@@ -1,0 +1,23 @@
+[project]
+name = "upmixer"
+version = "0.1.0"
+description = "Stereo to multichannel audio upmixer"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.12",
+    "soundfile>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "matplotlib>=3.7",
+]
+
+[project.scripts]
+upmixer = "upmixer.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
