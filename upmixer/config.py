@@ -52,8 +52,10 @@ class UpmixConfig:
 
     # Height channel parameters
     height_crossover_hz: float = 3000.0
-    height_transition_width_hz: float = 1000.0
+    height_transition_width_hz: float = 1500.0
     height_max_gain: float = 0.7
+    height_low_shelf_gain: float = 0.3
+    height_mid_blend: float = 0.35
     height_back_delay_ms: float = 10.0
 
     # Output format

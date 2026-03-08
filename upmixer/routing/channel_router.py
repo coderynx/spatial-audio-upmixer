@@ -10,8 +10,10 @@ from upmixer.routing.lfe import LFEExtractor
 class HeightFilter:
     """Frequency-dependent gain for height channels.
 
-    Vertical localization cues exist primarily above 4kHz (pinna HRTFs).
-    Uses a sigmoid transition curve starting around 3kHz.
+    Uses a high-shelf curve rather than a high-pass.  A floor gain
+    (``low_shelf_gain``) preserves body and warmth below the crossover,
+    while frequencies above the crossover receive the full ``max_gain``.
+    The sigmoid transition is widened for a gentle, natural roll-off.
     """
 
     def __init__(self, config: UpmixConfig, sample_rate: int, n_freq_bins: int):
@@ -20,6 +22,7 @@ class HeightFilter:
             crossover_hz=config.height_crossover_hz,
             transition_width_hz=config.height_transition_width_hz,
             max_gain=config.height_max_gain,
+            low_shelf_gain=config.height_low_shelf_gain,
             sample_rate=sample_rate,
             n_freq_bins=n_freq_bins,
         )
@@ -29,13 +32,20 @@ class HeightFilter:
         crossover_hz: float,
         transition_width_hz: float,
         max_gain: float,
+        low_shelf_gain: float,
         sample_rate: int,
         n_freq_bins: int,
     ) -> np.ndarray:
-        """Build sigmoid height frequency mask."""
+        """Build high-shelf frequency mask.
+
+        Below crossover: ``low_shelf_gain`` (preserves body).
+        Above crossover: ``max_gain`` (emphasises height cues).
+        Smooth sigmoid transition in between.
+        """
         freqs = np.arange(n_freq_bins) * sample_rate / ((n_freq_bins - 1) * 2)
         sigmoid_scale = transition_width_hz / 4.0
-        mask = max_gain / (1.0 + np.exp(-(freqs - crossover_hz) / sigmoid_scale))
+        sigmoid = 1.0 / (1.0 + np.exp(-(freqs - crossover_hz) / sigmoid_scale))
+        mask = low_shelf_gain + (max_gain - low_shelf_gain) * sigmoid
         return mask
 
     @property
@@ -59,6 +69,7 @@ class ChannelRouter:
         self._format = FORMAT_MAP[config.output_format]
         self._lfe = LFEExtractor(config, sample_rate, n_freq_bins)
         self._decorrelator = Decorrelator(config, n_freq_bins)
+        self._height_mid_blend = config.height_mid_blend
 
         self._height_filter = None
         if self._format.has_height:
@@ -102,21 +113,25 @@ class ChannelRouter:
                 d.ambient_R, filter_index=3
             )
 
-        # Height channels
+        # Height channels: blend ambient with a portion of mid for body
         if self._height_filter is not None:
+            mb = self._height_mid_blend
+            height_src_L = d.ambient_L + mb * mid_frame
+            height_src_R = d.ambient_R + mb * mid_frame
+
             channels["TFL"] = self._height_filter.apply_frame(
-                self._decorrelator.apply_frame(d.ambient_L, filter_index=4)
+                self._decorrelator.apply_frame(height_src_L, filter_index=4)
             )
             channels["TFR"] = self._height_filter.apply_frame(
-                self._decorrelator.apply_frame(d.ambient_R, filter_index=5)
+                self._decorrelator.apply_frame(height_src_R, filter_index=5)
             )
 
             if self._format.n_height_channels == 4:
                 channels["TBL"] = self._height_filter.apply_frame(
-                    self._decorrelator.apply_frame(d.ambient_L, filter_index=6)
+                    self._decorrelator.apply_frame(height_src_L, filter_index=6)
                 )
                 channels["TBR"] = self._height_filter.apply_frame(
-                    self._decorrelator.apply_frame(d.ambient_R, filter_index=7)
+                    self._decorrelator.apply_frame(height_src_R, filter_index=7)
                 )
 
         return channels
@@ -144,18 +159,22 @@ class ChannelRouter:
             channels["BR"] = cfg.back_gain * self._decorrelator.apply(d.ambient_R, 3)
 
         if self._height_filter is not None:
+            mb = self._height_mid_blend
+            height_src_L = d.ambient_L + mb * mid
+            height_src_R = d.ambient_R + mb * mid
+
             channels["TFL"] = self._height_filter.apply(
-                self._decorrelator.apply(d.ambient_L, 4)
+                self._decorrelator.apply(height_src_L, 4)
             )
             channels["TFR"] = self._height_filter.apply(
-                self._decorrelator.apply(d.ambient_R, 5)
+                self._decorrelator.apply(height_src_R, 5)
             )
             if self._format.n_height_channels == 4:
                 channels["TBL"] = self._height_filter.apply(
-                    self._decorrelator.apply(d.ambient_L, 6)
+                    self._decorrelator.apply(height_src_L, 6)
                 )
                 channels["TBR"] = self._height_filter.apply(
-                    self._decorrelator.apply(d.ambient_R, 7)
+                    self._decorrelator.apply(height_src_R, 7)
                 )
 
         return channels

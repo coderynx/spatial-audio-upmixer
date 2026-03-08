@@ -43,6 +43,18 @@ def main():
         default=None,
         help="Height channel gain for Atmos formats (0-1)",
     )
+    parser.add_argument(
+        "--height-mid-blend",
+        type=float,
+        default=None,
+        help="How much mid/center signal is blended into height channels (0-1, default: 0.35)",
+    )
+    parser.add_argument(
+        "--height-low-shelf",
+        type=float,
+        default=None,
+        help="Low-frequency shelf gain for height channels (0-1, default: 0.3)",
+    )
     parser.add_argument("--fft-size", type=int, default=None, help="STFT window size")
     parser.add_argument(
         "--no-auto-fft",
@@ -73,6 +85,10 @@ def main():
         config.center_attenuation = args.center_attenuation
     if args.height_gain is not None:
         config.height_gain = args.height_gain
+    if args.height_mid_blend is not None:
+        config.height_mid_blend = args.height_mid_blend
+    if args.height_low_shelf is not None:
+        config.height_low_shelf_gain = args.height_low_shelf
     if args.fft_size is not None:
         config.fft_size = args.fft_size
         config.hop_size = args.fft_size // 4
