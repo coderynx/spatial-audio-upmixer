@@ -12,14 +12,15 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             "Universal multichannel audio upmixer. "
-            "Upmix mono, stereo, 5.1, or 7.1 to any higher surround/Atmos format."
+            "Upmix mono, stereo, or any surround format to a higher channel layout. "
+            "Supported inputs: mono, stereo, 5.0, 5.1, 7.1, 5.1.2, 5.1.4, 7.1.2."
         )
     )
     parser.add_argument(
         "input",
-        help="Input audio file (WAV/FLAC). Supported layouts: mono, stereo, 5.0, 5.1, 7.1, 5.1.2, 7.1.2",
+        help="Input audio file (WAV/FLAC)",
     )
-    parser.add_argument("output", help="Output multichannel WAV file")
+    parser.add_argument("output", help="Output multichannel audio file")
     parser.add_argument(
         "--format",
         choices=_OUTPUT_FORMAT_CHOICES,
@@ -34,90 +35,91 @@ def main():
         help=(
             "Override auto-detected input format. "
             f"Choices: {', '.join(_INPUT_FORMAT_CHOICES)}. "
-            "Useful when channel count is ambiguous (e.g. 8ch = 7.1 or 5.1.2)."
+            "Required when channel count is ambiguous (8ch = 7.1 or 5.1.2; 10ch = 7.1.2 or 5.1.4)."
         ),
     )
+
+    # --- Gain controls ---
     parser.add_argument(
-        "--center-gain", type=float, default=None, help="Center channel gain (0-1)"
+        "--center-gain", type=float, default=None,
+        help="Center channel output gain (default: 0.85)",
     )
     parser.add_argument(
-        "--surround-gain",
-        type=float,
-        default=None,
-        help="Side surround channels gain (0-1)",
+        "--surround-gain", type=float, default=None,
+        help="Side surround channel gain (default: 0.6)",
     )
     parser.add_argument(
-        "--back-gain",
-        type=float,
-        default=None,
-        help="Rear back channels gain for 7.1 formats (0-1, default: 0.55)",
+        "--back-gain", type=float, default=None,
+        help="Rear back channel gain for 7.1 formats (default: 0.55)",
     )
     parser.add_argument(
-        "--center-extraction-gain",
-        type=float,
-        default=None,
-        help="How much mid signal goes to center (0-1, default: 0.7)",
+        "--height-gain", type=float, default=None,
+        help="Height channel gain for Atmos formats (default: 0.55)",
     )
     parser.add_argument(
-        "--center-attenuation",
-        type=float,
-        default=None,
-        help="How much center is attenuated from FL/FR (0-1, default: 0.3)",
+        "--lfe-gain", type=float, default=None,
+        help="LFE channel gain (default: 0.5)",
+    )
+
+    # --- Center extraction ---
+    parser.add_argument(
+        "--center-extraction-gain", type=float, default=None,
+        help="How much mid signal goes to center channel (default: 0.85)",
     )
     parser.add_argument(
-        "--height-gain",
-        type=float,
-        default=None,
-        help="Height channel gain for Atmos formats (0-1)",
+        "--center-attenuation", type=float, default=None,
+        help="How much center-panned content is attenuated from FL/FR (default: 0.5)",
+    )
+
+    # --- LFE ---
+    parser.add_argument(
+        "--lfe-cutoff", type=float, default=None, metavar="HZ",
+        help="LFE low-pass cutoff frequency in Hz (default: 120)",
+    )
+
+    # --- Height EQ ---
+    parser.add_argument(
+        "--height-low-rolloff-gain", type=float, default=None,
+        help="Sub-bass gain for height channels, 0=full rolloff 1=flat (default: 0.15)",
     )
     parser.add_argument(
-        "--height-mid-blend",
-        type=float,
-        default=None,
-        help="How much mid/center signal is blended into height channels (0-1, default: 0.35)",
+        "--height-high-shelf-gain", type=float, default=None,
+        help="High-frequency presence boost for height channels, >1.0=lift (default: 1.5)",
     )
-    parser.add_argument(
-        "--height-low-rolloff-gain",
-        type=float,
-        default=None,
-        help="Sub-bass gain for height channels (0-1, default: 0.15). Higher = more bass in height.",
-    )
-    parser.add_argument(
-        "--height-high-shelf-gain",
-        type=float,
-        default=None,
-        help="High-frequency boost for height channels (default: 1.5). >1.0 = presence lift.",
-    )
+
+    # --- STFT / processing ---
     parser.add_argument("--fft-size", type=int, default=None, help="STFT window size")
     parser.add_argument(
-        "--no-auto-fft",
-        action="store_true",
+        "--no-auto-fft", action="store_true",
         help="Disable automatic FFT size scaling for high sample rates",
     )
     parser.add_argument(
-        "--block-size",
-        type=int,
-        default=None,
+        "--block-size", type=int, default=None,
         help="Streaming block size in samples (default: 4096)",
     )
+
+    # --- Output ---
     parser.add_argument(
-        "--no-normalize", action="store_true", help="Disable output normalization"
+        "--no-normalize", action="store_true", help="Disable output energy normalization",
     )
     parser.add_argument(
         "--output-type",
         choices=["wav", "adm-bwf"],
         default="wav",
         help=(
-            "Output file type. 'wav' = standard multichannel WAV. "
-            "'adm-bwf' = Broadcast Wave Format with ITU-R BS.2076-2 ADM metadata "
-            "for import into Logic Pro, DaVinci Resolve, Pro Tools, etc. (default: wav)"
+            "Output file format. 'wav' = standard multichannel WAV. "
+            "'adm-bwf' = Broadcast Wave with ITU-R BS.2076-2 ADM metadata "
+            "for Logic Pro, DaVinci Resolve, Pro Tools, etc. (default: wav)"
         ),
     )
     parser.add_argument(
-        "--output-sample-rate",
-        type=int,
+        "--output-subtype",
+        choices=["PCM_16", "PCM_24", "PCM_32"],
         default=None,
-        metavar="HZ",
+        help="Output bit depth (default: PCM_24)",
+    )
+    parser.add_argument(
+        "--output-sample-rate", type=int, default=None, metavar="HZ",
         help="Resample output to this sample rate (e.g. 48000, 96000). Default: same as input.",
     )
 
@@ -131,14 +133,16 @@ def main():
         config.surround_gain = args.surround_gain
     if args.back_gain is not None:
         config.back_gain = args.back_gain
+    if args.height_gain is not None:
+        config.height_gain = args.height_gain
+    if args.lfe_gain is not None:
+        config.lfe_gain = args.lfe_gain
     if args.center_extraction_gain is not None:
         config.center_extraction_gain = args.center_extraction_gain
     if args.center_attenuation is not None:
         config.center_attenuation = args.center_attenuation
-    if args.height_gain is not None:
-        config.height_gain = args.height_gain
-    if args.height_mid_blend is not None:
-        config.height_mid_blend = args.height_mid_blend
+    if args.lfe_cutoff is not None:
+        config.lfe_cutoff_hz = args.lfe_cutoff
     if args.height_low_rolloff_gain is not None:
         config.height_low_rolloff_gain = args.height_low_rolloff_gain
     if args.height_high_shelf_gain is not None:
@@ -153,6 +157,8 @@ def main():
     if args.no_normalize:
         config.normalize_output = False
     config.output_type = args.output_type
+    if args.output_subtype is not None:
+        config.output_subtype = args.output_subtype
     if args.output_sample_rate is not None:
         config.output_sample_rate = args.output_sample_rate
 
