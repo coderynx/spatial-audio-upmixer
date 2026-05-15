@@ -212,6 +212,7 @@ class StemRouter:
         stems: dict[str, np.ndarray],
         n_samples: int,
         passthrough_channels: set[str] | None = None,
+        per_stem_routing: dict[str, dict[str, float]] | None = None,
     ) -> dict[str, np.ndarray]:
         """Mix stems into output channels.
 
@@ -219,6 +220,9 @@ class StemRouter:
             stems: Dict "StemName[@zone]" → ndarray (n_samples, 2) stereo float.
             n_samples: Expected output length.
             passthrough_channels: Channel names to skip (injected directly by caller).
+            per_stem_routing: Optional content-aware per-stem routing overrides
+                produced by ContentMixer. Takes precedence over ZONE_ROUTING /
+                DEFAULT_ROUTING for any stem key present in the dict.
 
         Returns:
             Dict channel_name → 1D float64 array of length n_samples.
@@ -230,7 +234,9 @@ class StemRouter:
         }
 
         for stem_key, audio in stems.items():
-            if "@" in stem_key:
+            if per_stem_routing and stem_key in per_stem_routing:
+                stem_routing = per_stem_routing[stem_key]
+            elif "@" in stem_key:
                 stem_name, zone = stem_key.rsplit("@", 1)
                 stem_routing = (
                     ZONE_ROUTING.get(zone, {}).get(stem_name)

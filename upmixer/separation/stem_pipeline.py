@@ -207,9 +207,25 @@ class StemUpmixPipeline:
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
         out_sr = cfg.output_sample_rate if cfg.output_sample_rate else sep_sr
 
+        # Content-aware routing: analyse each stem → modulate routing table gains
+        per_stem_routing = None
+        if cfg.content_aware_mixing:
+            from upmixer.separation.content_mixer import ContentMixer
+            mixer = ContentMixer(cfg, output_fmt, sep_sr)
+            per_stem_routing = mixer.build(all_stems, router)
+            print("  Content-aware mixing:")
+            for stem_key, audio in all_stems.items():
+                base = router.get_routing(stem_key)
+                if base:
+                    features = mixer._analyzer.analyze(audio)
+                    print(f"    {mixer.describe(stem_key, features)}")
+
         # Route all stems to a mixed multichannel bed (both adm-bwf and wav)
         channels = router.route(
-            all_stems, n_samples, passthrough_channels=set(passthrough_resampled.keys())
+            all_stems,
+            n_samples,
+            passthrough_channels=set(passthrough_resampled.keys()),
+            per_stem_routing=per_stem_routing,
         )
 
         # Inject passthrough channels

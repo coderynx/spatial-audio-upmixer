@@ -133,6 +133,14 @@ def main():
         "--no-normalize", action="store_true", help="Disable output energy normalization",
     )
     parser.add_argument(
+        "--no-content-mix", action="store_true",
+        help="Disable content-aware stem mixing (use static routing tables only)",
+    )
+    parser.add_argument(
+        "--content-mix-strength", type=float, default=None, metavar="S",
+        help="Content-aware mixing strength 0.0–1.0 (default: 1.0)",
+    )
+    parser.add_argument(
         "--no-loudness-normalize", action="store_true",
         help=(
             "Disable ITU-R BS.1770-4 loudness normalization "
@@ -197,6 +205,10 @@ def main():
         config.block_size = args.block_size
     if args.no_normalize:
         config.normalize_output = False
+    if args.no_content_mix:
+        config.content_aware_mixing = False
+    if args.content_mix_strength is not None:
+        config.content_mix_strength = max(0.0, min(1.0, args.content_mix_strength))
     if args.no_loudness_normalize:
         config.loudness_normalize = False
     if args.loudness_target is not None:
