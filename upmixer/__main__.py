@@ -3,6 +3,7 @@ import argparse
 from upmixer.config import UpmixConfig
 from upmixer.formats import INPUT_FORMAT_MAP
 from upmixer.pipeline import UpmixPipeline
+from upmixer.separation.separator import DEFAULT_MODEL
 
 _INPUT_FORMAT_CHOICES = sorted(INPUT_FORMAT_MAP.keys())
 _OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
@@ -37,6 +38,35 @@ def main():
             f"Choices: {', '.join(_INPUT_FORMAT_CHOICES)}. "
             "Required when channel count is ambiguous (8ch = 7.1 or 5.1.2; 10ch = 7.1.2 or 5.1.4)."
         ),
+    )
+
+    # --- Processing mode ---
+    parser.add_argument(
+        "--mode",
+        choices=["realtime", "stem"],
+        default="realtime",
+        help=(
+            "Processing mode. "
+            "'realtime' (default): coherence-based STFT pipeline, works on any input, low latency. "
+            "'stem': source-separation pipeline — separates instruments then places each in 3D space. "
+            "Requires: pip install 'audio-separator[cpu]'. Only supports mono/stereo input."
+        ),
+    )
+    parser.add_argument(
+        "--stem-model",
+        default=DEFAULT_MODEL,
+        metavar="MODEL",
+        help=(
+            f"audio-separator model for stem mode (default: {DEFAULT_MODEL}). "
+            "4-stem models (drums/bass/vocals/other) give best spatial placement. "
+            "Models are auto-downloaded on first use."
+        ),
+    )
+    parser.add_argument(
+        "--stem-model-dir",
+        default=None,
+        metavar="DIR",
+        help="Directory to cache downloaded separation models (default: ~/.cache/upmixer-models).",
     )
 
     # --- Gain controls ---
@@ -162,8 +192,17 @@ def main():
     if args.output_sample_rate is not None:
         config.output_sample_rate = args.output_sample_rate
 
-    pipeline = UpmixPipeline(config)
-    pipeline.process_file(args.input, args.output, input_format_override=args.input_format)
+    if args.mode == "stem":
+        from upmixer.separation.stem_pipeline import StemUpmixPipeline
+        stem_pipeline = StemUpmixPipeline(
+            config=config,
+            model=args.stem_model,
+            model_dir=args.stem_model_dir,
+        )
+        stem_pipeline.process_file(args.input, args.output, input_format_override=args.input_format)
+    else:
+        pipeline = UpmixPipeline(config)
+        pipeline.process_file(args.input, args.output, input_format_override=args.input_format)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,12 @@ dev = [
     "pytest>=7.0",
     "matplotlib>=3.7",
 ]
+separation-cpu = [
+    "audio-separator[cpu]>=0.24",
+]
+separation-gpu = [
+    "audio-separator[gpu]>=0.24",
+]
 
 [project.scripts]
 upmixer = "upmixer.__main__:main"
