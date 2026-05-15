@@ -30,8 +30,8 @@ class UpmixConfig:
     epsilon: float = 1e-10
 
     # Soft matrix parameters
-    center_extraction_gain: float = 0.7
-    center_attenuation: float = 0.3
+    center_extraction_gain: float = 0.85
+    center_attenuation: float = 0.5
 
     # Channel routing gains (linear)
     center_gain: float = 0.85

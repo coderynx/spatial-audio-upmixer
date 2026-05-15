@@ -82,7 +82,10 @@ class SoftMatrixDecomposer:
         mag_R = np.abs(X_R_frame)
         pan = (mag_L - mag_R) / (mag_L + mag_R + self._eps)
 
-        center_weight = coherence_frame * (1.0 - np.abs(pan))
+        # Pan-based only: wide reverb is already captured in side signal → surrounds.
+        # Coherence gate was too strict for multi-instrument mixes (interference → low
+        # coherence even for centered content → phantom center artifact).
+        center_weight = 1.0 - np.abs(pan)
         center = self._center_extraction_gain * center_weight * mid
 
         reduction = self._center_attenuation * center_weight * 0.5
