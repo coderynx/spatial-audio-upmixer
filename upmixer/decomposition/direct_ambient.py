@@ -9,40 +9,42 @@ from upmixer.config import UpmixConfig
 class SoftMatrixResult:
     """Result of soft matrix decomposition for one frame."""
 
-    center: np.ndarray  # Center channel spectrum (n_freq,)
-    front_L: np.ndarray  # Front left spectrum (n_freq,)
-    front_R: np.ndarray  # Front right spectrum (n_freq,)
-    ambient_L: np.ndarray  # Left ambient/surround spectrum (n_freq,)
-    ambient_R: np.ndarray  # Right ambient/surround spectrum (n_freq,)
+    center: np.ndarray      # Center channel spectrum (n_freq,)
+    front_L: np.ndarray     # Front left spectrum (n_freq,)
+    front_R: np.ndarray     # Front right spectrum (n_freq,)
+    ambient_L: np.ndarray   # M-S side = (L-R)/2
+    ambient_R: np.ndarray   # -(L-R)/2
+    signal_L: np.ndarray    # Raw left input (for height air extraction)
+    signal_R: np.ndarray    # Raw right input
 
 
 @dataclass
 class SoftMatrixBatchResult:
     """Result of soft matrix decomposition for full spectrogram (batch mode)."""
 
-    center: np.ndarray  # (n_freq, n_frames)
+    center: np.ndarray      # (n_freq, n_frames)
     front_L: np.ndarray
     front_R: np.ndarray
     ambient_L: np.ndarray
     ambient_R: np.ndarray
+    signal_L: np.ndarray
+    signal_R: np.ndarray
 
 
 class SoftMatrixDecomposer:
-    """Soft matrix upmixer: gain-based spatial remixing without spectral subtraction.
+    """Panning-aware soft matrix upmixer.
 
-    Instead of isolating the center via Wiener masking (which causes phase
-    artifacts), this approach uses gain modulation only:
+    Center is extracted only for content that is both coherent (correlated)
+    AND center-panned (instantaneous pan near zero). Wide or hard-panned
+    content stays in FL/FR unmodified.
 
-    1. Center = gain * sqrt(coherence) * mid  -- weighted copy, no subtraction
-    2. FL/FR = L/R * (1 - attenuation * coherence * 0.5) -- gentle gain reduction
-    3. Ambient = side = (L-R)/2  -- fixed linear combination, clean phase
-
-    This avoids all phase artifacts from spectral subtraction.
+    Ambient = pure M-S side signal — no decorrelation, no artificial coloring.
     """
 
     def __init__(self, config: UpmixConfig):
         self._center_extraction_gain = config.center_extraction_gain
         self._center_attenuation = config.center_attenuation
+        self._eps = config.epsilon
 
     def decompose_frame(
         self,
@@ -50,29 +52,29 @@ class SoftMatrixDecomposer:
         X_R_frame: np.ndarray,
         coherence_frame: np.ndarray,
     ) -> SoftMatrixResult:
-        """Decompose one frame using soft matrixing."""
         mid = (X_L_frame + X_R_frame) * 0.5
         side = (X_L_frame - X_R_frame) * 0.5
 
-        # Coherence-weighted center extraction: sqrt for gentler curve
-        coherence_gain = self._center_extraction_gain * np.sqrt(coherence_frame)
-        center = coherence_gain * mid
+        mag_L = np.abs(X_L_frame)
+        mag_R = np.abs(X_R_frame)
+        pan = (mag_L - mag_R) / (mag_L + mag_R + self._eps)
 
-        # Front L/R: gentle coherence-proportional attenuation (no subtraction)
-        center_reduction = self._center_attenuation * coherence_frame
-        front_L = X_L_frame * (1.0 - center_reduction * 0.5)
-        front_R = X_R_frame * (1.0 - center_reduction * 0.5)
+        # Extract center only where signal is coherent AND center-panned
+        center_weight = coherence_frame * (1.0 - np.abs(pan))
+        center = self._center_extraction_gain * center_weight * mid
 
-        # Ambient: side signal for surrounds
-        ambient_L = side
-        ambient_R = -side  # Negated so SL and SR differ
+        reduction = self._center_attenuation * center_weight * 0.5
+        front_L = X_L_frame * (1.0 - reduction)
+        front_R = X_R_frame * (1.0 - reduction)
 
         return SoftMatrixResult(
             center=center,
             front_L=front_L,
             front_R=front_R,
-            ambient_L=ambient_L,
-            ambient_R=ambient_R,
+            ambient_L=side,
+            ambient_R=-side,
+            signal_L=X_L_frame,
+            signal_R=X_R_frame,
         )
 
     def decompose(
@@ -85,12 +87,16 @@ class SoftMatrixDecomposer:
         mid = (X_L + X_R) * 0.5
         side = (X_L - X_R) * 0.5
 
-        coherence_gain = self._center_extraction_gain * np.sqrt(coherence)
-        center = coherence_gain * mid
+        mag_L = np.abs(X_L)
+        mag_R = np.abs(X_R)
+        pan = (mag_L - mag_R) / (mag_L + mag_R + self._eps)
 
-        center_reduction = self._center_attenuation * coherence
-        front_L = X_L * (1.0 - center_reduction * 0.5)
-        front_R = X_R * (1.0 - center_reduction * 0.5)
+        center_weight = coherence * (1.0 - np.abs(pan))
+        center = self._center_extraction_gain * center_weight * mid
+
+        reduction = self._center_attenuation * center_weight * 0.5
+        front_L = X_L * (1.0 - reduction)
+        front_R = X_R * (1.0 - reduction)
 
         return SoftMatrixBatchResult(
             center=center,
@@ -98,4 +104,6 @@ class SoftMatrixDecomposer:
             front_R=front_R,
             ambient_L=side,
             ambient_R=-side,
+            signal_L=X_L,
+            signal_R=X_R,
         )

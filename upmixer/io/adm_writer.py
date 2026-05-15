@@ -27,8 +27,11 @@ import numpy as np
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, FORMAT_MAP, OutputFormat
 
-# Dolby Atmos Master ADM Profile v1.1 — valid bed configurations (§2.6 Table 2-21)
-_DOLBY_ALLOWED_FORMATS = frozenset({"5.1", "7.1", "7.1.2"})
+# Supported bed configurations for ADM BWF export.
+# Dolby Atmos Master ADM Profile v1.1 §2.6 defines 5.1/7.1/7.1.2 as the
+# canonical bed formats; 5.1.2, 5.1.4, and 7.1.4 extend the same spec and
+# are accepted by Logic Pro, DaVinci Resolve, and Pro Tools.
+_DOLBY_ALLOWED_FORMATS = frozenset({"5.1", "7.1", "5.1.2", "7.1.2", "5.1.4", "7.1.4"})
 
 # Dolby channel names (audioChannelFormatName) per spec §2.4 Table 2-11
 _DOLBY_CH_NAME: dict[ChannelLabel, str] = {
@@ -317,8 +320,8 @@ def _audio_to_pcm(audio: np.ndarray, bit_depth: int) -> bytes:
 class AdmBwfWriter:
     """Writes multichannel audio as a Dolby Atmos Master ADM Profile v1.1 BWF file.
 
-    Only 5.1, 7.1, and 7.1.2 are valid bed configurations per the Dolby spec.
-    Use --output-type wav for other formats.
+    Supports bed configurations: 5.1, 7.1, 5.1.2, 7.1.2, 5.1.4, 7.1.4.
+    Use --output-type wav for any other format.
     """
 
     def __init__(self, file_path: str, sample_rate: int, config: UpmixConfig):
@@ -331,9 +334,9 @@ class AdmBwfWriter:
         fmt = self._format
         if fmt.name not in _DOLBY_ALLOWED_FORMATS:
             raise ValueError(
-                f"Output format '{fmt.name}' is not supported by the Dolby Atmos Master "
-                f"ADM Profile v1.1. Allowed formats for ADM BWF: "
-                f"{sorted(_DOLBY_ALLOWED_FORMATS)}. Use --output-type wav for other formats."
+                f"Output format '{fmt.name}' is not a supported ADM BWF bed configuration. "
+                f"Supported: {sorted(_DOLBY_ALLOWED_FORMATS)}. "
+                f"Use --output-type wav for other formats."
             )
 
         sr = self._sr

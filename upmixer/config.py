@@ -36,7 +36,7 @@ class UpmixConfig:
     lfe_gain: float = 0.5
     surround_gain: float = 0.6
     back_gain: float = 0.4
-    height_gain: float = 0.45
+    height_gain: float = 0.55
 
     # LFE parameters
     lfe_cutoff_hz: float = 120.0
@@ -50,11 +50,15 @@ class UpmixConfig:
     # Back channel parameters
     back_delay_ms: float = 15.0
 
-    # Height channel parameters
+    # Height channel parameters — elevation EQ
+    # Sub-bass rolloff: below low_rolloff_hz → attenuated (height speakers don't couple bass to room)
+    # Flat mids: full body preserved
+    # High shelf: above crossover_hz → boosted for elevation HRTF cues and air
+    height_low_rolloff_hz: float = 150.0
+    height_low_rolloff_gain: float = 0.15
     height_crossover_hz: float = 3000.0
-    height_transition_width_hz: float = 1500.0
-    height_max_gain: float = 0.7
-    height_low_shelf_gain: float = 0.3
+    height_transition_width_hz: float = 2000.0
+    height_high_shelf_gain: float = 1.5
     height_mid_blend: float = 0.35
     height_back_delay_ms: float = 10.0
 

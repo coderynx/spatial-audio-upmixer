@@ -71,10 +71,16 @@ def main():
         help="How much mid/center signal is blended into height channels (0-1, default: 0.35)",
     )
     parser.add_argument(
-        "--height-low-shelf",
+        "--height-low-rolloff-gain",
         type=float,
         default=None,
-        help="Low-frequency shelf gain for height channels (0-1, default: 0.3)",
+        help="Sub-bass gain for height channels (0-1, default: 0.15). Higher = more bass in height.",
+    )
+    parser.add_argument(
+        "--height-high-shelf-gain",
+        type=float,
+        default=None,
+        help="High-frequency boost for height channels (default: 1.5). >1.0 = presence lift.",
     )
     parser.add_argument("--fft-size", type=int, default=None, help="STFT window size")
     parser.add_argument(
@@ -125,8 +131,10 @@ def main():
         config.height_gain = args.height_gain
     if args.height_mid_blend is not None:
         config.height_mid_blend = args.height_mid_blend
-    if args.height_low_shelf is not None:
-        config.height_low_shelf_gain = args.height_low_shelf
+    if args.height_low_rolloff_gain is not None:
+        config.height_low_rolloff_gain = args.height_low_rolloff_gain
+    if args.height_high_shelf_gain is not None:
+        config.height_high_shelf_gain = args.height_high_shelf_gain
     if args.fft_size is not None:
         config.fft_size = args.fft_size
         config.hop_size = args.fft_size // 4

@@ -5,24 +5,6 @@ from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, InputFormat, OutputFormat
 
 
-def _allpass_decorr(signal: np.ndarray, seed: int, n_taps: int = 1024) -> np.ndarray:
-    """Decorrelate via convolution with a random-phase unit-magnitude FIR.
-
-    numpy's irfft of a unit-magnitude spectrum already yields sum(h²) ≈ 1,
-    so no additional normalization is needed — dividing by peak would amplify
-    filter energy by ~100x, making derived channels far too loud.
-    """
-    rng = np.random.default_rng(seed)
-    n_freq = n_taps // 2
-    phase = rng.uniform(0, 2 * np.pi, n_freq + 1)
-    h = np.fft.irfft(np.exp(1j * phase), n=n_taps)
-    return np.convolve(signal, h, mode="same")
-
-
-def _apply_delay(signal: np.ndarray, delay_samples: int) -> np.ndarray:
-    return np.pad(signal, (delay_samples, 0))[: len(signal)]
-
-
 def _lfe_filter(
     signal: np.ndarray, sr: int, cutoff_hz: float, gain: float, order: int
 ) -> np.ndarray:
@@ -30,27 +12,40 @@ def _lfe_filter(
     return sosfilt(sos, signal) * gain
 
 
-def _high_shelf(
+def _elevation_eq(
     signal: np.ndarray,
     sr: int,
-    crossover_hz: float,
-    low_gain: float,
-    high_gain: float,
+    low_rolloff_hz: float,
+    low_rolloff_gain: float,
+    high_shelf_hz: float,
+    high_shelf_gain: float,
 ) -> np.ndarray:
-    """High-shelf: low_gain below crossover, high_gain above.
+    """Elevation EQ: sub-bass rolloff + high-frequency presence lift.
 
-    Implemented as: original*low_gain + hp*(high_gain - low_gain).
+    Mirrors HeightFilter._build_elevation_mask in the time domain.
+    Section 1: HP-based attenuation below low_rolloff_hz
+    Section 2: shelf boost above high_shelf_hz
+    Midrange preserved at unity.
     """
-    sos_hp = butter(2, crossover_hz / (sr / 2.0), btype="high", output="sos")
-    hp = sosfilt(sos_hp, signal)
-    return signal * low_gain + hp * (high_gain - low_gain)
+    nyq = sr / 2.0
+
+    # Sub-bass rolloff: blend original with HPF output
+    sos_lp_bass = butter(1, low_rolloff_hz / nyq, btype="low", output="sos")
+    low_component = sosfilt(sos_lp_bass, signal)
+    # attenuate only the sub-bass portion
+    bass_shaped = signal - low_component * (1.0 - low_rolloff_gain)
+
+    # High shelf: blend with HPF signal boosted by (high_shelf_gain - 1)
+    sos_hp = butter(2, high_shelf_hz / nyq, btype="high", output="sos")
+    hp = sosfilt(sos_hp, bass_shaped)
+    return bass_shaped + hp * (high_shelf_gain - 1.0)
 
 
 class MultichannelUpmixer:
     """Upmix multichannel audio to a higher format.
 
     Passes through existing channels unchanged and derives missing channels
-    from spatially appropriate sources using time-domain processing.
+    using gain-only remixing — no decorrelation, no delays.
     """
 
     def __init__(
@@ -85,12 +80,12 @@ class MultichannelUpmixer:
         BL = out.get("BL")
         BR = out.get("BR")
 
-        # --- Center ---
+        # Center
         if "C" not in out and FL is not None and FR is not None:
             out["C"] = 0.35 * (FL + FR)
             C = out["C"]
 
-        # --- LFE ---
+        # LFE
         if "LFE" not in out:
             src = C if C is not None else ((FL + FR) * 0.5 if FL is not None else None)
             if src is not None:
@@ -98,34 +93,28 @@ class MultichannelUpmixer:
                     src, sr, cfg.lfe_cutoff_hz, cfg.lfe_gain, cfg.lfe_filter_order
                 )
 
-        # --- Surround (SL/SR) ---
-        # Normally present for multichannel inputs; synthesised for quad-like formats.
+        # Surround: simple gain from front channels (clean, no decorrelation)
         if "SL" not in out:
             src = FL if FL is not None else (BL if BL is not None else None)
             if src is not None:
-                out["SL"] = cfg.surround_gain * _allpass_decorr(src, seed=0)
+                out["SL"] = cfg.surround_gain * src
                 SL = out["SL"]
         if "SR" not in out:
             src = FR if FR is not None else (BR if BR is not None else None)
             if src is not None:
-                out["SR"] = cfg.surround_gain * _allpass_decorr(src, seed=1)
+                out["SR"] = cfg.surround_gain * src
                 SR = out["SR"]
 
-        # --- Back surround (BL/BR) ---
+        # Back surround: simple gain from surround
         if fmt.has_back:
-            delay = int(cfg.back_delay_ms * sr / 1000.0)
             if "BL" not in out and SL is not None:
-                out["BL"] = cfg.back_gain * _apply_delay(
-                    _allpass_decorr(SL, seed=2), delay
-                )
+                out["BL"] = cfg.back_gain * SL
                 BL = out["BL"]
             if "BR" not in out and SR is not None:
-                out["BR"] = cfg.back_gain * _apply_delay(
-                    _allpass_decorr(SR, seed=3), delay
-                )
+                out["BR"] = cfg.back_gain * SR
                 BR = out["BR"]
 
-        # --- Height channels ---
+        # Height channels: high-shelf only, no decorrelation, no delay
         if fmt.has_height:
             n = len(next(iter(out.values())))
 
@@ -140,18 +129,18 @@ class MultichannelUpmixer:
             else:
                 h_src_L = h_src_R = np.zeros(n)
 
+            eq_kwargs = dict(
+                sr=sr,
+                low_rolloff_hz=cfg.height_low_rolloff_hz,
+                low_rolloff_gain=cfg.height_low_rolloff_gain,
+                high_shelf_hz=cfg.height_crossover_hz,
+                high_shelf_gain=cfg.height_high_shelf_gain,
+            )
+
             if "TFL" not in out:
-                shelved = _high_shelf(
-                    h_src_L, sr,
-                    cfg.height_crossover_hz, cfg.height_low_shelf_gain, cfg.height_max_gain,
-                )
-                out["TFL"] = cfg.height_gain * _allpass_decorr(shelved, seed=4)
+                out["TFL"] = cfg.height_gain * _elevation_eq(h_src_L, **eq_kwargs)
             if "TFR" not in out:
-                shelved = _high_shelf(
-                    h_src_R, sr,
-                    cfg.height_crossover_hz, cfg.height_low_shelf_gain, cfg.height_max_gain,
-                )
-                out["TFR"] = cfg.height_gain * _allpass_decorr(shelved, seed=5)
+                out["TFR"] = cfg.height_gain * _elevation_eq(h_src_R, **eq_kwargs)
 
             if fmt.n_height_channels == 4:
                 if SL is not None:
@@ -162,22 +151,9 @@ class MultichannelUpmixer:
                 else:
                     hb_src_L, hb_src_R = h_src_L, h_src_R
 
-                delay = int(cfg.height_back_delay_ms * sr / 1000.0)
                 if "TBL" not in out:
-                    shelved = _high_shelf(
-                        hb_src_L, sr,
-                        cfg.height_crossover_hz, cfg.height_low_shelf_gain, cfg.height_max_gain,
-                    )
-                    out["TBL"] = cfg.height_gain * _apply_delay(
-                        _allpass_decorr(shelved, seed=6), delay
-                    )
+                    out["TBL"] = cfg.height_gain * _elevation_eq(hb_src_L, **eq_kwargs)
                 if "TBR" not in out:
-                    shelved = _high_shelf(
-                        hb_src_R, sr,
-                        cfg.height_crossover_hz, cfg.height_low_shelf_gain, cfg.height_max_gain,
-                    )
-                    out["TBR"] = cfg.height_gain * _apply_delay(
-                        _allpass_decorr(shelved, seed=7), delay
-                    )
+                    out["TBR"] = cfg.height_gain * _elevation_eq(hb_src_R, **eq_kwargs)
 
         return {label.value: out[label.value] for label in fmt.channels}

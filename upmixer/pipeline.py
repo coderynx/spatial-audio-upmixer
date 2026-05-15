@@ -293,22 +293,6 @@ class UpmixPipeline:
         fmt = FORMAT_MAP[cfg.output_format]
         n_samples = len(original_left)
 
-        if fmt.has_back:
-            delay_samples = int(cfg.back_delay_ms * sr / 1000.0)
-            for ch_name in ("BL", "BR"):
-                if ch_name in channels:
-                    channels[ch_name] = np.pad(
-                        channels[ch_name], (delay_samples, 0)
-                    )[:n_samples]
-
-        if fmt.n_height_channels == 4:
-            delay_samples = int(cfg.height_back_delay_ms * sr / 1000.0)
-            for ch_name in ("TBL", "TBR"):
-                if ch_name in channels:
-                    channels[ch_name] = np.pad(
-                        channels[ch_name], (delay_samples, 0)
-                    )[:n_samples]
-
         if cfg.normalize_output:
             channels = normalize_energy(channels, original_left, original_right)
 
