@@ -44,6 +44,7 @@ from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
 from upmixer.io.writer import AudioWriter
 from upmixer.separation.separator import StemSeparator, DEFAULT_MODEL
+from upmixer.separation.stem_analyzer import analyze_stems
 from upmixer.separation.stem_router import StemRouter
 from upmixer.utils import soft_limit
 
@@ -209,25 +210,26 @@ class StemUpmixPipeline:
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
         out_sr = cfg.output_sample_rate if cfg.output_sample_rate else sep_sr
 
-        # Content-aware routing: analyse each stem → modulate routing table gains
-        per_stem_routing = None
-        if cfg.content_aware_mixing:
-            from upmixer.separation.content_mixer import ContentMixer
-            mixer = ContentMixer(cfg, output_fmt, sep_sr)
-            per_stem_routing = mixer.build(all_stems, router)
-            print("  Content-aware mixing:")
-            for stem_key, audio in all_stems.items():
-                base = router.get_routing(stem_key)
-                if base:
-                    features = mixer._analyzer.analyze(audio)
-                    print(f"    {mixer.describe(stem_key, features)}")
+        # Content-aware analysis: per-stem features drive spatial gain scaling
+        print("  Analyzing stem content...")
+        stem_features = analyze_stems(all_stems, sep_sr)
+        for stem_key, feat in sorted(stem_features.items()):
+            name = stem_key.split("@")[0]
+            zone = f"@{stem_key.split('@')[1]}" if "@" in stem_key else ""
+            print(
+                f"    {name}{zone}: "
+                f"width={feat.stereo_width:.2f}  "
+                f"highs={feat.high_freq_ratio:.2f}  "
+                f"lows={feat.low_freq_ratio:.2f}  "
+                f"transients={feat.transient_ratio:.2f}"
+            )
 
         # Route all stems to a mixed multichannel bed (both adm-bwf and wav)
         channels = router.route(
             all_stems,
             n_samples,
             passthrough_channels=set(passthrough_resampled.keys()),
-            per_stem_routing=per_stem_routing,
+            stem_features=stem_features,
         )
 
         # Inject passthrough channels

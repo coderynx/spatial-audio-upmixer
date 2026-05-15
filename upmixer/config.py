@@ -79,7 +79,7 @@ class UpmixConfig:
     peak_limit_threshold: float = 0.95
 
     # Content-aware mixing (stem analysis → spatial routing modulation)
-    content_aware_mixing: bool = True
+
     content_mix_strength: float = 1.0    # [0=neutral, 1=full content-aware]
     content_hf_analysis_hz: float = 4000.0  # lower edge of HF band for air detection
 

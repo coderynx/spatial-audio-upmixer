@@ -22,9 +22,53 @@ from scipy.signal import butter, sosfilt
 
 from upmixer.formats import ChannelLabel, OutputFormat
 from upmixer.config import UpmixConfig
+from upmixer.separation.stem_analyzer import StemFeatures
 
 _LEFT_CHANNELS  = {ChannelLabel.FL, ChannelLabel.SL, ChannelLabel.BL, ChannelLabel.TFL, ChannelLabel.TBL}
 _RIGHT_CHANNELS = {ChannelLabel.FR, ChannelLabel.SR, ChannelLabel.BR, ChannelLabel.TFR, ChannelLabel.TBR}
+
+# Channel type subsets for content-aware gain scaling
+_FRONT_CHANNELS    = {ChannelLabel.FL, ChannelLabel.FR}
+_SURROUND_CHANNELS = {ChannelLabel.SL, ChannelLabel.SR, ChannelLabel.BL, ChannelLabel.BR}
+_HEIGHT_CHANNELS   = {ChannelLabel.TFL, ChannelLabel.TFR, ChannelLabel.TBL, ChannelLabel.TBR}
+
+
+def _content_scale(features: StemFeatures, label: ChannelLabel) -> float:
+    """Per-channel multiplicative scale [0.2, 1.3] driven by stem content.
+
+    Multiplied onto the static routing table gain so that spatial placement
+    adapts to the actual audio rather than using fixed gain for every track.
+
+    LFE     : boosted by low-frequency energy
+    Center  : boosted when content is mono (vocals, bass, centred instruments)
+    Height  : boosted by high-frequency and transient content (cymbals, bright ambience)
+    Surround: boosted by wide stereo and sustained (non-transient) content
+    Front   : stable anchor; gentle boost for transient-heavy direct sounds
+    """
+    w = features.stereo_width       # [0,1] — 1 = wide stereo
+    h = features.high_freq_ratio    # [0,1] — 1 = treble-heavy
+    b = features.low_freq_ratio     # [0,1] — 1 = bass-heavy
+    t = features.transient_ratio    # [0,1] — 1 = percussive / transient
+
+    if label == ChannelLabel.LFE:
+        # Low-frequency content → stronger LFE
+        return 0.4 + 0.9 * b
+
+    if label == ChannelLabel.C:
+        # Mono content → stronger center (vocals, bass, mono lead)
+        return 0.6 + 0.7 * (1.0 - w)
+
+    if label in _HEIGHT_CHANNELS:
+        # Treble + transient (cymbals, bright room) → stronger height
+        return 0.2 + 0.8 * (0.6 * h + 0.4 * t)
+
+    if label in _SURROUND_CHANNELS:
+        # Wide stereo + sustained → stronger surrounds (reverb, ambience, guitars)
+        sustain = 1.0 - t
+        return 0.2 + 0.8 * (0.65 * w + 0.35 * sustain)
+
+    # Front channels (FL, FR): anchor; gentle boost for direct / percussive content
+    return 0.6 + 0.4 * (0.5 * t + 0.5 * (1.0 - w))
 
 # ── Zone routing tables ────────────────────────────────────────────────────────
 # front: direct/dry front-speaker content → front channels + slight height
@@ -212,7 +256,7 @@ class StemRouter:
         stems: dict[str, np.ndarray],
         n_samples: int,
         passthrough_channels: set[str] | None = None,
-        per_stem_routing: dict[str, dict[str, float]] | None = None,
+        stem_features: dict[str, StemFeatures] | None = None,
     ) -> dict[str, np.ndarray]:
         """Mix stems into output channels.
 
@@ -220,9 +264,10 @@ class StemRouter:
             stems: Dict "StemName[@zone]" → ndarray (n_samples, 2) stereo float.
             n_samples: Expected output length.
             passthrough_channels: Channel names to skip (injected directly by caller).
-            per_stem_routing: Optional content-aware per-stem routing overrides
-                produced by ContentMixer. Takes precedence over ZONE_ROUTING /
-                DEFAULT_ROUTING for any stem key present in the dict.
+            stem_features: Optional per-stem content analysis (from stem_analyzer).
+                When provided, static routing table gains are scaled per channel type
+                based on the stem's stereo width, frequency content, and transient
+                density — making spatial placement adapt to the actual audio.
 
         Returns:
             Dict channel_name → 1D float64 array of length n_samples.
@@ -234,9 +279,7 @@ class StemRouter:
         }
 
         for stem_key, audio in stems.items():
-            if per_stem_routing and stem_key in per_stem_routing:
-                stem_routing = per_stem_routing[stem_key]
-            elif "@" in stem_key:
+            if "@" in stem_key:
                 stem_name, zone = stem_key.rsplit("@", 1)
                 stem_routing = (
                     ZONE_ROUTING.get(zone, {}).get(stem_name)
@@ -249,6 +292,9 @@ class StemRouter:
             if not stem_routing:
                 continue
 
+            # Content-aware features for this stem (None → no scaling, gains unchanged)
+            features = stem_features.get(stem_key) if stem_features else None
+
             n = min(len(audio), n_samples)
             stem_L = audio[:n, 0].astype(np.float64)
             stem_R = audio[:n, 1].astype(np.float64) if audio.shape[1] > 1 else stem_L.copy()
@@ -260,7 +306,11 @@ class StemRouter:
                 ch = label.value
                 if ch in skip or ch not in stem_routing:
                     continue
+
+                # Apply content scale on top of static table gain
                 gain = stem_routing[ch]
+                if features is not None:
+                    gain = gain * _content_scale(features, label)
 
                 if label == ChannelLabel.LFE:
                     if lfe_signal is None:
