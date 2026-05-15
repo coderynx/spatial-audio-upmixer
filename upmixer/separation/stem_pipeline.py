@@ -137,12 +137,15 @@ class StemUpmixPipeline:
 
         # Build zone pairs and passthrough channels
         if input_fmt.n_channels <= 2:
-            # Stereo / mono: use input file directly, single front zone
+            # Stereo / mono: single zone, untagged stems → DEFAULT_ROUTING
+            # (full 3D spread including SL/SR/BL/BR/height/LFE).
             sep_zones: dict[str, str | np.ndarray] = {"front": input_path}
             passthrough: dict[str, np.ndarray] = {}
-            print("  Mode: stereo — single front zone")
+            stereo_mode = True
+            print("  Mode: stereo — single zone, full-3D routing")
         else:
             sep_zones, passthrough = _extract_zones(audio_full, input_fmt)
+            stereo_mode = False
             print(f"  Mode: multichannel — zones: {sorted(sep_zones.keys())}")
             if passthrough:
                 print(f"  Passthrough: {sorted(passthrough.keys())}")
@@ -167,7 +170,10 @@ class StemUpmixPipeline:
 
                 zone_stems = separator.separate(sep_path)
                 for stem_name, stem_audio in zone_stems.items():
-                    all_stems[f"{stem_name}@{zone_name}"] = stem_audio
+                    # Stereo: unzoned keys → DEFAULT_ROUTING (full 3D + LFE).
+                    # Multichannel: zone-tagged keys → ZONE_ROUTING.
+                    key = stem_name if stereo_mode else f"{stem_name}@{zone_name}"
+                    all_stems[key] = stem_audio
 
         finally:
             for tmp in tmp_files:
@@ -180,7 +186,7 @@ class StemUpmixPipeline:
             )
 
         n_samples = max(len(s) for s in all_stems.values())
-        stem_summary = sorted({k.split("@")[0] for k in all_stems})
+        stem_summary = sorted({k.split("@")[0] for k in all_stems})  # noqa: keep zone-stripped names
         print(
             f"  Stems: {stem_summary}  ({n_samples / sep_sr:.2f}s at {sep_sr} Hz)"
         )
@@ -198,19 +204,21 @@ class StemUpmixPipeline:
             else:
                 passthrough_resampled = {k: v.astype(np.float64) for k, v in passthrough.items()}
 
-        # Route stems to channels (passthrough channels are skipped in routing)
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
+        out_sr = cfg.output_sample_rate if cfg.output_sample_rate else sep_sr
+
+        # Route all stems to a mixed multichannel bed (both adm-bwf and wav)
         channels = router.route(
             all_stems, n_samples, passthrough_channels=set(passthrough_resampled.keys())
         )
 
-        # Inject passthrough channels directly
+        # Inject passthrough channels
         for ch_name, ch_audio in passthrough_resampled.items():
             if ch_name in channels:
                 n = min(len(ch_audio), n_samples)
                 channels[ch_name][:n] += ch_audio[:n]
 
-        # Normalize energy (stems + passthrough as reference)
+        # Normalize energy
         if cfg.normalize_output:
             total_input_energy = sum(
                 float(np.sum(s ** 2)) for s in all_stems.values()
@@ -227,8 +235,7 @@ class StemUpmixPipeline:
         for name in channels:
             channels[name] = soft_limit(channels[name], cfg.peak_limit_threshold)
 
-        # Resample to target output sample rate
-        out_sr = cfg.output_sample_rate if cfg.output_sample_rate else sep_sr
+        # Resample to output sample rate
         if cfg.output_sample_rate and cfg.output_sample_rate != sep_sr:
             g = math.gcd(cfg.output_sample_rate, sep_sr)
             up, down = cfg.output_sample_rate // g, sep_sr // g
@@ -243,6 +250,7 @@ class StemUpmixPipeline:
         else:
             writer = AudioWriter(output_path, out_sr, cfg)
         writer.write(channels)
+
         print(f"Output: {output_path}")
 
 

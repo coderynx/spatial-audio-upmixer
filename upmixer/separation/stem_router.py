@@ -268,3 +268,13 @@ class StemRouter:
                     channels[ch][:n] += gain * stem_mono
 
         return channels
+
+    def get_routing(self, stem_key: str) -> dict[str, float] | None:
+        """Return effective routing dict for a stem key ("StemName" or "StemName@zone")."""
+        if "@" in stem_key:
+            stem_name, zone = stem_key.rsplit("@", 1)
+            return (
+                ZONE_ROUTING.get(zone, {}).get(stem_name)
+                or self._fallback_routing.get(stem_name)
+            )
+        return self._fallback_routing.get(stem_key)
