@@ -232,6 +232,25 @@ class StemUpmixPipeline:
                 scale = np.sqrt(total_input_energy / total_output_energy)
                 channels = {k: v * scale for k, v in channels.items()}
 
+        # Loudness normalization — BS.1770-4, Dolby DEE compliance
+        if cfg.loudness_normalize:
+            from upmixer.loudness import normalize_loudness
+            channels, ln_info = normalize_loudness(
+                channels,
+                sep_sr,
+                output_fmt,
+                target_lkfs=cfg.loudness_target_lkfs,
+                max_tp_dbtp=cfg.loudness_max_tp,
+                max_gain_db=cfg.loudness_max_gain_db,
+            )
+            print(
+                f"  Loudness: {ln_info['measured_lkfs']:.1f} LKFS → "
+                f"{cfg.loudness_target_lkfs:.1f} LKFS  "
+                f"gain {ln_info['applied_gain_db']:+.1f} dB  "
+                f"TP {ln_info['measured_tp_dbtp']:.1f} dBTP"
+                + ("  [TP limited]" if ln_info["tp_limited"] else "")
+            )
+
         for name in channels:
             channels[name] = soft_limit(channels[name], cfg.peak_limit_threshold)
 

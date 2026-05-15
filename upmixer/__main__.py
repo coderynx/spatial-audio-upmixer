@@ -133,6 +133,17 @@ def main():
         "--no-normalize", action="store_true", help="Disable output energy normalization",
     )
     parser.add_argument(
+        "--no-loudness-normalize", action="store_true",
+        help=(
+            "Disable ITU-R BS.1770-4 loudness normalization "
+            "(Dolby DEE compliance, default: enabled)"
+        ),
+    )
+    parser.add_argument(
+        "--loudness-target", type=float, default=None, metavar="LKFS",
+        help="Target integrated loudness in LKFS (default: -24.0 for Dolby Atmos)",
+    )
+    parser.add_argument(
         "--output-type",
         choices=["wav", "adm-bwf"],
         default="wav",
@@ -186,6 +197,10 @@ def main():
         config.block_size = args.block_size
     if args.no_normalize:
         config.normalize_output = False
+    if args.no_loudness_normalize:
+        config.loudness_normalize = False
+    if args.loudness_target is not None:
+        config.loudness_target_lkfs = args.loudness_target
     config.output_type = args.output_type
     if args.output_subtype is not None:
         config.output_subtype = args.output_subtype

@@ -78,6 +78,12 @@ class UpmixConfig:
     normalize_output: bool = True
     peak_limit_threshold: float = 0.95
 
+    # Loudness normalization (ITU-R BS.1770-4 / Dolby DEE compliance)
+    loudness_normalize: bool = True
+    loudness_target_lkfs: float = -24.0   # Dolby Atmos home / cinema
+    loudness_max_tp: float = -2.0          # Dolby True Peak ceiling
+    loudness_max_gain_db: float = 30.0     # cap upward gain (prevent noise amplification)
+
     def resolve_fft_params(self, actual_sample_rate: int) -> tuple[int, int]:
         """Returns (fft_size, hop_size) after applying sample rate adaptation."""
         if self.auto_fft_size:
