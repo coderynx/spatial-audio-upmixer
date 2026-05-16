@@ -160,7 +160,7 @@ Loudness is normalized to ITU-R BS.1770-4 with True Peak limiting before writing
 | `7.1.2` | FL FR C LFE SL SR BL BR TFL TFR | 7.1 + front overhead |
 | `7.1.4` | FL FR C LFE SL SR BL BR TFL TFR TBL TBR | Full Atmos bed |
 
-ADM-BWF output (`--output-type adm-bwf`) embeds ITU-R BS.2076-2 metadata for DAW import. Tested with Logic Pro and DaVinci Resolve.
+ADM-BWF output (`--output-type adm-bwf`) embeds ITU-R BS.2076-2 metadata for DAW import. Tested with Logic Pro.
 
 ---
 
