@@ -1,11 +1,29 @@
 """Spatial routing: maps separated stems to multichannel output positions.
 
-Zone-aware routing for multichannel input:
-  Each stem is tagged "StemName@zone" where zone ∈ {front, surround, back,
-  height_front, height_back}. Zone stems route primarily to their spatial home,
-  spreading only where musically appropriate.
+Routing philosophy (Dolby Atmos Music best practices):
+  Front bed (FL/FR/C) = song foundation — vocals, kick, snare, bass, melody.
+    Center anchors: lead vocals, kick/snare transients, bass mono low-end.
+    NOT vocals-only center — that sounds pasted-in and unnatural.
 
-For stereo input all stems are tagged @front; behaviour matches DEFAULT_ROUTING.
+  LFE = effect send, not primary bass channel.
+    Core low-end lives in FL/FR; LFE adds weight at specific transient moments.
+
+  Surround (SL/SR/BL/BR) = diffuse only.
+    Room reverb, ambience, crowd. Keep rhythmic core in front.
+    NO dominant surround bass — muddy and disorienting.
+
+  Heights (TFL/TFR/TBL/TBR) = space/elevation, not dry instruments.
+    Reverb tails, ambient textures, pad swells, overhead mics simulation.
+    Backing vocals in choruses get height for expansion.
+    Wide sustained content belongs here more than transient direct sounds.
+
+  Backing vocals ≠ lead vocals.
+    Lead: center-anchored phantom (C dominant + light FL/FR).
+    Backing: widened in front L/R + strong height for chorus expansion.
+
+Zone-aware routing for multichannel input:
+  Each stem tagged "StemName@zone" where zone ∈ {front, surround, back,
+  height_front, height_back}. Zone stems route to their spatial home.
 
 Center (C) and LFE from multichannel inputs are passed through directly and
 excluded from stem routing via the passthrough_channels set.
@@ -34,16 +52,17 @@ _HEIGHT_CHANNELS   = {ChannelLabel.TFL, ChannelLabel.TFR, ChannelLabel.TBL, Chan
 
 
 def _content_scale(features: StemFeatures, label: ChannelLabel) -> float:
-    """Per-channel multiplicative scale [0.2, 1.3] driven by stem content.
+    """Per-channel multiplicative scale driven by stem content analysis.
 
-    Multiplied onto the static routing table gain so that spatial placement
-    adapts to the actual audio rather than using fixed gain for every track.
+    Applied on top of the static routing table gain so spatial placement
+    adapts to the actual audio rather than using fixed gains.
 
-    LFE     : boosted by low-frequency energy
-    Center  : boosted when content is mono (vocals, bass, centred instruments)
-    Height  : boosted by high-frequency and transient content (cymbals, bright ambience)
-    Surround: boosted by wide stereo and sustained (non-transient) content
-    Front   : stable anchor; gentle boost for transient-heavy direct sounds
+    LFE     : boosted by low-frequency energy (bass/kick).
+    Center  : boosted when content is mono (vocals, bass, kick) — less for wide stereo.
+    Height  : two paths — cymbal/air (HF+transient) OR reverb tail (wide+sustained).
+              Takes the stronger path so both use-cases score well.
+    Surround: wide + sustained (reverb, room ambience, diffuse guitars).
+    Front   : stable anchor; slightly boosted for direct/percussive sounds.
     """
     w = features.stereo_width       # [0,1] — 1 = wide stereo
     h = features.high_freq_ratio    # [0,1] — 1 = treble-heavy
@@ -51,173 +70,231 @@ def _content_scale(features: StemFeatures, label: ChannelLabel) -> float:
     t = features.transient_ratio    # [0,1] — 1 = percussive / transient
 
     if label == ChannelLabel.LFE:
-        # Low-frequency content → stronger LFE
+        # Low-freq content → stronger weight send
         return 0.4 + 0.9 * b
 
     if label == ChannelLabel.C:
-        # Mono content → stronger center (vocals, bass, mono lead)
-        return 0.6 + 0.7 * (1.0 - w)
+        # Mono content → stronger center (vocals, kick, bass, keys in mono)
+        # Wide stereo content (guitars, pads) should phantom through FL/FR
+        return 0.55 + 0.65 * (1.0 - w)
 
     if label in _HEIGHT_CHANNELS:
-        # Treble + transient (cymbals, bright room) → stronger height
-        return 0.2 + 0.8 * (0.6 * h + 0.4 * t)
+        # Path 1: cymbal / air — high-freq + transient (overhead mics, bright room)
+        cymbal_score  = 0.6 * h + 0.4 * t
+        # Path 2: reverb tail / ambience — wide + sustained (pads, room decay)
+        ambient_score = 0.5 * w + 0.5 * (1.0 - t)
+        # Take the stronger of the two so both cymbals and pads get height presence
+        return 0.25 + 0.72 * max(cymbal_score, ambient_score)
 
     if label in _SURROUND_CHANNELS:
-        # Wide stereo + sustained → stronger surrounds (reverb, ambience, guitars)
+        # Wide + sustained content (room reverb, ambience, distant guitars)
         sustain = 1.0 - t
-        return 0.2 + 0.8 * (0.65 * w + 0.35 * sustain)
+        return 0.20 + 0.80 * (0.60 * w + 0.40 * sustain)
 
-    # Front channels (FL, FR): anchor; gentle boost for direct / percussive content
-    return 0.6 + 0.4 * (0.5 * t + 0.5 * (1.0 - w))
+    # Front channels (FL, FR): stable anchor — slight boost for direct/percussive
+    return 0.60 + 0.40 * (0.55 * t + 0.45 * (1.0 - w))
+
 
 # ── Zone routing tables ────────────────────────────────────────────────────────
-# front: direct/dry front-speaker content → front channels + slight height
+# Design rules:
+#  • front zone: direct/dry → front bed dominant. Bass and drums use center anchor.
+#  • surround zone: room/reverb tails → surrounds + heights. NO surround bass.
+#  • back zone: rear content → BL/BR + rear heights.
+#  • height_front / height_back: overhead energy → TFL/TFR and TBL/TBR.
 
 ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
     "front": {
-        "Vocals":         {"C": 0.85, "FL": 0.25, "FR": 0.25, "TFL": 0.12, "TFR": 0.12},
-        "Bass":           {"FL": 0.55, "FR": 0.55, "LFE": 0.90},
-        "Drums":          {"FL": 0.65, "FR": 0.65, "LFE": 0.40, "TFL": 0.20, "TFR": 0.20},
-        "Other":          {"FL": 0.40, "FR": 0.40, "TFL": 0.12, "TFR": 0.12},
-        "Guitar":         {"FL": 0.50, "FR": 0.50, "TFL": 0.10, "TFR": 0.10},
-        "Piano":          {"C": 0.15, "FL": 0.55, "FR": 0.55, "TFL": 0.12, "TFR": 0.12},
-        "Instrumental":   {"FL": 0.60, "FR": 0.60, "LFE": 0.45, "TFL": 0.15, "TFR": 0.15},
-        "Lead Vocals":    {"C": 0.90, "FL": 0.20, "FR": 0.20},
-        "Backing Vocals": {"FL": 0.40, "FR": 0.40, "TFL": 0.15, "TFR": 0.15},
+        # Vocals from front speakers: center-anchored with phantom support
+        "Vocals":         {"C": 0.72, "FL": 0.28, "FR": 0.28, "TFL": 0.08, "TFR": 0.08},
+        # Bass: front L/R primary, center mono anchor, LFE as effect send
+        "Bass":           {"FL": 0.65, "FR": 0.65, "C": 0.22, "LFE": 0.75},
+        # Drums: kick/snare center anchor + front + slight height for cymbals/room
+        "Drums":          {"C": 0.22, "FL": 0.58, "FR": 0.58, "LFE": 0.32,
+                           "TFL": 0.18, "TFR": 0.18},
+        # Other/pads: front presence + height for ambience/reverb component
+        "Other":          {"FL": 0.38, "FR": 0.38, "SL": 0.18, "SR": 0.18,
+                           "TFL": 0.30, "TFR": 0.30},
+        # Guitar: strong front, slight surround room depth, subtle air
+        "Guitar":         {"FL": 0.55, "FR": 0.55, "SL": 0.15, "SR": 0.15,
+                           "TFL": 0.10, "TFR": 0.10},
+        # Piano: melody anchor (slight C), natural room in FL/FR
+        "Piano":          {"C": 0.18, "FL": 0.58, "FR": 0.58,
+                           "TFL": 0.12, "TFR": 0.12},
+        # Instrumental (2-stem): balanced front bed with slight height
+        "Instrumental":   {"C": 0.12, "FL": 0.62, "FR": 0.62, "LFE": 0.40,
+                           "TFL": 0.15, "TFR": 0.15},
+        # Lead vocals: center-dominant phantom (C+FL+FR natural blend)
+        "Lead Vocals":    {"C": 0.80, "FL": 0.22, "FR": 0.22,
+                           "TFL": 0.07, "TFR": 0.07},
+        # Backing vocals: widened front + height (chorus expansion)
+        "Backing Vocals": {"FL": 0.48, "FR": 0.48,
+                           "TFL": 0.25, "TFR": 0.25},
     },
-    # surround: room/reverb tails, wide ambience → surrounds + back + height
+    # surround: room/reverb tails, wide ambience → surrounds + heights, no front injection
     "surround": {
-        "Vocals":         {"SL": 0.30, "SR": 0.30, "TBL": 0.15, "TBR": 0.15},
-        "Bass":           {"LFE": 0.25},
-        "Drums":          {"SL": 0.60, "SR": 0.60, "BL": 0.30, "BR": 0.30, "TBL": 0.15, "TBR": 0.15},
-        "Other":          {"SL": 0.70, "SR": 0.70, "BL": 0.45, "BR": 0.45, "TBL": 0.25, "TBR": 0.25},
-        "Guitar":         {"SL": 0.65, "SR": 0.65, "BL": 0.30, "BR": 0.30},
-        "Piano":          {"SL": 0.35, "SR": 0.35, "TBL": 0.20, "TBR": 0.20},
-        "Instrumental":   {"SL": 0.55, "SR": 0.55, "BL": 0.30, "BR": 0.30, "LFE": 0.20},
-        "Lead Vocals":    {"SL": 0.15, "SR": 0.15},
-        "Backing Vocals": {"SL": 0.45, "SR": 0.45, "TBL": 0.20, "TBR": 0.20},
-    },
-    # back: deep rear energy → back channels + height_back
-    "back": {
-        "Vocals":         {"BL": 0.25, "BR": 0.25},
+        "Vocals":         {"SL": 0.22, "SR": 0.22, "TBL": 0.14, "TBR": 0.14},
+        # Bass in surround zone → LFE send only (no surround bass = muddy)
         "Bass":           {"LFE": 0.20},
-        "Drums":          {"BL": 0.55, "BR": 0.55, "TBL": 0.20, "TBR": 0.20},
-        "Other":          {"BL": 0.65, "BR": 0.65, "TBL": 0.35, "TBR": 0.35},
-        "Guitar":         {"BL": 0.50, "BR": 0.50},
-        "Piano":          {"BL": 0.30, "BR": 0.30},
-        "Instrumental":   {"BL": 0.50, "BR": 0.50, "TBL": 0.25, "TBR": 0.25},
-        "Lead Vocals":    {"BL": 0.15, "BR": 0.15},
-        "Backing Vocals": {"BL": 0.40, "BR": 0.40},
+        "Drums":          {"SL": 0.52, "SR": 0.52, "BL": 0.22, "BR": 0.22,
+                           "TFL": 0.15, "TFR": 0.15, "TBL": 0.22, "TBR": 0.22},
+        "Other":          {"SL": 0.62, "SR": 0.62, "BL": 0.32, "BR": 0.32,
+                           "TFL": 0.28, "TFR": 0.28, "TBL": 0.32, "TBR": 0.32},
+        "Guitar":         {"SL": 0.58, "SR": 0.58, "BL": 0.22, "BR": 0.22,
+                           "TBL": 0.12, "TBR": 0.12},
+        "Piano":          {"SL": 0.38, "SR": 0.38, "TBL": 0.18, "TBR": 0.18},
+        "Instrumental":   {"SL": 0.48, "SR": 0.48, "BL": 0.22, "BR": 0.22,
+                           "LFE": 0.15, "TBL": 0.18, "TBR": 0.18},
+        # Lead vocals: barely touch surround — don't defocus the lead
+        "Lead Vocals":    {"SL": 0.10, "SR": 0.10},
+        "Backing Vocals": {"SL": 0.38, "SR": 0.38,
+                           "TFL": 0.18, "TFR": 0.18, "TBL": 0.22, "TBR": 0.22},
     },
-    # height_front: overhead front energy → TFL/TFR + slight TBL/TBR
+    # back: deep rear energy → BL/BR + rear heights
+    "back": {
+        "Vocals":         {"BL": 0.20, "BR": 0.20},
+        "Bass":           {"LFE": 0.15},
+        "Drums":          {"BL": 0.50, "BR": 0.50, "TBL": 0.28, "TBR": 0.28},
+        "Other":          {"BL": 0.58, "BR": 0.58, "TBL": 0.42, "TBR": 0.42},
+        "Guitar":         {"BL": 0.42, "BR": 0.42, "TBL": 0.18, "TBR": 0.18},
+        "Piano":          {"BL": 0.28, "BR": 0.28, "TBL": 0.15, "TBR": 0.15},
+        "Instrumental":   {"BL": 0.42, "BR": 0.42, "TBL": 0.28, "TBR": 0.28},
+        "Lead Vocals":    {"BL": 0.08, "BR": 0.08},
+        "Backing Vocals": {"BL": 0.32, "BR": 0.32, "TBL": 0.25, "TBR": 0.25},
+    },
+    # height_front: overhead front energy → TFL/TFR primary (ambience, reverb, cymbals)
     "height_front": {
-        "Vocals":         {"TFL": 0.30, "TFR": 0.30},
+        "Vocals":         {"TFL": 0.32, "TFR": 0.32},
         "Bass":           {},
-        "Drums":          {"TFL": 0.55, "TFR": 0.55, "TBL": 0.15, "TBR": 0.15},
-        "Other":          {"TFL": 0.60, "TFR": 0.60, "TBL": 0.20, "TBR": 0.20},
-        "Guitar":         {"TFL": 0.45, "TFR": 0.45},
-        "Piano":          {"TFL": 0.40, "TFR": 0.40},
-        "Instrumental":   {"TFL": 0.50, "TFR": 0.50},
-        "Lead Vocals":    {"TFL": 0.20, "TFR": 0.20},
-        "Backing Vocals": {"TFL": 0.35, "TFR": 0.35},
+        "Drums":          {"TFL": 0.58, "TFR": 0.58, "TBL": 0.18, "TBR": 0.18},
+        "Other":          {"TFL": 0.68, "TFR": 0.68, "TBL": 0.28, "TBR": 0.28},
+        "Guitar":         {"TFL": 0.45, "TFR": 0.45, "TBL": 0.10, "TBR": 0.10},
+        "Piano":          {"TFL": 0.42, "TFR": 0.42},
+        "Instrumental":   {"TFL": 0.52, "TFR": 0.52, "TBL": 0.18, "TBR": 0.18},
+        "Lead Vocals":    {"TFL": 0.22, "TFR": 0.22},
+        "Backing Vocals": {"TFL": 0.50, "TFR": 0.50},  # chorus expansion overhead
     },
     # height_back: rear overhead energy → TBL/TBR primary
     "height_back": {
         "Vocals":         {"TBL": 0.25, "TBR": 0.25},
         "Bass":           {},
-        "Drums":          {"TBL": 0.45, "TBR": 0.45},
-        "Other":          {"TBL": 0.65, "TBR": 0.65},
-        "Guitar":         {"TBL": 0.40, "TBR": 0.40},
-        "Piano":          {"TBL": 0.35, "TBR": 0.35},
-        "Instrumental":   {"TBL": 0.50, "TBR": 0.50},
-        "Lead Vocals":    {"TBL": 0.15, "TBR": 0.15},
-        "Backing Vocals": {"TBL": 0.40, "TBR": 0.40},
+        "Drums":          {"TBL": 0.52, "TBR": 0.52},
+        "Other":          {"TBL": 0.72, "TBR": 0.72},
+        "Guitar":         {"TBL": 0.42, "TBR": 0.42},
+        "Piano":          {"TBL": 0.38, "TBR": 0.38},
+        "Instrumental":   {"TBL": 0.58, "TBR": 0.58},
+        "Lead Vocals":    {"TBL": 0.10, "TBR": 0.10},
+        "Backing Vocals": {"TBL": 0.50, "TBR": 0.50},
     },
 }
 
-# ── Default routing (stereo / unzoned fallback) ────────────────────────────────
+# ── Default routing (stereo input → full multichannel) ─────────────────────────
+# Designed for stereo source material upmixed to full 3D bed.
+# Key principle: instruments must anchor front first; spatial spread is secondary.
+
 DEFAULT_ROUTING: dict[str, dict[str, float]] = {
+    # Generic vocals: center-anchored with natural phantom support
+    # Center not at 1.0 — phantom center (L+R) feels more natural than single speaker
     "Vocals": {
-        "C":   0.85,
-        "FL":  0.25,
-        "FR":  0.25,
-        "TFL": 0.15,
-        "TFR": 0.15,
+        "C":   0.70,
+        "FL":  0.28,
+        "FR":  0.28,
+        "TFL": 0.12,   # subtle reverb tail elevation
+        "TFR": 0.12,
     },
+    # Bass: front L/R primary (the body of bass lives here), LFE for weight/transient
+    # Adding center anchor for mono fundamental coherence
     "Bass": {
-        "FL":  0.50,
-        "FR":  0.50,
-        "LFE": 0.90,
+        "FL":  0.65,
+        "FR":  0.65,
+        "C":   0.20,   # mono low-end anchor (kick sub fundamental)
+        "LFE": 0.80,   # effect send for sub weight
     },
+    # Drums: center anchor (kick/snare), strong front, overhead sim in heights
+    # Room mics → surround sends; LFE = kick sub weight
     "Drums": {
-        "FL":  0.60,
-        "FR":  0.60,
-        "SL":  0.25,
-        "SR":  0.25,
-        "BL":  0.10,
-        "BR":  0.10,
-        "LFE": 0.40,
-        "TFL": 0.20,
-        "TFR": 0.20,
-    },
-    "Other": {
-        "FL":  0.35,
-        "FR":  0.35,
-        "SL":  0.55,
-        "SR":  0.55,
-        "BL":  0.30,
-        "BR":  0.30,
-        "TFL": 0.20,
-        "TFR": 0.20,
-        "TBL": 0.15,
-        "TBR": 0.15,
-    },
-    "Guitar": {
-        "FL":  0.30,
-        "FR":  0.30,
-        "SL":  0.60,
-        "SR":  0.60,
-        "BL":  0.25,
-        "BR":  0.25,
-        "TFL": 0.15,
-        "TFR": 0.15,
-    },
-    "Piano": {
-        "C":   0.20,
-        "FL":  0.50,
-        "FR":  0.50,
-        "SL":  0.25,
-        "SR":  0.25,
-        "TFL": 0.15,
-        "TFR": 0.15,
-    },
-    "Instrumental": {
+        "C":   0.20,   # kick/snare direct anchor
         "FL":  0.55,
         "FR":  0.55,
-        "SL":  0.45,
-        "SR":  0.45,
-        "BL":  0.25,
-        "BR":  0.25,
-        "LFE": 0.50,
-        "TFL": 0.15,
-        "TFR": 0.15,
-        "TBL": 0.10,
-        "TBR": 0.10,
-    },
-    "Lead Vocals": {
-        "C":   0.90,
-        "FL":  0.20,
-        "FR":  0.20,
-        "TFL": 0.15,
-        "TFR": 0.15,
-    },
-    "Backing Vocals": {
-        "FL":  0.40,
-        "FR":  0.40,
-        "SL":  0.35,
-        "SR":  0.35,
-        "TFL": 0.20,
+        "SL":  0.18,   # room overhead sim
+        "SR":  0.18,
+        "LFE": 0.32,   # kick sub weight send (not dominant)
+        "TFL": 0.20,   # cymbal / overhead mic sim
         "TFR": 0.20,
+        "TBL": 0.08,   # rear room bloom
+        "TBR": 0.08,
+    },
+    # Other: pads, textures, atmospherics, synths → diffuse + STRONG height
+    # This is the reverb/ambience stem — heights are its natural home
+    "Other": {
+        "FL":  0.28,
+        "FR":  0.28,
+        "SL":  0.48,
+        "SR":  0.48,
+        "BL":  0.22,
+        "BR":  0.22,
+        "TFL": 0.42,   # strong height for ambience/reverb
+        "TFR": 0.42,
+        "TBL": 0.28,
+        "TBR": 0.28,
+    },
+    # Guitar: front-dominant (it IS the song), natural room in surrounds
+    # Previous: FL=0.30 SL=0.60 — guitar more surround than front = wrong
+    "Guitar": {
+        "FL":  0.52,
+        "FR":  0.52,
+        "SL":  0.35,   # room width / reverb
+        "SR":  0.35,
+        "BL":  0.12,
+        "BR":  0.12,
+        "TFL": 0.12,   # subtle air
+        "TFR": 0.12,
+    },
+    # Piano: melody instrument → front-dominant + slight center for mono melody
+    "Piano": {
+        "C":   0.18,   # slight center for mono melody lines
+        "FL":  0.55,
+        "FR":  0.55,
+        "SL":  0.22,   # natural room decay
+        "SR":  0.22,
+        "TFL": 0.15,
+        "TFR": 0.15,
+    },
+    # Instrumental (2-stem / roformer): full mix without vocals
+    "Instrumental": {
+        "C":   0.15,
+        "FL":  0.55,
+        "FR":  0.55,
+        "SL":  0.38,
+        "SR":  0.38,
+        "BL":  0.18,
+        "BR":  0.18,
+        "LFE": 0.45,
+        "TFL": 0.22,
+        "TFR": 0.22,
+        "TBL": 0.12,
+        "TBR": 0.12,
+    },
+    # Lead vocals: center-dominant phantom — C strong but not hard-panned
+    # Light FL/FR phantom prevents the "pasted in mono" effect
+    # TFL/TFR: reverb tail elevation only (not the dry vocal)
+    "Lead Vocals": {
+        "C":   0.80,
+        "FL":  0.20,   # phantom support for naturalness
+        "FR":  0.20,
+        "TFL": 0.08,   # reverb elevation
+        "TFR": 0.08,
+    },
+    # Backing vocals: widened in front, height for chorus expansion
+    # NOT center-anchored — contrast with lead, give width and elevation
+    "Backing Vocals": {
+        "FL":  0.45,
+        "FR":  0.45,
+        "SL":  0.22,   # gentle diffusion
+        "SR":  0.22,
+        "TFL": 0.30,   # chorus overhead expansion
+        "TFR": 0.30,
+        "TBL": 0.12,
+        "TBR": 0.12,
     },
 }
 
