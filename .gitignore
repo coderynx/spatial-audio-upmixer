@@ -131,6 +131,18 @@ Network Trash Folder
 Temporary Items
 .apdisk
 
+### upmixer-specific
+# Separation model cache (auto-downloaded, can be large)
+upmixer-models/
+# Temporary stem files written during separation
+upmixer_stems_*/
+# Test audio files (large binaries)
+*.wav
+*.flac
+*.aiff
+*.mp3
+*.m4a
+
 ### Python template
 # Byte-compiled / optimized / DLL files
 __pycache__/

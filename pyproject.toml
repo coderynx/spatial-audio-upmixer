@@ -2,7 +2,17 @@
 name = "upmixer"
 version = "0.1.0"
 description = "Stereo to multichannel audio upmixer"
+readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.11"
+keywords = ["audio", "upmix", "dolby-atmos", "surround-sound", "stem-separation"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Conversion",
+]
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.12",
