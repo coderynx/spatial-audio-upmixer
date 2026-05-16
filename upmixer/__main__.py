@@ -1,4 +1,6 @@
 import argparse
+import logging
+import sys
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import INPUT_FORMAT_MAP
@@ -133,10 +135,6 @@ def main():
         "--no-normalize", action="store_true", help="Disable output energy normalization",
     )
     parser.add_argument(
-        "--no-content-mix", action="store_true",
-        help="Disable content-aware stem mixing (use static routing tables only)",
-    )
-    parser.add_argument(
         "--content-mix-strength", type=float, default=None, metavar="S",
         help="Content-aware mixing strength 0.0–1.0 (default: 1.0)",
     )
@@ -172,7 +170,43 @@ def main():
         help="Resample output to this sample rate (e.g. 48000, 96000). Default: same as input.",
     )
 
+    # --- Verbosity / output format ---
+    verbosity = parser.add_mutually_exclusive_group()
+    verbosity.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Suppress all output except warnings and errors.",
+    )
+    verbosity.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable debug-level logging (includes audio-separator internals).",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Print a JSON summary of the result to stdout when done. "
+            "Implies --quiet (log output goes to stderr only at WARNING level)."
+        ),
+    )
+
     args = parser.parse_args()
+
+    # Configure logging — all upmixer output goes to stderr so stdout is clean
+    # for --json output.
+    if args.verbose:
+        log_level = logging.DEBUG
+    elif args.quiet or args.json:
+        log_level = logging.WARNING
+    else:
+        log_level = logging.INFO
+
+    logging.basicConfig(
+        level=log_level,
+        format="%(message)s",
+        stream=sys.stderr,
+    )
 
     config = UpmixConfig(output_format=args.format)
 
@@ -205,8 +239,6 @@ def main():
         config.block_size = args.block_size
     if args.no_normalize:
         config.normalize_output = False
-    if args.no_content_mix:
-        config.content_aware_mixing = False
     if args.content_mix_strength is not None:
         config.content_mix_strength = max(0.0, min(1.0, args.content_mix_strength))
     if args.no_loudness_normalize:
@@ -226,10 +258,17 @@ def main():
             model=args.stem_model,
             model_dir=args.stem_model_dir,
         )
-        stem_pipeline.process_file(args.input, args.output, input_format_override=args.input_format)
+        result = stem_pipeline.process_file(
+            args.input, args.output, input_format_override=args.input_format
+        )
     else:
         pipeline = UpmixPipeline(config)
-        pipeline.process_file(args.input, args.output, input_format_override=args.input_format)
+        result = pipeline.process_file(
+            args.input, args.output, input_format_override=args.input_format
+        )
+
+    if args.json:
+        print(result.to_json())
 
 
 if __name__ == "__main__":

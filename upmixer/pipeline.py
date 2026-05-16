@@ -1,4 +1,7 @@
+import logging
 import math
+import time
+from typing import Callable
 
 import numpy as np
 from scipy.signal import resample_poly
@@ -17,8 +20,11 @@ from upmixer.formats import (
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
 from upmixer.io.writer import AudioWriter
+from upmixer.result import UpmixResult
 from upmixer.routing.channel_router import ChannelRouter
 from upmixer.utils import normalize_energy, soft_limit
+
+_log = logging.getLogger("upmixer")
 
 
 class StreamingProcessor:
@@ -158,13 +164,34 @@ class UpmixPipeline:
         input_path: str,
         output_path: str,
         input_format_override: str | None = None,
-    ) -> None:
-        """Upmix any supported input format to a higher output format."""
+        progress_callback: Callable[[str, float], None] | None = None,
+    ) -> UpmixResult:
+        """Upmix any supported input format to a higher output format.
+
+        Args:
+            input_path: Source audio file (WAV/FLAC).
+            output_path: Destination file path.
+            input_format_override: Force a specific input layout name instead of
+                auto-detecting from channel count.
+            progress_callback: Optional callable ``(message, fraction)`` invoked
+                at key stages.  *fraction* is in [0, 1].
+
+        Returns:
+            :class:`~upmixer.result.UpmixResult` with processing metadata.
+        """
+        t0 = time.monotonic()
         cfg = self.config
+
+        def _progress(msg: str, frac: float) -> None:
+            _log.info(msg)
+            if progress_callback is not None:
+                progress_callback(msg, frac)
 
         reader = AudioReader(input_path)
         audio, sr = reader.read()
         n_samples = audio.shape[0]
+
+        _progress(f"Input:  {input_path}", 0.0)
 
         # Resolve input format
         if input_format_override is not None:
@@ -193,11 +220,12 @@ class UpmixPipeline:
 
         fft_size, hop_size = cfg.resolve_fft_params(sr)
 
-        print(f"Input:  {input_path}")
-        print(f"  Format:  {input_fmt.name} ({input_fmt.n_channels}ch)")
-        print(f"  Sample rate: {sr} Hz")
-        print(f"  Duration:    {n_samples / sr:.2f}s ({n_samples} samples)")
-        print(f"  Output format: {output_fmt.name} ({output_fmt.n_channels}ch)")
+        _log.info("  Format:        %s (%dch)", input_fmt.name, input_fmt.n_channels)
+        _log.info("  Sample rate:   %d Hz", sr)
+        _log.info("  Duration:      %.2fs (%d samples)", n_samples / sr, n_samples)
+        _log.info("  Output format: %s (%dch)", output_fmt.name, output_fmt.n_channels)
+
+        _progress(f"  Format: {input_fmt.name} → {output_fmt.name}", 0.1)
 
         if input_fmt.n_channels <= 2:
             # Mono / stereo: coherence-based STFT pipeline
@@ -206,8 +234,10 @@ class UpmixPipeline:
             else:
                 left, right = audio[:, 0], audio[:, 1]
 
-            print(f"  FFT size: {fft_size}, hop: {hop_size}")
-            channels = self._run_stereo_pipeline(left, right, sr, n_samples, fft_size, hop_size)
+            _log.info("  FFT size: %d, hop: %d", fft_size, hop_size)
+            channels = self._run_stereo_pipeline(
+                left, right, sr, n_samples, fft_size, hop_size, progress_callback
+            )
             channels = self._post_process(channels, sr, left, right)
         else:
             # Multichannel: time-domain pass-through + derivation
@@ -217,22 +247,39 @@ class UpmixPipeline:
                 label: audio[:, i]
                 for i, label in enumerate(input_fmt.channels)
             }
-            print("  Processing (multichannel pass-through + channel derivation)...")
+            _progress("  Processing (multichannel pass-through + channel derivation)...", 0.2)
             upmixer = MultichannelUpmixer(cfg, input_fmt, output_fmt, sr)
             channels = upmixer.process(input_channels)
             channels = self._post_process_multichannel(channels, sr, audio)
 
+        _progress("  Processing complete.", 0.9)
+
         out_sr = cfg.output_sample_rate if cfg.output_sample_rate else sr
         if cfg.output_sample_rate and cfg.output_sample_rate != sr:
             channels = self._resample_channels(channels, sr, cfg.output_sample_rate)
-            print(f"  Resampled: {sr} Hz → {cfg.output_sample_rate} Hz")
+            _log.info("  Resampled: %d Hz → %d Hz", sr, cfg.output_sample_rate)
 
         if cfg.output_type == "adm-bwf":
             writer = AdmBwfWriter(output_path, out_sr, cfg)
         else:
             writer = AudioWriter(output_path, out_sr, cfg)
         writer.write(channels)
-        print(f"Output: {output_path}")
+
+        _progress(f"Output: {output_path}", 1.0)
+
+        return UpmixResult(
+            input_path=input_path,
+            output_path=output_path,
+            input_format=input_fmt.name,
+            output_format=output_fmt.name,
+            input_sample_rate=sr,
+            output_sample_rate=out_sr,
+            duration_seconds=n_samples / sr,
+            n_channels_in=input_fmt.n_channels,
+            n_channels_out=output_fmt.n_channels,
+            mode="realtime",
+            processing_time_seconds=time.monotonic() - t0,
+        )
 
     def _run_stereo_pipeline(
         self,
@@ -242,6 +289,7 @@ class UpmixPipeline:
         n_samples: int,
         fft_size: int,
         hop_size: int,
+        progress_callback: Callable[[str, float], None] | None = None,
     ) -> dict[str, np.ndarray]:
         """Run the coherence-based STFT pipeline on a stereo (or mono→stereo) pair."""
         cfg = self.config
@@ -252,12 +300,16 @@ class UpmixPipeline:
 
         latency = fft_size - hop_size
 
-        print("  Processing...")
-        for start in range(0, n_samples, cfg.block_size):
+        _log.info("  Processing...")
+        n_blocks = math.ceil(n_samples / cfg.block_size)
+        for block_idx, start in enumerate(range(0, n_samples, cfg.block_size)):
             end = min(start + cfg.block_size, n_samples)
             block_out = processor.process_block(left[start:end], right[start:end])
             for ch_name, samples in block_out.items():
                 all_outputs[ch_name].append(samples)
+            if progress_callback is not None and n_blocks > 0:
+                frac = 0.2 + 0.6 * (block_idx + 1) / n_blocks
+                progress_callback(f"  Block {block_idx + 1}/{n_blocks}", frac)
 
         tail_zeros = np.zeros(latency + fft_size)
         tail_out = processor.process_block(tail_zeros, tail_zeros)

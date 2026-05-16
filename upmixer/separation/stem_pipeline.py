@@ -26,13 +26,17 @@ Usage:
 
     cfg = UpmixConfig(output_format='7.1.4')
     pipeline = StemUpmixPipeline(cfg)
-    pipeline.process_file('surround_51.wav', 'atmos_714.wav')
+    result = pipeline.process_file('surround_51.wav', 'atmos_714.wav')
+    print(result.to_json())
 """
 from __future__ import annotations
 
+import logging
 import math
 import os
 import tempfile
+import time
+from typing import Callable
 
 import numpy as np
 import soundfile as sf
@@ -43,10 +47,13 @@ from upmixer.formats import ChannelLabel, FORMAT_MAP, INPUT_FORMAT_MAP, detect_i
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
 from upmixer.io.writer import AudioWriter
+from upmixer.result import UpmixResult
 from upmixer.separation.separator import StemSeparator, DEFAULT_MODEL
 from upmixer.separation.stem_analyzer import analyze_stems
 from upmixer.separation.stem_router import StemRouter
 from upmixer.utils import soft_limit
+
+_log = logging.getLogger("upmixer")
 
 # Ordered list of (zone_name, left_channel, right_channel) pairs.
 # Only zones whose both channels exist in the input are extracted.
@@ -98,9 +105,28 @@ class StemUpmixPipeline:
         input_path: str,
         output_path: str,
         input_format_override: str | None = None,
-    ) -> None:
-        """Separate stems and write spatially routed multichannel output file."""
+        progress_callback: Callable[[str, float], None] | None = None,
+    ) -> UpmixResult:
+        """Separate stems and write spatially routed multichannel output file.
+
+        Args:
+            input_path: Source audio file (WAV/FLAC).
+            output_path: Destination file path.
+            input_format_override: Force a specific input layout name instead of
+                auto-detecting from channel count.
+            progress_callback: Optional callable ``(message, fraction)`` invoked
+                at key stages.  *fraction* is in [0, 1].
+
+        Returns:
+            :class:`~upmixer.result.UpmixResult` with processing metadata.
+        """
+        t0 = time.monotonic()
         cfg = self.config
+
+        def _progress(msg: str, frac: float) -> None:
+            _log.info(msg)
+            if progress_callback is not None:
+                progress_callback(msg, frac)
 
         reader = AudioReader(input_path)
         audio_full, sr = reader.read()
@@ -122,20 +148,24 @@ class StemUpmixPipeline:
 
         output_fmt = FORMAT_MAP[cfg.output_format]
 
-        print(f"Input:  {input_path}")
-        print(f"  Format:       {input_fmt.name} ({input_fmt.n_channels}ch)")
-        print(f"  Sample rate:  {sr} Hz")
-        print(f"  Output format:{output_fmt.name} ({output_fmt.n_channels}ch)")
-        print(f"  Model:        {self._model}")
+        _log.info("Input:  %s", input_path)
+        _log.info("  Format:        %s (%dch)", input_fmt.name, input_fmt.n_channels)
+        _log.info("  Sample rate:   %d Hz", sr)
+        _log.info("  Output format: %s (%dch)", output_fmt.name, output_fmt.n_channels)
+        _log.info("  Model:         %s", self._model)
 
         # Separate at the target output rate (or input rate if none specified).
         # audio-separator resamples its output internally, so stems always arrive
         # at sep_sr — no explicit post-resample is needed for the common case.
         sep_sr = cfg.output_sample_rate or sr
+
+        # Derive log level for audio-separator: verbose if our logger is at DEBUG
+        sep_log_level = logging.DEBUG if _log.isEnabledFor(logging.DEBUG) else logging.WARNING
         separator = StemSeparator(
             model=self._model,
             model_dir=self._model_dir,
             sample_rate=sep_sr,
+            log_level=sep_log_level,
         )
 
         # Build zone pairs and passthrough channels
@@ -145,22 +175,28 @@ class StemUpmixPipeline:
             sep_zones: dict[str, str | np.ndarray] = {"front": input_path}
             passthrough: dict[str, np.ndarray] = {}
             stereo_mode = True
-            print("  Mode: stereo — single zone, full-3D routing")
+            _log.info("  Mode: stereo — single zone, full-3D routing")
         else:
             sep_zones, passthrough = _extract_zones(audio_full, input_fmt)
             stereo_mode = False
-            print(f"  Mode: multichannel — zones: {sorted(sep_zones.keys())}")
+            _log.info("  Mode: multichannel — zones: %s", sorted(sep_zones.keys()))
             if passthrough:
-                print(f"  Passthrough: {sorted(passthrough.keys())}")
+                _log.info("  Passthrough: %s", sorted(passthrough.keys()))
+
+        _progress("  Separating stems...", 0.1)
 
         # Separate each zone
-        print("  Separating stems...")
         all_stems: dict[str, np.ndarray] = {}
         tmp_files: list[str] = []
+        zone_names = list(sep_zones.keys())
+        n_zones = len(zone_names)
 
         try:
-            for zone_name, pair_src in sep_zones.items():
-                print(f"    {zone_name}...")
+            for zone_idx, zone_name in enumerate(zone_names):
+                pair_src = sep_zones[zone_name]
+                zone_frac = 0.15 + 0.60 * (zone_idx / n_zones)
+                _progress(f"    Separating zone: {zone_name}...", zone_frac)
+
                 if isinstance(pair_src, str):
                     sep_path = pair_src
                 else:
@@ -190,9 +226,10 @@ class StemUpmixPipeline:
             )
 
         n_samples = max(len(s) for s in all_stems.values())
-        stem_summary = sorted({k.split("@")[0] for k in all_stems})  # noqa: keep zone-stripped names
-        print(
-            f"  Stems: {stem_summary}  ({n_samples / sep_sr:.2f}s at {sep_sr} Hz)"
+        stem_summary = sorted({k.split("@")[0] for k in all_stems})
+        _log.info(
+            "  Stems: %s  (%.2fs at %d Hz)",
+            stem_summary, n_samples / sep_sr, sep_sr,
         )
 
         # Resample passthrough channels to sep_sr for consistent mixing
@@ -212,20 +249,20 @@ class StemUpmixPipeline:
         out_sr = cfg.output_sample_rate if cfg.output_sample_rate else sep_sr
 
         # Content-aware analysis: per-stem features drive spatial gain scaling
-        print("  Analyzing stem content...")
+        _progress("  Analyzing stem content...", 0.75)
         stem_features = analyze_stems(all_stems, sep_sr)
         for stem_key, feat in sorted(stem_features.items()):
             name = stem_key.split("@")[0]
             zone = f"@{stem_key.split('@')[1]}" if "@" in stem_key else ""
-            print(
-                f"    {name}{zone}: "
-                f"width={feat.stereo_width:.2f}  "
-                f"highs={feat.high_freq_ratio:.2f}  "
-                f"lows={feat.low_freq_ratio:.2f}  "
-                f"transients={feat.transient_ratio:.2f}"
+            _log.info(
+                "    %s%s: width=%.2f  highs=%.2f  lows=%.2f  transients=%.2f",
+                name, zone,
+                feat.stereo_width, feat.high_freq_ratio,
+                feat.low_freq_ratio, feat.transient_ratio,
             )
 
-        # Route all stems to a mixed multichannel bed (both adm-bwf and wav)
+        # Route all stems to a mixed multichannel bed
+        _progress("  Routing stems to channels...", 0.80)
         channels = router.route(
             all_stems,
             n_samples,
@@ -254,7 +291,12 @@ class StemUpmixPipeline:
                 channels = {k: v * scale for k, v in channels.items()}
 
         # Loudness normalization — BS.1770-4, Dolby DEE compliance
+        ln_measured_lkfs: float | None = None
+        ln_measured_tp: float | None = None
+        ln_gain_db: float | None = None
+
         if cfg.loudness_normalize:
+            _progress("  Normalizing loudness (BS.1770-4)...", 0.90)
             from upmixer.loudness import normalize_loudness
             channels, ln_info = normalize_loudness(
                 channels,
@@ -264,12 +306,14 @@ class StemUpmixPipeline:
                 max_tp_dbtp=cfg.loudness_max_tp,
                 max_gain_db=cfg.loudness_max_gain_db,
             )
-            print(
-                f"  Loudness: {ln_info['measured_lkfs']:.1f} LKFS → "
-                f"{cfg.loudness_target_lkfs:.1f} LKFS  "
-                f"gain {ln_info['applied_gain_db']:+.1f} dB  "
-                f"TP {ln_info['measured_tp_dbtp']:.1f} dBTP"
-                + ("  [TP limited]" if ln_info["tp_limited"] else "")
+            ln_measured_lkfs = ln_info["measured_lkfs"]
+            ln_measured_tp = ln_info["measured_tp_dbtp"]
+            ln_gain_db = ln_info["applied_gain_db"]
+            _log.info(
+                "  Loudness: %.1f LKFS → %.1f LKFS  gain %+.1f dB  TP %.1f dBTP%s",
+                ln_measured_lkfs, cfg.loudness_target_lkfs, ln_gain_db,
+                ln_measured_tp,
+                "  [TP limited]" if ln_info["tp_limited"] else "",
             )
 
         for name in channels:
@@ -281,7 +325,25 @@ class StemUpmixPipeline:
             writer = AudioWriter(output_path, out_sr, cfg)
         writer.write(channels)
 
-        print(f"Output: {output_path}")
+        _progress(f"Output: {output_path}", 1.0)
+
+        return UpmixResult(
+            input_path=input_path,
+            output_path=output_path,
+            input_format=input_fmt.name,
+            output_format=output_fmt.name,
+            input_sample_rate=sr,
+            output_sample_rate=out_sr,
+            duration_seconds=n_samples / sep_sr,
+            n_channels_in=input_fmt.n_channels,
+            n_channels_out=output_fmt.n_channels,
+            mode="stem",
+            measured_lkfs=ln_measured_lkfs,
+            measured_tp_dbtp=ln_measured_tp,
+            applied_gain_db=ln_gain_db,
+            stems=stem_summary,
+            processing_time_seconds=time.monotonic() - t0,
+        )
 
 
 def _extract_zones(
