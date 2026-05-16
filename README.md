@@ -10,10 +10,6 @@ Supported output formats: 5.1, 7.1, 5.1.2, 5.1.4, 7.1.2, 7.1.4.
 
 ## Installation
 
-```bash
-pip install upmixer
-```
-
 The stem separation mode requires an additional dependency. Install the CPU variant (works everywhere) or the GPU variant if you have CUDA:
 
 ```bash
