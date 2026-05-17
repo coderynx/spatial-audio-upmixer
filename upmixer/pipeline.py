@@ -218,8 +218,6 @@ class UpmixPipeline:
                 f"Output must be a strict superset of the input channel layout."
             )
 
-        fft_size, hop_size = cfg.resolve_fft_params(sr)
-
         _log.info("  Format:        %s (%dch)", input_fmt.name, input_fmt.n_channels)
         _log.info("  Sample rate:   %d Hz", sr)
         _log.info("  Duration:      %.2fs (%d samples)", n_samples / sr, n_samples)
@@ -234,6 +232,7 @@ class UpmixPipeline:
             else:
                 left, right = audio[:, 0], audio[:, 1]
 
+            fft_size, hop_size = cfg.resolve_fft_params(sr)
             _log.info("  FFT size: %d, hop: %d", fft_size, hop_size)
             channels = self._run_stereo_pipeline(
                 left, right, sr, n_samples, fft_size, hop_size, progress_callback
@@ -291,40 +290,62 @@ class UpmixPipeline:
         hop_size: int,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> dict[str, np.ndarray]:
-        """Run the coherence-based STFT pipeline on a stereo (or mono→stereo) pair."""
+        """Run the coherence-based STFT pipeline on a stereo (or mono→stereo) pair.
+
+        Uses pre-allocated output buffers (one array per channel) to avoid
+        accumulating tens of thousands of tiny numpy chunks — which causes heavy
+        GC pressure and apparent stalls on long high-sample-rate files.
+        """
         cfg = self.config
         processor = StreamingProcessor(cfg, sr)
         fmt = FORMAT_MAP[cfg.output_format]
         channel_names = [label.value for label in fmt.channels]
-        all_outputs: dict[str, list[np.ndarray]] = {ch: [] for ch in channel_names}
 
         latency = fft_size - hop_size
 
+        # Pre-allocate one output buffer per channel.
+        # Upper bound: main audio + tail flush + one extra window.
+        tail_len = latency + fft_size
+        buf_size = n_samples + tail_len + hop_size
+        out_buf: dict[str, np.ndarray] = {
+            ch: np.zeros(buf_size) for ch in channel_names
+        }
+        write_ptr = 0
+
+        def _write_block(block_out: dict[str, np.ndarray]) -> int:
+            chunk_len = len(next(iter(block_out.values())))
+            end = write_ptr + chunk_len
+            for ch, samples in block_out.items():
+                out_buf[ch][write_ptr:end] = samples
+            return chunk_len
+
         _log.info("  Processing...")
         n_blocks = math.ceil(n_samples / cfg.block_size)
+        log_interval = max(1, n_blocks // 20)   # ~20 progress lines total
+
         for block_idx, start in enumerate(range(0, n_samples, cfg.block_size)):
             end = min(start + cfg.block_size, n_samples)
             block_out = processor.process_block(left[start:end], right[start:end])
-            for ch_name, samples in block_out.items():
-                all_outputs[ch_name].append(samples)
-            if progress_callback is not None and n_blocks > 0:
-                frac = 0.2 + 0.6 * (block_idx + 1) / n_blocks
-                progress_callback(f"  Block {block_idx + 1}/{n_blocks}", frac)
+            write_ptr += _write_block(block_out)
 
-        tail_zeros = np.zeros(latency + fft_size)
-        tail_out = processor.process_block(tail_zeros, tail_zeros)
-        for ch_name, samples in tail_out.items():
-            all_outputs[ch_name].append(samples)
+            if n_blocks > 0:
+                if (block_idx + 1) % log_interval == 0 or block_idx == n_blocks - 1:
+                    pct = (block_idx + 1) * 100 // n_blocks
+                    _log.info("  Processing... %3d%%", pct)
+                if progress_callback is not None:
+                    frac = 0.2 + 0.6 * (block_idx + 1) / n_blocks
+                    progress_callback(f"  Block {block_idx + 1}/{n_blocks}", frac)
+
+        tail_zeros = np.zeros(tail_len)
+        write_ptr += _write_block(processor.process_block(tail_zeros, tail_zeros))
 
         flush_out = processor.flush()
-        for ch_name, samples in flush_out.items():
-            if len(samples) > 0:
-                all_outputs[ch_name].append(samples)
+        if flush_out and len(next(iter(flush_out.values()))) > 0:
+            write_ptr += _write_block(flush_out)
 
         channels = {}
-        for ch_name, chunks in all_outputs.items():
-            full = np.concatenate(chunks)
-            full = full[latency:]
+        for ch_name, buf in out_buf.items():
+            full = buf[:write_ptr][latency:]
             if len(full) > n_samples:
                 channels[ch_name] = full[:n_samples]
             elif len(full) < n_samples:

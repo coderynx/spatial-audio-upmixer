@@ -3,6 +3,7 @@ from scipy.signal import butter, sosfilt
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, InputFormat, OutputFormat
+from upmixer.utils import elevation_eq as _elevation_eq, haas_decorrelate, diffuse_send
 
 
 def _lfe_filter(
@@ -12,40 +13,12 @@ def _lfe_filter(
     return sosfilt(sos, signal) * gain
 
 
-def _elevation_eq(
-    signal: np.ndarray,
-    sr: int,
-    low_rolloff_hz: float,
-    low_rolloff_gain: float,
-    high_shelf_hz: float,
-    high_shelf_gain: float,
-) -> np.ndarray:
-    """Elevation EQ: sub-bass rolloff + high-frequency presence lift.
-
-    Mirrors HeightFilter._build_elevation_mask in the time domain.
-    Section 1: HP-based attenuation below low_rolloff_hz
-    Section 2: shelf boost above high_shelf_hz
-    Midrange preserved at unity.
-    """
-    nyq = sr / 2.0
-
-    # Sub-bass rolloff: blend original with HPF output
-    sos_lp_bass = butter(1, low_rolloff_hz / nyq, btype="low", output="sos")
-    low_component = sosfilt(sos_lp_bass, signal)
-    # attenuate only the sub-bass portion
-    bass_shaped = signal - low_component * (1.0 - low_rolloff_gain)
-
-    # High shelf: blend with HPF signal boosted by (high_shelf_gain - 1)
-    sos_hp = butter(2, high_shelf_hz / nyq, btype="high", output="sos")
-    hp = sosfilt(sos_hp, bass_shaped)
-    return bass_shaped + hp * (high_shelf_gain - 1.0)
-
-
 class MultichannelUpmixer:
     """Upmix multichannel audio to a higher format.
 
-    Passes through existing channels unchanged and derives missing channels
-    using gain-only remixing — no decorrelation, no delays.
+    Passes through existing channels unchanged. Derives missing channels
+    using gain remixing + Haas decorrelation (right spatial channels) +
+    early-reflection diffusion (surround/height sources).
     """
 
     def __init__(
@@ -93,28 +66,34 @@ class MultichannelUpmixer:
                     src, sr, cfg.lfe_cutoff_hz, cfg.lfe_gain, cfg.lfe_filter_order
                 )
 
-        # Surround: simple gain from front channels (clean, no decorrelation)
+        # Surround: diffuse send on source + Haas delay on right channel.
+        # Derived-only — pass-through surrounds untouched.
         if "SL" not in out:
             src = FL if FL is not None else (BL if BL is not None else None)
             if src is not None:
-                out["SL"] = cfg.surround_gain * src
+                out["SL"] = cfg.surround_gain * diffuse_send(src, sr)
                 SL = out["SL"]
         if "SR" not in out:
             src = FR if FR is not None else (BR if BR is not None else None)
             if src is not None:
-                out["SR"] = cfg.surround_gain * src
+                diffused = diffuse_send(src, sr)
+                out["SR"] = cfg.surround_gain * haas_decorrelate(
+                    diffused, int(sr * 23.0 / 1000.0)
+                )
                 SR = out["SR"]
 
-        # Back surround: simple gain from surround
+        # Back surround: diffuse + Haas on right
         if fmt.has_back:
             if "BL" not in out and SL is not None:
-                out["BL"] = cfg.back_gain * SL
+                out["BL"] = cfg.back_gain * diffuse_send(SL, sr)
                 BL = out["BL"]
             if "BR" not in out and SR is not None:
-                out["BR"] = cfg.back_gain * SR
+                out["BR"] = cfg.back_gain * haas_decorrelate(
+                    diffuse_send(SR, sr), int(sr * 19.0 / 1000.0)
+                )
                 BR = out["BR"]
 
-        # Height channels: high-shelf only, no decorrelation, no delay
+        # Height channels: elevation EQ + Haas on right
         if fmt.has_height:
             n = len(next(iter(out.values())))
 
@@ -140,7 +119,9 @@ class MultichannelUpmixer:
             if "TFL" not in out:
                 out["TFL"] = cfg.height_gain * _elevation_eq(h_src_L, **eq_kwargs)
             if "TFR" not in out:
-                out["TFR"] = cfg.height_gain * _elevation_eq(h_src_R, **eq_kwargs)
+                out["TFR"] = cfg.height_gain * _elevation_eq(
+                    haas_decorrelate(h_src_R, int(sr * 17.0 / 1000.0)), **eq_kwargs
+                )
 
             if fmt.n_height_channels == 4:
                 if SL is not None:
@@ -154,6 +135,8 @@ class MultichannelUpmixer:
                 if "TBL" not in out:
                     out["TBL"] = cfg.height_gain * _elevation_eq(hb_src_L, **eq_kwargs)
                 if "TBR" not in out:
-                    out["TBR"] = cfg.height_gain * _elevation_eq(hb_src_R, **eq_kwargs)
+                    out["TBR"] = cfg.height_gain * _elevation_eq(
+                        haas_decorrelate(hb_src_R, int(sr * 13.0 / 1000.0)), **eq_kwargs
+                    )
 
         return {label.value: out[label.value] for label in fmt.channels}
