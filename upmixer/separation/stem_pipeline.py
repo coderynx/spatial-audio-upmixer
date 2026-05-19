@@ -170,10 +170,20 @@ class StemUpmixPipeline:
             )
             _preview_stereo_forced_array = True  # force numpy path even for stereo
 
-        # Separate at the target output rate (or input rate if none specified).
-        # audio-separator resamples its output internally, so stems always arrive
-        # at sep_sr — no explicit post-resample is needed for the common case.
-        sep_sr = cfg.output_sample_rate or sr
+        # Resolve the final output sample rate BEFORE creating the separator so
+        # audio-separator resamples internally during stem extraction.  All
+        # downstream processing (routing, LN, resampling) then runs at out_sr
+        # instead of the input sample rate.
+        #
+        # Why this matters: a 192 kHz / 408 s input with ADM-BWF output produces
+        # ~7.5 GB of float64 channel data at 192 kHz before the final 48 kHz
+        # resample.  By resolving the target rate early and passing it to the
+        # separator, every post-separation step works at 48 kHz (~1.9 GB).
+        out_sr: int = cfg.output_sample_rate or sr
+        if cfg.output_type == "adm-bwf" and cfg.output_sample_rate is None and out_sr != 48_000:
+            out_sr = 48_000
+            _log.info("  ADM-BWF: output forced to 48 kHz (Dolby spec)")
+        sep_sr = out_sr  # separate at final output rate; separator handles resample
 
         # Derive log level for audio-separator: verbose if our logger is at DEBUG
         sep_log_level = logging.DEBUG if _log.isEnabledFor(logging.DEBUG) else logging.WARNING
@@ -273,11 +283,7 @@ class StemUpmixPipeline:
                 passthrough_resampled = {k: v.astype(np.float64) for k, v in passthrough.items()}
 
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
-        out_sr = cfg.output_sample_rate if cfg.output_sample_rate else sep_sr
-        # Dolby Atmos Music Delivery Playbook: ADM-BWF delivery requires 48 kHz.
-        if cfg.output_type == "adm-bwf" and cfg.output_sample_rate is None and out_sr != 48000:
-            out_sr = 48000
-            _log.info("  ADM-BWF: output forced to 48 kHz (Dolby spec)")
+        # out_sr already resolved above (before separator creation)
 
         # Content-aware analysis: per-stem features drive spatial gain scaling
         _progress("  Analyzing stem content...", 0.75)
