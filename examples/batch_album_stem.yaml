@@ -1,0 +1,43 @@
+# Batch album upmix — stem mode (7.1.4 Atmos Music)
+#
+# Processes all WAV/FLAC files in a directory.
+# Stem separation model is loaded ONCE and reused across all tracks —
+# dramatically faster than running upmixer per file.
+#
+# Requires: pip install "upmixer[separation-cpu,manifest]"
+#
+# Usage:
+#   upmixer --manifest batch_album_stem.yaml
+
+mode:    stem
+format:  7.1.4
+
+# ── Output format — Dolby Atmos Music Master Delivery Specification v2022.07 ──
+output:
+  type: adm-bwf         # ITU-R BS.2076-2 ADM-BWF container
+  subtype: PCM_24       # 24-bit LPCM
+  sample_rate: 48000    # 48 kHz
+
+# ── Batch input/output ────────────────────────────────────────────────────────
+batch:
+  input_dir:  /path/to/album/           # scan for *.wav and *.flac
+  output_dir: /path/to/output/          # output filenames match input stems
+  workers: 1                            # stem mode is always sequential
+
+# ── Stem separation ───────────────────────────────────────────────────────────
+stem_model: BS-Roformer-SW.ckpt         # high-quality 4-stem Roformer model
+
+mixing:
+  stem_cache_dir: /tmp/upmixer_stems    # cache stems — avoids re-separation on reruns
+
+# ── Mastering ─────────────────────────────────────────────────────────────────
+mastering:
+  eq:
+    profile: spatial-present
+    strength: 0.7
+  compressor:
+    profile: transparent
+  loudness:
+    normalize: true
+    target:  -18.0
+    max_tp:  -1.0

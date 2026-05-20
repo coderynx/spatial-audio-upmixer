@@ -5,7 +5,14 @@
   "output":  "atmos_music.adm.bwf",
   "mode":    "stem",
   "format":  "7.1.4",
-  "profile": "atmos-music",
+
+  "output_type":        "adm-bwf",
+  "output_subtype":     "PCM_24",
+  "output_sample_rate": 48000,
+
+  "loudness_normalize": true,
+  "loudness_target":    -18.0,
+  "loudness_max_tp":    -1.0,
 
   "preview":          false,
   "preview_duration": 30.0

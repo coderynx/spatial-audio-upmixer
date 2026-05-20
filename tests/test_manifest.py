@@ -215,55 +215,10 @@ class TestApplyManifestJobParams:
         assert "input" not in job
         assert "output" not in job
 
-    def test_profile_not_in_job_params(self):
-        """'profile' is consumed by apply_manifest itself, not returned."""
-        cfg = UpmixConfig()
-        job = apply_manifest(cfg, {"profile": "atmos-music"})
-        assert "profile" not in job
-
     def test_null_job_key_not_in_dict(self):
         cfg = UpmixConfig()
         job = apply_manifest(cfg, {"input": None})
         assert "input" not in job
-
-
-# ---------------------------------------------------------------------------
-# apply_manifest — profile application
-# ---------------------------------------------------------------------------
-
-class TestApplyManifestProfile:
-    def test_atmos_music_profile_sets_loudness(self):
-        cfg = UpmixConfig()
-        apply_manifest(cfg, {"profile": "atmos-music"})
-        assert cfg.loudness_target_lkfs == pytest.approx(-18.0)
-        assert cfg.loudness_max_tp == pytest.approx(-1.0)
-
-    def test_atmos_music_profile_sets_lfe_cutoff(self):
-        cfg = UpmixConfig()
-        apply_manifest(cfg, {"profile": "atmos-music"})
-        assert cfg.lfe_cutoff_hz == pytest.approx(120.0)
-
-    def test_atmos_music_profile_sets_sample_rate(self):
-        cfg = UpmixConfig()
-        apply_manifest(cfg, {"profile": "atmos-music"})
-        assert cfg.output_sample_rate == 48_000
-
-    def test_field_overrides_profile(self):
-        """Manifest field listed after profile must win over profile default."""
-        cfg = UpmixConfig()
-        apply_manifest(cfg, {"profile": "atmos-music", "loudness_target": -16.0})
-        assert cfg.loudness_target_lkfs == pytest.approx(-16.0)
-
-    def test_unknown_profile_raises(self):
-        cfg = UpmixConfig()
-        with pytest.raises(ValueError, match="Unknown profile"):
-            apply_manifest(cfg, {"profile": "does-not-exist"})
-
-    def test_atmos_bluray_profile(self):
-        cfg = UpmixConfig()
-        apply_manifest(cfg, {"profile": "atmos-bluray"})
-        assert cfg.loudness_target_lkfs == pytest.approx(-27.0)
-        assert cfg.loudness_max_tp == pytest.approx(-2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -413,18 +368,6 @@ class TestExpandNestedSections:
 # ---------------------------------------------------------------------------
 # Profile-linked loudness_normalize
 # ---------------------------------------------------------------------------
-
-class TestProfileLinkedLoudness:
-    def test_atmos_music_profile_enables_loudness(self):
-        cfg = UpmixConfig(loudness_normalize=False)  # start disabled
-        apply_manifest(cfg, {"profile": "atmos-music"})
-        assert cfg.loudness_normalize is True  # profile forces it on
-
-    def test_atmos_bluray_profile_enables_loudness(self):
-        cfg = UpmixConfig(loudness_normalize=False)
-        apply_manifest(cfg, {"profile": "atmos-bluray"})
-        assert cfg.loudness_normalize is True
-
 
 # ---------------------------------------------------------------------------
 # Nested mixing: section expansion

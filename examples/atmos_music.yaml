@@ -16,8 +16,12 @@ mode: stem
 # Full Dolby Atmos bed (12 channels)
 format: 7.1.4
 
-# Dolby Atmos Music streaming profile — sets loudness, container, sample rate
-profile: atmos-music
+# ── Output format — Dolby Atmos Music Master Delivery Specification v2022.07 ──
+# ADM-BWF container: feed to a Dolby Media Encoder (DME) for streaming delivery.
+output:
+  type: adm-bwf         # ITU-R BS.2076-2 ADM-BWF container
+  subtype: PCM_24       # 24-bit LPCM (spec requirement)
+  sample_rate: 48000    # 48 kHz (spec requirement)
 
 # ── Mixing (stem mode only) ───────────────────────────────────────────────────
 # Applied after stem separation, before spatial routing.
@@ -76,8 +80,7 @@ mastering:
   #   excite: true       # harmonic exciter on sub-bass band
   #   lfe_gain: 1.0      # dB, LFE channel trim
 
-  # Loudness normalization — controlled by the profile above
-  # (do not override unless you have a specific reason to deviate from spec)
+  # Loudness normalization — Dolby Atmos Music Master Delivery Specification v2022.07
   loudness:
     normalize: true
     target: -18.0
@@ -89,6 +92,6 @@ mastering:
 #   preview_duration: 30.0
 #   preview_start: 60.0  # start at 60 s (default: auto-center)
 
-# ── Output ────────────────────────────────────────────────────────────────────
+# ── Downmix (optional) ────────────────────────────────────────────────────────
 # output:
 #   downmix: stereo_check.wav   # write an ITU-R BS.775-4 stereo fold-down

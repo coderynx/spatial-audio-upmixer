@@ -1,0 +1,34 @@
+# Batch — fully explicit input/output pairs
+#
+# Each job specifies its own input and (optionally) output path.
+# Useful when outputs need custom names or go to different directories.
+# output_dir acts as a fallback for jobs with no explicit output path.
+#
+# Usage:
+#   upmixer --manifest batch_explicit_jobs.yaml
+
+mode:    stem
+format:  7.1.4
+
+# ── Batch jobs ────────────────────────────────────────────────────────────────
+batch:
+  output_dir: /output/default/          # fallback when job has no output key
+  jobs:
+    - input:  /albums/disc1/01_intro.wav
+      output: /masters/disc1_01_atmos.wav
+
+    - input:  /albums/disc1/02_main.flac
+      output: /masters/disc1_02_atmos.wav
+
+    - input:  /albums/disc2/01_reprise.wav
+      # no output → derived: /output/default/01_reprise.wav
+
+    - input:  /bonus/hidden_track.flac
+      output: /masters/bonus_hidden_atmos.wav
+
+# ── Mastering ─────────────────────────────────────────────────────────────────
+mastering:
+  loudness:
+    normalize: true
+    target:  -18.0
+    max_tp:  -1.0

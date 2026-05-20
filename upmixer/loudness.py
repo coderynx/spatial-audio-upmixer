@@ -12,6 +12,7 @@ Channel weights follow BS.1770-4 §2.2 Table 1:
 from __future__ import annotations
 
 import math
+import os
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 
@@ -147,7 +148,7 @@ def measure_integrated_loudness(
         weight, audio = args
         return _channel_weighted_blocks(audio, weight, sos, block_len, hop_len)
 
-    with ThreadPoolExecutor(max_workers=min(len(tasks), 8)) as ex:
+    with ThreadPoolExecutor(max_workers=max(1, min(len(tasks), (os.cpu_count() or 4) // 2, 4))) as ex:
         results = list(ex.map(_process, tasks))
 
     power_blocks: np.ndarray | None = None
@@ -193,7 +194,7 @@ def measure_true_peak(channels: dict[str, np.ndarray]) -> float:
     if not audio_list:
         return -120.0
 
-    with ThreadPoolExecutor(max_workers=min(len(audio_list), 8)) as ex:
+    with ThreadPoolExecutor(max_workers=max(1, min(len(audio_list), (os.cpu_count() or 4) // 2, 4))) as ex:
         peaks = list(ex.map(_channel_tp, audio_list))
 
     max_tp = max(peaks) if peaks else 1e-30

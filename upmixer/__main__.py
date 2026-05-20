@@ -2,7 +2,7 @@
 
 Priority order for all parameters
 -----------------------------------
-CLI flags  >  manifest values  >  profile defaults  >  UpmixConfig defaults
+CLI flags  >  manifest values  >  UpmixConfig defaults
 
 Usage
 -----
@@ -23,35 +23,10 @@ import sys
 from upmixer.config import UpmixConfig
 from upmixer.formats import INPUT_FORMAT_MAP
 from upmixer.pipeline import UpmixPipeline
-from upmixer.profiles import PROFILES, DeliveryProfile
 from upmixer.separation.separator import DEFAULT_MODEL
 
 _INPUT_FORMAT_CHOICES = sorted(INPUT_FORMAT_MAP.keys())
 _OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
-_PROFILE_CHOICES = sorted(PROFILES.keys())
-
-
-def _apply_profile(config: UpmixConfig, profile: DeliveryProfile, *, src: str = "") -> None:
-    """Apply a DeliveryProfile to config.  ``src`` is logged for traceability."""
-    config.loudness_normalize   = profile.loudness_normalize
-    config.loudness_target_lkfs = profile.loudness_target_lkfs
-    config.loudness_max_tp      = profile.loudness_max_tp
-    config.output_subtype       = profile.output_subtype
-    config.output_type          = profile.output_type
-    import logging as _l
-    log = _l.getLogger("upmixer")
-    if profile.lfe_cutoff_hz is not None:
-        config.lfe_cutoff_hz = float(profile.lfe_cutoff_hz)
-    log.info(
-        "  %sProfile: %s — %+.1f LKFS / %+.1f dBTP / %d kHz / %s / %s",
-        f"[{src}] " if src else "",
-        profile.display_name,
-        profile.loudness_target_lkfs,
-        profile.loudness_max_tp,
-        profile.sample_rate // 1000,
-        profile.output_subtype,
-        profile.output_type,
-    )
 
 
 def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_set: bool) -> None:
@@ -60,7 +35,7 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
     Only non-None values are applied so manifest defaults are preserved for
     flags the user did not supply.  ``sample_rate_set`` indicates whether
     ``--output-sample-rate`` was given on the command line (needed to avoid
-    clobbering the profile's sample rate).
+    clobbering a manifest-set sample rate).
     """
     if args.format is not None:
         config.output_format = args.format
@@ -101,8 +76,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.loudness_target_lkfs = args.loudness_target
     if args.output_type is not None:
         config.output_type = args.output_type
-    elif not (args.manifest or args.profile):
-        # No manifest and no profile → default to wav
+    elif not args.manifest:
+        # No manifest → default to wav
         config.output_type = "wav"
     if args.output_subtype is not None:
         config.output_subtype = args.output_subtype
@@ -201,6 +176,26 @@ def _parse_key_value_pairs(s: str, value_type: type) -> dict:
     return result
 
 
+def _apply_resource_limits(cpu_priority: str) -> None:
+    import os
+    if cpu_priority == "low":
+        try:
+            os.nice(10)
+        except (OSError, AttributeError):
+            pass  # Windows has no os.nice
+    try:
+        import torch
+        n = max(1, (os.cpu_count() or 4) // 2)
+        torch.set_num_threads(n)
+    except ImportError:
+        pass
+    try:
+        from threadpoolctl import threadpool_limits
+        threadpool_limits(limits=max(1, (os.cpu_count() or 4) // 2))
+    except ImportError:
+        pass  # soft dep — skip silently
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -251,37 +246,56 @@ def main() -> None:
         help="Print all valid manifest keys and their types, then exit.",
     )
 
+    # ── Batch processing ──────────────────────────────────────────────────────
+    parser.add_argument(
+        "--inputs",
+        nargs="+",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Two or more input audio files for batch processing (WAV/FLAC). "
+            "Files may be from different directories. Requires --output-dir. "
+            "Example: --inputs /dir1/a.wav /dir2/b.flac /dir3/c.wav"
+        ),
+    )
+    parser.add_argument(
+        "--batch-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Process all WAV/FLAC files in DIR (batch mode). "
+            "Files are sorted by name. Requires --output-dir."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Output directory for batch mode (--inputs or --batch-dir). "
+            "Output filenames are derived from input stems."
+        ),
+    )
+    parser.add_argument(
+        "--batch-workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Parallel workers for realtime batch mode (default: 1). "
+            "Stem mode is always sequential (model reuse requires single process)."
+        ),
+    )
+
     # ── Output format ─────────────────────────────────────────────────────────
     parser.add_argument(
         "--format",
         choices=_OUTPUT_FORMAT_CHOICES,
         default=None,
         help=(
-            "Output channel format (default: 5.1, or as set by --manifest / --profile). "
+            "Output channel format (default: 5.1, or as set by --manifest). "
             f"Choices: {', '.join(_OUTPUT_FORMAT_CHOICES)}."
         ),
-    )
-
-    # ── Delivery profile ──────────────────────────────────────────────────────
-    parser.add_argument(
-        "--profile",
-        choices=_PROFILE_CHOICES,
-        default=None,
-        metavar="PROFILE",
-        help=(
-            "Delivery target profile. Sets loudness, sample rate, bit depth, "
-            "and container to match the platform spec. "
-            "Overrides any 'profile' key in the manifest. "
-            "Individual flags (--loudness-target, --output-sample-rate, etc.) "
-            "override the profile. "
-            f"Choices: {', '.join(_PROFILE_CHOICES)}. "
-            "Use --profile-info to print full spec for each profile."
-        ),
-    )
-    parser.add_argument(
-        "--profile-info",
-        action="store_true",
-        help="Print the delivery spec for all built-in profiles and exit.",
     )
 
     # ── Input format ──────────────────────────────────────────────────────────
@@ -376,7 +390,7 @@ def main() -> None:
             "'wav' = standard multichannel WAV. "
             "'adm-bwf' = Broadcast Wave + ITU-R BS.2076-2 ADM metadata "
             "(Logic Pro, DaVinci Resolve, Pro Tools). "
-            "Default: set by --profile, or 'wav' if no profile."
+            "Default: 'wav' (or as set by manifest)."
         ),
     )
     parser.add_argument("--output-subtype", choices=["PCM_16", "PCM_24", "PCM_32"], default=None, help="Output bit depth (default: PCM_24)")
@@ -553,6 +567,19 @@ def main() -> None:
         ),
     )
 
+    # ── Resource limits ───────────────────────────────────────────────────────
+    parser.add_argument(
+        "--cpu-priority",
+        choices=["normal", "low"],
+        default="low",
+        help=(
+            "Process scheduling priority. 'low' calls os.nice(10) and caps "
+            "numpy/torch thread counts to half the logical CPU count, preventing "
+            "the app from saturating the system during heavy processing. "
+            "Default: low."
+        ),
+    )
+
     # ── Verbosity ─────────────────────────────────────────────────────────────
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument("--quiet",   "-q", action="store_true", help="Suppress all output except warnings and errors.")
@@ -560,22 +587,6 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", help="Print a JSON summary of the result to stdout when done.")
 
     # ── Early exits (before full parse) ──────────────────────────────────────
-    if "--profile-info" in sys.argv:
-        for key, p in sorted(PROFILES.items()):
-            print(f"\n{'─' * 60}")
-            print(f"  {p.display_name}  (--profile {p.name})")
-            print(f"{'─' * 60}")
-            print(f"  Loudness target : {p.loudness_target_lkfs:+.1f} LKFS")
-            print(f"  True Peak ceil  : {p.loudness_max_tp:+.1f} dBTP")
-            print(f"  Sample rate     : {p.sample_rate // 1000} kHz")
-            print(f"  Bit depth       : {p.bit_depth}-bit")
-            print(f"  Output type     : {p.output_type}")
-            lfe_str = f"{p.lfe_cutoff_hz} Hz" if p.lfe_cutoff_hz is not None else "default (120 Hz)"
-            print(f"  LFE cutoff      : {lfe_str}")
-            print(f"  Notes           : {p.codec_note}")
-        print()
-        sys.exit(0)
-
     if "--manifest-keys" in sys.argv:
         from upmixer.manifest import list_manifest_keys
         print("\nValid manifest keys (key → UpmixConfig attribute):\n")
@@ -585,6 +596,8 @@ def main() -> None:
         sys.exit(0)
 
     args = parser.parse_args()
+
+    _apply_resource_limits(args.cpu_priority)
 
     # ── Logging setup ─────────────────────────────────────────────────────────
     if args.verbose:
@@ -598,7 +611,7 @@ def main() -> None:
 
     # ── Build config ──────────────────────────────────────────────────────────
     # Start with UpmixConfig defaults, then apply in priority order:
-    #   profile (from manifest or --profile)  <  manifest fields  <  CLI flags
+    #   manifest fields  <  CLI flags
     config = UpmixConfig()
 
     # Track whether --output-sample-rate was explicitly given (vs. None default)
@@ -610,23 +623,11 @@ def main() -> None:
     if args.manifest is not None:
         from upmixer.manifest import load_manifest, apply_manifest
         manifest_data = load_manifest(args.manifest)
-        # Profile from manifest is applied UNLESS --profile is given on CLI
-        # (--profile wins; it will be applied in step 2 and overwrites manifest profile)
-        if args.profile is not None and "profile" in manifest_data:
-            manifest_data = dict(manifest_data)
-            del manifest_data["profile"]   # suppress manifest profile; CLI wins
         manifest_job = apply_manifest(config, manifest_data)
         if not sample_rate_set and "output_sample_rate" in manifest_data:
             sample_rate_set = True  # manifest set it; don't clobber with None
 
-    # ── 2. Apply --profile (CLI wins over manifest profile) ───────────────────
-    if args.profile is not None:
-        profile: DeliveryProfile = PROFILES[args.profile]
-        _apply_profile(config, profile, src="CLI")
-        if not sample_rate_set:
-            config.output_sample_rate = profile.sample_rate
-
-    # ── 3. Apply CLI flags (override manifest + profile) ─────────────────────
+    # ── 2. Apply CLI flags (override manifest) ────────────────────────────────
     _apply_cli_flags(config, args, sample_rate_set)
 
     # ── 3a. --generate-eq-profile standalone tool ─────────────────────────────
@@ -661,67 +662,117 @@ def main() -> None:
         print(f"EQ profile saved to: {save_path}")
         sys.exit(0)
 
-    # ── 4. Resolve input / output / job params ────────────────────────────────
-    # Priority: CLI positional args > manifest 'input'/'output' keys
-    input_path  = args.input  or manifest_job.get("input")
-    output_path = args.output or manifest_job.get("output")
-
-    if not input_path:
-        parser.error(
-            "input file is required. "
-            "Pass it as a positional argument or set 'input' in the manifest."
-        )
-    if not output_path:
-        parser.error(
-            "output file is required. "
-            "Pass it as a positional argument or set 'output' in the manifest."
-        )
-
-    # Resolve mode (CLI > manifest > default realtime)
+    # ── 4. Resolve mode and stem params ──────────────────────────────────────
     mode = args.mode or manifest_job.get("mode", "realtime")
-
-    # Resolve stem params (CLI > manifest > defaults)
     stem_model     = args.stem_model     or manifest_job.get("stem_model",     DEFAULT_MODEL)
     stem_model_dir = args.stem_model_dir or manifest_job.get("stem_model_dir", None)
     input_format   = args.input_format   or manifest_job.get("input_format",   None)
 
-    # ── 5. Run pipeline ───────────────────────────────────────────────────────
-    if mode == "stem":
-        from upmixer.separation.stem_pipeline import StemUpmixPipeline
-        stem_pipeline = StemUpmixPipeline(
-            config=config,
-            model=stem_model,
-            model_dir=stem_model_dir,
-        )
-        result = stem_pipeline.process_file(
-            input_path, output_path,
-            input_format_override=input_format,
-        )
-    else:
-        pipeline = UpmixPipeline(config)
-        result = pipeline.process_file(
-            input_path, output_path,
-            input_format_override=input_format,
-        )
+    # ── 5. Detect batch vs single-file mode ───────────────────────────────────
+    batch_inputs  = args.inputs or manifest_job.get("batch_inputs")
+    batch_dir     = args.batch_dir or manifest_job.get("batch_dir")
+    output_dir    = args.output_dir or manifest_job.get("batch_output_dir")
+    batch_jobs_manifest = manifest_job.get("batch_jobs")
+    is_batch = bool(batch_inputs or batch_dir or batch_jobs_manifest)
 
-    # ── Optional: save EQ reference profile after run ─────────────────────────
-    ref_save = getattr(args, "mastering_eq_reference_save", None)
-    if ref_save and config.mastering_eq_reference is not None:
-        from upmixer.mastering.eq_match import EQMatcher
-        from upmixer.formats import FORMAT_MAP
-        fmt = FORMAT_MAP.get(config.output_format)
-        ch_names = list(fmt.channels) if fmt else []
-        if ch_names:
-            matcher = EQMatcher(
-                result.sample_rate if hasattr(result, "sample_rate")
-                else (config.output_sample_rate or 48000)
+    if is_batch:
+        # ── Batch mode ────────────────────────────────────────────────────────
+        from upmixer.batch import BatchProcessor, resolve_batch_jobs
+
+        if not output_dir and not batch_jobs_manifest:
+            parser.error(
+                "Batch mode requires --output-dir. "
+                "Alternatively, set 'output' per job in the manifest batch.jobs list."
             )
-            bps = matcher.analyze(config.mastering_eq_reference, ch_names)
-            matcher.save_profile(bps, ref_save)
-            print(f"EQ profile saved to: {ref_save}", file=sys.stderr)
 
-    if args.json:
-        print(result.to_json())
+        jobs = resolve_batch_jobs(
+            input_paths=None,
+            batch_dir=batch_dir,
+            output_dir=output_dir,
+            output_ext=".wav",
+            explicit_jobs=batch_jobs_manifest,
+            batch_inputs=batch_inputs,
+        )
+        if not jobs:
+            parser.error("No input files found for batch processing.")
+
+        workers = args.batch_workers or manifest_job.get("batch_workers") or 1
+        processor = BatchProcessor(
+            config=config,
+            mode=mode,
+            stem_model=stem_model,
+            stem_model_dir=stem_model_dir,
+            workers=workers,
+            progress_callback=lambda done, total, path: (
+                _log.info("[%d/%d] %s", done + 1, total, path) if path else None
+            ),
+        )
+        batch_result = processor.process(jobs)
+
+        for fail in batch_result.failed:
+            _log.error("FAILED: %s — %s", fail["input"], fail["error"])
+
+        if args.json:
+            print(batch_result.to_json())
+        else:
+            _log.info(
+                "Batch complete: %d/%d succeeded in %.1fs",
+                len(batch_result.jobs), len(jobs), batch_result.wall_time_s,
+            )
+
+    else:
+        # ── Single-file mode (unchanged behaviour) ────────────────────────────
+        input_path  = args.input  or manifest_job.get("input")
+        output_path = args.output or manifest_job.get("output")
+
+        if not input_path:
+            parser.error(
+                "input file is required. "
+                "Pass it as a positional argument, set 'input' in the manifest, "
+                "or use --inputs / --batch-dir for batch processing."
+            )
+        if not output_path:
+            parser.error(
+                "output file is required. "
+                "Pass it as a positional argument or set 'output' in the manifest."
+            )
+
+        if mode == "stem":
+            from upmixer.separation.stem_pipeline import StemUpmixPipeline
+            stem_pipeline = StemUpmixPipeline(
+                config=config,
+                model=stem_model,
+                model_dir=stem_model_dir,
+            )
+            result = stem_pipeline.process_file(
+                input_path, output_path,
+                input_format_override=input_format,
+            )
+        else:
+            pipeline = UpmixPipeline(config)
+            result = pipeline.process_file(
+                input_path, output_path,
+                input_format_override=input_format,
+            )
+
+        # ── Optional: save EQ reference profile after single-file run ─────────
+        ref_save = getattr(args, "mastering_eq_reference_save", None)
+        if ref_save and config.mastering_eq_reference is not None:
+            from upmixer.mastering.eq_match import EQMatcher
+            from upmixer.formats import FORMAT_MAP
+            fmt = FORMAT_MAP.get(config.output_format)
+            ch_names = list(fmt.channels) if fmt else []
+            if ch_names:
+                matcher = EQMatcher(
+                    result.sample_rate if hasattr(result, "sample_rate")
+                    else (config.output_sample_rate or 48000)
+                )
+                bps = matcher.analyze(config.mastering_eq_reference, ch_names)
+                matcher.save_profile(bps, ref_save)
+                print(f"EQ profile saved to: {ref_save}", file=sys.stderr)
+
+        if args.json:
+            print(result.to_json())
 
 
 if __name__ == "__main__":

@@ -49,8 +49,9 @@ upmixer input.wav output.wav --format 7.1.4 --mode stem
 # Write ADM-BWF for import into Logic Pro / DaVinci Resolve / Pro Tools
 upmixer input.wav output.wav --format 7.1.4 --output-type adm-bwf
 
-# Dolby Atmos Music streaming delivery (profile sets loudness, container, sample rate)
-upmixer input.flac output.adm.bwf --format 7.1.4 --profile atmos-music
+# Dolby Atmos Music streaming delivery (explicit loudness + container)
+upmixer input.flac output.adm.bwf --format 7.1.4 --output-type adm-bwf \
+        --output-sample-rate 48000 --loudness-target -18.0
 
 # Override auto-detected input format (8ch is ambiguous: 7.1 or 5.1.2)
 upmixer surround.wav output.wav --input-format 5.1.2 --format 7.1.4
@@ -90,32 +91,123 @@ input:   stereo.flac
 output:  atmos_music.adm.bwf
 mode:    stem
 format:  7.1.4
-profile: atmos-music
 
-# Override individual profile values
-loudness_target:  -18.0
-preview:          false
+output:
+  type: adm-bwf
+  subtype: PCM_24
+  sample_rate: 48000
+
+mastering:
+  loudness:
+    normalize: true
+    target:   -18.0
+    max_tp:   -1.0
 ```
 
 #### Manifest format (JSON)
 
 ```json
 {
-  "input":   "stereo.flac",
-  "output":  "atmos_music.adm.bwf",
-  "mode":    "stem",
-  "format":  "7.1.4",
-  "profile": "atmos-music"
+  "input":              "stereo.flac",
+  "output":             "atmos_music.adm.bwf",
+  "mode":               "stem",
+  "format":             "7.1.4",
+  "output_type":        "adm-bwf",
+  "output_subtype":     "PCM_24",
+  "output_sample_rate": 48000,
+  "loudness_normalize": true,
+  "loudness_target":    -18.0,
+  "loudness_max_tp":    -1.0
 }
 ```
 
 #### Parameter priority order
 
 ```
-CLI flags  >  manifest values  >  profile defaults  >  UpmixConfig defaults
+CLI flags  >  manifest values  >  UpmixConfig defaults
 ```
 
-CLI flags always win. Manifest values override profile defaults. Profile defaults override the built-in UpmixConfig defaults.
+CLI flags always win. Manifest values override the built-in UpmixConfig defaults.
+
+### Batch processing
+
+Process entire albums or arbitrary file lists in a single invocation. In stem mode the neural network model is **loaded once** and reused across all files — significantly faster than running upmixer per track.
+
+```bash
+# All WAV/FLAC files in a directory → output dir (stem mode)
+upmixer --batch-dir /albums/ok-computer/ --output-dir /out/ --mode stem --format 7.1.4
+
+# Cherry-picked files from different directories (realtime, 4 parallel workers)
+upmixer --inputs /dir1/track1.wav /dir2/track2.flac /dir3/bonus.wav \
+        --output-dir /out/ --mode realtime --batch-workers 4
+
+# Manifest-driven batch (see examples/batch_album_stem.yaml)
+upmixer --manifest examples/batch_album_stem.yaml
+
+# Get a JSON summary of all results
+upmixer --batch-dir /albums/ --output-dir /out/ --json
+```
+
+**Resource usage**: By default upmixer runs at reduced OS priority (`--cpu-priority low`) and caps numpy/torch thread counts to half the logical CPU count. Pass `--cpu-priority normal` to disable this.
+
+#### Batch manifest format
+
+The `batch:` section supports three input styles:
+
+```yaml
+# Style 1 — directory scan (*.wav + *.flac, sorted by name)
+batch:
+  input_dir:  /albums/ok-computer/
+  output_dir: /output/ok-computer-714/
+  workers: 1                          # stem mode: always 1; realtime: can be > 1
+
+# Style 2 — explicit file list (files from any directories)
+batch:
+  output_dir: /output/
+  inputs:
+    - /albums/artist1/track1.wav
+    - /archive/remasters/track2.flac
+    - /downloads/bonus.wav
+
+# Style 3 — fully explicit input/output pairs
+batch:
+  output_dir: /output/default/        # fallback when job omits output
+  jobs:
+    - {input: /dir1/track1.wav, output: /masters/track1_atmos.wav}
+    - {input: /dir2/track2.flac}      # output → /output/default/track2.wav
+```
+
+See [`examples/batch_album_stem.yaml`](examples/batch_album_stem.yaml), [`examples/batch_files_realtime.yaml`](examples/batch_files_realtime.yaml), and [`examples/batch_explicit_jobs.yaml`](examples/batch_explicit_jobs.yaml) for complete examples.
+
+#### Batch Python API
+
+```python
+from upmixer.batch import BatchProcessor, resolve_batch_jobs
+from upmixer.config import UpmixConfig
+
+jobs = resolve_batch_jobs(
+    input_paths=["/dir1/a.wav", "/dir2/b.flac"],
+    output_dir="/out/",
+)
+result = BatchProcessor(UpmixConfig(), mode="stem").process(jobs)
+print(f"{len(result.jobs)}/{len(jobs)} succeeded in {result.wall_time_s:.1f}s")
+for fail in result.failed:
+    print(f"FAILED: {fail['input']} — {fail['error']}")
+```
+
+`StemUpmixPipeline` now supports context manager syntax to ensure the model is released when done:
+
+```python
+from upmixer.separation.stem_pipeline import StemUpmixPipeline
+from upmixer.config import UpmixConfig
+
+with StemUpmixPipeline(UpmixConfig(), model="BS-Roformer-SW.ckpt") as pipeline:
+    for track, out in pairs:
+        result = pipeline.process_file(track, out)   # model reused each call
+# model released here
+```
+
+---
 
 ### Key CLI options
 
@@ -125,8 +217,6 @@ CLI flags always win. Manifest values override profile defaults. Profile default
 | `--manifest-keys` | — | Print all valid manifest keys and exit |
 | `--format` | `5.1` | Output channel layout |
 | `--mode` | `realtime` | `realtime` or `stem` |
-| `--profile` | — | Delivery target profile (see below) |
-| `--profile-info` | — | Print full spec for every profile and exit |
 | `--input-format` | auto | Force input layout (required for ambiguous channel counts) |
 | `--output-type` | `wav` | `wav` or `adm-bwf` |
 | `--output-sample-rate` | same as input | Resample output (e.g. `48000`) |
@@ -135,6 +225,11 @@ CLI flags always win. Manifest values override profile defaults. Profile default
 | `--loudness-target` | `-18.0` | Target integrated loudness in LKFS |
 | `--stem-model` | `htdemucs_ft.yaml` | Separation model |
 | `--stem-model-dir` | `~/.cache/upmixer-models` | Model cache directory |
+| `--inputs` | — | One or more input files for batch (any directories) |
+| `--batch-dir` | — | Directory to scan for WAV/FLAC (batch mode) |
+| `--output-dir` | — | Output directory for batch mode |
+| `--batch-workers` | `1` | Parallel workers (realtime batch only) |
+| `--cpu-priority` | `low` | `low` = nice(10) + cap threads; `normal` = no limits |
 | `--center-gain` | `0.85` | Center channel gain |
 | `--surround-gain` | `0.60` | Side surround gain |
 | `--height-gain` | `0.55` | Height channel gain |
@@ -145,23 +240,18 @@ CLI flags always win. Manifest values override profile defaults. Profile default
 | `--preview-start` | auto-center | Preview start time in seconds |
 | `-q` / `--quiet` | — | Suppress all output except errors |
 | `-v` / `--verbose` | — | Debug logging |
-| `--json` | — | Print `UpmixResult` as JSON to stdout |
+| `--json` | — | Print `UpmixResult` / `BatchResult` as JSON to stdout |
 
-### Delivery profiles
+### Delivery targets
 
-Profiles bundle loudness, sample rate, bit depth, and container requirements for a specific distribution platform. Use `--profile-info` to see the full spec for each profile.
+Set loudness, container, and sample rate directly in your manifest or via CLI flags. Common target configurations:
 
-| Profile | Loudness | True Peak | Sample rate | Container | Use case |
-|---------|----------|-----------|-------------|-----------|----------|
-| `atmos-music` | −18 LKFS | −1 dBTP | 48 kHz | ADM-BWF | Dolby Atmos Music (streaming) |
-| `atmos-bluray` | −27 LKFS | −2 dBTP | 48 kHz | WAV | Dolby Atmos Blu-ray (TrueHD) |
+| Target | `output.type` | `output.sample_rate` | `loudness.target` | `loudness.max_tp` | Use case |
+|--------|--------------|---------------------|-------------------|-------------------|----------|
+| Dolby Atmos Music (streaming) | `adm-bwf` | `48000` | `-18.0` | `-1.0` | Apple Music, Amazon Music, Tidal |
+| Dolby Atmos Blu-ray (TrueHD) | `wav` | `48000` | `-27.0` | `-2.0` | Blu-ray via TrueHD/MLP encoder |
 
-Individual CLI flags always override profile values:
-
-```bash
-# Atmos Music profile but louder (some artists prefer -16)
-upmixer input.flac out.adm.bwf --format 7.1.4 --profile atmos-music --loudness-target -16.0
-```
+See [`examples/atmos_music.yaml`](examples/atmos_music.yaml) and [`examples/batch_files_realtime.yaml`](examples/batch_files_realtime.yaml) for complete manifest examples.
 
 ---
 

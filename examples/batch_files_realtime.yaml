@@ -1,0 +1,35 @@
+# Batch — cherry-picked files from different directories, realtime mode
+#
+# Process specific files regardless of where they live.
+# Realtime mode is fast; use workers > 1 to parallelize on multi-core systems.
+#
+# Usage:
+#   upmixer --manifest batch_files_realtime.yaml
+
+mode:    realtime
+format:  5.1
+
+# ── Output format — Dolby Atmos Blu-ray (TrueHD/MLP) ─────────────────────────
+# Feed output WAV to a Dolby Media Encoder (DME) for TrueHD encoding.
+# Loudness convention: -27 LKFS dialog-gated (BS.1770-1), ±2 LU tolerance.
+output:
+  type: wav             # multichannel WAV → TrueHD encoder
+  subtype: PCM_24       # 24-bit LPCM
+  sample_rate: 48000    # 48 kHz
+
+# ── Batch input/output ────────────────────────────────────────────────────────
+batch:
+  output_dir: /path/to/output/
+  workers: 4                            # parallel processing (realtime mode only)
+  inputs:
+    - /albums/artist1/track01.wav
+    - /archive/remasters/bonus_track.flac
+    - /downloads/collab_feat.wav
+    - /projects/mix_session/final_stereo.wav
+
+# ── Mastering ─────────────────────────────────────────────────────────────────
+mastering:
+  loudness:
+    normalize: true
+    target:  -27.0
+    max_tp:  -2.0

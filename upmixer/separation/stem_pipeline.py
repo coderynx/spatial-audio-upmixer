@@ -100,6 +100,46 @@ class StemUpmixPipeline:
         self._model = model
         self._model_dir = model_dir
         self._custom_routing = custom_routing
+        # Shared separator — model loaded once, reused across process_file() calls.
+        # Re-created only when sample_rate changes between files.
+        self._separator: StemSeparator | None = None
+        self._separator_sr: int | None = None
+
+    def _get_or_create_separator(self, sep_sr: int) -> StemSeparator:
+        """Return a ready StemSeparator, creating or re-creating only when needed.
+
+        The neural network model is loaded once and reused across all files that
+        share the same sample rate — the dominant cost saving in batch mode.
+        """
+        sep_log_level = logging.DEBUG if _log.isEnabledFor(logging.DEBUG) else logging.WARNING
+        if self._separator is None or self._separator_sr != sep_sr:
+            if self._separator is not None:
+                _log.info(
+                    "  Separator: sample rate changed %d→%d, re-creating.",
+                    self._separator_sr, sep_sr,
+                )
+                self._separator.close()
+            self._separator = StemSeparator(
+                model=self._model,
+                model_dir=self._model_dir,
+                sample_rate=sep_sr,
+                log_level=sep_log_level,
+            )
+            self._separator_sr = sep_sr
+        return self._separator
+
+    def close(self) -> None:
+        """Release the separator and unload the neural network model."""
+        if self._separator is not None:
+            self._separator.close()
+            self._separator = None
+            self._separator_sr = None
+
+    def __enter__(self) -> "StemUpmixPipeline":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
     def process_file(
         self,
@@ -238,16 +278,7 @@ class StemUpmixPipeline:
             all_stems = _cache_hit_stems
             _log.info("  Stem cache: using cached stems (separation skipped)")
         else:
-            # Derive log level: verbose if our logger is at DEBUG
-            sep_log_level = (
-                logging.DEBUG if _log.isEnabledFor(logging.DEBUG) else logging.WARNING
-            )
-            separator = StemSeparator(
-                model=self._model,
-                model_dir=self._model_dir,
-                sample_rate=sep_sr,
-                log_level=sep_log_level,
-            )
+            separator = self._get_or_create_separator(sep_sr)
             tmp_files: list[str] = []
             zone_names = list(sep_zones.keys())
             n_zones = len(zone_names)
@@ -279,7 +310,7 @@ class StemUpmixPipeline:
                 for tmp in tmp_files:
                     if os.path.exists(tmp):
                         os.unlink(tmp)
-                separator.close()  # flush persistent temp dir immediately
+                # separator is shared across calls — do NOT close here
 
             # Save to cache for next run
             if _stem_cache is not None and all_stems:

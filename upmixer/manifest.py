@@ -18,7 +18,7 @@ Manifest keys use the same names as the CLI flags (without the leading
 
 Priority order
 --------------
-CLI flags > manifest values > profile defaults > UpmixConfig defaults.
+CLI flags > manifest values > UpmixConfig defaults.
 
 Example (YAML)::
 
@@ -26,11 +26,9 @@ Example (YAML)::
     output:  atmos.adm.bwf
     format:  7.1.2
     mode:    stem
-    profile: atmos-music
 
     stem_model: BS-Roformer-SW.ckpt
 
-    # Override specific profile values
     loudness_target: -18.0
     preview: true
     preview_duration: 30.0
@@ -47,7 +45,6 @@ from pathlib import Path
 from typing import Any
 
 from upmixer.config import UpmixConfig
-from upmixer.profiles import PROFILES
 
 _log = logging.getLogger("upmixer")
 
@@ -296,6 +293,26 @@ _MIXING_KEY_MAP: dict[str, str] = {
     "stem_cache_dir": "stem_cache_dir",    # stem separation cache directory
 }
 
+# ── Batch section ─────────────────────────────────────────────────────────────
+# batch:
+#   input_dir: /albums/ok-computer/           # scan directory
+#   inputs:                                   # explicit files (any dirs)
+#     - /dir1/track1.wav
+#     - /dir2/track2.flac
+#   output_dir: /output/                      # shared output dir
+#   workers: 1                                # realtime parallel workers
+#   jobs:                                     # fully explicit pairs
+#     - {input: /dir1/a.wav, output: /out/a.wav}
+#     - {input: /dir2/b.flac}                 # output derived from output_dir
+
+_BATCH_KEY_MAP: dict[str, str] = {
+    "input_dir":  "batch_dir",
+    "inputs":     "batch_inputs",
+    "output_dir": "batch_output_dir",
+    "workers":    "batch_workers",
+    "jobs":       "batch_jobs",
+}
+
 
 def _expand_nested_sections(data: dict) -> dict:
     """Expand nested YAML sections into flat manifest keys.
@@ -372,7 +389,7 @@ def _expand_nested_sections(data: dict) -> dict:
         Expanded flat dict.  A copy is made when expansion occurs; the
         original dict is returned unchanged when no known sections are present.
     """
-    _SECTION_KEYS = {"mastering", "mixing", "routing", "output", "processing"}
+    _SECTION_KEYS = {"mastering", "mixing", "routing", "output", "processing", "batch"}
     present = {k for k in _SECTION_KEYS if k in data and isinstance(data.get(k), dict)}
 
     if not present:
@@ -424,6 +441,13 @@ def _expand_nested_sections(data: dict) -> dict:
             if flat_key not in expanded:
                 expanded[flat_key] = value
 
+    # ── batch: ────────────────────────────────────────────────────────────────
+    if "batch" in present:
+        for sub_key, value in data["batch"].items():
+            flat_key = _BATCH_KEY_MAP.get(sub_key, sub_key)
+            if flat_key not in expanded:
+                expanded[flat_key] = value
+
     return expanded
 
 # Keys handled at the pipeline / CLI level, not mapped into UpmixConfig.
@@ -434,7 +458,12 @@ _JOB_KEYS: frozenset[str] = frozenset({
     "input_format",
     "stem_model",
     "stem_model_dir",
-    "profile",
+    # Batch processing (from batch: section or flat keys)
+    "batch_dir",
+    "batch_inputs",
+    "batch_output_dir",
+    "batch_workers",
+    "batch_jobs",
 })
 
 
@@ -493,9 +522,6 @@ def apply_manifest(
 ) -> dict[str, Any]:
     """Apply manifest values to a :class:`~upmixer.config.UpmixConfig`.
 
-    Profile (if specified in manifest) is applied first so that individual
-    field values in the manifest can override the profile defaults.
-
     CLI flag values are NOT applied here — the caller applies them afterwards
     so they win over the manifest.
 
@@ -513,33 +539,6 @@ def apply_manifest(
     """
     # ── Expand nested mastering: section into flat keys ───────────────────────
     manifest = _expand_nested_sections(manifest)
-
-    # ── Apply delivery profile (individual manifest fields override) ──────────
-    profile_name: str | None = manifest.get("profile")
-    if profile_name is not None:
-        if profile_name not in PROFILES:
-            raise ValueError(
-                f"Unknown profile '{profile_name}' in manifest. "
-                f"Valid choices: {sorted(PROFILES.keys())}"
-            )
-        profile = PROFILES[profile_name]
-        config.loudness_normalize   = profile.loudness_normalize
-        config.loudness_target_lkfs = profile.loudness_target_lkfs
-        config.loudness_max_tp      = profile.loudness_max_tp
-        config.output_subtype       = profile.output_subtype
-        config.output_type          = profile.output_type
-        config.output_sample_rate   = profile.sample_rate
-        if profile.lfe_cutoff_hz is not None:
-            config.lfe_cutoff_hz = float(profile.lfe_cutoff_hz)
-        _log.info(
-            "  Manifest profile: %s — %+.1f LKFS / %+.1f dBTP / %d kHz / %s / %s",
-            profile.display_name,
-            profile.loudness_target_lkfs,
-            profile.loudness_max_tp,
-            profile.sample_rate // 1000,
-            profile.output_subtype,
-            profile.output_type,
-        )
 
     # ── Apply config fields ───────────────────────────────────────────────────
     for key, value in manifest.items():
@@ -564,7 +563,7 @@ def apply_manifest(
 
     # ── Collect job-level params ──────────────────────────────────────────────
     job_params: dict[str, Any] = {}
-    for key in _JOB_KEYS - {"profile"}:
+    for key in _JOB_KEYS:
         if key in manifest and manifest[key] is not None:
             job_params[key] = manifest[key]
 
