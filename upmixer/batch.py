@@ -32,7 +32,7 @@ import os
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Callable
 
 from upmixer.config import UpmixConfig
@@ -159,7 +159,11 @@ class BatchProcessor:
 
     Stem mode: Sequential. The neural network model is loaded once on the first
     file and reused for all subsequent files — the primary performance benefit
-    for album-sized batches. The separator is released when done.
+    for album-sized batches. Separated stems are cached to disk so that
+    re-runs of the same batch (e.g. after adjusting loudness settings) skip
+    the slow separation step entirely. Cache dir defaults to
+    ``~/.cache/upmixer-stems``; override via ``config.stem_cache_dir`` or
+    ``--stem-cache-dir``. The separator is released when done.
 
     Realtime mode: Sequential (workers=1) or parallel via ProcessPoolExecutor
     (workers>1). Uses processes (not threads) to avoid GIL + numpy memory
@@ -205,12 +209,29 @@ class BatchProcessor:
         result.wall_time_s = time.monotonic() - t0
         return result
 
+    # Default stem cache directory used when the caller has not explicitly set
+    # config.stem_cache_dir.  Mirrors the model cache convention.
+    _DEFAULT_STEM_CACHE_DIR: str = os.path.join(
+        os.path.expanduser("~"), ".cache", "upmixer-stems"
+    )
+
     def _process_stem(self, jobs: list[BatchJob], total: int) -> BatchResult:
         from upmixer.separation.stem_pipeline import StemUpmixPipeline
 
+        # Auto-enable stem cache for batch runs: separating each track in an
+        # album takes minutes; caching lets re-runs (e.g. tweaking loudness)
+        # skip the separation step entirely.  Use config value if set; fall
+        # back to the per-user default otherwise.
+        if self._config.stem_cache_dir:
+            effective_config = self._config
+        else:
+            cache_dir = self._DEFAULT_STEM_CACHE_DIR
+            _log.info("  Stem cache: auto-enabled at %s", cache_dir)
+            effective_config = replace(self._config, stem_cache_dir=cache_dir)
+
         result = BatchResult()
         with StemUpmixPipeline(
-            config=self._config,
+            config=effective_config,
             model=self._stem_model,
             model_dir=self._stem_model_dir,
         ) as pipeline:

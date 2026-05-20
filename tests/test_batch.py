@@ -285,6 +285,106 @@ class TestSeparatorReuse:
         assert p._separator_sr is None
 
 
+# ── BatchProcessor — stem cache ──────────────────────────────────────────────
+
+class TestBatchStemCache:
+    """BatchProcessor stem mode auto-enables and correctly propagates stem cache."""
+
+    def _make_mock_pipeline(self, fake_result_fn):
+        """Return a context-manager-compatible MagicMock for StemUpmixPipeline."""
+        mock = MagicMock()
+        mock.__enter__ = MagicMock(return_value=mock)
+        mock.__exit__ = MagicMock(return_value=False)
+        mock.process_file.side_effect = lambda inp, out, **_: fake_result_fn(inp, out)
+        return mock
+
+    def _fake_result(self, input_path: str, output_path: str) -> UpmixResult:
+        return UpmixResult(
+            input_path=input_path,
+            output_path=output_path,
+            input_format="Stereo",
+            output_format="7.1.4 Atmos",
+            input_sample_rate=48000,
+            output_sample_rate=48000,
+            duration_seconds=1.0,
+            n_channels_in=2,
+            n_channels_out=12,
+            mode="stem",
+        )
+
+    def test_auto_cache_dir_when_none_configured(self, two_wavs, tmp_path):
+        """stem_cache_dir must default to _DEFAULT_STEM_CACHE_DIR when not set."""
+        a, b = two_wavs
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        jobs = resolve_batch_jobs(input_paths=[a, b], output_dir=str(out_dir))
+
+        processor = BatchProcessor(config=UpmixConfig(), mode="stem")
+        captured: dict = {}
+
+        def fake_pipeline_cls(config, **kwargs):
+            captured["config"] = config
+            return self._make_mock_pipeline(self._fake_result)
+
+        with patch(
+            "upmixer.separation.stem_pipeline.StemUpmixPipeline",
+            side_effect=fake_pipeline_cls,
+        ):
+            processor.process(jobs)
+
+        assert "config" in captured
+        assert captured["config"].stem_cache_dir == BatchProcessor._DEFAULT_STEM_CACHE_DIR
+
+    def test_explicit_cache_dir_not_overridden(self, two_wavs, tmp_path):
+        """Explicit stem_cache_dir on config must not be replaced by the default."""
+        a, b = two_wavs
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        jobs = resolve_batch_jobs(input_paths=[a, b], output_dir=str(out_dir))
+
+        custom_dir = str(tmp_path / "my_stems")
+        config = UpmixConfig()
+        config.stem_cache_dir = custom_dir
+        processor = BatchProcessor(config=config, mode="stem")
+        captured: dict = {}
+
+        def fake_pipeline_cls(config, **kwargs):
+            captured["config"] = config
+            return self._make_mock_pipeline(self._fake_result)
+
+        with patch(
+            "upmixer.separation.stem_pipeline.StemUpmixPipeline",
+            side_effect=fake_pipeline_cls,
+        ):
+            processor.process(jobs)
+
+        assert captured["config"].stem_cache_dir == custom_dir
+
+    def test_original_config_not_mutated(self, two_wavs, tmp_path):
+        """BatchProcessor must never mutate the caller's UpmixConfig instance."""
+        a, b = two_wavs
+        out_dir = tmp_path / "out"
+        out_dir.mkdir()
+        jobs = resolve_batch_jobs(input_paths=[a, b], output_dir=str(out_dir))
+
+        original_config = UpmixConfig()
+        assert original_config.stem_cache_dir is None
+
+        processor = BatchProcessor(config=original_config, mode="stem")
+
+        def fake_pipeline_cls(config, **kwargs):
+            return self._make_mock_pipeline(self._fake_result)
+
+        with patch(
+            "upmixer.separation.stem_pipeline.StemUpmixPipeline",
+            side_effect=fake_pipeline_cls,
+        ):
+            processor.process(jobs)
+
+        # Auto-enable must not bleed back into the caller's config object.
+        assert original_config.stem_cache_dir is None
+
+
 # ── BatchProcessor — realtime mode ───────────────────────────────────────────
 
 class TestBatchProcessorRealtime:
