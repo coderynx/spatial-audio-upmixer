@@ -131,8 +131,9 @@ def resolve_batch_jobs(
 
     # Priority 3: directory scan
     if batch_dir:
-        wav_files = sorted(glob.glob(os.path.join(batch_dir, "*.wav")))
-        flac_files = sorted(glob.glob(os.path.join(batch_dir, "*.flac")))
+        safe_dir = glob.escape(batch_dir)  # handle [ ] ? * in directory names
+        wav_files = sorted(glob.glob(os.path.join(safe_dir, "*.wav")))
+        flac_files = sorted(glob.glob(os.path.join(safe_dir, "*.flac")))
         all_files = sorted(wav_files + flac_files, key=os.path.basename)
         return [
             BatchJob(input_path=p, output_path=_derive_output(p))

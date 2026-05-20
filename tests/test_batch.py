@@ -128,6 +128,44 @@ class TestResolveBatchJobs:
         jobs = resolve_batch_jobs(batch_dir=empty_dir, output_dir=out_dir)
         assert jobs == []
 
+    def test_batch_dir_with_brackets_in_path(self, tmp_path):
+        """Directory names with [ ] (common in music filenames) must not break glob."""
+        bracketed = tmp_path / "Album [FLAC] [16B-44.1kHz]"
+        bracketed.mkdir()
+        _make_wav(str(bracketed / "track01.flac"))
+        _make_wav(str(bracketed / "track02.wav"))
+        out_dir = str(tmp_path / "out")
+        os.makedirs(out_dir)
+        jobs = resolve_batch_jobs(batch_dir=str(bracketed), output_dir=out_dir)
+        assert len(jobs) == 2
+
+    def test_flac_only_batch_dir(self, tmp_path):
+        """Directory with only .flac files (no .wav) must still be scanned."""
+        a = _make_wav(str(tmp_path / "alpha.flac"))
+        b = _make_wav(str(tmp_path / "beta.flac"))
+        out_dir = str(tmp_path / "out")
+        os.makedirs(out_dir)
+        jobs = resolve_batch_jobs(batch_dir=str(tmp_path), output_dir=out_dir)
+        assert len(jobs) == 2
+        exts = {os.path.splitext(j.input_path)[1] for j in jobs}
+        assert exts == {".flac"}
+
+    def test_flac_input_derives_wav_output(self, tmp_path):
+        """Output path for .flac input uses .wav extension by default."""
+        f = _make_wav(str(tmp_path / "track.flac"))
+        out_dir = str(tmp_path / "out")
+        os.makedirs(out_dir)
+        jobs = resolve_batch_jobs(input_paths=[f], output_dir=out_dir)
+        assert jobs[0].output_path == os.path.join(out_dir, "track.wav")
+
+    def test_flac_input_derives_adm_output_ext(self, tmp_path):
+        """output_ext param propagates to derived output path."""
+        f = _make_wav(str(tmp_path / "track.flac"))
+        out_dir = str(tmp_path / "out")
+        os.makedirs(out_dir)
+        jobs = resolve_batch_jobs(input_paths=[f], output_dir=out_dir, output_ext=".adm.bwf")
+        assert jobs[0].output_path == os.path.join(out_dir, "track.adm.bwf")
+
     def test_cross_directory_files(self, tmp_path):
         dir1 = tmp_path / "dir1"
         dir2 = tmp_path / "dir2"

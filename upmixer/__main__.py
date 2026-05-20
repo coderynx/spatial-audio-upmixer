@@ -20,6 +20,8 @@ import argparse
 import logging
 import sys
 
+_log = logging.getLogger("upmixer")
+
 from upmixer.config import UpmixConfig
 from upmixer.formats import INPUT_FORMAT_MAP
 from upmixer.pipeline import UpmixPipeline
@@ -685,16 +687,23 @@ def main() -> None:
                 "Alternatively, set 'output' per job in the manifest batch.jobs list."
             )
 
+        output_ext = ".adm.bwf" if config.output_type == "adm-bwf" else ".wav"
         jobs = resolve_batch_jobs(
             input_paths=None,
             batch_dir=batch_dir,
             output_dir=output_dir,
-            output_ext=".wav",
+            output_ext=output_ext,
             explicit_jobs=batch_jobs_manifest,
             batch_inputs=batch_inputs,
         )
         if not jobs:
-            parser.error("No input files found for batch processing.")
+            if batch_dir:
+                parser.error(
+                    f"No input files found in '{batch_dir}'. "
+                    "Make sure the path exists and contains .wav or .flac files."
+                )
+            else:
+                parser.error("No input files found for batch processing.")
 
         workers = args.batch_workers or manifest_job.get("batch_workers") or 1
         processor = BatchProcessor(
