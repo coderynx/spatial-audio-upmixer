@@ -1,19 +1,46 @@
 {
   "_comment": "Dolby Atmos Music Master Delivery — JSON manifest example",
 
-  "input":   "stereo.flac",
-  "output":  "atmos_music.adm.bwf",
-  "mode":    "stem",
-  "format":  "7.1.4",
+  "version": "1.0",
 
-  "output_type":        "adm-bwf",
-  "output_subtype":     "PCM_24",
-  "output_sample_rate": 48000,
+  "metadata": {
+    "name": "Atmos Music Master",
+    "description": "Dolby Atmos Music Master Delivery — streaming platforms"
+  },
 
-  "loudness_normalize": true,
-  "loudness_target":    -18.0,
-  "loudness_max_tp":    -1.0,
+  "engine": {
+    "mode": "stem"
+  },
 
-  "preview":          false,
-  "preview_duration": 30.0
+  "mixing": {
+    "channel_layout": "7.1.4"
+  },
+
+  "format": {
+    "type": "adm-bwf",
+    "subtype": "PCM_24",
+    "sample_rate": 48000
+  },
+
+  "mastering": {
+    "eq": {
+      "profile": "atmos-streaming",
+      "strength": 1.0
+    },
+    "compressor": {
+      "profile": "glue"
+    },
+    "loudness": {
+      "normalize": true,
+      "target": -18.0,
+      "max_tp": -1.0
+    }
+  },
+
+  "assets": [
+    {
+      "input":  "stereo.flac",
+      "output": "atmos_music.wav"
+    }
+  ]
 }

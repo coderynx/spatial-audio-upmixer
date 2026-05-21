@@ -1,34 +1,63 @@
-# Batch — fully explicit input/output pairs
+# Batch — explicit input/output pairs with per-asset overrides
 #
-# Each job specifies its own input and (optionally) output path.
-# Useful when outputs need custom names or go to different directories.
-# output_dir acts as a fallback for jobs with no explicit output path.
+# Each asset can override any global block for localized fine-tuning.
+# Deep-merge: only specified keys are overridden; rest inherits from global.
 #
 # Usage:
 #   upmixer --manifest batch_explicit_jobs.yaml
 
-mode:    stem
-format:  7.1.4
+version: "1.0"
 
-# ── Batch jobs ────────────────────────────────────────────────────────────────
-batch:
-  output_dir: /output/default/          # fallback when job has no output key
-  jobs:
-    - input:  /albums/disc1/01_intro.wav
-      output: /masters/disc1_01_atmos.wav
+metadata:
+  name: "Multi-disc Batch — Explicit Jobs"
+  description: "Two-disc album with per-track vocal treatment overrides"
 
-    - input:  /albums/disc1/02_main.flac
-      output: /masters/disc1_02_atmos.wav
+# ── Engine ────────────────────────────────────────────────────────────────────
+engine:
+  mode: stem
 
-    - input:  /albums/disc2/01_reprise.wav
-      # no output → derived: /output/default/01_reprise.wav
+# ── Mixing ────────────────────────────────────────────────────────────────────
+mixing:
+  channel_layout: 7.1.4
+  stem_rebalance:
+    Vocals: +1.5          # global: push vocals forward on all tracks
 
-    - input:  /bonus/hidden_track.flac
-      output: /masters/bonus_hidden_atmos.wav
+# ── Format ────────────────────────────────────────────────────────────────────
+format:
+  type: adm-bwf
+  subtype: PCM_24
+  sample_rate: 48000
 
 # ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:
   loudness:
     normalize: true
-    target:  -18.0
-    max_tp:  -1.0
+    target: -18.0
+    max_tp: -1.0
+
+# ── Assets ────────────────────────────────────────────────────────────────────
+assets:
+  - input:  /albums/disc1/01_intro.flac
+    output: /masters/disc1_01_atmos.wav
+
+  - input:  /albums/disc1/02_main.flac
+    output: /masters/disc1_02_atmos.wav
+    # Local override: this track already has forward vocals — keep neutral
+    mixing:
+      stem_rebalance:
+        Vocals: +0.0
+
+  - input:  /albums/disc1/03_ballad.flac
+    output: /masters/disc1_03_atmos.wav
+    # Local override: EQ for this intimate track
+    mastering:
+      eq:
+        profile: spatial-warm
+        strength: 0.6
+
+  - input:  /albums/disc2/01_reprise.flac
+    output: /masters/disc2_01_atmos.wav
+
+  - input:  /bonus/hidden_track.flac
+    output: /masters/bonus_hidden_atmos.wav
+    stem_cache_dir: /tmp/stems/bonus   # per-asset stem cache override

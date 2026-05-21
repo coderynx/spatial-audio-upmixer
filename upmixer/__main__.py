@@ -198,6 +198,69 @@ def _apply_resource_limits(cpu_priority: str) -> None:
         pass  # soft dep — skip silently
 
 
+def _run_manifest_assets(asset_jobs, meta, args, parser) -> None:
+    """Process all assets resolved from a manifest file.
+
+    Applies per-asset config deep-merged with CLI flag overrides.  In stem
+    mode the separator model is loaded once and reused across all assets.
+    """
+    from upmixer.manifest import apply_asset_job
+
+    if not asset_jobs:
+        parser.error("Manifest contains no assets to process.")
+
+    if meta:
+        parts = [p for p in (meta.name, meta.author) if p]
+        if parts:
+            _log.info("Manifest: %s", " — ".join(parts))
+        if meta.description:
+            _log.info("  %s", meta.description)
+
+    first_engine = asset_jobs[0].engine
+    mode = args.mode or first_engine.get("mode", "realtime")
+    stem_model = args.stem_model or first_engine.get("stem_model", DEFAULT_MODEL)
+    stem_model_dir = args.stem_model_dir or first_engine.get("stem_model_dir", None)
+    n = len(asset_jobs)
+
+    def _build_cfg(job):
+        cfg = UpmixConfig()
+        apply_asset_job(cfg, job)
+        _apply_cli_flags(cfg, args, args.output_sample_rate is not None)
+        return cfg
+
+    if mode == "stem":
+        from upmixer.separation.stem_pipeline import StemUpmixPipeline
+        first_cfg = _build_cfg(asset_jobs[0])
+        with StemUpmixPipeline(
+            config=first_cfg,
+            model=stem_model,
+            model_dir=stem_model_dir,
+        ) as pipeline:
+            for i, job in enumerate(asset_jobs):
+                cfg = _build_cfg(job)
+                input_fmt = args.input_format or job.engine.get("input_format")
+                _log.info("[%d/%d] %s", i + 1, n, job.input)
+                pipeline._config = cfg  # reuse separator, update config per asset
+                result = pipeline.process_file(
+                    job.input, job.output,
+                    input_format_override=input_fmt,
+                )
+                if args.json:
+                    print(result.to_json())
+    else:
+        for i, job in enumerate(asset_jobs):
+            cfg = _build_cfg(job)
+            input_fmt = args.input_format or job.engine.get("input_format")
+            _log.info("[%d/%d] %s", i + 1, n, job.input)
+            pipeline_rt = UpmixPipeline(cfg)
+            result = pipeline_rt.process_file(
+                job.input, job.output,
+                input_format_override=input_fmt,
+            )
+            if args.json:
+                print(result.to_json())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -619,15 +682,19 @@ def main() -> None:
     # Track whether --output-sample-rate was explicitly given (vs. None default)
     sample_rate_set = args.output_sample_rate is not None
 
-    # ── 1. Load and apply manifest ────────────────────────────────────────────
-    manifest_data: dict = {}
-    manifest_job: dict = {}
+    # ── 1. Manifest-driven mode (unified assets schema) ───────────────────────
     if args.manifest is not None:
-        from upmixer.manifest import load_manifest, apply_manifest
-        manifest_data = load_manifest(args.manifest)
-        manifest_job = apply_manifest(config, manifest_data)
-        if not sample_rate_set and "output_sample_rate" in manifest_data:
-            sample_rate_set = True  # manifest set it; don't clobber with None
+        from upmixer.manifest import (
+            load_manifest, validate_manifest, parse_manifest, ManifestError,
+        )
+        try:
+            _raw = load_manifest(args.manifest)
+            validate_manifest(_raw)
+        except ManifestError as exc:
+            parser.error(str(exc))
+        _meta, _asset_jobs = parse_manifest(_raw)
+        _run_manifest_assets(_asset_jobs, _meta, args, parser)
+        return
 
     # ── 2. Apply CLI flags (override manifest) ────────────────────────────────
     _apply_cli_flags(config, args, sample_rate_set)
@@ -664,36 +731,32 @@ def main() -> None:
         print(f"EQ profile saved to: {save_path}")
         sys.exit(0)
 
-    # ── 4. Resolve mode and stem params ──────────────────────────────────────
-    mode = args.mode or manifest_job.get("mode", "realtime")
-    stem_model     = args.stem_model     or manifest_job.get("stem_model",     DEFAULT_MODEL)
-    stem_model_dir = args.stem_model_dir or manifest_job.get("stem_model_dir", None)
-    input_format   = args.input_format   or manifest_job.get("input_format",   None)
+    # ── 4. Resolve mode and stem params (CLI only; manifest path returns early) ─
+    mode = args.mode or "realtime"
+    stem_model     = args.stem_model     or DEFAULT_MODEL
+    stem_model_dir = args.stem_model_dir or None
+    input_format   = args.input_format   or None
 
     # ── 5. Detect batch vs single-file mode ───────────────────────────────────
-    batch_inputs  = args.inputs or manifest_job.get("batch_inputs")
-    batch_dir     = args.batch_dir or manifest_job.get("batch_dir")
-    output_dir    = args.output_dir or manifest_job.get("batch_output_dir")
-    batch_jobs_manifest = manifest_job.get("batch_jobs")
-    is_batch = bool(batch_inputs or batch_dir or batch_jobs_manifest)
+    batch_inputs = args.inputs
+    batch_dir    = args.batch_dir
+    output_dir   = args.output_dir
+    is_batch = bool(batch_inputs or batch_dir)
 
     if is_batch:
         # ── Batch mode ────────────────────────────────────────────────────────
         from upmixer.batch import BatchProcessor, resolve_batch_jobs
 
-        if not output_dir and not batch_jobs_manifest:
-            parser.error(
-                "Batch mode requires --output-dir. "
-                "Alternatively, set 'output' per job in the manifest batch.jobs list."
-            )
+        if not output_dir:
+            parser.error("Batch mode requires --output-dir.")
 
-        output_ext = ".adm.bwf" if config.output_type == "adm-bwf" else ".wav"
+        output_ext = ".wav"  # ADM-BWF uses WAV container; always .wav
         jobs = resolve_batch_jobs(
             input_paths=None,
             batch_dir=batch_dir,
             output_dir=output_dir,
             output_ext=output_ext,
-            explicit_jobs=batch_jobs_manifest,
+            explicit_jobs=None,
             batch_inputs=batch_inputs,
         )
         if not jobs:
@@ -705,7 +768,7 @@ def main() -> None:
             else:
                 parser.error("No input files found for batch processing.")
 
-        workers = args.batch_workers or manifest_job.get("batch_workers") or 1
+        workers = args.batch_workers or 1
         processor = BatchProcessor(
             config=config,
             mode=mode,
@@ -731,14 +794,14 @@ def main() -> None:
 
     else:
         # ── Single-file mode (unchanged behaviour) ────────────────────────────
-        input_path  = args.input  or manifest_job.get("input")
-        output_path = args.output or manifest_job.get("output")
+        input_path  = args.input
+        output_path = args.output
 
         if not input_path:
             parser.error(
                 "input file is required. "
-                "Pass it as a positional argument, set 'input' in the manifest, "
-                "or use --inputs / --batch-dir for batch processing."
+                "Pass it as a positional argument or use --inputs / --batch-dir "
+                "for batch processing.  For manifest-driven jobs use --manifest."
             )
         if not output_path:
             parser.error(

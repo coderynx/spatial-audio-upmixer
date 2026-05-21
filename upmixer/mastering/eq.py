@@ -44,6 +44,16 @@ from scipy.signal import fftconvolve, firwin2, minimum_phase
 
 _log = logging.getLogger("upmixer")
 
+# Register this module's manifest keys so parse_manifest() can expand them.
+from upmixer.manifest import register_block_keys as _rbk
+_rbk("mastering", {
+    "eq": {
+        "profile":  ("config", "mastering_eq_profile"),
+        "strength": ("config", "mastering_eq_strength"),
+    },
+})
+del _rbk
+
 # ── Per-channel FIR cache (EQ-match mode) ────────────────────────────────────
 # Key: (breakpoints_hash, sample_rate, n_taps) → minimum-phase IR
 _PC_FIR_CACHE: dict[tuple[str, int, int], np.ndarray] = {}

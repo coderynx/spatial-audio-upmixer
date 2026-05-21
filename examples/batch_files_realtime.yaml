@@ -1,35 +1,50 @@
 # Batch — cherry-picked files from different directories, realtime mode
 #
 # Process specific files regardless of where they live.
-# Realtime mode is fast; use workers > 1 to parallelize on multi-core systems.
+# Realtime mode is fast; no stem separation dependency required.
 #
 # Usage:
 #   upmixer --manifest batch_files_realtime.yaml
 
-mode:    realtime
-format:  5.1
+version: "1.0"
 
-# ── Output format — Dolby Atmos Blu-ray (TrueHD/MLP) ─────────────────────────
-# Feed output WAV to a Dolby Media Encoder (DME) for TrueHD encoding.
+metadata:
+  name: "Realtime Batch — 5.1"
+  description: "Multi-source batch upmix to 5.1, Blu-ray loudness convention"
+
+# ── Engine ────────────────────────────────────────────────────────────────────
+engine:
+  mode: realtime
+
+# ── Mixing ────────────────────────────────────────────────────────────────────
+mixing:
+  channel_layout: 5.1
+
+# ── Output format — multichannel WAV for TrueHD encoding ─────────────────────
+# Feed output to a Dolby Media Encoder (DME) for TrueHD encoding.
 # Loudness convention: -27 LKFS dialog-gated (BS.1770-1), ±2 LU tolerance.
-output:
-  type: wav             # multichannel WAV → TrueHD encoder
-  subtype: PCM_24       # 24-bit LPCM
-  sample_rate: 48000    # 48 kHz
-
-# ── Batch input/output ────────────────────────────────────────────────────────
-batch:
-  output_dir: /path/to/output/
-  workers: 4                            # parallel processing (realtime mode only)
-  inputs:
-    - /albums/artist1/track01.wav
-    - /archive/remasters/bonus_track.flac
-    - /downloads/collab_feat.wav
-    - /projects/mix_session/final_stereo.wav
+format:
+  type: wav
+  subtype: PCM_24
+  sample_rate: 48000
 
 # ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:
   loudness:
     normalize: true
-    target:  -27.0
-    max_tp:  -2.0
+    target: -27.0         # Blu-ray: -27 LKFS dialog-gated (BS.1770-1)
+    max_tp: -2.0
+
+# ── Assets ────────────────────────────────────────────────────────────────────
+assets:
+  - input:  /albums/artist1/track01.wav
+    output: /path/to/output/track01_51.wav
+
+  - input:  /archive/remasters/bonus_track.flac
+    output: /path/to/output/bonus_track_51.wav
+
+  - input:  /downloads/collab_feat.wav
+    output: /path/to/output/collab_feat_51.wav
+
+  - input:  /projects/mix_session/final_stereo.wav
+    output: /path/to/output/final_stereo_51.wav

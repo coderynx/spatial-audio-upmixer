@@ -1,6 +1,5 @@
-# Batch album upmix — stem mode (7.1.4 Atmos Music)
+# Batch album upmix — stem mode, 7.1.4 Atmos Music
 #
-# Processes all WAV/FLAC files in a directory.
 # Stem separation model is loaded ONCE and reused across all tracks —
 # dramatically faster than running upmixer per file.
 #
@@ -9,26 +8,27 @@
 # Usage:
 #   upmixer --manifest batch_album_stem.yaml
 
-mode:    stem
-format:  7.1.4
+version: "1.0"
+
+metadata:
+  name: "Album Batch — Stem 7.1.4"
+  description: "Full album upmix with stem separation, reusing model across tracks"
+
+# ── Engine ────────────────────────────────────────────────────────────────────
+engine:
+  mode: stem
+  stem_model: BS-Roformer-SW.ckpt   # high-quality 4-stem RoFormer model
+
+# ── Mixing ────────────────────────────────────────────────────────────────────
+mixing:
+  channel_layout: 7.1.4
+  stem_cache_dir: /tmp/upmixer_stems    # cache stems — avoids re-separation on reruns
 
 # ── Output format — Dolby Atmos Music Master Delivery Specification v2022.07 ──
-output:
-  type: adm-bwf         # ITU-R BS.2076-2 ADM-BWF container
-  subtype: PCM_24       # 24-bit LPCM
-  sample_rate: 48000    # 48 kHz
-
-# ── Batch input/output ────────────────────────────────────────────────────────
-batch:
-  input_dir:  /path/to/album/           # scan for *.wav and *.flac
-  output_dir: /path/to/output/          # output filenames match input stems
-  workers: 1                            # stem mode is always sequential
-
-# ── Stem separation ───────────────────────────────────────────────────────────
-stem_model: BS-Roformer-SW.ckpt         # high-quality 4-stem Roformer model
-
-mixing:
-  stem_cache_dir: /tmp/upmixer_stems    # cache stems — avoids re-separation on reruns
+format:
+  type: adm-bwf           # ITU-R BS.2076-2 ADM-BWF container (WAV)
+  subtype: PCM_24
+  sample_rate: 48000
 
 # ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:
@@ -39,5 +39,19 @@ mastering:
     profile: transparent
   loudness:
     normalize: true
-    target:  -18.0
-    max_tp:  -1.0
+    target: -18.0
+    max_tp: -1.0
+
+# ── Assets ────────────────────────────────────────────────────────────────────
+assets:
+  - input:  /path/to/album/01_intro.flac
+    output: /path/to/output/01_intro.wav
+
+  - input:  /path/to/album/02_main.flac
+    output: /path/to/output/02_main.wav
+
+  - input:  /path/to/album/03_bridge.flac
+    output: /path/to/output/03_bridge.wav
+
+  - input:  /path/to/album/04_outro.flac
+    output: /path/to/output/04_outro.wav

@@ -43,6 +43,20 @@ from scipy.signal import lfilter
 
 _log = logging.getLogger("upmixer")
 
+from upmixer.manifest import register_block_keys as _rbk
+_rbk("mastering", {
+    "compressor": {
+        "profile":      ("config", "mastering_comp_profile"),
+        "threshold_db": ("config", "mastering_comp_threshold_db"),
+        "ratio":        ("config", "mastering_comp_ratio"),
+        "attack_ms":    ("config", "mastering_comp_attack_ms"),
+        "release_ms":   ("config", "mastering_comp_release_ms"),
+        "knee_db":      ("config", "mastering_comp_knee_db"),
+        "makeup_db":    ("config", "mastering_comp_makeup_db"),
+    },
+})
+del _rbk
+
 # ── Predefined compressor profiles ───────────────────────────────────────────
 
 COMP_PROFILES: dict[str, dict[str, float]] = {

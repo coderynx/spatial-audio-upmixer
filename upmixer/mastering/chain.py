@@ -52,6 +52,16 @@ from upmixer.utils import soft_limit
 
 _log = logging.getLogger("upmixer")
 
+from upmixer.manifest import register_block_keys as _rbk
+_rbk("mastering", {
+    "loudness": {
+        "normalize": ("config", "loudness_normalize"),
+        "target":    ("config", "loudness_target"),
+        "max_tp":    ("config", "loudness_max_tp"),
+    },
+})
+del _rbk
+
 
 @dataclass
 class MasteringResult:

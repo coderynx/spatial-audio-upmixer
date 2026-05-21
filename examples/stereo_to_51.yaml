@@ -5,41 +5,36 @@
 #
 # Usage:
 #   upmixer --manifest stereo_to_51.yaml
-# Or override input/output from the CLI:
-#   upmixer --manifest stereo_to_51.yaml my_track.flac my_output.wav
 
-input:  stereo.wav
-output: surround_51.wav
+version: "1.0"
 
-format: 5.1
-mode:   realtime
+# ── Engine ────────────────────────────────────────────────────────────────────
+engine:
+  mode: realtime
 
-# ── Routing ────────────────────────────────────────────────────────────────────
+# ── Mixing ────────────────────────────────────────────────────────────────────
+mixing:
+  channel_layout: 5.1
+
+# ── Routing ───────────────────────────────────────────────────────────────────
 routing:
   center_gain:   0.85   # center channel (lead vocals / dialog)
   surround_gain: 0.60   # side surrounds
   lfe_gain:      0.50   # LFE sub channel
   lfe_cutoff:    120    # LFE low-pass cutoff in Hz
 
-# ── Mastering ──────────────────────────────────────────────────────────────────
+# ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:
-  # Preset EQ — spatial-warm adds body to streaming-mastered stereo sources
   eq:
-    profile: spatial-warm
+    profile: spatial-warm   # adds body to streaming-mastered stereo sources
     strength: 0.7
-
   # EQ Match — independent reference-based spectral matching
-  # Can run together with eq above.
   # eq_match:
   #   reference: reference_51.wav
   #   strength: 0.5
-
-  # Bus compression — none by default for realtime mode (preserve dynamics)
-  # Uncomment to add light glue:
+  # Bus compression — omitted by default for realtime (preserve dynamics)
   # compressor:
   #   profile: transparent
-
-  # Loudness normalization
   loudness:
     normalize: true
     target: -18.0
@@ -49,3 +44,8 @@ mastering:
 # processing:
 #   preview: true
 #   preview_duration: 30.0
+
+# ── Assets ────────────────────────────────────────────────────────────────────
+assets:
+  - input:  stereo.wav
+    output: surround_51.wav

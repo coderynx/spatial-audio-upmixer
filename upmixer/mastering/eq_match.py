@@ -56,6 +56,18 @@ from scipy.signal import butter, sosfilt, welch
 
 _log = logging.getLogger("upmixer")
 
+from upmixer.manifest import register_block_keys as _rbk
+_rbk("mastering", {
+    "eq_match": {
+        "reference": ("config", "mastering_match_ref_path"),
+        "strength":  ("config", "mastering_match_ref_strength"),
+        "spectrum":  ("config", "mastering_match_ref_spectrum"),
+        "rms":       ("config", "mastering_match_ref_rms"),
+        "max_db":    ("config", "mastering_match_ref_max_db"),
+    },
+})
+del _rbk
+
 # ── Channel proxy table ───────────────────────────────────────────────────────
 # Maps (n_reference_channels) → {target_channel: reference_index | proxy_name}
 # Special proxy names:

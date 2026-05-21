@@ -463,57 +463,68 @@ class TestBatchProcessorRealtime:
         assert len(calls) >= 2
 
 
-# ── Manifest batch: section ───────────────────────────────────────────────────
+# ── Manifest assets-based batch ───────────────────────────────────────────────
 
 class TestManifestBatch:
-    def test_batch_section_expands_to_flat_keys(self):
-        from upmixer.manifest import _expand_nested_sections
+    """Verify that the new assets-based schema produces correct batch jobs."""
+
+    def test_multi_asset_manifest_produces_multiple_jobs(self):
+        from upmixer.manifest import parse_manifest, validate_manifest
 
         data = {
-            "mode": "stem",
-            "batch": {
-                "input_dir": "/albums/",
-                "output_dir": "/out/",
-                "workers": 2,
-            },
+            "version": "1.0.0",
+            "engine": {"mode": "stem"},
+            "assets": [
+                {"input": "/albums/a.wav", "output": "/out/a.wav"},
+                {"input": "/albums/b.wav", "output": "/out/b.wav"},
+                {"input": "/albums/c.flac", "output": "/out/c.wav"},
+            ],
         }
-        expanded = _expand_nested_sections(data)
-        assert expanded["batch_dir"] == "/albums/"
-        assert expanded["batch_output_dir"] == "/out/"
-        assert expanded["batch_workers"] == 2
-        assert "batch" not in expanded
+        validate_manifest(data)
+        _, jobs = parse_manifest(data)
+        assert len(jobs) == 3
+        assert jobs[0].input == "/albums/a.wav"
+        assert jobs[2].output == "/out/c.wav"
 
-    def test_batch_inputs_list_preserved(self):
-        from upmixer.manifest import _expand_nested_sections
+    def test_engine_mode_propagated_to_all_assets(self):
+        from upmixer.manifest import parse_manifest
 
         data = {
-            "batch": {
-                "inputs": ["/dir1/a.wav", "/dir2/b.flac"],
-                "output_dir": "/out/",
-            }
+            "version": "1.0",
+            "engine": {"mode": "realtime"},
+            "assets": [
+                {"input": "a.wav", "output": "a_out.wav"},
+                {"input": "b.wav", "output": "b_out.wav"},
+            ],
         }
-        expanded = _expand_nested_sections(data)
-        assert expanded["batch_inputs"] == ["/dir1/a.wav", "/dir2/b.flac"]
+        _, jobs = parse_manifest(data)
+        assert all(j.engine.get("mode") == "realtime" for j in jobs)
 
-    def test_batch_jobs_list_preserved(self):
-        from upmixer.manifest import _expand_nested_sections
+    def test_global_config_inherited_by_all_assets(self):
+        from upmixer.manifest import parse_manifest
 
-        jobs = [{"input": "/a.wav"}, {"input": "/b.wav", "output": "/out/b.wav"}]
-        data = {"batch": {"jobs": jobs, "output_dir": "/out/"}}
-        expanded = _expand_nested_sections(data)
-        assert expanded["batch_jobs"] == jobs
-
-    def test_apply_manifest_returns_batch_params(self):
-        from upmixer.manifest import apply_manifest
-
-        config = UpmixConfig()
-        manifest = {
-            "mode": "stem",
-            "batch_dir": "/albums/",
-            "batch_output_dir": "/out/",
-            "batch_workers": 1,
+        data = {
+            "version": "1.0",
+            "mastering": {"loudness": {"target": -18.0}},
+            "assets": [
+                {"input": "a.wav", "output": "a.wav"},
+                {"input": "b.wav", "output": "b.wav"},
+            ],
         }
-        job_params = apply_manifest(config, manifest)
-        assert job_params["batch_dir"] == "/albums/"
-        assert job_params["batch_output_dir"] == "/out/"
-        assert job_params["batch_workers"] == 1
+        _, jobs = parse_manifest(data)
+        for j in jobs:
+            assert j.config.get("loudness_target") == pytest.approx(-18.0)
+
+    def test_per_asset_output_paths(self):
+        from upmixer.manifest import parse_manifest
+
+        data = {
+            "version": "1.0",
+            "assets": [
+                {"input": "x.flac", "output": "/masters/x.wav"},
+                {"input": "y.flac", "output": "/masters/y.wav"},
+            ],
+        }
+        _, jobs = parse_manifest(data)
+        assert jobs[0].output == "/masters/x.wav"
+        assert jobs[1].output == "/masters/y.wav"

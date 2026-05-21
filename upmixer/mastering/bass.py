@@ -35,6 +35,19 @@ from scipy.signal import butter, sosfilt
 
 _log = logging.getLogger("upmixer")
 
+from upmixer.manifest import register_block_keys as _rbk
+_rbk("mastering", {
+    "bass": {
+        "profile":        ("config", "mastering_bass_profile"),
+        "sub_gain_db":    ("config", "mastering_bass_sub_gain_db"),
+        "mid_gain_db":    ("config", "mastering_bass_mid_gain_db"),
+        "mono_cutoff_hz": ("config", "mastering_bass_mono_cutoff_hz"),
+        "excite":         ("config", "mastering_bass_excite"),
+        "lfe_gain_db":    ("config", "mastering_bass_lfe_gain_db"),
+    },
+})
+del _rbk
+
 # ── Predefined bass profiles ──────────────────────────────────────────────────
 
 BASS_PROFILES: dict[str, dict] = {

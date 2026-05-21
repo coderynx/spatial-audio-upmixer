@@ -6,62 +6,44 @@
 # Usage:
 #   upmixer --manifest stem_714.yaml
 
-input:  stereo.flac
-output: stem_714.wav
+version: "1.0"
 
-mode:   stem
-format: 7.1.4
-
-# ── Stem separation model ──────────────────────────────────────────────────────
-# Default htdemucs_ft.yaml is a good 4-stem model (vocals/drums/bass/other).
-# Uncomment to use a higher-quality 6-stem or RoFormer model.
-# stem_model: htdemucs_6s.yaml
-# stem_model: BS-Roformer-Viperx-1297.ckpt
+# ── Engine ────────────────────────────────────────────────────────────────────
+engine:
+  mode: stem
+  # stem_model: htdemucs_6s.yaml               # 6-stem model
+  # stem_model: BS-Roformer-Viperx-1297.ckpt   # high-quality RoFormer
 
 # ── Mixing (stem mode only) ───────────────────────────────────────────────────
-# Applied after stem separation, before spatial routing.
-# Remove section or comment it out to use default content-aware routing.
 mixing:
+  channel_layout: 7.1.4
   # Stem rebalance: bring vocals forward, tighten bass
   # stem_rebalance:
   #   Vocals: +1.0
   #   Bass:   +0.5
   #   Drums:  -0.5
-
   # Per-stem EQ
   # stem_eq:
   #   Vocals: vocal-presence
   #   Bass:   bass-warmth
   #   Drums:  drums-punch
-
   # Stem cache — skip re-separation on repeated test runs
   # stem_cache_dir: /tmp/upmixer_stems
 
-# ── Mastering ──────────────────────────────────────────────────────────────────
+# ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:
-  # Preset EQ
   eq:
-    profile: spatial-present   # adds presence and definition to instruments
-    strength: 0.8              # slightly reduced for a subtler effect
-
+    profile: spatial-present  # adds presence and definition to instruments
+    strength: 0.8
   # EQ Match — independent reference-based spectral matching
-  # Can run together with eq above.
   # eq_match:
   #   reference: reference_714.wav
   #   strength: 0.5
-
-  # Bus compression / glue
   compressor:
-    profile: transparent       # very gentle — preserves studio dynamics
-    # threshold: -22.0
-    # ratio:     1.5
-
-  # Bass control (optional)
+    profile: transparent      # very gentle — preserves studio dynamics
   # bass:
   #   profile: enhance
-  #   lfe_gain: 1.0
-
-  # Loudness normalization
+  #   lfe_gain_db: 1.0
   loudness:
     normalize: true
     target: -18.0
@@ -72,3 +54,8 @@ mastering:
 # processing:
 #   preview: true
 #   preview_duration: 30.0
+
+# ── Assets ────────────────────────────────────────────────────────────────────
+assets:
+  - input:  stereo.flac
+    output: stem_714.wav

@@ -50,7 +50,7 @@ upmixer input.wav output.wav --format 7.1.4 --mode stem
 upmixer input.wav output.wav --format 7.1.4 --output-type adm-bwf
 
 # Dolby Atmos Music streaming delivery (explicit loudness + container)
-upmixer input.flac output.adm.bwf --format 7.1.4 --output-type adm-bwf \
+upmixer input.flac output.wav --format 7.1.4 --output-type adm-bwf \
         --output-sample-rate 48000 --loudness-target -18.0
 
 # Override auto-detected input format (8ch is ambiguous: 7.1 or 5.1.2)
@@ -75,7 +75,7 @@ All parameters can be defined in a YAML or JSON manifest file. This is the recom
 upmixer --manifest examples/atmos_music.yaml
 
 # Manifest provides defaults; CLI flags override them
-upmixer --manifest examples/atmos_music.yaml input_override.flac output_override.adm.bwf
+upmixer --manifest examples/atmos_music.yaml --preview
 
 # List all valid manifest keys and their types
 upmixer --manifest-keys
@@ -85,39 +85,62 @@ See the [`examples/`](examples/) directory for ready-to-use manifests.
 
 #### Manifest format (YAML)
 
-```yaml
-# examples/atmos_music.yaml
-input:   stereo.flac
-output:  atmos_music.adm.bwf
-mode:    stem
-format:  7.1.4
+Version format: `MAJOR.MINOR[.PATCH]` — e.g., `"1.0"` or `"1.0.0"`. ADM-BWF always uses `.wav` extension (WAV container).
 
-output:
-  type: adm-bwf
+```yaml
+version: "1.0"
+
+metadata:             # optional — informational only, not inherited by assets
+  name: "My Project"
+  author: "Jane Doe"
+
+engine:
+  mode: stem          # or realtime
+
+mixing:
+  channel_layout: 7.1.4
+
+format:               # output file format (separate from output path)
+  type: adm-bwf       # ITU-R BS.2076-2 ADM-BWF container (WAV)
   subtype: PCM_24
   sample_rate: 48000
 
 mastering:
   loudness:
     normalize: true
-    target:   -18.0
-    max_tp:   -1.0
+    target: -18.0
+    max_tp: -1.0
+
+assets:
+  - input:  stereo.flac
+    output: atmos_music.wav
+```
+
+Global blocks (`engine`, `mixing`, `mastering`, `routing`, `format`, `processing`) apply to all assets. Per-asset blocks deep-merge with globals — only specified keys are overridden.
+
+```yaml
+# Per-asset override example
+assets:
+  - input:  tracks/01_intro.flac
+    output: dist/01_intro.wav
+
+  - input:  tracks/02_main.flac
+    output: dist/02_main.wav
+    mixing:
+      stem_rebalance:
+        Vocals: +0.0   # override only vocals for this track
 ```
 
 #### Manifest format (JSON)
 
 ```json
 {
-  "input":              "stereo.flac",
-  "output":             "atmos_music.adm.bwf",
-  "mode":               "stem",
-  "format":             "7.1.4",
-  "output_type":        "adm-bwf",
-  "output_subtype":     "PCM_24",
-  "output_sample_rate": 48000,
-  "loudness_normalize": true,
-  "loudness_target":    -18.0,
-  "loudness_max_tp":    -1.0
+  "version": "1.0",
+  "engine": {"mode": "stem"},
+  "mixing": {"channel_layout": "7.1.4"},
+  "format": {"type": "adm-bwf", "subtype": "PCM_24", "sample_rate": 48000},
+  "mastering": {"loudness": {"normalize": true, "target": -18.0, "max_tp": -1.0}},
+  "assets": [{"input": "stereo.flac", "output": "atmos_music.wav"}]
 }
 ```
 
@@ -152,30 +175,35 @@ upmixer --batch-dir /albums/ --output-dir /out/ --json
 
 #### Batch manifest format
 
-The `batch:` section supports three input styles:
+Manifest batch uses the unified `assets` array — a single-file job is a one-item array:
 
 ```yaml
-# Style 1 — directory scan (*.wav + *.flac, sorted by name)
-batch:
-  input_dir:  /albums/ok-computer/
-  output_dir: /output/ok-computer-714/
-  workers: 1                          # stem mode: always 1; realtime: can be > 1
+version: "1.0"
 
-# Style 2 — explicit file list (files from any directories)
-batch:
-  output_dir: /output/
-  inputs:
-    - /albums/artist1/track1.wav
-    - /archive/remasters/track2.flac
-    - /downloads/bonus.wav
+engine:
+  mode: stem
 
-# Style 3 — fully explicit input/output pairs
-batch:
-  output_dir: /output/default/        # fallback when job omits output
-  jobs:
-    - {input: /dir1/track1.wav, output: /masters/track1_atmos.wav}
-    - {input: /dir2/track2.flac}      # output → /output/default/track2.wav
+mixing:
+  channel_layout: 7.1.4
+  stem_cache_dir: /tmp/upmixer_stems
+
+mastering:
+  loudness:
+    normalize: true
+    target: -18.0
+
+assets:
+  - input:  /albums/01_intro.flac
+    output: /output/01_intro.wav
+
+  - input:  /albums/02_main.flac
+    output: /output/02_main.wav
+    mixing:
+      stem_rebalance:
+        Vocals: +0.0   # per-asset override
 ```
+
+For directory scanning use the CLI: `upmixer --batch-dir /albums/ --output-dir /out/ --mode stem`.
 
 See [`examples/batch_album_stem.yaml`](examples/batch_album_stem.yaml), [`examples/batch_files_realtime.yaml`](examples/batch_files_realtime.yaml), and [`examples/batch_explicit_jobs.yaml`](examples/batch_explicit_jobs.yaml) for complete examples.
 
@@ -293,15 +321,18 @@ Manifest-driven API:
 
 ```python
 from upmixer.config import UpmixConfig
-from upmixer.manifest import load_manifest, apply_manifest
+from upmixer.manifest import load_manifest, validate_manifest, parse_manifest, apply_asset_job
 from upmixer.pipeline import UpmixPipeline
 
-config = UpmixConfig()
-manifest = load_manifest("job.yaml")
-job = apply_manifest(config, manifest)   # returns job-level params (input/output/mode/...)
+raw = load_manifest("job.yaml")
+validate_manifest(raw)                           # raises ManifestError on bad version/assets
+meta, asset_jobs = parse_manifest(raw)           # meta: ManifestMeta | None
 
-pipeline = UpmixPipeline(config)
-result = pipeline.process_file(job["input"], job["output"])
+for job in asset_jobs:
+    config = UpmixConfig()
+    apply_asset_job(config, job)                 # applies job.config + format params
+    pipeline = UpmixPipeline(config)
+    result = pipeline.process_file(job.input, job.output)
 ```
 
 `UpmixResult` fields:

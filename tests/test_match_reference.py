@@ -2,8 +2,10 @@
 import numpy as np
 import pytest
 
+import upmixer.mastering.eq_match  # noqa: F401 — triggers register_block_keys for mastering.eq_match
+
 from upmixer.config import UpmixConfig
-from upmixer.manifest import _MASTERING_SUBSECTIONS, _FIELD_MAP, apply_manifest
+from upmixer.manifest import _BLOCK_REGISTRY, _FIELD_MAP, apply_asset_job, AssetJob, parse_manifest
 from upmixer.mastering.match_reference import (
     ReferenceMatchProcessor,
     _CHANNEL_PROXIES,
@@ -414,48 +416,54 @@ class TestConfigFields:
 # ── manifest integration ──────────────────────────────────────────────────────
 
 class TestManifestMatchReferenceIntegration:
-    def test_match_reference_in_subsections(self):
-        assert "match_reference" in _MASTERING_SUBSECTIONS
-
-    def test_eq_match_removed_from_subsections(self):
-        assert "eq_match" not in _MASTERING_SUBSECTIONS
+    def test_eq_match_in_registry(self):
+        assert "eq_match" in _BLOCK_REGISTRY.get("mastering", {})
 
     def test_flat_key_path_applies(self):
+        job = AssetJob(input="x", output="y",
+                       config={"mastering_match_ref_path": "ref.wav"})
         cfg = UpmixConfig()
-        apply_manifest(cfg, {"mastering_match_ref_path": "ref.wav"})
+        apply_asset_job(cfg, job)
         assert cfg.mastering_match_ref_path == "ref.wav"
 
     def test_flat_key_strength_applies(self):
+        job = AssetJob(input="x", output="y",
+                       config={"mastering_match_ref_strength": 0.5})
         cfg = UpmixConfig()
-        apply_manifest(cfg, {"mastering_match_ref_strength": "0.5"})
+        apply_asset_job(cfg, job)
         assert cfg.mastering_match_ref_strength == 0.5
 
     def test_flat_key_match_spectrum_applies(self):
+        job = AssetJob(input="x", output="y",
+                       config={"mastering_match_ref_spectrum": False})
         cfg = UpmixConfig()
-        apply_manifest(cfg, {"mastering_match_ref_spectrum": False})
+        apply_asset_job(cfg, job)
         assert cfg.mastering_match_ref_spectrum is False
 
     def test_flat_key_match_rms_applies(self):
+        job = AssetJob(input="x", output="y",
+                       config={"mastering_match_ref_rms": False})
         cfg = UpmixConfig()
-        apply_manifest(cfg, {"mastering_match_ref_rms": False})
+        apply_asset_job(cfg, job)
         assert cfg.mastering_match_ref_rms is False
 
-    def test_nested_match_reference_section(self):
-        cfg = UpmixConfig()
-        apply_manifest(
-            cfg,
-            {
-                "mastering": {
-                    "match_reference": {
-                        "reference": "ref.wav",
-                        "strength": 0.5,
-                        "match_spectrum": True,
-                        "match_rms": False,
-                        "max_correction_db": 8.0,
-                    }
+    def test_nested_eq_match_section(self):
+        data = {
+            "version": "1.0.0",
+            "mastering": {
+                "eq_match": {
+                    "reference": "ref.wav",
+                    "strength": 0.5,
+                    "spectrum": True,
+                    "rms": False,
+                    "max_db": 8.0,
                 }
             },
-        )
+            "assets": [{"input": "a.flac", "output": "a.wav"}],
+        }
+        _, jobs = parse_manifest(data)
+        cfg = UpmixConfig()
+        apply_asset_job(cfg, jobs[0])
         assert cfg.mastering_match_ref_path == "ref.wav"
         assert cfg.mastering_match_ref_strength == 0.5
         assert cfg.mastering_match_ref_spectrum is True
