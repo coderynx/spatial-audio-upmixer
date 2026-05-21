@@ -25,7 +25,6 @@ _log = logging.getLogger("upmixer")
 from upmixer.config import UpmixConfig
 from upmixer.formats import INPUT_FORMAT_MAP
 from upmixer.pipeline import UpmixPipeline
-from upmixer.separation.separator import DEFAULT_MODEL
 
 _INPUT_FORMAT_CHOICES = sorted(INPUT_FORMAT_MAP.keys())
 _OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
@@ -156,6 +155,11 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
     # Mixing — stem cache
     if args.stem_cache_dir is not None:
         config.stem_cache_dir = args.stem_cache_dir
+    # Stem selection
+    if args.stems is not None:
+        from upmixer.separation.stem_plan import normalize_stems as _normalize
+        raw = [s.strip() for s in args.stems.split(",") if s.strip()]
+        config.stems = _normalize(raw)
 
 
 def _parse_key_value_pairs(s: str, value_type: type) -> dict:
@@ -224,7 +228,6 @@ def _run_manifest_assets(asset_jobs, meta, args, parser) -> None:
 
     first_engine = asset_jobs[0].engine
     mode = args.mode or first_engine.get("mode", "realtime")
-    stem_model = args.stem_model or first_engine.get("stem_model", DEFAULT_MODEL)
     stem_model_dir = args.stem_model_dir or first_engine.get("stem_model_dir", None)
     n = len(asset_jobs)
 
@@ -234,19 +237,31 @@ def _run_manifest_assets(asset_jobs, meta, args, parser) -> None:
         _apply_cli_flags(cfg, args, args.output_sample_rate is not None)
         return cfg
 
+    def _apply_per_asset_stems(cfg, job):
+        """Propagate per-asset stems from engine block into cfg.stems."""
+        from upmixer.separation.stem_plan import normalize_stems as _normalize
+        asset_stems = job.engine.get("stems")
+        if asset_stems:
+            cfg.stems = _normalize(asset_stems)
+        elif args.stems and cfg.stems is None:
+            # --stems CLI flag not yet applied (no per-asset override)
+            raw = [s.strip() for s in args.stems.split(",") if s.strip()]
+            cfg.stems = _normalize(raw)
+
     if mode == "stem":
         from upmixer.separation.stem_pipeline import StemUpmixPipeline
         first_cfg = _build_cfg(asset_jobs[0])
+        _apply_per_asset_stems(first_cfg, asset_jobs[0])
         with StemUpmixPipeline(
             config=first_cfg,
-            model=stem_model,
             model_dir=stem_model_dir,
         ) as pipeline:
             for i, job in enumerate(asset_jobs):
                 cfg = _build_cfg(job)
+                _apply_per_asset_stems(cfg, job)
                 input_fmt = args.input_format or job.engine.get("input_format")
                 _log.info("[%d/%d] %s", i + 1, n, job.input)
-                pipeline._config = cfg  # reuse separator, update config per asset
+                pipeline.config = cfg  # reuse separators, update config per asset
                 result = pipeline.process_file(
                     job.input, job.output,
                     input_format_override=input_fmt,
@@ -397,12 +412,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--stem-model",
+        "--stems",
         default=None,
-        metavar="MODEL",
+        metavar="STEM[,STEM...]",
         help=(
-            f"audio-separator model for stem mode (default: {DEFAULT_MODEL}). "
-            "Models are auto-downloaded on first use."
+            "Comma-separated list of stems to extract in stem mode. "
+            "Valid: vocals, bass, drums, guitar, piano, other, kick, snare, "
+            "hi-hat, ride, crash, crowd. "
+            "Default: vocals,bass,drums,guitar,piano,other. "
+            "Example: --stems vocals,kick,snare,crowd"
         ),
     )
     parser.add_argument(
@@ -703,7 +721,6 @@ def main() -> None:
 
     # ── 4. Resolve mode and stem params (CLI only; manifest path returns early) ─
     mode = args.mode or "realtime"
-    stem_model     = args.stem_model     or DEFAULT_MODEL
     stem_model_dir = args.stem_model_dir or None
     input_format   = args.input_format   or None
 
@@ -742,7 +759,6 @@ def main() -> None:
         processor = BatchProcessor(
             config=config,
             mode=mode,
-            stem_model=stem_model,
             stem_model_dir=stem_model_dir,
             workers=workers,
             progress_callback=lambda done, total, path: (
@@ -783,7 +799,6 @@ def main() -> None:
             from upmixer.separation.stem_pipeline import StemUpmixPipeline
             stem_pipeline = StemUpmixPipeline(
                 config=config,
-                model=stem_model,
                 model_dir=stem_model_dir,
             )
             result = stem_pipeline.process_file(

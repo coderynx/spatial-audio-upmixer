@@ -37,7 +37,6 @@ from typing import Callable
 
 from upmixer.config import UpmixConfig
 from upmixer.result import UpmixResult
-from upmixer.separation.separator import DEFAULT_MODEL
 
 _log = logging.getLogger("upmixer")
 
@@ -172,7 +171,6 @@ class BatchProcessor:
     Args:
         config: Per-file processing configuration.
         mode: "realtime" (STFT coherence) or "stem" (source separation).
-        stem_model: Model filename for stem mode.
         stem_model_dir: Override model cache directory.
         workers: Parallel workers for realtime mode (ignored in stem mode).
         progress_callback: Called as (done, total, current_input_path) before
@@ -183,14 +181,12 @@ class BatchProcessor:
         self,
         config: UpmixConfig,
         mode: str = "realtime",
-        stem_model: str = DEFAULT_MODEL,
         stem_model_dir: str | None = None,
         workers: int = 1,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> None:
         self._config = config
         self._mode = mode
-        self._stem_model = stem_model
         self._stem_model_dir = stem_model_dir
         self._workers = max(1, workers)
         self._progress = progress_callback
@@ -232,7 +228,6 @@ class BatchProcessor:
         result = BatchResult()
         with StemUpmixPipeline(
             config=effective_config,
-            model=self._stem_model,
             model_dir=self._stem_model_dir,
         ) as pipeline:
             for done, job in enumerate(jobs):

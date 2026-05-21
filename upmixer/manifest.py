@@ -113,7 +113,7 @@ class AssetJob:
 
     ``config`` contains flat UpmixConfig-ready keys after deep-merging global
     and asset-level blocks.  ``engine`` holds job-level params that are not
-    part of UpmixConfig (mode, stem_model, stem_model_dir, input_format).
+    part of UpmixConfig (mode, stem_model_dir, input_format, stems).
     """
 
     input: str
@@ -135,10 +135,11 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
     # ── engine: ───────────────────────────────────────────────────────────────
     "engine": {
         "mode":           ("engine", "mode"),
-        "stem_model":     ("engine", "stem_model"),
+        # stem_model removed — model selection is now automatic based on stems
         "stem_model_dir": ("engine", "stem_model_dir"),
         "input_format":   ("engine", "input_format"),
         "stem_cache_dir": ("config", "stem_cache_dir"),
+        "stems":          ("engine", "stems"),  # list[str] — normalized at runtime
     },
 
     # ── format: ───────────────────────────────────────────────────────────────
@@ -156,6 +157,7 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "channel_layout": ("config", "format"),
         "stem_rebalance": ("config", "stem_rebalance"),
         "stem_eq":        ("config", "stem_eq_profiles"),
+        "stems":          ("engine", "stems"),  # per-asset override of engine.stems
     },
 
     # ── processing: ───────────────────────────────────────────────────────────
@@ -277,10 +279,11 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "mastering_match_ref_spectrum": ("mastering_match_ref_spectrum",  bool),
     "mastering_match_ref_rms":      ("mastering_match_ref_rms",       bool),
     "mastering_match_ref_max_db":   ("mastering_match_ref_max_db",    float),
-    # Mixing — stem rebalance / EQ / cache
+    # Mixing — stem rebalance / EQ / cache / selection
     "stem_rebalance":              ("stem_rebalance",   dict),
     "stem_eq_profiles":            ("stem_eq_profiles", dict),
     "stem_cache_dir":              ("stem_cache_dir",   str),
+    "stems":                       ("stems",            list),
     # Downmix
     "downmix_output":              ("downmix_output_path",    str),
     "downmix_surround_coeff":      ("surround_downmix_coeff", float),
@@ -381,6 +384,49 @@ def validate_manifest(data: dict) -> None:
             raise ManifestError(
                 f"assets[{i}] needs 'input'+'output' or 'input_dir'+'output_dir'."
             )
+
+    # Deprecation: stem_model no longer supported
+    if isinstance(data.get("engine"), dict) and "stem_model" in data["engine"]:
+        import warnings
+        warnings.warn(
+            "'engine.stem_model' is no longer supported and will be ignored. "
+            "Model selection is now automatic based on the 'stems' list.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    # Validate stems lists wherever they appear
+    _VALID_STEM_NAMES = {
+        "vocals", "bass", "drums", "guitar", "piano", "other",
+        "kick", "snare", "hi-hat", "ride", "crash", "crowd",
+        # canonical title-case also accepted
+        "Vocals", "Bass", "Drums", "Guitar", "Piano", "Other",
+        "Kick", "Snare", "Hi-Hat", "Ride", "Crash", "Crowd",
+    }
+    _stems_to_check = [
+        data.get("engine", {}).get("stems") if isinstance(data.get("engine"), dict) else None,
+        data.get("mixing", {}).get("stems") if isinstance(data.get("mixing"), dict) else None,
+    ]
+    for asset in assets:
+        if isinstance(asset.get("engine"), dict):
+            _stems_to_check.append(asset["engine"].get("stems"))
+        if isinstance(asset.get("mixing"), dict):
+            _stems_to_check.append(asset["mixing"].get("stems"))
+    for stem_list in _stems_to_check:
+        if stem_list is None:
+            continue
+        if not isinstance(stem_list, list):
+            raise ManifestError(
+                f"'stems' must be a list of stem name strings, "
+                f"got {type(stem_list).__name__}."
+            )
+        for s in stem_list:
+            if s not in _VALID_STEM_NAMES:
+                raise ManifestError(
+                    f"Unknown stem name '{s}'. "
+                    f"Valid names: vocals, bass, drums, guitar, piano, other, "
+                    f"kick, snare, hi-hat, ride, crash, crowd."
+                )
 
 
 # ── Parsing ────────────────────────────────────────────────────────────────────
@@ -562,6 +608,6 @@ def list_manifest_keys() -> dict[str, str]:
     out: dict[str, str] = {}
     for mk, (ca, t) in sorted(_FIELD_MAP.items()):
         out[mk] = f"{ca}  ({t.__name__})"
-    for key in ("mode", "stem_model", "stem_model_dir", "input_format"):
+    for key in ("mode", "stem_model_dir", "input_format", "stems"):
         out[key] = "engine parameter"
     return out

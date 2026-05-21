@@ -664,7 +664,7 @@ class TestListManifestKeys:
 
     def test_engine_params_present(self):
         keys = list_manifest_keys()
-        for k in ("mode", "stem_model", "stem_model_dir", "input_format"):
+        for k in ("mode", "stems", "stem_model_dir", "input_format"):
             assert k in keys
 
     def test_mastering_flat_keys_present(self):

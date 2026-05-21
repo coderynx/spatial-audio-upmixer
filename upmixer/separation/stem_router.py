@@ -134,6 +134,16 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         # Backing vocals: widened front + height (chorus expansion)
         "Backing Vocals": {"FL": 0.48, "FR": 0.48,
                            "TFL": 0.25, "TFR": 0.25},
+        # DrumSep sub-stems (direct/dry content → front-dominant)
+        "Kick":           {"C": 0.35, "FL": 0.55, "FR": 0.55, "LFE": 0.90},
+        "Snare":          {"C": 0.40, "FL": 0.62, "FR": 0.62,
+                           "TFL": 0.10, "TFR": 0.10},
+        "Toms":           {"C": 0.15, "FL": 0.58, "FR": 0.58, "LFE": 0.22},
+        "Hi-Hat":         {"FL": 0.40, "FR": 0.40, "TFL": 0.50, "TFR": 0.50},
+        "Ride":           {"FL": 0.35, "FR": 0.35, "TFL": 0.55, "TFR": 0.55},
+        "Crash":          {"FL": 0.32, "FR": 0.32, "TFL": 0.60, "TFR": 0.60},
+        # Crowd: front zone has minimal crowd — push to room/sides
+        "Crowd":          {"SL": 0.30, "SR": 0.30, "TFL": 0.10, "TFR": 0.10},
     },
     # surround: room/reverb tails, wide ambience → surrounds + heights, no front injection
     "surround": {
@@ -153,6 +163,17 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Lead Vocals":    {"SL": 0.10, "SR": 0.10},
         "Backing Vocals": {"SL": 0.38, "SR": 0.38,
                            "TFL": 0.18, "TFR": 0.18, "TBL": 0.22, "TBR": 0.22},
+        # DrumSep sub-stems (room/reverb component)
+        "Kick":           {"LFE": 0.25},
+        "Snare":          {"SL": 0.30, "SR": 0.30},
+        "Toms":           {"SL": 0.40, "SR": 0.40},
+        "Hi-Hat":         {"SL": 0.22, "SR": 0.22,
+                           "TFL": 0.28, "TFR": 0.28, "TBL": 0.18, "TBR": 0.18},
+        "Ride":           {"SL": 0.18, "SR": 0.18, "TBL": 0.22, "TBR": 0.22},
+        "Crash":          {"SL": 0.28, "SR": 0.28, "TBL": 0.30, "TBR": 0.30},
+        # Crowd: surround zone is the primary home for audience noise (kept low)
+        "Crowd":          {"SL": 0.32, "SR": 0.32, "BL": 0.20, "BR": 0.20,
+                           "TBL": 0.18, "TBR": 0.18},
     },
     # back: deep rear energy → BL/BR + rear heights
     "back": {
@@ -165,6 +186,15 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Instrumental":   {"BL": 0.42, "BR": 0.42, "TBL": 0.28, "TBR": 0.28},
         "Lead Vocals":    {"BL": 0.08, "BR": 0.08},
         "Backing Vocals": {"BL": 0.32, "BR": 0.32, "TBL": 0.25, "TBR": 0.25},
+        # DrumSep sub-stems (deep rear room)
+        "Kick":           {"LFE": 0.18},
+        "Snare":          {"BL": 0.20, "BR": 0.20},
+        "Toms":           {"BL": 0.35, "BR": 0.35},
+        "Hi-Hat":         {"TBL": 0.42, "TBR": 0.42},
+        "Ride":           {"BL": 0.20, "BR": 0.20, "TBL": 0.40, "TBR": 0.40},
+        "Crash":          {"BL": 0.28, "BR": 0.28, "TBL": 0.48, "TBR": 0.48},
+        # Crowd: rear zone → diffuse behind listener (kept subdued)
+        "Crowd":          {"BL": 0.30, "BR": 0.30, "TBL": 0.22, "TBR": 0.22},
     },
     # height_front: overhead front energy → TFL/TFR primary (ambience, reverb, cymbals)
     "height_front": {
@@ -177,6 +207,15 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Instrumental":   {"TFL": 0.52, "TFR": 0.52, "TBL": 0.18, "TBR": 0.18},
         "Lead Vocals":    {"TFL": 0.22, "TFR": 0.22},
         "Backing Vocals": {"TFL": 0.50, "TFR": 0.50},  # chorus expansion overhead
+        # DrumSep sub-stems (overhead/height content)
+        "Kick":           {},
+        "Snare":          {"TFL": 0.15, "TFR": 0.15},
+        "Toms":           {"TFL": 0.22, "TFR": 0.22},
+        "Hi-Hat":         {"TFL": 0.72, "TFR": 0.72},
+        "Ride":           {"TFL": 0.68, "TFR": 0.68},
+        "Crash":          {"TFL": 0.80, "TFR": 0.80, "TBL": 0.25, "TBR": 0.25},
+        # Crowd: subtle front overhead diffusion
+        "Crowd":          {"TFL": 0.20, "TFR": 0.20, "TBL": 0.12, "TBR": 0.12},
     },
     # height_back: rear overhead energy → TBL/TBR primary
     "height_back": {
@@ -189,6 +228,15 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Instrumental":   {"TBL": 0.58, "TBR": 0.58},
         "Lead Vocals":    {"TBL": 0.10, "TBR": 0.10},
         "Backing Vocals": {"TBL": 0.50, "TBR": 0.50},
+        # DrumSep sub-stems (rear overhead content)
+        "Kick":           {},
+        "Snare":          {"TBL": 0.12, "TBR": 0.12},
+        "Toms":           {"TBL": 0.18, "TBR": 0.18},
+        "Hi-Hat":         {"TBL": 0.52, "TBR": 0.52},
+        "Ride":           {"TBL": 0.62, "TBR": 0.62},
+        "Crash":          {"TBL": 0.75, "TBR": 0.75},
+        # Crowd: rear height diffusion (subdued)
+        "Crowd":          {"TBL": 0.28, "TBR": 0.28},
     },
 }
 
@@ -300,6 +348,73 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "TFR": 0.30,
         "TBL": 0.12,
         "TBR": 0.12,
+    },
+    # ── DrumSep sub-stems ──────────────────────────────────────────────────────
+    # Kick: sub-bass punch in front + strong LFE send
+    "Kick": {
+        "C":   0.30,
+        "FL":  0.55,
+        "FR":  0.55,
+        "LFE": 0.85,
+    },
+    # Snare: centre-anchored crack + front transient
+    "Snare": {
+        "C":   0.35,
+        "FL":  0.60,
+        "FR":  0.60,
+        "TFL": 0.08,   # subtle overhead snap
+        "TFR": 0.08,
+    },
+    # Toms: front-focused with natural room spill
+    "Toms": {
+        "C":   0.12,
+        "FL":  0.62,
+        "FR":  0.62,
+        "SL":  0.15,
+        "SR":  0.15,
+        "LFE": 0.20,
+    },
+    # Hi-Hat: strong overhead height + front body
+    "Hi-Hat": {
+        "FL":  0.42,
+        "FR":  0.42,
+        "TFL": 0.55,
+        "TFR": 0.55,
+        "TBL": 0.10,
+        "TBR": 0.10,
+    },
+    # Ride: height-dominant bright overhead
+    "Ride": {
+        "FL":  0.38,
+        "FR":  0.38,
+        "TFL": 0.60,
+        "TFR": 0.60,
+    },
+    # Crash: wide impact burst across front + heights
+    "Crash": {
+        "FL":  0.35,
+        "FR":  0.35,
+        "SL":  0.20,
+        "SR":  0.20,
+        "TFL": 0.65,
+        "TFR": 0.65,
+        "TBL": 0.12,
+        "TBR": 0.12,
+    },
+    # ── Crowd pre-isolation stem ───────────────────────────────────────────────
+    # Crowd: ambient audience noise → immersive surround envelope.
+    # Gains deliberately conservative (~half of instrument stems) so crowd
+    # stays clearly in the background.  Surround/rear placement creates the
+    # live-venue atmosphere without competing with the instruments.
+    "Crowd": {
+        "SL":  0.28,
+        "SR":  0.28,
+        "BL":  0.20,
+        "BR":  0.20,
+        "TBL": 0.15,
+        "TBR": 0.15,
+        "TFL": 0.06,
+        "TFR": 0.06,
     },
 }
 

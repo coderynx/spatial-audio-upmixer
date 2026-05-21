@@ -221,6 +221,7 @@ class TestSeparatorReuse:
     def test_separator_created_once_for_same_sr(self, two_wavs, tmp_path):
         """Model should be instantiated exactly once when sample rates match."""
         from upmixer.separation.stem_pipeline import StemUpmixPipeline
+        from upmixer.separation.stem_plan import MODEL_PRIMARY
 
         a, b = two_wavs
         out_dir = tmp_path / "out"
@@ -241,9 +242,9 @@ class TestSeparatorReuse:
             counting_init,
         ):
             pipeline = StemUpmixPipeline(UpmixConfig())
-            # Trigger separator creation for the same sample rate twice
-            pipeline._get_or_create_separator(48000)
-            pipeline._get_or_create_separator(48000)
+            # Trigger separator creation for same model + sample rate twice
+            pipeline._get_or_create_separator(MODEL_PRIMARY, 48000)
+            pipeline._get_or_create_separator(MODEL_PRIMARY, 48000)
             pipeline.close()
 
         assert init_call_count == 1
@@ -251,6 +252,7 @@ class TestSeparatorReuse:
     def test_separator_recreated_on_sr_change(self, tmp_path):
         """Changing sample rate between files must reload the model."""
         from upmixer.separation.stem_pipeline import StemUpmixPipeline
+        from upmixer.separation.stem_plan import MODEL_PRIMARY
 
         init_call_count = 0
         original_init = __import__(
@@ -267,21 +269,22 @@ class TestSeparatorReuse:
             counting_init,
         ):
             pipeline = StemUpmixPipeline(UpmixConfig())
-            pipeline._get_or_create_separator(44100)
-            pipeline._get_or_create_separator(48000)
+            pipeline._get_or_create_separator(MODEL_PRIMARY, 44100)
+            pipeline._get_or_create_separator(MODEL_PRIMARY, 48000)
             pipeline.close()
 
         assert init_call_count == 2
 
     def test_pipeline_context_manager_closes(self, tmp_path):
-        """__exit__ must call close() and nullify the separator."""
+        """__exit__ must call close() and clear all separators."""
         from upmixer.separation.stem_pipeline import StemUpmixPipeline
+        from upmixer.separation.stem_plan import MODEL_PRIMARY
 
         with StemUpmixPipeline(UpmixConfig()) as p:
-            p._get_or_create_separator(48000)
-            assert p._separator is not None
+            p._get_or_create_separator(MODEL_PRIMARY, 48000)
+            assert p._separators  # non-empty dict
 
-        assert p._separator is None
+        assert p._separators == {}
         assert p._separator_sr is None
 
 

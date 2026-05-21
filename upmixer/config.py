@@ -153,10 +153,17 @@ class UpmixConfig:
 
     # ── Mixing: stem separation cache ─────────────────────────────────────────
     # Directory for caching separated stems to disk.  On subsequent runs with
-    # the same input file (path + mtime), model, and sample rate the cached
+    # the same input file (path + mtime), stems list, and sample rate the cached
     # stems are loaded directly, skipping the (slow) separation step.
     # None = caching disabled.
     stem_cache_dir: str | None = None
+
+    # ── Mixing: requested output stems (stem pipeline only) ───────────────────
+    # Canonical title-case stem names to extract.  None = default 6-stem set
+    # [Vocals, Bass, Drums, Guitar, Piano, Other].
+    # Set via manifest engine.stems / mixing.stems or --stems CLI flag.
+    # normalize_stems() in stem_plan.py is applied before this is consumed.
+    stems: list[str] | None = None
 
     def resolve_fft_params(self, actual_sample_rate: int) -> tuple[int, int]:
         """Returns (fft_size, hop_size) after applying sample rate adaptation."""

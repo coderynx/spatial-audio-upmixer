@@ -48,7 +48,13 @@ from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
 from upmixer.io.writer import AudioWriter
 from upmixer.result import UpmixResult
-from upmixer.separation.separator import StemSeparator, DEFAULT_MODEL
+from upmixer.separation.separator import StemSeparator
+from upmixer.separation.stem_plan import (
+    DEFAULT_STEMS,
+    SeparationPlan,
+    normalize_stems,
+    resolve_separation_plan,
+)
 from upmixer.separation.stem_analyzer import analyze_stems
 from upmixer.separation.stem_router import StemRouter
 from upmixer.mastering import MasteringChain
@@ -80,9 +86,13 @@ class StemUpmixPipeline:
     then routes zone-tagged stems to their spatial home in the output. Center
     and LFE channels bypass separation and are injected directly.
 
+    Stem selection is driven by ``config.stems`` (or the manifest ``stems`` key).
+    The pipeline internally resolves which models to run and in which order via
+    :func:`~upmixer.separation.stem_plan.resolve_separation_plan`.  Model
+    selection is not exposed to callers.
+
     Args:
         config: UpmixConfig controlling gains, LFE cutoff, output format, etc.
-        model: audio-separator model filename. Defaults to htdemucs_ft (4-stem).
         model_dir: Model cache directory. Defaults to ~/.cache/upmixer-models.
         custom_routing: Override the fallback stem→channel routing table used
             when a stem/zone combination is not in the built-in zone tables.
@@ -92,54 +102,154 @@ class StemUpmixPipeline:
     def __init__(
         self,
         config: UpmixConfig | None = None,
-        model: str = DEFAULT_MODEL,
         model_dir: str | None = None,
         custom_routing: dict[str, dict[str, float]] | None = None,
     ) -> None:
         self.config = config or UpmixConfig()
-        self._model = model
         self._model_dir = model_dir
         self._custom_routing = custom_routing
-        # Shared separator — model loaded once, reused across process_file() calls.
-        # Re-created only when sample_rate changes between files.
-        self._separator: StemSeparator | None = None
+        # Per-model separator cache: model_filename → StemSeparator.
+        # Models are loaded once and reused across files that share the same
+        # sample rate — the dominant cost saving in batch mode.
+        self._separators: dict[str, StemSeparator] = {}
         self._separator_sr: int | None = None
 
-    def _get_or_create_separator(self, sep_sr: int) -> StemSeparator:
-        """Return a ready StemSeparator, creating or re-creating only when needed.
+    def _get_or_create_separator(self, model: str, sep_sr: int) -> StemSeparator:
+        """Return a ready StemSeparator for the given model and sample rate.
 
-        The neural network model is loaded once and reused across all files that
-        share the same sample rate — the dominant cost saving in batch mode.
+        Creates a new instance if the model has not been loaded yet.  If the
+        sample rate changes between calls all cached separators are recreated
+        (in practice all stages of a single plan run at the same sep_sr).
         """
         sep_log_level = logging.DEBUG if _log.isEnabledFor(logging.DEBUG) else logging.WARNING
-        if self._separator is None or self._separator_sr != sep_sr:
-            if self._separator is not None:
+        if self._separator_sr != sep_sr:
+            # Sample rate changed: close all cached separators and start fresh
+            if self._separators:
                 _log.info(
                     "  Separator: sample rate changed %d→%d, re-creating.",
                     self._separator_sr, sep_sr,
                 )
-                self._separator.close()
-            self._separator = StemSeparator(
-                model=self._model,
+            for s in self._separators.values():
+                s.close()
+            self._separators = {}
+            self._separator_sr = sep_sr
+        if model not in self._separators:
+            self._separators[model] = StemSeparator(
+                model=model,
                 model_dir=self._model_dir,
                 sample_rate=sep_sr,
                 log_level=sep_log_level,
             )
-            self._separator_sr = sep_sr
-        return self._separator
+        return self._separators[model]
 
     def close(self) -> None:
-        """Release the separator and unload the neural network model."""
-        if self._separator is not None:
-            self._separator.close()
-            self._separator = None
-            self._separator_sr = None
+        """Release all separators and unload neural network models."""
+        for s in self._separators.values():
+            s.close()
+        self._separators = {}
+        self._separator_sr = None
 
     def __enter__(self) -> "StemUpmixPipeline":
         return self
 
     def __exit__(self, *_: object) -> None:
         self.close()
+
+    def _execute_plan(
+        self,
+        plan: SeparationPlan,
+        sep_path: str,
+        sep_sr: int,
+    ) -> dict[str, np.ndarray]:
+        """Execute all tasks in the plan against one audio zone (sep_path).
+
+        Manages intermediate on-disk files between stages:
+        - Stage 0 keeps ``_crowd_other`` on disk so Stage 1 can read it.
+        - Stage 1 keeps ``Drums`` on disk so Stage 2 can read it.
+        - Intermediate files not in the final requested stems are deleted after
+          all stages complete.
+
+        Returns a dict of canonical_name → ndarray for all requested stems.
+        """
+        all_loaded: dict[str, np.ndarray] = {}
+        # Accumulates canonical_name → absolute WAV path for on-disk intermediates
+        all_disk: dict[str, str] = {}
+
+        # Pre-compute all input_source values used by later stages (excluding "original")
+        later_inputs: frozenset[str] = frozenset(
+            t.input_source for t in plan.tasks if t.input_source != "original"
+        )
+
+        n_tasks = len(plan.tasks)
+        for stage_idx, task in enumerate(plan.tasks):
+            _log.info(
+                "  [stage %d/%d] model=%s  input=%s  keep_on_disk=%s",
+                stage_idx + 1,
+                n_tasks,
+                task.model,
+                task.input_source,
+                sorted(task.output_stems & later_inputs) or "(none)",
+            )
+
+            if task.input_source != "original" and task.input_source not in all_disk:
+                available = sorted(all_disk.keys()) or ["(none)"]
+                raise RuntimeError(
+                    f"Stage {stage_idx + 1} needs intermediate stem "
+                    f"'{task.input_source}' on disk, but it was not produced by "
+                    f"any previous stage.\n"
+                    f"Available on-disk stems: {available}\n"
+                    f"Likely cause: the model that should produce "
+                    f"'{task.input_source}' outputs a different filename tag — "
+                    f"run with --verbose (-v) to see raw output filenames and "
+                    f"update STEM_NAME_MAP in separator.py if needed."
+                )
+
+            input_path_for_task = (
+                sep_path if task.input_source == "original"
+                else all_disk[task.input_source]
+            )
+
+            # Determine which output stems from this task need to remain on disk
+            # because a later task will read them as its input.
+            keep_on_disk = task.output_stems & later_inputs
+
+            sep = self._get_or_create_separator(task.model, sep_sr)
+            loaded, on_disk = sep.separate_to_file(input_path_for_task, keep_on_disk)
+
+            _log.info(
+                "  [stage %d/%d] produced: loaded=%s  on_disk=%s",
+                stage_idx + 1,
+                n_tasks,
+                sorted(loaded.keys()) or "(none)",
+                sorted(on_disk.keys()) or "(none)",
+            )
+
+            # Collect loaded stems that are final requested outputs
+            for name, audio in loaded.items():
+                if name in plan.requested_stems:
+                    all_loaded[name] = audio
+
+            all_disk.update(on_disk)
+
+        # Load on-disk stems that are also requested as final outputs
+        # (e.g. "Drums" was kept on disk for Stage 2 but user also wants it)
+        for name, path in all_disk.items():
+            if name in plan.requested_stems and name not in all_loaded:
+                audio, _ = sf.read(path, dtype="float32", always_2d=True)
+                if audio.shape[1] == 1:
+                    audio = np.concatenate([audio, audio], axis=1)
+                all_loaded[name] = audio
+
+        # Clean up on-disk intermediates not needed in the final result
+        for name, path in all_disk.items():
+            if name not in plan.requested_stems:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+        _log.info("  All stages complete. Final stems: %s", sorted(all_loaded.keys()))
+        return all_loaded
 
     def process_file(
         self,
@@ -194,7 +304,12 @@ class StemUpmixPipeline:
         _log.info("  Sample rate:   %d Hz", sr)
         _log.info("  Duration:      %.2fs", audio_full.shape[0] / sr)
         _log.info("  Output format: %s (%dch)", output_fmt.name, output_fmt.n_channels)
-        _log.info("  Model:         %s", self._model)
+        # Resolve the stem execution plan from config.stems (or default 6-stem set)
+        _raw_stems = cfg.stems or []
+        _canonical = normalize_stems(_raw_stems) if _raw_stems else list(DEFAULT_STEMS)
+        plan = resolve_separation_plan(_canonical)
+        _log.info("  Stems:         %s", sorted(plan.requested_stems))
+        _log.info("  Models:        %s", [t.model for t in plan.tasks])
 
         # Preview: slice audio_full to the requested window before any processing.
         # Stereo mode normally passes the original file path to the separator;
@@ -234,7 +349,7 @@ class StemUpmixPipeline:
             from upmixer.separation.stem_cache import StemCache
             _stem_cache = StemCache(cfg.stem_cache_dir)
             _cache_result = _stem_cache.load(
-                input_path, self._model, sep_sr,
+                input_path, plan.stems_hash, sep_sr,
                 is_preview=cfg.preview,
                 preview_duration=cfg.preview_duration_s,
                 preview_start=cfg.preview_start_s,
@@ -278,7 +393,6 @@ class StemUpmixPipeline:
             all_stems = _cache_hit_stems
             _log.info("  Stem cache: using cached stems (separation skipped)")
         else:
-            separator = self._get_or_create_separator(sep_sr)
             tmp_files: list[str] = []
             zone_names = list(sep_zones.keys())
             n_zones = len(zone_names)
@@ -299,7 +413,7 @@ class StemUpmixPipeline:
                         sep_path = tmp
                         tmp_files.append(tmp)
 
-                    zone_stems = separator.separate(sep_path)
+                    zone_stems = self._execute_plan(plan, sep_path, sep_sr)
                     for stem_name, stem_audio in zone_stems.items():
                         # Stereo: unzoned keys → DEFAULT_ROUTING (full 3D + LFE).
                         # Multichannel: zone-tagged keys → ZONE_ROUTING.
@@ -310,12 +424,11 @@ class StemUpmixPipeline:
                 for tmp in tmp_files:
                     if os.path.exists(tmp):
                         os.unlink(tmp)
-                # separator is shared across calls — do NOT close here
 
             # Save to cache for next run
             if _stem_cache is not None and all_stems:
                 _stem_cache.save(
-                    input_path, self._model, sep_sr, all_stems, sep_sr,
+                    input_path, plan.stems_hash, sep_sr, all_stems, sep_sr,
                     is_preview=cfg.preview,
                     preview_duration=cfg.preview_duration_s,
                     preview_start=cfg.preview_start_s,

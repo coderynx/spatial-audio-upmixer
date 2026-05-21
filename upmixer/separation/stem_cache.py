@@ -12,8 +12,12 @@ Cache structure on disk::
             Vocals__front.wav      # zone-tagged: '@' replaced by '__'
             ...
 
-Cache key: SHA-256 of ``abs_path|mtime|model|sep_sr|preview_tag``
+Cache key: SHA-256 of ``abs_path|mtime|stems_hash|sep_sr|preview_tag``
 (first 20 hex chars).
+
+``stems_hash`` is a 20-char digest of the sorted requested stem names
+(from :func:`~upmixer.separation.stem_plan.resolve_separation_plan`).
+Different stem selections always produce different cache entries.
 
 ``preview_tag`` encodes whether the stems are a preview slice:
 ``"full"`` for a complete separation, or ``"preview:{duration:.3f}@{start:.3f}"``
@@ -24,8 +28,8 @@ and triggers a fresh full-file separation.
 Preview stems are **never written** to cache (they are short-lived test
 artifacts and would waste disk space for little benefit).
 
-Cache invalidation: any change to abs_path, mtime, model, sep_sr, or preview
-window produces a different key → cold miss.
+Cache invalidation: any change to abs_path, mtime, stems_hash, sep_sr, or
+preview window produces a different key → cold miss.
 
 Stems are stored as float32 PCM_24 WAV (soundfile).  On load, arrays are
 returned as float64 to match the rest of the pipeline.
@@ -61,7 +65,7 @@ def _preview_tag(
 
 def _cache_key(
     input_path: str,
-    model: str,
+    stems_hash: str,
     sep_sr: int,
     is_preview: bool = False,
     preview_duration: float | None = None,
@@ -71,11 +75,17 @@ def _cache_key(
 
     Preview and full-file runs always produce different keys, so a cached
     preview never masks a subsequent full-file separation.
+
+    Args:
+        stems_hash: 20-char digest from
+                    :attr:`~upmixer.separation.stem_plan.SeparationPlan.stems_hash`.
+                    Encodes the full set of requested stems so different stem
+                    selections never share a cache entry.
     """
     abs_path = str(Path(input_path).resolve())
     mtime = os.path.getmtime(abs_path)
     tag = _preview_tag(is_preview, preview_duration, preview_start)
-    raw = f"{abs_path}|{mtime:.6f}|{model}|{sep_sr}|{tag}"
+    raw = f"{abs_path}|{mtime:.6f}|{stems_hash}|{sep_sr}|{tag}"
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -104,7 +114,7 @@ class StemCache:
     def load(
         self,
         input_path: str,
-        model: str,
+        stems_hash: str,
         sep_sr: int,
         is_preview: bool = False,
         preview_duration: float | None = None,
@@ -114,7 +124,7 @@ class StemCache:
 
         Args:
             input_path:       Original input audio file path.
-            model:            Stem separation model name.
+            stems_hash:       20-char digest from SeparationPlan.stems_hash.
             sep_sr:           Target separation sample rate in Hz.
             is_preview:       Whether this is a preview (sliced) run.
             preview_duration: Preview window length in seconds.
@@ -124,7 +134,7 @@ class StemCache:
             ``(stems_dict, sample_rate)`` on cache hit, or ``None`` on miss.
             Stems are returned as float64 arrays shaped ``(n_samples, 2)``.
         """
-        key = _cache_key(input_path, model, sep_sr, is_preview, preview_duration, preview_start)
+        key = _cache_key(input_path, stems_hash, sep_sr, is_preview, preview_duration, preview_start)
         entry_dir = self._root / key
 
         if not entry_dir.exists():
@@ -187,7 +197,7 @@ class StemCache:
     def save(
         self,
         input_path: str,
-        model: str,
+        stems_hash: str,
         sep_sr: int,
         stems: dict[str, np.ndarray],
         sample_rate: int,
@@ -202,7 +212,7 @@ class StemCache:
 
         Args:
             input_path:       Original input audio file path.
-            model:            Stem separation model name.
+            stems_hash:       20-char digest from SeparationPlan.stems_hash.
             sep_sr:           Target separation sample rate in Hz.
             stems:            Dict stem_key → ``(n_samples, 2)`` float array.
             sample_rate:      Actual sample rate of the stems (should equal sep_sr).
@@ -222,7 +232,7 @@ class StemCache:
 
         abs_path = str(Path(input_path).resolve())
         mtime = os.path.getmtime(abs_path)
-        key = _cache_key(input_path, model, sep_sr, is_preview, preview_duration, preview_start)
+        key = _cache_key(input_path, stems_hash, sep_sr, is_preview, preview_duration, preview_start)
         entry_dir = self._root / key
         entry_dir.mkdir(parents=True, exist_ok=True)
 
@@ -237,7 +247,7 @@ class StemCache:
         meta = {
             "input_path": abs_path,
             "mtime": round(mtime, 6),
-            "model": model,
+            "stems_hash": stems_hash,
             "sep_sr": sep_sr,
             "stem_keys": list(stems.keys()),
         }

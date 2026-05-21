@@ -19,12 +19,12 @@ DEFAULT_MODEL = "BS-Roformer-SW.ckpt"
 # Keys = substring that appears in the (StemName) tag in output filenames.
 # Values = canonical name used in DEFAULT_ROUTING in stem_router.py.
 STEM_NAME_MAP: dict[str, str] = {
-    # 4-stem Demucs
+    # 4-stem Demucs / BS-Roformer primary stems
     "Vocals": "Vocals",
     "Drums": "Drums",
     "Bass": "Bass",
     "Other": "Other",
-    # 6-stem Demucs (htdemucs_6s)
+    # 6-stem extended primary stems
     "Guitar": "Guitar",
     "Piano": "Piano",
     # RoFormer 2-stem
@@ -36,6 +36,36 @@ STEM_NAME_MAP: dict[str, str] = {
     # De-verb / denoise outputs
     "Reverb": "Other",
     "No Reverb": "Vocals",
+    # DrumSep model outputs (MDX23C-DrumSep-aufr33-jarredou)
+    # NOTE: verify exact tag strings if model output filenames differ
+    "Kick":   "Kick",
+    "Snare":  "Snare",
+    "Toms":   "Toms",
+    "HH":     "Hi-Hat",   # some models abbreviate hi-hat as "HH"
+    "Hi-Hat": "Hi-Hat",
+    "Ride":   "Ride",
+    "Crash":  "Crash",
+    # Crowd isolation model outputs (mel_band_roformer_crowd_aufr33_viperx)
+    # NOTE: this model tags its residual as "(other)" — same tag as the primary
+    # model's catch-all stem.  The disambiguation is handled via MODEL_STEM_OVERRIDES
+    # below, which remaps "(other)" → "_crowd_other" when this specific model runs.
+    "Crowd":    "Crowd",
+    "No Crowd": "_crowd_other",   # kept as fallback in case model config changes
+}
+
+
+# Per-model stem tag overrides.
+# Some models reuse generic tags (e.g. "(other)") for stems that have a
+# specific role in the multi-stage pipeline.  Entries here take precedence
+# over STEM_NAME_MAP when the named model is running.
+MODEL_STEM_OVERRIDES: dict[str, dict[str, str]] = {
+    # Crowd isolation model: its residual output is tagged "(other)" — the same
+    # tag that the primary 6-stem model uses for its catch-all stem.  Without
+    # this override the residual would be mapped to "Other" (primary meaning)
+    # and discarded rather than kept on disk as "_crowd_other" for Stage 1.
+    "mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt": {
+        "other": "_crowd_other",
+    },
 }
 
 
@@ -166,11 +196,12 @@ class StemSeparator:
         sep = self._get_separator()
         output_paths = sep.separate(audio_path)
 
+        _overrides = MODEL_STEM_OVERRIDES.get(self._model)
         stems: dict[str, np.ndarray] = {}
         for path in output_paths:
             # audio-separator may return basenames or absolute paths
             full_path = path if os.path.isabs(path) else os.path.join(tmp_dir, path)
-            stem_name = _parse_stem_name(full_path)
+            stem_name = _parse_stem_name(full_path, _overrides)
             if stem_name is None:
                 try:
                     os.unlink(full_path)
@@ -203,6 +234,98 @@ class StemSeparator:
 
         return stems
 
+    def separate_to_file(
+        self,
+        audio_path: str,
+        keep_on_disk: frozenset[str],
+    ) -> tuple[dict[str, np.ndarray], dict[str, str]]:
+        """Separate audio, keeping specified stems as on-disk WAV files.
+
+        Used by the multi-stage pipeline to pass intermediate stems (e.g. the
+        crowd residual or the Drums stem) directly to the next model stage
+        without loading them into memory.
+
+        Args:
+            audio_path:   Input file path.
+            keep_on_disk: Canonical stem names to leave as WAV files on disk.
+                          Their paths are returned so the next pipeline stage
+                          can use them as input.  The caller is responsible for
+                          cleanup once the files are no longer needed.
+
+        Returns:
+            ``(loaded, on_disk)`` where:
+              ``loaded``  — canonical_name → ndarray for stems NOT in keep_on_disk.
+              ``on_disk`` — canonical_name → absolute WAV path for kept stems.
+        """
+        tmp_dir = self._ensure_tmp_dir()
+        sep = self._get_separator()
+        output_paths = sep.separate(audio_path)
+
+        _log.debug(
+            "[separator] model=%s produced %d output file(s): %s",
+            self._model,
+            len(output_paths),
+            [os.path.basename(p) for p in output_paths],
+        )
+
+        _overrides = MODEL_STEM_OVERRIDES.get(self._model)
+        loaded: dict[str, np.ndarray] = {}
+        on_disk: dict[str, str] = {}
+
+        for path in output_paths:
+            full = path if os.path.isabs(path) else os.path.join(tmp_dir, path)
+            stem_name = _parse_stem_name(full, _overrides)
+            _log.debug(
+                "[separator] %s → stem_name=%r  keep_on_disk=%s",
+                os.path.basename(full),
+                stem_name,
+                stem_name in keep_on_disk if stem_name else "N/A (unrecognised)",
+            )
+            if stem_name is None:
+                _log.warning(
+                    "[separator] Unrecognised stem tag in filename '%s' — "
+                    "add an entry to STEM_NAME_MAP to handle this model output. "
+                    "File will be discarded.",
+                    os.path.basename(full),
+                )
+                try:
+                    os.unlink(full)
+                except OSError:
+                    pass
+                continue
+
+            if stem_name in keep_on_disk:
+                on_disk[stem_name] = full  # caller manages lifecycle
+                continue
+
+            try:
+                audio, _ = sf.read(full, dtype="float32", always_2d=True)
+            except Exception as exc:
+                _log.warning(
+                    "Skipping stem '%s' — could not read '%s': %s",
+                    stem_name, os.path.basename(full), exc,
+                )
+                try:
+                    os.unlink(full)
+                except OSError:
+                    pass
+                continue
+
+            if audio.shape[1] == 1:
+                audio = np.concatenate([audio, audio], axis=1)
+            loaded[stem_name] = audio
+            try:
+                os.unlink(full)
+            except OSError:
+                pass
+
+        _log.debug(
+            "[separator] stage done — loaded=%s  on_disk=%s",
+            sorted(loaded.keys()),
+            sorted(on_disk.keys()),
+        )
+        return loaded, on_disk
+
     def close(self) -> None:
         """Remove the persistent temp directory and release the Separator."""
         import shutil
@@ -215,20 +338,53 @@ class StemSeparator:
         self.close()
 
 
-def _parse_stem_name(path: str) -> str | None:
+def _parse_stem_name(
+    path: str,
+    model_overrides: dict[str, str] | None = None,
+) -> str | None:
     """Extract canonical stem label from audio-separator output filename.
 
-    audio-separator names files like:
+    audio-separator names output files like:
         song_(Vocals)_model_name.wav
         song_(Lead Vocals)_model_name.wav
-        song_(Instrumental)_model_name.wav
 
-    Matches against STEM_NAME_MAP keys (longest match first to avoid
-    'Vocals' matching before 'Lead Vocals').
+    In multi-stage pipelines the intermediate filename is embedded in the
+    next stage's output filename, e.g.:
+        song_(other)_crowd_model_(Piano)_primary_model.wav
+                      ^^^^ intermediate tag ^^^^  ^^^^ current stage tag
+
+    To correctly identify the current-stage stem, this function finds the
+    **rightmost** matching tag in the filename.  Tags from intermediate
+    stages always appear earlier (leftward) than the current stage's tag.
+
+    Args:
+        path:             Output file path from audio-separator.
+        model_overrides:  Per-model tag→canonical mapping that takes precedence
+                          over the general STEM_NAME_MAP when two tags occur at
+                          the same position (i.e. the current model's own tag).
+                          Keys must be lowercase.
+
+    Returns:
+        Canonical stem name, or ``None`` if no known tag is found.
     """
     name = os.path.basename(path).lower()
-    # Sort by length descending so "Lead Vocals" matches before "Vocals"
-    for tag in sorted(STEM_NAME_MAP.keys(), key=len, reverse=True):
-        if f"({tag.lower()})" in name:
-            return STEM_NAME_MAP[tag]
-    return None
+
+    best_pos: int = -1
+    best_canonical: str | None = None
+
+    # Model-specific overrides — checked at their position (keys already lowercase)
+    if model_overrides:
+        for tag, canonical in model_overrides.items():
+            pos = name.rfind(f"({tag})")
+            if pos > best_pos:
+                best_pos = pos
+                best_canonical = canonical
+
+    # General map — rightmost occurrence wins over intermediate-stage tags
+    for tag, canonical in STEM_NAME_MAP.items():
+        pos = name.rfind(f"({tag.lower()})")
+        if pos > best_pos:
+            best_pos = pos
+            best_canonical = canonical
+
+    return best_canonical
