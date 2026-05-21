@@ -204,6 +204,150 @@ class TestValidateManifestAssets:
                 "assets": ["not_a_dict"],
             })
 
+    def test_dir_asset_passes_validation(self):
+        validate_manifest({
+            "version": "1.0",
+            "assets": [{"input_dir": "/in/", "output_dir": "/out/"}],
+        })
+
+    def test_asset_neither_explicit_nor_dir_raises(self):
+        with pytest.raises(ManifestError, match="input_dir"):
+            validate_manifest({
+                "version": "1.0",
+                "assets": [{"stem_cache_dir": "/tmp/"}],
+            })
+
+    def test_asset_input_dir_only_raises(self):
+        with pytest.raises(ManifestError):
+            validate_manifest({
+                "version": "1.0",
+                "assets": [{"input_dir": "/in/"}],
+            })
+
+    def test_asset_output_dir_only_raises(self):
+        with pytest.raises(ManifestError):
+            validate_manifest({
+                "version": "1.0",
+                "assets": [{"output_dir": "/out/"}],
+            })
+
+
+# ---------------------------------------------------------------------------
+# parse_manifest — dir asset expansion
+# ---------------------------------------------------------------------------
+
+class TestDirAssetExpansion:
+    def _make_data(self, asset_extra: dict | None = None, global_extra: dict | None = None) -> dict:
+        asset = {"input_dir": "/album/", "output_dir": "/out/"}
+        if asset_extra:
+            asset.update(asset_extra)
+        data: dict = {"version": "1.0", "assets": [asset]}
+        if global_extra:
+            data.update(global_extra)
+        return data
+
+    def test_expands_wav_and_flac(self, tmp_path):
+        (tmp_path / "01_intro.flac").write_bytes(b"")
+        (tmp_path / "02_main.wav").write_bytes(b"")
+        (tmp_path / "notes.txt").write_bytes(b"")
+        data = {"version": "1.0", "assets": [
+            {"input_dir": str(tmp_path), "output_dir": "/out/"}
+        ]}
+        _, jobs = parse_manifest(data)
+        assert len(jobs) == 2
+        basenames = sorted(j.input.split("/")[-1] for j in jobs)
+        assert basenames == ["01_intro.flac", "02_main.wav"]
+
+    def test_output_paths_derived_correctly(self, tmp_path):
+        (tmp_path / "track.flac").write_bytes(b"")
+        data = {"version": "1.0", "assets": [
+            {"input_dir": str(tmp_path), "output_dir": "/masters/"}
+        ]}
+        _, jobs = parse_manifest(data)
+        assert jobs[0].output == "/masters/track.wav"
+
+    def test_glob_pattern_filters(self, tmp_path):
+        (tmp_path / "a.flac").write_bytes(b"")
+        (tmp_path / "b.wav").write_bytes(b"")
+        data = {"version": "1.0", "assets": [
+            {"input_dir": str(tmp_path), "output_dir": "/out/", "glob": "*.flac"}
+        ]}
+        _, jobs = parse_manifest(data)
+        assert len(jobs) == 1
+        assert jobs[0].input.endswith("a.flac")
+
+    def test_empty_dir_produces_no_jobs_no_crash(self, tmp_path, caplog):
+        import logging
+        data = {"version": "1.0", "assets": [
+            {"input_dir": str(tmp_path), "output_dir": "/out/"}
+        ]}
+        with caplog.at_level(logging.WARNING, logger="upmixer"):
+            _, jobs = parse_manifest(data)
+        assert jobs == []
+        assert "matched no" in caplog.text
+
+    def test_per_dir_block_overrides_deep_merge(self, tmp_path):
+        (tmp_path / "song.flac").write_bytes(b"")
+        data = {
+            "version": "1.0",
+            "mixing": {"stem_rebalance": {"Vocals": 1.5}},
+            "assets": [{
+                "input_dir": str(tmp_path),
+                "output_dir": "/out/",
+                "mixing": {"stem_rebalance": {"Vocals": 0.0}},
+            }],
+        }
+        _, jobs = parse_manifest(data)
+        assert len(jobs) == 1
+        assert jobs[0].config["stem_rebalance"]["Vocals"] == 0.0
+
+    def test_global_config_inherited(self, tmp_path):
+        (tmp_path / "song.flac").write_bytes(b"")
+        data = {
+            "version": "1.0",
+            "engine": {"mode": "realtime"},
+            "assets": [{"input_dir": str(tmp_path), "output_dir": "/out/"}],
+        }
+        _, jobs = parse_manifest(data)
+        assert jobs[0].engine["mode"] == "realtime"
+
+    def test_config_dicts_are_independent_per_file(self, tmp_path):
+        (tmp_path / "a.flac").write_bytes(b"")
+        (tmp_path / "b.flac").write_bytes(b"")
+        data = {
+            "version": "1.0",
+            "mastering": {"loudness": {"target": -18.0, "normalize": True}},
+            "assets": [{"input_dir": str(tmp_path), "output_dir": "/out/"}],
+        }
+        _, jobs = parse_manifest(data)
+        assert len(jobs) == 2
+        jobs[0].config["loudness_target"] = -23.0
+        assert jobs[1].config.get("loudness_target") == -18.0
+
+    def test_mixed_explicit_and_dir_assets(self, tmp_path):
+        (tmp_path / "dir_track.flac").write_bytes(b"")
+        data = {
+            "version": "1.0",
+            "assets": [
+                {"input": "explicit.flac", "output": "explicit.wav"},
+                {"input_dir": str(tmp_path), "output_dir": "/out/"},
+            ],
+        }
+        _, jobs = parse_manifest(data)
+        assert len(jobs) == 2
+        assert jobs[0].input == "explicit.flac"
+        assert jobs[1].input.endswith("dir_track.flac")
+
+    def test_sorted_alphabetically(self, tmp_path):
+        for name in ["c.flac", "a.flac", "b.wav"]:
+            (tmp_path / name).write_bytes(b"")
+        data = {"version": "1.0", "assets": [
+            {"input_dir": str(tmp_path), "output_dir": "/out/"}
+        ]}
+        _, jobs = parse_manifest(data)
+        basenames = [j.input.split("/")[-1] for j in jobs]
+        assert basenames == ["a.flac", "b.wav", "c.flac"]
+
 
 # ---------------------------------------------------------------------------
 # parse_manifest — single asset

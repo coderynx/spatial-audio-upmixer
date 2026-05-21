@@ -69,8 +69,10 @@ CLI flags > per-asset manifest values > global manifest values > UpmixConfig def
 """
 from __future__ import annotations
 
+import glob as _glob
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -373,17 +375,21 @@ def validate_manifest(data: dict) -> None:
             raise ManifestError(
                 f"assets[{i}] must be a mapping, got {type(asset).__name__}."
             )
-        for required in ("input", "output"):
-            if not asset.get(required):
-                raise ManifestError(
-                    f"assets[{i}] missing required '{required}' field."
-                )
+        has_explicit = bool(asset.get("input") and asset.get("output"))
+        has_dir = bool(asset.get("input_dir") and asset.get("output_dir"))
+        if not has_explicit and not has_dir:
+            raise ManifestError(
+                f"assets[{i}] needs 'input'+'output' or 'input_dir'+'output_dir'."
+            )
 
 
 # ── Parsing ────────────────────────────────────────────────────────────────────
 
 # Keys in an asset entry that are NOT block names and NOT input/output/shortcuts.
-_ASSET_NON_BLOCK_KEYS: frozenset[str] = frozenset({"input", "output", "stem_cache_dir"})
+_ASSET_NON_BLOCK_KEYS: frozenset[str] = frozenset({
+    "input", "output", "stem_cache_dir",
+    "input_dir", "output_dir", "glob",
+})
 
 
 def parse_manifest(data: dict) -> tuple[ManifestMeta | None, list[AssetJob]]:
@@ -436,12 +442,35 @@ def parse_manifest(data: dict) -> tuple[ManifestMeta | None, list[AssetJob]]:
 
         config_flat, engine_params = _expand_blocks(effective)
 
-        jobs.append(AssetJob(
-            input=asset["input"],
-            output=asset["output"],
-            config=config_flat,
-            engine=engine_params,
-        ))
+        if asset.get("input_dir"):
+            input_dir = asset["input_dir"]
+            output_dir = asset["output_dir"]
+            glob_pat = asset.get("glob")
+            safe = _glob.escape(input_dir)
+            if glob_pat:
+                files = sorted(_glob.glob(os.path.join(safe, glob_pat)))
+            else:
+                wav = _glob.glob(os.path.join(safe, "*.wav"))
+                flac = _glob.glob(os.path.join(safe, "*.flac"))
+                files = sorted(wav + flac, key=os.path.basename)
+            if not files:
+                _log.warning("assets input_dir=%r matched no .wav/.flac files", input_dir)
+            for f in files:
+                stem = os.path.splitext(os.path.basename(f))[0]
+                out = os.path.join(output_dir, stem + ".wav")
+                jobs.append(AssetJob(
+                    input=f,
+                    output=out,
+                    config=dict(config_flat),
+                    engine=dict(engine_params),
+                ))
+        else:
+            jobs.append(AssetJob(
+                input=asset["input"],
+                output=asset["output"],
+                config=config_flat,
+                engine=engine_params,
+            ))
 
     return meta, jobs
 
