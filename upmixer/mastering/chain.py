@@ -7,14 +7,13 @@ that shapes the final tone, dynamics, loudness, and peak ceiling.
 
 Processing order
 ----------------
+0. **Reference matching** (optional) — spectral envelope ratio EQ + global RMS
+   scalar derived from a reference audio file.  Runs first to imprint the
+   reference's "feel" before any other mastering stage.  Controlled by
+   ``config.mastering_match_ref_path`` (``None`` = disabled).
 1. **Spectral shaping** (optional) — minimum-phase FIR tonal curve applied to
    all channels except LFE.  Controlled by ``config.mastering_eq_profile`` and
    ``config.mastering_eq_strength``.  Disabled when profile is ``None``.
-   When ``config.mastering_eq_reference`` is set, per-channel FIRs derived
-   from the reference track are used instead of a preset profile.  The EQ
-   match curve is scaled by ``config.mastering_eq_match_strength`` before the
-   FIR is built — this scales the gain_dB values themselves (not a wet/dry
-   blend), giving more predictable intensity control for broad spectral shapes.
 2. **Bus compression** (optional) — linked-sidechain RMS glue compressor.
    Cosmetic only; does not substitute for loudness normalization.  Controlled
    by ``config.mastering_comp_profile`` (``None`` = disabled).  Individual
@@ -110,6 +109,22 @@ class MasteringChain:
         cfg = self._cfg
         result = MasteringResult()
 
+        # ── Step 0: spectral + RMS reference matching ─────────────────────────
+        if cfg.mastering_match_ref_path is not None:
+            from .match_reference import ReferenceMatchProcessor
+            _log.info(
+                "  Match reference: analysing '%s'...", cfg.mastering_match_ref_path
+            )
+            proc = ReferenceMatchProcessor(
+                reference_path=cfg.mastering_match_ref_path,
+                strength=cfg.mastering_match_ref_strength,
+                match_spectrum=cfg.mastering_match_ref_spectrum,
+                match_rms=cfg.mastering_match_ref_rms,
+                max_correction_db=cfg.mastering_match_ref_max_db,
+                sample_rate=sample_rate,
+            )
+            channels = proc.process(channels)
+
         # ── Step 1a: preset EQ profile ────────────────────────────────────────
         if cfg.mastering_eq_profile is not None:
             from .eq import SpectralShaper
@@ -119,23 +134,6 @@ class MasteringChain:
                 sample_rate=sample_rate,
             )
             channels = shaper.process(channels)
-
-        # ── Step 1b: EQ match from reference (independent of step 1a) ────────
-        if cfg.mastering_eq_reference is not None:
-            from .eq import EQMatchShaper
-            from .eq_match import EQMatcher, scale_breakpoints
-            _log.info("  EQ Match: analysing reference '%s'...", cfg.mastering_eq_reference)
-            matcher = EQMatcher(sample_rate)
-            per_ch_bps = matcher.analyze(
-                cfg.mastering_eq_reference, list(channels.keys())
-            )
-            per_ch_bps = scale_breakpoints(per_ch_bps, cfg.mastering_eq_match_strength)
-            eq_match = EQMatchShaper(
-                per_channel_breakpoints=per_ch_bps,
-                strength=1.0,
-                sample_rate=sample_rate,
-            )
-            channels = eq_match.process(channels)
 
         # ── Step 2: bus compression ────────────────────────────────────────────
         if cfg.mastering_comp_profile is not None:

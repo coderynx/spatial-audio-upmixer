@@ -1,16 +1,19 @@
 """Mastering package — post-mixing tonal, dynamic, and loudness processing.
 
-Public API (re-exported for backward compatibility)::
+Public API::
 
     from upmixer.mastering import MasteringChain, MasteringResult
+    from upmixer.mastering import ReferenceMatchProcessor
 
 Sub-modules:
-    chain       — MasteringChain orchestrator
-    eq          — SpectralShaper + EQ_PROFILES
-    eq_match    — EQMatcher + scale_breakpoints
-    compressor  — BusCompressor + COMP_PROFILES
-    bass        — BassController + BASS_PROFILES
+    chain            — MasteringChain orchestrator
+    match_reference  — ReferenceMatchProcessor (spectral + RMS reference matching)
+    eq               — SpectralShaper + EQ_PROFILES
+    eq_match         — EQMatcher + scale_breakpoints (standalone utility)
+    compressor       — BusCompressor + COMP_PROFILES
+    bass             — BassController + BASS_PROFILES
 """
 from .chain import MasteringChain, MasteringResult
+from .match_reference import ReferenceMatchProcessor
 
-__all__ = ["MasteringChain", "MasteringResult"]
+__all__ = ["MasteringChain", "MasteringResult", "ReferenceMatchProcessor"]

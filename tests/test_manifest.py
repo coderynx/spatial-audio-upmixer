@@ -455,9 +455,9 @@ class TestListManifestKeysMixingBass:
         ]:
             assert k in keys, f"Missing key '{k}'"
 
-    def test_mastering_eq_reference_present(self):
+    def test_mastering_match_ref_path_present(self):
         keys = list_manifest_keys()
-        assert "mastering_eq_reference" in keys
+        assert "mastering_match_ref_path" in keys
 
     def test_mixing_key_map_keys_match_field_map(self):
         """All values in _MIXING_KEY_MAP that point to config fields are in _FIELD_MAP."""
@@ -550,14 +550,12 @@ class TestMasteringSubsections:
                 "eq": {
                     "profile": "atmos-streaming",
                     "strength": 0.8,
-                    "match_strength": 0.4,
                 }
             }
         }
         expanded = _expand_nested_sections(data)
         assert expanded.get("mastering_eq_profile") == "atmos-streaming"
         assert expanded.get("mastering_eq_strength") == pytest.approx(0.8)
-        assert expanded.get("mastering_eq_match_strength") == pytest.approx(0.4)
         assert "mastering" not in expanded
 
     def test_two_level_compressor_section(self):
@@ -619,39 +617,45 @@ class TestMasteringSubsections:
         cfg = UpmixConfig()
         apply_manifest(cfg, {
             "mastering": {
-                "eq": {"profile": "spatial-air", "match_strength": 0.3},
+                "eq": {"profile": "spatial-air"},
                 "loudness": {"normalize": False},
             }
         }, allow_unknown_keys=False)
         assert cfg.mastering_eq_profile == "spatial-air"
-        assert cfg.mastering_eq_match_strength == pytest.approx(0.3)
         assert cfg.loudness_normalize is False
 
 
 # ---------------------------------------------------------------------------
-# EQ match strength field
+# Match reference fields
 # ---------------------------------------------------------------------------
 
-class TestEqMatchStrengthField:
-    def test_flat_key_in_field_map(self):
-        assert "mastering_eq_match_strength" in _FIELD_MAP
+class TestMatchReferenceFields:
+    def test_flat_key_path_in_field_map(self):
+        assert "mastering_match_ref_path" in _FIELD_MAP
 
-    def test_flat_key_apply(self):
+    def test_flat_key_strength_in_field_map(self):
+        assert "mastering_match_ref_strength" in _FIELD_MAP
+
+    def test_flat_key_apply_path(self):
         cfg = UpmixConfig()
-        apply_manifest(cfg, {"mastering_eq_match_strength": 0.3})
-        assert cfg.mastering_eq_match_strength == pytest.approx(0.3)
+        apply_manifest(cfg, {"mastering_match_ref_path": "ref.wav"})
+        assert cfg.mastering_match_ref_path == "ref.wav"
 
-    def test_mastering_key_map_has_eq_match_strength(self):
-        assert "eq_match_strength" in _MASTERING_KEY_MAP
-
-    def test_mastering_section_eq_match_strength(self):
-        data = {"mastering": {"eq_match_strength": 0.25}}
-        expanded = _expand_nested_sections(data)
-        assert expanded.get("mastering_eq_match_strength") == pytest.approx(0.25)
-
-    def test_default_is_0_5(self):
+    def test_flat_key_apply_strength(self):
         cfg = UpmixConfig()
-        assert cfg.mastering_eq_match_strength == pytest.approx(0.5)
+        apply_manifest(cfg, {"mastering_match_ref_strength": 0.5})
+        assert cfg.mastering_match_ref_strength == pytest.approx(0.5)
+
+    def test_old_eq_match_strength_removed(self):
+        assert "mastering_eq_match_strength" not in _FIELD_MAP
+
+    def test_default_path_is_none(self):
+        cfg = UpmixConfig()
+        assert cfg.mastering_match_ref_path is None
+
+    def test_default_strength_is_0_7(self):
+        cfg = UpmixConfig()
+        assert cfg.mastering_match_ref_strength == pytest.approx(0.7)
 
 
 # ---------------------------------------------------------------------------

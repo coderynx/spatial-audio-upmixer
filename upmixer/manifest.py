@@ -102,9 +102,12 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "mastering_bass_mono_cutoff_hz": ("mastering_bass_mono_cutoff_hz", float),
     "mastering_bass_excite":         ("mastering_bass_excite",         bool),
     "mastering_bass_lfe_gain_db":    ("mastering_bass_lfe_gain_db",    float),
-    # Mastering — EQ from reference (Match EQ)
-    "mastering_eq_reference":        ("mastering_eq_reference",        str),
-    "mastering_eq_match_strength":   ("mastering_eq_match_strength",   float),
+    # Mastering — spectral + RMS reference matching
+    "mastering_match_ref_path":     ("mastering_match_ref_path",     str),
+    "mastering_match_ref_strength": ("mastering_match_ref_strength",  float),
+    "mastering_match_ref_spectrum": ("mastering_match_ref_spectrum",  bool),
+    "mastering_match_ref_rms":      ("mastering_match_ref_rms",       bool),
+    "mastering_match_ref_max_db":   ("mastering_match_ref_max_db",    float),
     # Mixing — stem rebalance (stem pipeline only)
     "stem_rebalance":                ("stem_rebalance",                dict),
     # Mixing — per-stem EQ (stem pipeline only)
@@ -138,8 +141,6 @@ _MASTERING_KEY_MAP: dict[str, str] = {
     # EQ
     "eq_profile":          "mastering_eq_profile",
     "eq_strength":         "mastering_eq_strength",
-    "eq_reference":        "mastering_eq_reference",
-    "eq_match_strength":   "mastering_eq_match_strength",
     # Compressor
     "comp_profile":     "mastering_comp_profile",
     "comp_threshold":   "mastering_comp_threshold_db",
@@ -181,14 +182,6 @@ _MASTERING_KEY_MAP: dict[str, str] = {
 _MASTERING_EQ_SUBMAP: dict[str, str] = {
     "profile":  "mastering_eq_profile",
     "strength": "mastering_eq_strength",
-    # Deprecated: use mastering.eq_match section instead
-    "reference":      "mastering_eq_reference",
-    "match_strength": "mastering_eq_match_strength",
-}
-
-_MASTERING_EQ_MATCH_SUBMAP: dict[str, str] = {
-    "reference": "mastering_eq_reference",
-    "strength":  "mastering_eq_match_strength",
 }
 
 _MASTERING_COMP_SUBMAP: dict[str, str] = {
@@ -216,12 +209,20 @@ _MASTERING_LOUDNESS_SUBMAP: dict[str, str] = {
     "max_tp":    "loudness_max_tp",
 }
 
+_MASTERING_MATCH_REF_SUBMAP: dict[str, str] = {
+    "reference":        "mastering_match_ref_path",
+    "strength":         "mastering_match_ref_strength",
+    "match_spectrum":   "mastering_match_ref_spectrum",
+    "match_rms":        "mastering_match_ref_rms",
+    "max_correction_db":"mastering_match_ref_max_db",
+}
+
 _MASTERING_SUBSECTIONS: dict[str, dict[str, str]] = {
-    "eq":         _MASTERING_EQ_SUBMAP,
-    "eq_match":   _MASTERING_EQ_MATCH_SUBMAP,
-    "compressor": _MASTERING_COMP_SUBMAP,
-    "bass":       _MASTERING_BASS_SUBMAP,
-    "loudness":   _MASTERING_LOUDNESS_SUBMAP,
+    "eq":              _MASTERING_EQ_SUBMAP,
+    "compressor":      _MASTERING_COMP_SUBMAP,
+    "bass":            _MASTERING_BASS_SUBMAP,
+    "loudness":        _MASTERING_LOUDNESS_SUBMAP,
+    "match_reference": _MASTERING_MATCH_REF_SUBMAP,
 }
 
 # ── Routing section ───────────────────────────────────────────────────────────

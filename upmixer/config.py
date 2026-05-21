@@ -132,15 +132,14 @@ class UpmixConfig:
     mastering_bass_excite: bool = False                 # harmonic exciter on/off
     mastering_bass_lfe_gain_db: float | None = None     # dB, LFE channel trim
 
-    # ── Mastering: EQ from reference (Match EQ) ───────────────────────────────
-    # When set, overrides mastering_eq_profile: a per-channel EQ is derived
-    # from the reference audio file (path) via EQMatcher and applied instead.
-    mastering_eq_reference: str | None = None    # path to reference audio file
-    # EQ match strength: scales gain_dB values before FIR design (0.0=flat,
-    # 1.0=full curve). Semantically different from mastering_eq_strength
-    # (wet/dry blend) — gain scaling is more predictable for broad spectral
-    # shapes. Default 0.5 gives half the reference curve deviation.
-    mastering_eq_match_strength: float = 0.5
+    # ── Mastering: spectral + RMS reference matching ─────────────────────────
+    # Runs as step 0 (before SpectralShaper). None = disabled.
+    # Both match_spectrum and match_rms are independently toggleable.
+    mastering_match_ref_path: str | None = None   # path to reference audio file
+    mastering_match_ref_strength: float = 0.7     # spectral FIR wet/dry blend
+    mastering_match_ref_spectrum: bool = True      # enable spectral correction
+    mastering_match_ref_rms: bool = True           # enable RMS level matching
+    mastering_match_ref_max_db: float = 12.0       # max spectral correction (dB)
 
     # ── Mixing: stem rebalance (stem pipeline only) ───────────────────────────
     # Per-stem gain adjustments (dB) applied before spatial routing.
