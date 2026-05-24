@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from upmixer.mastering_bass import (
+from upmixer.mastering.bass import (
     BASS_PROFILES,
     BASS_PROFILE_NAMES,
     BassController,

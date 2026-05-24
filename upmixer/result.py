@@ -47,11 +47,11 @@ class UpmixResult:
     duration_seconds: float
     n_channels_in: int
     n_channels_out: int
-    mode: str                            # "realtime" | "stem"
+    mode: str
     measured_lkfs: float | None = None
     measured_tp_dbtp: float | None = None
     applied_gain_db: float | None = None
-    stems: list[str] | None = None       # stem names (stem mode only)
+    stems: list[str] | None = None
     processing_time_seconds: float = 0.0
 
     def to_dict(self) -> dict:

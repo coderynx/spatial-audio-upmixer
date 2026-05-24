@@ -33,9 +33,6 @@ import numpy as np
 
 _log = logging.getLogger("upmixer")
 
-# ── Predefined rebalance profiles ────────────────────────────────────────────
-# Values are dB gain per canonical stem name (zone suffix not included).
-# Stems absent from the dict receive 0 dB (no change).
 
 REBALANCE_PROFILES: dict[str, dict[str, float]] = {
     "vocal-forward": {
@@ -55,12 +52,11 @@ REBALANCE_PROFILES: dict[str, dict[str, float]] = {
         "Drums":  +1.0,
         "Vocals": -0.5,
     },
-    "balanced": {},  # identity — no adjustments
+    "balanced": {},
 }
 
 REBALANCE_PROFILE_NAMES: tuple[str, ...] = tuple(sorted(REBALANCE_PROFILES.keys()))
 
-# Threshold for soft-clipper (applied only when boosting > +3 dB)
 _SOFT_CLIP_THRESHOLD: float = 0.95
 _BOOST_DB_CLIP_TRIGGER: float = 3.0
 
@@ -77,9 +73,8 @@ class StemRebalancer:
 
     def __init__(self, gains: dict[str, float], sample_rate: int) -> None:
         self._gains = gains
-        self._ramp_samples = max(1, int(round(0.010 * sample_rate)))  # 10 ms
+        self._ramp_samples = max(1, int(round(0.010 * sample_rate)))
 
-    # ── helpers ───────────────────────────────────────────────────────────────
 
     @staticmethod
     def _canonical(key: str) -> str:
@@ -89,7 +84,6 @@ class StemRebalancer:
     def _gain_db_for(self, key: str) -> float:
         return self._gains.get(self._canonical(key), 0.0)
 
-    # ── public API ────────────────────────────────────────────────────────────
 
     def process(
         self,
@@ -116,13 +110,11 @@ class StemRebalancer:
             gain_lin = 10.0 ** (gain_db / 20.0)
             arr = audio.astype(np.float64)
 
-            # Apply linear ramp at start to avoid clicks
             ramp_len = min(self._ramp_samples, arr.shape[0])
             ramp = np.linspace(1.0, gain_lin, ramp_len)
             arr[:ramp_len] *= ramp[:, np.newaxis] if arr.ndim == 2 else ramp
             arr[ramp_len:] *= gain_lin
 
-            # Soft-clip after large boosts to catch transient overshoots
             if gain_db > _BOOST_DB_CLIP_TRIGGER:
                 thr = _SOFT_CLIP_THRESHOLD
                 arr = np.tanh(arr / thr) * thr

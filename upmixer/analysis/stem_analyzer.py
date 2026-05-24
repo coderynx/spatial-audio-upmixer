@@ -13,15 +13,15 @@ import numpy as np
 
 @dataclass
 class StemFeatures:
-    """Per-stem content descriptor used by ContentMixer for routing decisions."""
+    """Per-stem content descriptor for content-aware spatial routing decisions."""
 
-    rms: float                 # linear RMS of the stereo mix
-    spectral_centroid_hz: float  # energy-weighted frequency centre (Hz)
-    lf_ratio: float            # fraction of energy below lf_cutoff_hz  ∈ [0,1]
-    hf_ratio: float            # fraction of energy above hf_cutoff_hz  ∈ [0,1]
-    stereo_width: float        # Side / (Mid + Side + ε)                ∈ [0,1]
-    transient_density: float   # normalised onset rate                  ∈ [0,1]
-    spectral_flatness: float   # Wiener entropy (0=tonal, 1=noise-like) ∈ [0,1]
+    rms: float
+    spectral_centroid_hz: float
+    lf_ratio: float
+    hf_ratio: float
+    stereo_width: float
+    transient_density: float
+    spectral_flatness: float
 
 
 class StemAnalyzer:
@@ -49,7 +49,6 @@ class StemAnalyzer:
         self._fft = fft_size
         self._trans_norm = transient_norm_rate
 
-        # Pre-compute constant spectral masks
         freqs = np.fft.rfftfreq(fft_size, 1.0 / sample_rate)
         self._freqs = freqs
         self._lf_mask = freqs < lf_cutoff_hz
@@ -62,23 +61,19 @@ class StemAnalyzer:
         R = audio[:, 1].astype(np.float64) if audio.shape[1] > 1 else audio[:, 0].astype(np.float64)
         mono = (L + R) * 0.5
 
-        # ── RMS ──────────────────────────────────────────────────────────────
         rms = float(np.sqrt(np.mean(mono ** 2)))
 
-        # ── Stereo width (M/S) ───────────────────────────────────────────────
         mid  = mono
         side = (L - R) * 0.5
         m_pow = float(np.mean(mid ** 2))
         s_pow = float(np.mean(side ** 2))
         stereo_width = s_pow / (m_pow + s_pow + 1e-12)
 
-        # ── Spectral features via short-time FFT ────────────────────────────
         n = len(mono)
         fft_size = self._fft
         hop = fft_size // 2
 
         if n < fft_size:
-            # Too short: fall back to a single zero-padded frame
             padded = np.zeros(fft_size)
             padded[:n] = mono[:n]
             specs = np.abs(np.fft.rfft(padded * self._window))[np.newaxis, :]
@@ -87,31 +82,26 @@ class StemAnalyzer:
             specs = np.array([
                 np.abs(np.fft.rfft(mono[s : s + fft_size] * self._window))
                 for s in starts
-            ])  # (n_frames, n_bins)
+            ])
 
-        mean_spec = np.mean(specs, axis=0)  # (n_bins,)
+        mean_spec = np.mean(specs, axis=0)
         spec_sq   = mean_spec ** 2
         total_sq  = float(np.sum(spec_sq)) + 1e-12
 
-        # Spectral centroid (Hz)
         spectral_centroid_hz = float(np.sum(self._freqs * spec_sq) / total_sq)
 
-        # LF / HF energy fractions
         lf_ratio = float(np.sum(spec_sq[self._lf_mask]) / total_sq)
         hf_ratio = float(np.sum(spec_sq[self._hf_mask]) / total_sq)
 
-        # Spectral flatness (Wiener entropy, clipped to [0, 1])
         eps = 1e-12
         log_geom = float(np.exp(np.mean(np.log(mean_spec + eps))))
         arith_mean = float(np.mean(mean_spec)) + eps
         spectral_flatness = min(1.0, max(0.0, log_geom / arith_mean))
 
-        # ── Transient density via HFC onset detection ────────────────────────
-        # High-frequency content (HFC) function: sum of bin_index * magnitude
         bin_idx = np.arange(specs.shape[1], dtype=np.float64)
-        hfc = specs @ bin_idx                           # (n_frames,)
+        hfc = specs @ bin_idx
         flux = np.diff(hfc, prepend=hfc[:1])
-        flux = np.maximum(flux, 0.0)                   # positive flux only
+        flux = np.maximum(flux, 0.0)
 
         if len(flux) > 2:
             threshold = np.mean(flux) + 2.0 * np.std(flux)

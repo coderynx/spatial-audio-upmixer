@@ -3,97 +3,64 @@
 # Spec: Dolby Atmos Music Master Delivery Specification v2022.07
 # Target: Apple Music, Amazon Music, Tidal
 #
-# The 'atmos-music' profile sets:
-#   loudness_target : -18.0 LKFS  (BS.1770-4 integrated)
-#   loudness_max_tp : -1.0 dBTP
-#   output_sample_rate: 48000 Hz
-#   output_subtype  : PCM_24
-#   output_type     : adm-bwf      (BS.2076-2 ADM metadata)
-#   lfe_cutoff      : 120 Hz
-#   loudness_normalize: true       (mandatory per spec)
-#
-# Replace the input/output paths before running:
+# Usage:
 #   upmixer --manifest atmos_music.yaml
 
-input:  stereo.flac
-output: atmos_music.adm.bwf
+version: "1.0"
 
-# Source separation: noticeably better spatial separation than realtime,
-# but significantly slower. Remove this line to use realtime mode.
-mode: stem
+metadata:
+  name: "Atmos Music Master"
+  description: "Dolby Atmos Music Master Delivery — streaming platforms"
 
-# Full Dolby Atmos bed (12 channels)
-format: 7.1.4
-
-# Dolby Atmos Music streaming profile — sets loudness, container, sample rate
-profile: atmos-music
+# ── Engine ────────────────────────────────────────────────────────────────────
+engine:
+  mode: stem              # stem separation: better spatial quality, slower
+  # stem_model: BS-Roformer-SW.ckpt   # override default htdemucs_ft
 
 # ── Mixing (stem mode only) ───────────────────────────────────────────────────
-# Applied after stem separation, before spatial routing.
-# Remove this section or comment it out to use the default content-aware routing.
 mixing:
+  channel_layout: 7.1.4  # full Dolby Atmos bed (12 channels)
   # Stem rebalance — per-stem gain adjustments in dB
-  # Use positive dB to push a stem forward, negative to recede.
-  # Uncomment and adjust as needed:
   # stem_rebalance:
-  #   Vocals: +1.5      # bring vocals forward
-  #   Drums:  -0.5      # slightly reduce percussion aggression
-  #   Bass:   +0.5      # add bass weight
-
+  #   Vocals: +1.5        # bring vocals forward
+  #   Drums:  -0.5        # reduce percussion aggression
+  #   Bass:   +0.5        # add bass weight
   # Per-stem EQ — optional tonal shaping per stem
-  # Profiles: vocal-presence, vocal-warmth, bass-warmth, bass-cut,
-  #           drums-punch, other-air, flat
-  # Uncomment and adjust as needed:
   # stem_eq:
   #   Vocals: vocal-presence
   #   Bass:   bass-warmth
   #   Other:  other-air
 
+# ── Output format — Dolby Atmos Music Master Delivery Specification v2022.07 ──
+format:
+  type: adm-bwf           # ITU-R BS.2076-2 ADM-BWF container (WAV)
+  subtype: PCM_24         # 24-bit LPCM (spec requirement)
+  sample_rate: 48000      # 48 kHz (spec requirement)
+
 # ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:
-  # EQ shaping — tonal character of the final mix (optional)
-  # Remove eq_profile or set to null to bypass.
-  # Profiles: spatial-transparent / spatial-air / spatial-warm / spatial-present / atmos-streaming
-  eq_profile: atmos-streaming   # subtle bass warmth + presence + air shelf
-  eq_strength: 1.0              # blend: 0.0 = bypass → 1.0 = full effect
+  eq:
+    profile: atmos-streaming  # subtle bass warmth + presence + air shelf
+    strength: 1.0             # 0.0 = bypass → 1.0 = full effect
+  # Reference matching — spectral + RMS matching to a reference track (independent of eq)
+  # match_reference:
+  #   path: reference_atmos.wav
+  #   strength: 0.5
+  compressor:
+    profile: glue
+  loudness:
+    normalize: true
+    target: -18.0             # Atmos Music spec: -18 LKFS
+    max_tp: -1.0              # -1 dBTP true peak ceiling
 
-  # Bus compression / glue (optional)
-  # Remove comp_profile or set to null to bypass.
-  # Profiles: transparent (gentle) / glue (SSL-style) / warm (opto-style)
-  comp_profile: glue
-  # Uncomment to override individual compressor parameters:
-  # comp_threshold: -18.0   # dBFS
-  # comp_ratio:     2.0
-  # comp_attack:    20.0    # ms
-  # comp_release:   200.0   # ms
-  # comp_makeup:    0.0     # dB
+# ── Processing ────────────────────────────────────────────────────────────────
+# processing:
+#   preview: true
+#   preview_duration: 30.0
+#   preview_start: 60.0       # start at 60 s (default: auto-center)
 
-  # Bass control (optional) — multichannel low-end shaping
-  # Profiles: boost / cut / mono / enhance
-  # Remove or set to null to bypass. Individual params override the profile.
-  # bass_profile: enhance
-  # bass_sub_gain:    1.5   # dB, sub-bass (<80 Hz)
-  # bass_mid_gain:    0.5   # dB, mid-bass (80–200 Hz)
-  # bass_mono_cutoff: 80.0  # Hz, sum L/R bass below this to mono
-  # bass_excite: true        # harmonic exciter on sub-bass band
-  # bass_lfe_gain: 1.0       # dB, LFE channel trim
-
-  # EQ from reference track (overrides eq_profile when set)
-  # Use a same-format reference for best results (7.1.4 → 7.1.4 reference).
-  # eq_reference: reference_atmos.wav
-  # After analysis, optionally save the generated profile for reuse:
-  # (Use --mastering-eq-reference-save from the CLI)
-
-  # Loudness normalization — controlled by the profile above (do not override
-  # unless you have a specific reason to deviate from the spec).
-  loudness_normalize: true
-  loudness_target: -18.0
-  loudness_max_tp: -1.0
-
-# ── Optional overrides ─────────────────────────────────────────────────────────
-# Quick preview: process only 30 s from the middle of the track
-# preview: true
-# preview_duration: 30.0
-
-# Write an ITU-R BS.775-4 stereo fold-down for reference
-# downmix_output: stereo_check.wav
+# ── Assets ────────────────────────────────────────────────────────────────────
+assets:
+  - input:  stereo.flac
+    output: atmos_music.wav   # ADM-BWF uses WAV container
+    # stem_cache_dir: /tmp/upmixer_stems   # cache stems for faster re-runs

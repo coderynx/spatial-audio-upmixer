@@ -11,7 +11,6 @@ class ChannelLabel(Enum):
     SR = "SR"
     BL = "BL"
     BR = "BR"
-    # Height channels (Dolby Atmos / DTS:X)
     TFL = "TFL"
     TFR = "TFR"
     TBL = "TBL"
@@ -48,7 +47,6 @@ class OutputFormat:
         return {"5.1": "B", "5.1.2": "C", "5.1.4": "D", "7.1": "I", "7.1.4": "J"}.get(self.name, "")
 
 
-# Standard WAVEX channel orderings
 SURROUND_51 = OutputFormat(
     name="5.1",
     channels=(
@@ -57,7 +55,6 @@ SURROUND_51 = OutputFormat(
     ),
 )
 
-# WAVEX 7.1 order: FL FR C LFE BL BR SL SR
 SURROUND_71 = OutputFormat(
     name="7.1",
     channels=(
@@ -67,7 +64,6 @@ SURROUND_71 = OutputFormat(
     ),
 )
 
-# Dolby Atmos / DTS:X height formats
 SURROUND_512 = OutputFormat(
     name="5.1.2",
     channels=(
@@ -146,7 +142,6 @@ class InputFormat:
         return any(ch in _HEIGHT_LABELS for ch in self.channels)
 
 
-# Standard input formats with WAVEX/SMPTE channel ordering
 MONO = InputFormat("mono", (ChannelLabel.C,))
 STEREO = InputFormat("stereo", (ChannelLabel.FL, ChannelLabel.FR))
 INPUT_5_0 = InputFormat(
@@ -205,7 +200,6 @@ INPUT_FORMAT_MAP: dict[str, InputFormat] = {
     "7.1.2": INPUT_7_1_2,
 }
 
-# Default format by channel count (8ch = 7.1; use --input-format to override to 5.1.2)
 _INPUT_FORMAT_BY_CHANNELS: dict[int, InputFormat] = {
     1: MONO,
     2: STEREO,

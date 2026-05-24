@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from upmixer.mastering_eq import EQ_PROFILES, EQ_PROFILE_NAMES, SpectralShaper, _build_fir
+from upmixer.mastering.eq import EQ_PROFILES, EQ_PROFILE_NAMES, SpectralShaper, _build_fir
 
 
 # ---------------------------------------------------------------------------

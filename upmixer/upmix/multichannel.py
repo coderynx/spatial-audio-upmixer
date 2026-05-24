@@ -58,13 +58,10 @@ class MultichannelUpmixer:
         BL = out.get("BL")
         BR = out.get("BR")
 
-        # Center
         if "C" not in out and FL is not None and FR is not None:
-            # ITU-R BS.775-4 Table 2 inverse: k_c/2 ≈ 0.3536
             out["C"] = (_ITU_C_COEFF * 0.5) * (FL + FR)
             C = out["C"]
 
-        # LFE
         if "LFE" not in out:
             src = C if C is not None else ((FL + FR) * 0.5 if FL is not None else None)
             if src is not None:
@@ -72,8 +69,6 @@ class MultichannelUpmixer:
                     src, sr, cfg.lfe_cutoff_hz, cfg.lfe_gain, cfg.lfe_filter_order
                 )
 
-        # Surround: diffuse send on source + Haas delay on right channel.
-        # Derived-only — pass-through surrounds untouched.
         if "SL" not in out:
             src = FL if FL is not None else (BL if BL is not None else None)
             if src is not None:
@@ -88,7 +83,6 @@ class MultichannelUpmixer:
                 )
                 SR = out["SR"]
 
-        # Back surround: diffuse + Haas on right
         if fmt.has_back:
             if "BL" not in out and SL is not None:
                 out["BL"] = cfg.back_gain * diffuse_send(SL, sr)
@@ -99,7 +93,6 @@ class MultichannelUpmixer:
                 )
                 BR = out["BR"]
 
-        # Height channels: elevation EQ + Haas on right
         if fmt.has_height:
             n = len(next(iter(out.values())))
 

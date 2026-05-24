@@ -4,6 +4,22 @@ from upmixer.config import UpmixConfig
 from upmixer.decomposition.direct_ambient import SoftMatrixBatchResult, SoftMatrixResult
 from upmixer.formats import FORMAT_MAP
 from upmixer.routing.lfe import LFEExtractor
+from upmixer.manifest import register_block as _rb
+
+_rb("routing", {
+    "center_gain":            ("config", "center_gain"),
+    "surround_gain":          ("config", "surround_gain"),
+    "back_gain":              ("config", "back_gain"),
+    "height_gain":            ("config", "height_gain"),
+    "lfe_gain":               ("config", "lfe_gain"),
+    "lfe_cutoff":             ("config", "lfe_cutoff"),
+    "center_extraction_gain": ("config", "center_extraction_gain"),
+    "center_attenuation":     ("config", "center_attenuation"),
+    "height_low_rolloff_gain":("config", "height_low_rolloff_gain"),
+    "height_high_shelf_gain": ("config", "height_high_shelf_gain"),
+    "content_mix_strength":   ("config", "content_mix_strength"),
+})
+del _rb
 
 
 class HeightFilter:
@@ -88,7 +104,6 @@ class ChannelRouter:
         self._lfe = LFEExtractor(config, sample_rate, n_freq_bins)
         self._transient_gate_min = config.transient_gate_min
 
-        # Bass-protection mask: surrounds receive content above surround_bass_cutoff_hz
         freqs = np.arange(n_freq_bins) * sample_rate / ((n_freq_bins - 1) * 2)
         cutoff = config.surround_bass_cutoff_hz
         self._surround_freq_mask = 1.0 / (1.0 + np.exp(-(freqs - cutoff) / (cutoff / 4.0)))
@@ -111,9 +126,6 @@ class ChannelRouter:
         cfg = self._config
         d = decomposition
 
-        # Side signal (L-R)/2 is already near-zero for centered/coherent content —
-        # M-S decomposition handles spatial separation without extra per-bin masking.
-        # Apply only bass protection; no spectral masking to avoid underwater artifacts.
         side_L = d.ambient_L * self._surround_freq_mask
         side_R = d.ambient_R * self._surround_freq_mask
 
@@ -150,7 +162,6 @@ class ChannelRouter:
         cfg = self._config
         d = decomposition
 
-        # Batch gate: shape (n_frames,) → broadcast to (n_freq, n_frames)
         gate = self._transient_gate_min + (1.0 - self._transient_gate_min) * (
             1.0 - d.transient_score[np.newaxis, :]
         )

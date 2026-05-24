@@ -5,33 +5,47 @@
 #
 # Usage:
 #   upmixer --manifest stereo_to_51.yaml
-# Or override input/output from the CLI:
-#   upmixer --manifest stereo_to_51.yaml my_track.flac my_output.wav
 
-input:  stereo.wav
-output: surround_51.wav
+version: "1.0"
 
-format: 5.1
-mode:   realtime
+# ── Engine ────────────────────────────────────────────────────────────────────
+engine:
+  mode: realtime
 
-# ── Gain tuning ────────────────────────────────────────────────────────────────
-center_gain:   0.85   # center channel (lead vocals / dialog)
-surround_gain: 0.60   # side surrounds
-lfe_gain:      0.50   # LFE sub channel
-lfe_cutoff:    120    # LFE low-pass cutoff in Hz
+# ── Mixing ────────────────────────────────────────────────────────────────────
+mixing:
+  channel_layout: 5.1
 
-# ── Mastering ──────────────────────────────────────────────────────────────────
+# ── Routing ───────────────────────────────────────────────────────────────────
+routing:
+  center_gain:   0.85   # center channel (lead vocals / dialog)
+  surround_gain: 0.60   # side surrounds
+  lfe_gain:      0.50   # LFE sub channel
+  lfe_cutoff:    120    # LFE low-pass cutoff in Hz
+
+# ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:
-  # EQ shaping (optional — remove eq_profile to bypass)
-  # spatial-warm adds body to typical streaming-mastered stereo sources
-  eq_profile: spatial-warm
-  eq_strength: 0.7
+  eq:
+    profile: spatial-warm   # adds body to streaming-mastered stereo sources
+    strength: 0.7
+  # Reference matching — spectral + RMS matching to a reference track (independent of eq)
+  # match_reference:
+  #   path: reference_51.wav
+  #   strength: 0.5
+  # Bus compression — omitted by default for realtime (preserve dynamics)
+  # compressor:
+  #   profile: transparent
+  loudness:
+    normalize: true
+    target: -18.0
+    max_tp: -1.0
 
-  # Bus compression — none by default for realtime mode (preserve dynamics)
-  # Uncomment to add light glue:
-  # comp_profile: transparent
+# ── Processing ────────────────────────────────────────────────────────────────
+# processing:
+#   preview: true
+#   preview_duration: 30.0
 
-  # Loudness normalization
-  loudness_normalize: true
-  loudness_target: -18.0
-  loudness_max_tp: -1.0
+# ── Assets ────────────────────────────────────────────────────────────────────
+assets:
+  - input:  stereo.wav
+    output: surround_51.wav

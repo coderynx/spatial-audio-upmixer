@@ -16,6 +16,3 @@ __all__ = [
     "INPUT_FORMAT_MAP",
 ]
 
-# StemUpmixPipeline is intentionally NOT imported here — it has an optional
-# dependency on audio-separator.  Import it explicitly when needed:
-#   from upmixer.separation.stem_pipeline import StemUpmixPipeline

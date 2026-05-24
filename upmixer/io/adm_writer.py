@@ -28,13 +28,8 @@ from scipy.signal import butter, sosfilt
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, FORMAT_MAP, OutputFormat
 
-# Supported bed configurations for ADM BWF export.
-# Dolby Atmos Master ADM Profile v1.1 §2.6 defines 5.1/7.1/7.1.2 as the
-# canonical bed formats; 5.1.2, 5.1.4, and 7.1.4 extend the same spec and
-# are accepted by Logic Pro, DaVinci Resolve, and Pro Tools.
 _DOLBY_ALLOWED_FORMATS = frozenset({"5.1", "7.1", "5.1.2", "7.1.2", "5.1.4", "7.1.4"})
 
-# Dolby channel names (audioChannelFormatName) per spec §2.4 Table 2-11
 _DOLBY_CH_NAME: dict[ChannelLabel, str] = {
     ChannelLabel.FL:  "RoomCentricLeft",
     ChannelLabel.FR:  "RoomCentricRight",
@@ -50,7 +45,6 @@ _DOLBY_CH_NAME: dict[ChannelLabel, str] = {
     ChannelLabel.TBR: "RoomCentricRightTopRearSurround",
 }
 
-# Dolby speaker labels (RC_ prefix) per spec §2.5
 _DOLBY_SPEAKER_LABEL: dict[ChannelLabel, str] = {
     ChannelLabel.FL:  "RC_L",
     ChannelLabel.FR:  "RC_R",
@@ -66,7 +60,6 @@ _DOLBY_SPEAKER_LABEL: dict[ChannelLabel, str] = {
     ChannelLabel.TBR: "RC_Rtrs",
 }
 
-# ITU-R BS.2051-3 Table 1 speaker position labels (SP labels)
 _BS2051_SP_LABEL: dict[ChannelLabel, str] = {
     ChannelLabel.FL:  "M+030",
     ChannelLabel.FR:  "M-030",
@@ -82,7 +75,6 @@ _BS2051_SP_LABEL: dict[ChannelLabel, str] = {
     ChannelLabel.TBR: "U-110",
 }
 
-# Cartesian (X, Y, Z) positions per spec §2.5 Table 2-13
 _DOLBY_POSITION: dict[ChannelLabel, tuple[float, float, float]] = {
     ChannelLabel.FL:  (-1.0,  1.0,  0.0),
     ChannelLabel.FR:  ( 1.0,  1.0,  0.0),
@@ -99,7 +91,6 @@ _DOLBY_POSITION: dict[ChannelLabel, tuple[float, float, float]] = {
 }
 
 
-# ── Low-level helpers ─────────────────────────────────────────────────────────
 
 
 def _make_chunk(tag: bytes, data: bytes) -> bytes:
@@ -132,7 +123,6 @@ def _pos_str(v: float) -> str:
     return str(int(v)) if v == int(v) else f"{v:.6g}"
 
 
-# ── Chunk builders ────────────────────────────────────────────────────────────
 
 
 def _fmt_chunk(fmt: OutputFormat, sample_rate: int, bit_depth: int) -> bytes:
@@ -145,13 +135,13 @@ def _fmt_chunk(fmt: OutputFormat, sample_rate: int, bit_depth: int) -> bytes:
     block_align = n_ch * (bit_depth // 8)
     return struct.pack(
         "<HHIIHH",
-        0x0001,                    # wFormatTag = WAVE_FORMAT_PCM
+        0x0001,
         n_ch,
         sample_rate,
         sample_rate * block_align,
         block_align,
         bit_depth,
-    )  # 16 bytes
+    )
 
 
 def _loudness_i16(value: float | None) -> int:
@@ -162,7 +152,7 @@ def _loudness_i16(value: float | None) -> int:
     Range of encodable values: −327.68 … +327.66 (well beyond any real level).
     """
     if value is None:
-        return 0x7FFF  # not indicated
+        return 0x7FFF
     return int(round(max(-327.68, min(327.66, value)) * 100))
 
 
@@ -192,14 +182,13 @@ def _bext_chunk(
     buf[320:330] = now.strftime("%Y-%m-%d").encode("ascii")
     buf[330:338] = now.strftime("%H:%M:%S").encode("ascii")
 
-    struct.pack_into("<H", buf, 346, 2)  # BWF version = 2
+    struct.pack_into("<H", buf, 346, 2)
 
-    # EBU Tech 3285 r3 §2.8: loudness metadata fields (signed int16, 0.01 units)
-    struct.pack_into("<h", buf, 412, _loudness_i16(loudness_lkfs))  # LOUDNESS_VALUE
-    struct.pack_into("<H", buf, 414, 0x7FFF)                        # LOUDNESS_RANGE (not measured)
-    struct.pack_into("<h", buf, 416, _loudness_i16(tp_dbtp))        # MAX_TRUE_PEAK_LEVEL
-    struct.pack_into("<H", buf, 418, 0x7FFF)                        # MAX_MOMENTARY_LOUDNESS (not measured)
-    struct.pack_into("<H", buf, 420, 0x7FFF)                        # MAX_SHORT_TERM_LOUDNESS (not measured)
+    struct.pack_into("<h", buf, 412, _loudness_i16(loudness_lkfs))
+    struct.pack_into("<H", buf, 414, 0x7FFF)
+    struct.pack_into("<h", buf, 416, _loudness_i16(tp_dbtp))
+    struct.pack_into("<H", buf, 418, 0x7FFF)
+    struct.pack_into("<H", buf, 420, 0x7FFF)
 
     return bytes(buf) + b"\r\n"
 
@@ -208,16 +197,16 @@ def _chna_chunk(fmt: OutputFormat) -> bytes:
     """Build CHNA chunk using custom Dolby-profile IDs starting from 0x1001 (§3.2)."""
     n = fmt.n_channels
     pack_id = "AP_00011001"
-    data = struct.pack("<HH", n, n)  # numTracks, numUIDs
+    data = struct.pack("<HH", n, n)
 
     for i, label in enumerate(fmt.channels):
         track_fmt_id = f"AT_0001{0x1001 + i:04X}_01"
         uid_str = f"ATU_{i + 1:08d}"
-        data += struct.pack("<H", i + 1)    # 1-based track index
+        data += struct.pack("<H", i + 1)
         data += _pad_field(uid_str, 12)
         data += _pad_field(track_fmt_id, 14)
         data += _pad_field(pack_id, 11)
-        data += b"\x00"                     # padding byte
+        data += b"\x00"
 
     return data
 
@@ -246,13 +235,9 @@ def _axml_chunk(
     lines: list[str] = []
     a = lines.append
 
-    # ITU-R BS.2076-2 §6: axml chunk shall contain a bare audioFormatExtended
-    # element at the root — NOT wrapped in ebuCoreMain. Logic Pro parses
-    # audioFormatExtended at the document root; the EBU wrapper breaks routing.
     a('<?xml version="1.0" encoding="UTF-8"?>')
     a('<audioFormatExtended version="ITU-R_BS.2076-2">')
 
-    # audioProgramme — include start/end for Logic Pro timeline binding
     a('        <audioProgramme audioProgrammeID="APR_1001"')
     a('                        audioProgrammeName="Main Programme"')
     a(f'                        start="{zero}" end="{dur}">')
@@ -261,14 +246,12 @@ def _axml_chunk(
         a(f'          <audioProgrammeLabel language="en">ITU-R BS.2051-3 System {fmt.bs2051_system}</audioProgrammeLabel>')
     a('        </audioProgramme>')
 
-    # audioContent — dialogue element required, no typeLabel/typeDefinition (§2.8)
     a('        <audioContent audioContentID="ACO_1001"')
     a(f'                      audioContentName="{fmt.name} Bed">')
     a('          <audioObjectIDRef>AO_1001</audioObjectIDRef>')
     a('          <dialogue mixedContentKind="0">2</dialogue>')
     a('        </audioContent>')
 
-    # audioObject — no interact attribute (§2.7); binaural render mode required (§2.7)
     a('        <audioObject audioObjectID="AO_1001"')
     a(f'                     audioObjectName="{fmt.name} Bed"')
     a(f'                     start="{zero}" duration="{dur}">')
@@ -278,7 +261,6 @@ def _axml_chunk(
     a('          <binaural><binauralRenderMode>Off</binauralRenderMode></binaural>')
     a('        </audioObject>')
 
-    # audioPackFormat — custom ID (§3.1)
     a(f'        <audioPackFormat audioPackFormatID="{pack_id}"')
     a(f'                         audioPackFormatName="{fmt.name} Bed"')
     a('                         typeLabel="0001" typeDefinition="DirectSpeakers">')
@@ -286,8 +268,6 @@ def _axml_chunk(
         a(f'          <audioChannelFormatIDRef>{ch_id(i)}</audioChannelFormatIDRef>')
     a('        </audioPackFormat>')
 
-    # audioChannelFormats — Dolby names, cartesian positions, RC_ labels (§2.4, §2.5)
-    # DirectSpeakers audioBlockFormat must NOT have rtime/duration
     for i, label in enumerate(fmt.channels):
         cid = ch_id(i)
         bid = blk_id(i)
@@ -310,7 +290,6 @@ def _axml_chunk(
         a('          </audioBlockFormat>')
         a('        </audioChannelFormat>')
 
-    # audioStreamFormats — includes audioPackFormatIDRef (§2.3)
     for i, label in enumerate(fmt.channels):
         sid = stream_id(i)
         cid = ch_id(i)
@@ -323,7 +302,6 @@ def _axml_chunk(
         a(f'          <audioTrackFormatIDRef>{tid}</audioTrackFormatIDRef>')
         a('        </audioStreamFormat>')
 
-    # audioTrackFormats
     for i, label in enumerate(fmt.channels):
         tid = track_id(i)
         sid = stream_id(i)
@@ -333,7 +311,6 @@ def _axml_chunk(
         a(f'          <audioStreamFormatIDRef>{sid}</audioStreamFormatIDRef>')
         a('        </audioTrackFormat>')
 
-    # audioTrackUIDs — sampleRate and bitDepth required (§2.10)
     for i, label in enumerate(fmt.channels):
         uid = f"ATU_{i + 1:08d}"
         tid = track_id(i)
@@ -358,7 +335,6 @@ _RIGHT_CH_LABELS = {
     ChannelLabel.FR, ChannelLabel.SR, ChannelLabel.BR, ChannelLabel.TFR, ChannelLabel.TBR
 }
 
-# Default positions for passthrough channels written as Objects
 _PASSTHROUGH_POSITION: dict[str, tuple[float, float, float]] = {
     "C":   (0.0,  1.0,  0.0),
     "LFE": (0.0,  1.0, -1.0),
@@ -426,7 +402,7 @@ def _chna_stem_beds_chunk(
         stem_beds: list of (stem_name, stem_idx, [(label, track_idx), ...]).
             track_idx is 0-based global audio track index.
     """
-    entries: list[tuple[int, str]] = []  # (track_idx, pack_id)
+    entries: list[tuple[int, str]] = []
     for stem_name, stem_idx, channels in stem_beds:
         pack_id = f"AP_0001{0x2001 + stem_idx:04X}"
         for label, track_idx in channels:
@@ -470,7 +446,6 @@ def _axml_stem_beds_chunk(
     a('<?xml version="1.0" encoding="UTF-8"?>')
     a('<audioFormatExtended version="ITU-R_BS.2076-2">')
 
-    # audioProgramme
     a('        <audioProgramme audioProgrammeID="APR_1001"')
     a('                        audioProgrammeName="Stem Mix"')
     a(f'                        start="{zero}" end="{dur}">')
@@ -479,7 +454,6 @@ def _axml_stem_beds_chunk(
         a(f'          <audioProgrammeLabel language="en">ITU-R BS.2051-3 System {bs2051_system}</audioProgrammeLabel>')
     a('        </audioProgramme>')
 
-    # audioContent — one entry per stem
     a('        <audioContent audioContentID="ACO_1001"')
     a('                      audioContentName="Stems">')
     for stem_name, stem_idx, _ in stem_beds:
@@ -487,7 +461,6 @@ def _axml_stem_beds_chunk(
     a('          <dialogue mixedContentKind="0">2</dialogue>')
     a('        </audioContent>')
 
-    # audioObjects
     for stem_name, stem_idx, channels in stem_beds:
         obj_id = f"AO_{0x2001 + stem_idx:04X}"
         pack_id = f"AP_0001{0x2001 + stem_idx:04X}"
@@ -500,7 +473,6 @@ def _axml_stem_beds_chunk(
         a('          <binaural><binauralRenderMode>Off</binauralRenderMode></binaural>')
         a('        </audioObject>')
 
-    # audioPackFormats (DirectSpeakers)
     for stem_name, stem_idx, channels in stem_beds:
         pack_id = f"AP_0001{0x2001 + stem_idx:04X}"
         a(f'        <audioPackFormat audioPackFormatID="{pack_id}"')
@@ -510,7 +482,6 @@ def _axml_stem_beds_chunk(
             a(f'          <audioChannelFormatIDRef>AC_0001{0x2001 + track_idx:04X}</audioChannelFormatIDRef>')
         a('        </audioPackFormat>')
 
-    # audioChannelFormats (DirectSpeakers — NO rtime/duration per spec)
     for stem_name, stem_idx, channels in stem_beds:
         for label, track_idx in channels:
             ch_id = f"AC_0001{0x2001 + track_idx:04X}"
@@ -533,7 +504,6 @@ def _axml_stem_beds_chunk(
             a('          </audioBlockFormat>')
             a('        </audioChannelFormat>')
 
-    # audioStreamFormats
     for stem_name, stem_idx, channels in stem_beds:
         pack_id = f"AP_0001{0x2001 + stem_idx:04X}"
         for label, track_idx in channels:
@@ -548,7 +518,6 @@ def _axml_stem_beds_chunk(
             a(f'          <audioTrackFormatIDRef>{tid}</audioTrackFormatIDRef>')
             a('        </audioStreamFormat>')
 
-    # audioTrackFormats
     for _, stem_idx, channels in stem_beds:
         for label, track_idx in channels:
             tid = f"AT_0001{0x2001 + track_idx:04X}_01"
@@ -559,7 +528,6 @@ def _axml_stem_beds_chunk(
             a(f'          <audioStreamFormatIDRef>{sid}</audioStreamFormatIDRef>')
             a('        </audioTrackFormat>')
 
-    # audioTrackUIDs
     for _, stem_idx, channels in stem_beds:
         pack_id = f"AP_0001{0x2001 + stem_idx:04X}"
         for label, track_idx in channels:
@@ -590,7 +558,6 @@ def _audio_to_pcm(audio: np.ndarray, bit_depth: int) -> bytes:
     raise ValueError(f"Unsupported bit depth for ADM BWF: {bit_depth}")
 
 
-# ── Public writer class ───────────────────────────────────────────────────────
 
 
 class AdmBwfWriter:
@@ -641,7 +608,7 @@ class AdmBwfWriter:
                 raise ValueError(f"Missing channel '{key}' for {fmt.name} output")
             ordered.append(channels[key])
 
-        audio = np.column_stack(ordered)   # (n_samples, n_channels), C-order
+        audio = np.column_stack(ordered)
         duration_s = audio.shape[0] / sr
 
         fmt_bytes  = _fmt_chunk(fmt, sr, bit_depth)
@@ -650,8 +617,6 @@ class AdmBwfWriter:
         pcm_bytes  = _audio_to_pcm(audio, bit_depth)
         axml_bytes = _axml_chunk(fmt, duration_s, sr, bit_depth)
 
-        # Chunk order: fmt bext data axml chna
-        # bext placed before data per EBU Tech 3285 r3 recommendation.
         wave_body = (
             _make_chunk(b"fmt ", fmt_bytes)
             + _make_chunk(b"bext", bext_bytes)
@@ -716,9 +681,8 @@ class AdmBwfStemWriter:
             self._config.output_subtype, 24
         )
 
-        # stem_beds: list of (display_name, stem_idx, [(ChannelLabel, track_idx)])
         stem_beds: list[tuple[str, int, list[tuple[ChannelLabel, int]]]] = []
-        all_tracks: list[np.ndarray] = []  # mono audio per track
+        all_tracks: list[np.ndarray] = []
 
         for stem_idx, stem_key in enumerate(sorted(stems.keys())):
             audio = stems[stem_key]
@@ -733,10 +697,8 @@ class AdmBwfStemWriter:
             bed_channels: list[tuple[ChannelLabel, int]] = []
 
             for ch_str, gain in routing.items():
-                # Skip LFE here; handled separately below
                 if ch_str == "LFE":
                     continue
-                # Skip channels absent from the output format
                 if ch_str not in self._output_ch_values:
                     continue
                 try:
@@ -757,7 +719,6 @@ class AdmBwfStemWriter:
                 all_tracks.append(ch_audio)
                 bed_channels.append((label, track_idx))
 
-            # LFE: low-pass filtered mono, gain baked in
             lfe_routing_gain = routing.get("LFE", 0.0)
             if lfe_routing_gain > 0 and "LFE" in self._output_ch_values:
                 lfe_audio = (
@@ -772,7 +733,6 @@ class AdmBwfStemWriter:
             if bed_channels:
                 stem_beds.append((stem_name, stem_idx, bed_channels))
 
-        # Passthrough channels (C, LFE from multichannel source) as one extra bed
         if passthrough:
             pass_channels: list[tuple[ChannelLabel, int]] = []
             for ch_name in sorted(passthrough.keys()):

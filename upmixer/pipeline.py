@@ -19,7 +19,7 @@ from upmixer.formats import (
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
 from upmixer.io.writer import AudioWriter
-from upmixer.mastering import MasteringChain, MasteringResult
+from upmixer.mastering import MasteringChain
 from upmixer.result import UpmixResult
 from upmixer.routing.channel_router import ChannelRouter
 from upmixer.utils import normalize_energy, preview_slice, itu_downmix_stereo
@@ -43,27 +43,22 @@ class StreamingProcessor:
         fft_size, hop_size = config.resolve_fft_params(sample_rate)
         self._hop_size = hop_size
 
-        # Streaming STFT instances (one per input channel)
         self._stft_L = StreamingSTFT(config, sample_rate)
         self._stft_R = StreamingSTFT(config, sample_rate)
 
-        # Output STFT instances (one per output channel)
         self._format = FORMAT_MAP[config.output_format]
         self._stft_out: dict[str, StreamingSTFT] = {
             label.value: StreamingSTFT(config, sample_rate)
             for label in self._format.channels
         }
 
-        # Analysis components
         n_freq = fft_size // 2 + 1
         self._coherence_est = CoherenceEstimator(config)
         self._coherence_state = self._coherence_est.create_state(n_freq)
 
-        # Decomposition and routing
         self._decomposer = SoftMatrixDecomposer(config, sample_rate=sample_rate, n_freq=n_freq)
         self._router = ChannelRouter(config, sample_rate, n_freq)
 
-        # Input buffering (accumulate until we have hop_size samples)
         self._input_buffer_L = np.zeros(0)
         self._input_buffer_R = np.zeros(0)
 
@@ -97,26 +92,20 @@ class StreamingProcessor:
             X_R = self._stft_R.analyze_frame(hop_R)
 
             if X_L is None or X_R is None:
-                # Still filling initial STFT buffer
                 for ch in output_chunks:
                     output_chunks[ch].append(np.zeros(hop))
                 continue
 
-            # Coherence estimation (updates state in place)
             coherence = self._coherence_est.estimate_frame(
                 X_L, X_R, self._coherence_state
             )
 
-            # Soft matrix decomposition
             decomp = self._decomposer.decompose_frame(X_L, X_R, coherence)
 
-            # Mid signal for LFE
             mid_frame = (X_L + X_R) * 0.5
 
-            # Route to output channels
             channel_spectra = self._router.route_frame(decomp, mid_frame)
 
-            # Synthesize each channel
             for ch_name, spectrum in channel_spectra.items():
                 samples = self._stft_out[ch_name].synthesize_frame(spectrum)
                 output_chunks[ch_name].append(samples)
@@ -193,7 +182,6 @@ class UpmixPipeline:
 
         _progress(f"Input:  {input_path}", 0.0)
 
-        # Resolve input format
         if input_format_override is not None:
             if input_format_override not in INPUT_FORMAT_MAP:
                 raise ValueError(
@@ -236,7 +224,6 @@ class UpmixPipeline:
         _progress(f"  Format: {input_fmt.name} → {output_fmt.name}", 0.1)
 
         if input_fmt.n_channels <= 2:
-            # Mono / stereo: coherence-based STFT pipeline
             if input_fmt.n_channels == 1:
                 left = right = audio[:, 0]
             else:
@@ -249,7 +236,6 @@ class UpmixPipeline:
             )
             channels = self._post_process(channels, sr, left, right)
         else:
-            # Multichannel: time-domain pass-through + derivation
             from upmixer.upmix.multichannel import MultichannelUpmixer
 
             input_channels = {
@@ -263,15 +249,12 @@ class UpmixPipeline:
 
         _progress("  Processing complete.", 0.9)
 
-        # Mastering phase — shared with stem pipeline via MasteringChain.
-        # Applies BS.1770-4 loudness normalization (if enabled) + soft-limiting.
         _progress("  Mastering...", 0.93)
         mastering = MasteringChain(cfg)
         channels, mastering_result = mastering.process(channels, sr, output_fmt)
 
         out_sr = cfg.output_sample_rate if cfg.output_sample_rate else sr
         # Dolby Atmos Music Delivery Specification v2022.07: ADM-BWF requires 48 kHz.
-        # Override silently when the user has not set an explicit output rate.
         if cfg.output_type == "adm-bwf" and cfg.output_sample_rate is None and out_sr != 48000:
             out_sr = 48000
             _log.info("  ADM-BWF: output forced to 48 kHz (Dolby spec)")
@@ -335,8 +318,6 @@ class UpmixPipeline:
 
         latency = fft_size - hop_size
 
-        # Pre-allocate one output buffer per channel.
-        # Upper bound: main audio + tail flush + one extra window.
         tail_len = latency + fft_size
         buf_size = n_samples + tail_len + hop_size
         out_buf: dict[str, np.ndarray] = {
@@ -353,7 +334,7 @@ class UpmixPipeline:
 
         _log.info("  Processing...")
         n_blocks = math.ceil(n_samples / cfg.block_size)
-        log_interval = max(1, n_blocks // 20)   # ~20 progress lines total
+        log_interval = max(1, n_blocks // 20)
 
         for block_idx, start in enumerate(range(0, n_samples, cfg.block_size)):
             end = min(start + cfg.block_size, n_samples)

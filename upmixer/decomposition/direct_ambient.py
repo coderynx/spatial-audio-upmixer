@@ -11,32 +11,32 @@ from upmixer.config import UpmixConfig
 class SoftMatrixResult:
     """Result of perceptual spectral decomposition for one STFT frame."""
 
-    center: np.ndarray          # Center channel spectrum (n_freq,)
-    front_L: np.ndarray         # Front left spectrum (n_freq,)
-    front_R: np.ndarray         # Front right spectrum (n_freq,)
-    ambient_L: np.ndarray       # M-S side = (L-R)/2
-    ambient_R: np.ndarray       # -(L-R)/2
-    signal_L: np.ndarray        # Raw left input (for height extraction)
-    signal_R: np.ndarray        # Raw right input
-    width: np.ndarray           # Per-bin diffuseness = 1 - coherence (n_freq,)
-    transient_score: np.ndarray # Per-bin transient mask (n_freq,) ∈ [0,1]
-    harmonic_mask: np.ndarray   # Per-bin harmonicity (n_freq,) ∈ [0,1]
-
-
-@dataclass
-class SoftMatrixBatchResult:
-    """Result of perceptual spectral decomposition for full spectrogram (batch mode)."""
-
-    center: np.ndarray          # (n_freq, n_frames)
+    center: np.ndarray
     front_L: np.ndarray
     front_R: np.ndarray
     ambient_L: np.ndarray
     ambient_R: np.ndarray
     signal_L: np.ndarray
     signal_R: np.ndarray
-    width: np.ndarray           # (n_freq, n_frames)
-    transient_score: np.ndarray # (n_frames,) — zeros in batch mode
-    harmonic_mask: np.ndarray   # (n_freq, n_frames) — zeros in batch mode
+    width: np.ndarray
+    transient_score: np.ndarray
+    harmonic_mask: np.ndarray
+
+
+@dataclass
+class SoftMatrixBatchResult:
+    """Result of perceptual spectral decomposition for full spectrogram (batch mode)."""
+
+    center: np.ndarray
+    front_L: np.ndarray
+    front_R: np.ndarray
+    ambient_L: np.ndarray
+    ambient_R: np.ndarray
+    signal_L: np.ndarray
+    signal_R: np.ndarray
+    width: np.ndarray
+    transient_score: np.ndarray
+    harmonic_mask: np.ndarray
 
 
 class SoftMatrixDecomposer:
@@ -67,7 +67,7 @@ class SoftMatrixDecomposer:
         self._harmonicity_est = HarmonicityEstimator(config, n_freq)
         self._harmonicity_state = self._harmonicity_est.create_state()
 
-        self._prev_mag: np.ndarray | None = None  # legacy batch path
+        self._prev_mag: np.ndarray | None = None
 
     def decompose_frame(
         self,
@@ -82,9 +82,6 @@ class SoftMatrixDecomposer:
         mag_R = np.abs(X_R_frame)
         pan = (mag_L - mag_R) / (mag_L + mag_R + self._eps)
 
-        # Pan-based only: wide reverb is already captured in side signal → surrounds.
-        # Coherence gate was too strict for multi-instrument mixes (interference → low
-        # coherence even for centered content → phantom center artifact).
         center_weight = 1.0 - np.abs(pan)
         center = self._center_extraction_gain * center_weight * mid
 

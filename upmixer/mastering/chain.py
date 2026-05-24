@@ -7,11 +7,13 @@ that shapes the final tone, dynamics, loudness, and peak ceiling.
 
 Processing order
 ----------------
+0. **Reference matching** (optional) — spectral envelope ratio EQ + global RMS
+   scalar derived from a reference audio file.  Runs first to imprint the
+   reference's "feel" before any other mastering stage.  Controlled by
+   ``config.mastering_match_ref_path`` (``None`` = disabled).
 1. **Spectral shaping** (optional) — minimum-phase FIR tonal curve applied to
    all channels except LFE.  Controlled by ``config.mastering_eq_profile`` and
    ``config.mastering_eq_strength``.  Disabled when profile is ``None``.
-   When ``config.mastering_eq_reference`` is set, per-channel FIRs derived
-   from the reference track are used instead of a preset profile.
 2. **Bus compression** (optional) — linked-sidechain RMS glue compressor.
    Cosmetic only; does not substitute for loudness normalization.  Controlled
    by ``config.mastering_comp_profile`` (``None`` = disabled).  Individual
@@ -49,6 +51,16 @@ from upmixer.formats import OutputFormat
 from upmixer.utils import soft_limit
 
 _log = logging.getLogger("upmixer")
+
+from upmixer.manifest import register_block_keys as _rbk
+_rbk("mastering", {
+    "loudness": {
+        "normalize": ("config", "loudness_normalize"),
+        "target":    ("config", "loudness_target"),
+        "max_tp":    ("config", "loudness_max_tp"),
+    },
+})
+del _rbk
 
 
 @dataclass
@@ -107,25 +119,23 @@ class MasteringChain:
         cfg = self._cfg
         result = MasteringResult()
 
-        # ── Step 1: spectral shaping (EQ / EQ Match) ──────────────────────────
-        if cfg.mastering_eq_reference is not None:
-            # Per-channel EQ from reference track (overrides mastering_eq_profile)
-            from upmixer.mastering_eq import SpectralShaper
-            from upmixer.mastering_eq_match import EQMatcher
-            _log.info("  EQ Match: analysing reference '%s'...", cfg.mastering_eq_reference)
-            matcher = EQMatcher(sample_rate)
-            per_ch_bps = matcher.analyze(
-                cfg.mastering_eq_reference, list(channels.keys())
+        if cfg.mastering_match_ref_path is not None:
+            from .match_reference import ReferenceMatchProcessor
+            _log.info(
+                "  Match reference: analysing '%s'...", cfg.mastering_match_ref_path
             )
-            shaper = SpectralShaper(
-                profile=None,
-                strength=cfg.mastering_eq_strength,
+            proc = ReferenceMatchProcessor(
+                reference_path=cfg.mastering_match_ref_path,
+                strength=cfg.mastering_match_ref_strength,
+                match_spectrum=cfg.mastering_match_ref_spectrum,
+                match_rms=cfg.mastering_match_ref_rms,
+                max_correction_db=cfg.mastering_match_ref_max_db,
                 sample_rate=sample_rate,
-                per_channel_breakpoints=per_ch_bps,
             )
-            channels = shaper.process(channels)
-        elif cfg.mastering_eq_profile is not None:
-            from upmixer.mastering_eq import SpectralShaper
+            channels = proc.process(channels)
+
+        if cfg.mastering_eq_profile is not None:
+            from .eq import SpectralShaper
             shaper = SpectralShaper(
                 profile=cfg.mastering_eq_profile,
                 strength=cfg.mastering_eq_strength,
@@ -133,9 +143,8 @@ class MasteringChain:
             )
             channels = shaper.process(channels)
 
-        # ── Step 2: bus compression ────────────────────────────────────────────
         if cfg.mastering_comp_profile is not None:
-            from upmixer.mastering_comp import BusCompressor, COMP_PROFILES
+            from .compressor import BusCompressor, COMP_PROFILES
 
             preset = COMP_PROFILES.get(cfg.mastering_comp_profile, {})
             if not preset:
@@ -146,11 +155,6 @@ class MasteringChain:
                     sorted(COMP_PROFILES.keys()),
                 )
             else:
-                # Individual config params override preset when explicitly set (not None)
-                def _p(attr: str) -> float:
-                    val = getattr(cfg, attr)
-                    return val if val is not None else preset[attr.removeprefix("mastering_comp_")]
-
                 comp = BusCompressor(
                     threshold_db=cfg.mastering_comp_threshold_db
                     if cfg.mastering_comp_threshold_db is not None
@@ -174,7 +178,6 @@ class MasteringChain:
                 )
                 channels = comp.process(channels)
 
-        # ── Step 2.5: bass control ────────────────────────────────────────────
         _bass_active = (
             cfg.mastering_bass_profile is not None
             or cfg.mastering_bass_sub_gain_db is not None
@@ -184,7 +187,7 @@ class MasteringChain:
             or cfg.mastering_bass_excite
         )
         if _bass_active:
-            from upmixer.mastering_bass import BassController, BASS_PROFILES
+            from .bass import BassController, BASS_PROFILES
             preset = BASS_PROFILES.get(cfg.mastering_bass_profile or "", {})
 
             def _bp(attr: str, default: float = 0.0) -> float:
@@ -206,7 +209,6 @@ class MasteringChain:
             )
             channels = bass.process(channels)
 
-        # ── Step 3 + 4: BS.1770-4 loudness normalization + True Peak ceiling ──
         if cfg.loudness_normalize:
             _log.info("  Normalizing loudness (BS.1770-4)...")
             from upmixer.loudness import normalize_loudness
@@ -234,7 +236,6 @@ class MasteringChain:
                 "  [TP limited]" if result.tp_limited else "",
             )
 
-        # ── Step 5: tanh soft-limiter ──────────────────────────────────────────
         channels = {
             name: soft_limit(ch, cfg.peak_limit_threshold)
             for name, ch in channels.items()

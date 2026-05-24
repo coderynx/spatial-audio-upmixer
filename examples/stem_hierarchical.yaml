@@ -1,0 +1,106 @@
+# Hierarchical multi-stage stem extraction → 7.1.4 Atmos
+#
+# Demonstrates the three-tier model pipeline. The engine automatically selects
+# models and execution order based on the requested stems — no model names
+# appear in this manifest.
+#
+# Stage 0 — Crowd isolation (only when "crowd" is requested):
+#   mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt
+#   → Isolates "Crowd" from the original mix before instruments run.
+#     Without this stage, audience noise bleeds into every instrument stem.
+#
+# Stage 1 — Primary 6-stem separation:
+#   BS-Roformer-SW.ckpt
+#   Input: crowd-free residual (when crowd requested) OR original mix.
+#   Outputs: Vocals, Bass, Drums, Guitar, Piano, Other
+#
+# Stage 2 — Drum sub-separation (only when drum sub-stems are requested):
+#   MDX23C-DrumSep-aufr33-jarredou.ckpt
+#   Input: Drums stem produced by Stage 1.
+#   Outputs: Kick, Snare, Toms, Hi-Hat, Ride, Crash
+#   The intermediate Drums stem is deleted after extraction (unless also
+#   present in the stems list as an explicit output).
+#
+# Requires: pip install "upmixer[separation-cpu]"
+# Usage:    upmixer --manifest examples/stem_hierarchical.yaml --preview
+
+version: "1.0"
+
+metadata:
+  name: "Hierarchical Stem Extraction"
+  description: "Three-stage crowd+instrument+drumsep pipeline for concert recordings"
+
+# ── Engine ────────────────────────────────────────────────────────────────────
+engine:
+  mode: stem
+  # stems: which outputs to produce. The engine resolves models automatically.
+  # Default when omitted: [Vocals, Bass, Drums, Guitar, Piano, Other]
+  stems:
+    - vocals
+    - crowd       # triggers Stage 0 (crowd isolation) before Stage 1
+    - kick        # triggers Stage 2 (drumsep) after Stage 1
+    - snare
+    - hi-hat
+
+  # stem_cache_dir: /tmp/upmixer_stems  # auto-enabled for batch; override here
+
+# ── Mixing ────────────────────────────────────────────────────────────────────
+mixing:
+  channel_layout: 7.1.4
+
+  stem_rebalance:
+    Vocals: +1.5    # vocals forward
+    Kick:   +0.5
+    Crowd:  -3.0    # de-emphasize audience noise in the mix
+
+  # Per-stem EQ (optional)
+  # stem_eq:
+  #   Vocals: vocal-presence
+  #   Kick:   drums-punch
+
+# ── Mastering ─────────────────────────────────────────────────────────────────
+mastering:
+  eq:
+    profile: atmos-streaming
+    strength: 0.8
+  compressor:
+    profile: glue
+  loudness:
+    normalize: true
+    target: -18.0
+    max_tp: -1.0
+
+# ── Processing ────────────────────────────────────────────────────────────────
+processing:
+  preview: true
+  preview_duration: 30.0
+
+# ── Assets ────────────────────────────────────────────────────────────────────
+assets:
+  # Asset 1: concert recording — uses all three stages (crowd + instruments + drumsep)
+  - input:  concert_stereo.flac
+    output: concert_master.wav
+
+  # Asset 2: studio track — overrides stems to skip crowd stage entirely.
+  # The engine sees no "crowd" → Stage 0 is skipped, Stage 1 reads original mix.
+  - input:  studio_track.flac
+    output: studio_master.wav
+    mixing:
+      stems:
+        - vocals
+        - drums       # whole drums stem (Stage 1 only, no Stage 2)
+        - bass
+
+  # Asset 3: drum-only extraction — requests drum sub-stems plus whole Drums.
+  # Stage 1 keeps Drums as a final output AND feeds it into Stage 2 for sub-stems.
+  - input:  live_drums.flac
+    output: live_drums_master.wav
+    mixing:
+      stems:
+        - drums       # whole Drums stem kept (Stage 1 output)
+        - kick        # sub-stems (Stage 2 from Drums)
+        - snare
+        - toms
+        - hi-hat
+        - ride
+        - crash

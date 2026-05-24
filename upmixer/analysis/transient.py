@@ -9,8 +9,8 @@ from upmixer.config import UpmixConfig
 class TransientState:
     """Persistent state for per-band transient detection."""
 
-    prev_mag: np.ndarray        # (n_freq,) — magnitude of previous frame
-    band_ema_flux: np.ndarray   # (n_bands,) — per-band EMA of positive flux
+    prev_mag: np.ndarray
+    band_ema_flux: np.ndarray
     initialized: bool = False
 
 
@@ -99,7 +99,6 @@ class PerBandTransientDetector:
 
         state.prev_mag = mag
 
-        # Interpolate band scores → per-bin
         return np.interp(
             np.arange(self._n_freq, dtype=np.float64),
             self._band_center_bins,

@@ -41,9 +41,6 @@ from scipy.signal import fftconvolve, firwin2, minimum_phase
 
 _log = logging.getLogger("upmixer")
 
-# ── Predefined stem EQ profiles ───────────────────────────────────────────────
-# Format: list of (freq_hz, gain_dB) breakpoints, ascending frequency.
-# DC and Nyquist are added automatically during FIR design.
 
 STEM_EQ_PROFILES: dict[str, list[tuple[float, float]]] = {
     "vocal-presence": [
@@ -75,7 +72,6 @@ STEM_EQ_PROFILES: dict[str, list[tuple[float, float]]] = {
 
 STEM_EQ_PROFILE_NAMES: tuple[str, ...] = tuple(sorted(STEM_EQ_PROFILES.keys()))
 
-# ── Filter cache ──────────────────────────────────────────────────────────────
 _FIR_CACHE: dict[tuple[str, int, int], np.ndarray] = {}
 
 
@@ -98,7 +94,6 @@ def _build_fir(profile: str, sample_rate: int, n_taps: int) -> np.ndarray:
     freqs_norm = [f / nyquist for f in freqs_hz]
     gains_lin = [10.0 ** (g / 20.0) for g in gains_db]
 
-    # Ensure grid spans [0, 1]
     if freqs_norm[0] > 0.0:
         freqs_norm = [0.0] + freqs_norm
         gains_lin = [gains_lin[0]] + gains_lin
@@ -109,7 +104,6 @@ def _build_fir(profile: str, sample_rate: int, n_taps: int) -> np.ndarray:
         freqs_norm.append(1.0)
         gains_lin.append(gains_lin[-1])
 
-    # Remove duplicates
     seen: set[float] = set()
     pairs: list[tuple[float, float]] = []
     for f, g in zip(freqs_norm, gains_lin):
@@ -127,7 +121,6 @@ def _build_fir(profile: str, sample_rate: int, n_taps: int) -> np.ndarray:
     return h_mp
 
 
-# ── StemEQ ────────────────────────────────────────────────────────────────────
 
 class StemEQ:
     """Apply per-stem minimum-phase FIR EQ before spatial routing.
@@ -151,7 +144,6 @@ class StemEQ:
         sample_rate: int,
         n_taps: int = 511,
     ) -> None:
-        # Validate up front so errors surface before processing begins.
         for stem_name, profile in profiles.items():
             if profile not in STEM_EQ_PROFILES:
                 raise KeyError(
@@ -192,7 +184,6 @@ class StemEQ:
             if arr.ndim == 1:
                 out[key] = fftconvolve(arr, ir, mode="full")[: len(arr)]
             else:
-                # (n_samples, 2) stereo array — filter each channel
                 n = arr.shape[0]
                 filtered = np.empty_like(arr)
                 for ch in range(arr.shape[1]):

@@ -9,7 +9,7 @@ from upmixer.config import UpmixConfig
 class HarmonicityState:
     """Persistent state for per-frame harmonicity estimation."""
 
-    smoothed_mask: np.ndarray   # (n_freq,) — temporally smoothed harmonic mask
+    smoothed_mask: np.ndarray
     initialized: bool = False
 
 
@@ -69,7 +69,6 @@ class HarmonicityEstimator:
         """Sliding (2k+1)-bin median using reflect padding and stride tricks."""
         n = len(mag)
         padded = np.pad(mag, k, mode="reflect")
-        # Build a (n, 2k+1) view of overlapping windows
         shape = (n, 2 * k + 1)
         strides = (padded.strides[0], padded.strides[0])
         windows = np.lib.stride_tricks.as_strided(padded, shape=shape, strides=strides)

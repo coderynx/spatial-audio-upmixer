@@ -28,23 +28,6 @@ def side_panned_signal(sample_rate, duration):
     return signal, -signal
 
 
-@pytest.fixture
-def low_freq_sine(sample_rate, duration):
-    """A 60 Hz sine wave (should appear in LFE)."""
-    t = np.arange(int(sample_rate * duration)) / sample_rate
-    signal = 0.5 * np.sin(2 * np.pi * 60 * t)
-    return signal, signal.copy()
-
-
-@pytest.fixture
-def uncorrelated_noise(sample_rate, duration):
-    """Uncorrelated white noise in L and R."""
-    rng = np.random.default_rng(123)
-    n = int(sample_rate * duration)
-    left = rng.standard_normal(n) * 0.3
-    right = rng.standard_normal(n) * 0.3
-    return left, right
-
 
 @pytest.fixture
 def stereo_mix(sample_rate, duration):

@@ -1,0 +1,60 @@
+# Batch — whole directory, stem mode
+#
+# input_dir / output_dir expands to every .wav and .flac in the folder,
+# sorted alphabetically. Optional 'glob' narrows the scan (e.g. "*.flac").
+# Per-dir block overrides deep-merge with global — same rules as explicit assets.
+#
+# Requires: pip install "upmixer[separation-cpu,manifest]"
+#
+# Usage:
+#   upmixer --manifest examples/batch_dir_stem.yaml
+
+version: "1.0"
+
+metadata:
+  name: "Dir Batch — Stem 7.1.4"
+  description: "Scan a directory and upmix every track with one command"
+
+# ── Engine ────────────────────────────────────────────────────────────────────
+engine:
+  mode: stem
+  stem_model: BS-Roformer-SW.ckpt
+  stem_cache_dir: /tmp/upmixer_stems
+
+# ── Mixing ────────────────────────────────────────────────────────────────────
+mixing:
+  channel_layout: 7.1.4
+
+# ── Output format — Dolby Atmos Music Master Delivery ─────────────────────────
+format:
+  type: adm-bwf
+  subtype: PCM_24
+  sample_rate: 48000
+
+# ── Mastering ─────────────────────────────────────────────────────────────────
+mastering:
+  eq:
+    profile: spatial-present
+    strength: 0.7
+  compressor:
+    profile: transparent
+  loudness:
+    normalize: true
+    target: -18.0
+    max_tp: -1.0
+
+# ── Assets ────────────────────────────────────────────────────────────────────
+# Each entry with input_dir + output_dir expands at parse time into one job
+# per matching file. Mix with explicit input/output entries freely.
+assets:
+  # All .wav and .flac in /path/to/album/ → /path/to/output/
+  - input_dir:  /path/to/album/
+    output_dir: /path/to/output/
+
+  # Bonus disc: FLAC only, per-dir vocal boost applied to every expanded file
+  - input_dir:  /path/to/bonus_disc/
+    output_dir: /path/to/output/bonus/
+    glob: "*.flac"
+    mixing:
+      stem_rebalance:
+        Vocals: +1.5

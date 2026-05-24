@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from upmixer.mastering_comp import (
+from upmixer.mastering.compressor import (
     COMP_PROFILES,
     COMP_PROFILE_NAMES,
     BusCompressor,

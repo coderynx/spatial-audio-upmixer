@@ -1,0 +1,59 @@
+# Batch album upmix — stem mode, 7.1.4 Atmos Music
+#
+# Stem separation model is loaded ONCE and reused across all tracks —
+# dramatically faster than running upmixer per file.
+#
+# Requires: pip install "upmixer[separation-cpu,manifest]"
+#
+# Usage:
+#   upmixer --manifest batch_album_stem.yaml
+
+version: "1.0"
+
+metadata:
+  name: "Album Batch — Stem 7.1.4"
+  description: "Full album upmix with stem separation, reusing model across tracks"
+
+# ── Engine ────────────────────────────────────────────────────────────────────
+engine:
+  mode: stem
+  stem_model: BS-Roformer-SW.ckpt   # high-quality 4-stem RoFormer model
+  stem_cache_dir: /tmp/upmixer_stems    # cache stems — avoids re-separation on reruns
+
+# ── Mixing ────────────────────────────────────────────────────────────────────
+mixing:
+  channel_layout: 7.1.4
+
+# ── Output format — Dolby Atmos Music Master Delivery Specification v2022.07 ──
+format:
+  type: adm-bwf           # ITU-R BS.2076-2 ADM-BWF container (WAV)
+  subtype: PCM_24
+  sample_rate: 48000
+
+# ── Mastering ─────────────────────────────────────────────────────────────────
+mastering:
+  eq:
+    profile: spatial-present
+    strength: 0.7
+  compressor:
+    profile: transparent
+  loudness:
+    normalize: true
+    target: -18.0
+    max_tp: -1.0
+
+# ── Assets ────────────────────────────────────────────────────────────────────
+# Tip: swap explicit pairs for input_dir + output_dir to scan a whole folder
+# automatically. See batch_dir_stem.yaml for an example.
+assets:
+  - input:  /path/to/album/01_intro.flac
+    output: /path/to/output/01_intro.wav
+
+  - input:  /path/to/album/02_main.flac
+    output: /path/to/output/02_main.wav
+
+  - input:  /path/to/album/03_bridge.flac
+    output: /path/to/output/03_bridge.wav
+
+  - input:  /path/to/album/04_outro.flac
+    output: /path/to/output/04_outro.wav

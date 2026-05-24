@@ -3,8 +3,7 @@ import math
 import numpy as np
 from scipy.signal import butter, sosfilt
 
-# ITU-R BS.775-4 Annex 4 Table 2 — fixed center mixing coefficient (1/√2)
-_ITU_C_COEFF: float = 1.0 / math.sqrt(2)   # ≈ 0.7071
+_ITU_C_COEFF: float = 1.0 / math.sqrt(2)
 
 
 def db_to_linear(db: float) -> float:
@@ -27,7 +26,6 @@ def soft_limit(signal: np.ndarray, threshold: float = 0.95) -> np.ndarray:
     mask = np.abs(signal) > threshold
     if not np.any(mask):
         return out
-    # tanh compression above threshold
     over = np.abs(signal[mask]) - threshold
     compressed = threshold + (1.0 - threshold) * np.tanh(over / (1.0 - threshold))
     out[mask] = np.sign(signal[mask]) * compressed

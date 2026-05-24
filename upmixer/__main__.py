@@ -2,7 +2,7 @@
 
 Priority order for all parameters
 -----------------------------------
-CLI flags  >  manifest values  >  profile defaults  >  UpmixConfig defaults
+CLI flags  >  manifest values  >  UpmixConfig defaults
 
 Usage
 -----
@@ -20,38 +20,14 @@ import argparse
 import logging
 import sys
 
+_log = logging.getLogger("upmixer")
+
 from upmixer.config import UpmixConfig
 from upmixer.formats import INPUT_FORMAT_MAP
 from upmixer.pipeline import UpmixPipeline
-from upmixer.profiles import PROFILES, DeliveryProfile
-from upmixer.separation.separator import DEFAULT_MODEL
 
 _INPUT_FORMAT_CHOICES = sorted(INPUT_FORMAT_MAP.keys())
 _OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
-_PROFILE_CHOICES = sorted(PROFILES.keys())
-
-
-def _apply_profile(config: UpmixConfig, profile: DeliveryProfile, *, src: str = "") -> None:
-    """Apply a DeliveryProfile to config.  ``src`` is logged for traceability."""
-    config.loudness_normalize   = profile.loudness_normalize
-    config.loudness_target_lkfs = profile.loudness_target_lkfs
-    config.loudness_max_tp      = profile.loudness_max_tp
-    config.output_subtype       = profile.output_subtype
-    config.output_type          = profile.output_type
-    import logging as _l
-    log = _l.getLogger("upmixer")
-    if profile.lfe_cutoff_hz is not None:
-        config.lfe_cutoff_hz = float(profile.lfe_cutoff_hz)
-    log.info(
-        "  %sProfile: %s — %+.1f LKFS / %+.1f dBTP / %d kHz / %s / %s",
-        f"[{src}] " if src else "",
-        profile.display_name,
-        profile.loudness_target_lkfs,
-        profile.loudness_max_tp,
-        profile.sample_rate // 1000,
-        profile.output_subtype,
-        profile.output_type,
-    )
 
 
 def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_set: bool) -> None:
@@ -60,7 +36,7 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
     Only non-None values are applied so manifest defaults are preserved for
     flags the user did not supply.  ``sample_rate_set`` indicates whether
     ``--output-sample-rate`` was given on the command line (needed to avoid
-    clobbering the profile's sample rate).
+    clobbering a manifest-set sample rate).
     """
     if args.format is not None:
         config.output_format = args.format
@@ -101,8 +77,7 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.loudness_target_lkfs = args.loudness_target
     if args.output_type is not None:
         config.output_type = args.output_type
-    elif not (args.manifest or args.profile):
-        # No manifest and no profile → default to wav
+    elif not args.manifest:
         config.output_type = "wav"
     if args.output_subtype is not None:
         config.output_subtype = args.output_subtype
@@ -118,12 +93,10 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.preview_duration_s = args.preview_duration
     if args.preview_start is not None:
         config.preview_start_s = args.preview_start
-    # Mastering — EQ shaping
     if args.mastering_eq is not None:
         config.mastering_eq_profile = args.mastering_eq
     if args.mastering_eq_strength is not None:
         config.mastering_eq_strength = max(0.0, min(1.0, args.mastering_eq_strength))
-    # Mastering — bus compressor
     if args.mastering_comp is not None:
         config.mastering_comp_profile = args.mastering_comp
     if args.mastering_comp_threshold is not None:
@@ -136,7 +109,6 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.mastering_comp_release_ms = args.mastering_comp_release
     if args.mastering_comp_makeup is not None:
         config.mastering_comp_makeup_db = args.mastering_comp_makeup
-    # Mastering — bass control
     if args.mastering_bass is not None:
         config.mastering_bass_profile = args.mastering_bass
     if args.mastering_bass_sub is not None:
@@ -149,10 +121,16 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.mastering_bass_excite = True
     if args.mastering_bass_lfe is not None:
         config.mastering_bass_lfe_gain_db = args.mastering_bass_lfe
-    # Mastering — EQ from reference
-    if args.mastering_eq_reference is not None:
-        config.mastering_eq_reference = args.mastering_eq_reference
-    # Mixing — stem rebalance
+    if args.match_reference is not None:
+        config.mastering_match_ref_path = args.match_reference
+    if args.match_reference_strength is not None:
+        config.mastering_match_ref_strength = max(0.0, min(1.0, args.match_reference_strength))
+    if args.no_match_reference_spectrum:
+        config.mastering_match_ref_spectrum = False
+    if args.no_match_reference_rms:
+        config.mastering_match_ref_rms = False
+    if args.match_reference_max_db is not None:
+        config.mastering_match_ref_max_db = args.match_reference_max_db
     if args.stem_rebalance is not None:
         config.stem_rebalance = _parse_key_value_pairs(args.stem_rebalance, float)
     if args.stem_rebalance_profile is not None:
@@ -162,12 +140,16 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
                 f"Unknown stem rebalance profile '{args.stem_rebalance_profile}'. "
                 f"Valid choices: {sorted(REBALANCE_PROFILES.keys())}"
             )
-        # stem_rebalance dict overrides profile; profile only applied if no manual dict
         if config.stem_rebalance is None:
             config.stem_rebalance = REBALANCE_PROFILES[args.stem_rebalance_profile]
-    # Mixing — per-stem EQ
     if args.stem_eq is not None:
         config.stem_eq_profiles = _parse_key_value_pairs(args.stem_eq, str)
+    if args.stem_cache_dir is not None:
+        config.stem_cache_dir = args.stem_cache_dir
+    if args.stems is not None:
+        from upmixer.separation.stem_plan import normalize_stems as _normalize
+        raw = [s.strip() for s in args.stems.split(",") if s.strip()]
+        config.stems = _normalize(raw)
 
 
 def _parse_key_value_pairs(s: str, value_type: type) -> dict:
@@ -196,6 +178,99 @@ def _parse_key_value_pairs(s: str, value_type: type) -> dict:
     return result
 
 
+def _apply_resource_limits(cpu_priority: str) -> None:
+    import os
+    if cpu_priority == "low":
+        try:
+            os.nice(10)
+        except (OSError, AttributeError):
+            pass
+    try:
+        import torch
+        n = max(1, (os.cpu_count() or 4) // 2)
+        torch.set_num_threads(n)
+    except ImportError:
+        pass
+    try:
+        from threadpoolctl import threadpool_limits
+        threadpool_limits(limits=max(1, (os.cpu_count() or 4) // 2))
+    except ImportError:
+        pass
+
+
+def _run_manifest_assets(asset_jobs, meta, args, parser) -> None:
+    """Process all assets resolved from a manifest file.
+
+    Applies per-asset config deep-merged with CLI flag overrides.  In stem
+    mode the separator model is loaded once and reused across all assets.
+    """
+    from upmixer.manifest import apply_asset_job
+
+    if not asset_jobs:
+        parser.error("Manifest contains no assets to process.")
+
+    if meta:
+        parts = [p for p in (meta.name, meta.author) if p]
+        if parts:
+            _log.info("Manifest: %s", " — ".join(parts))
+        if meta.description:
+            _log.info("  %s", meta.description)
+
+    first_engine = asset_jobs[0].engine
+    mode = args.mode or first_engine.get("mode", "realtime")
+    stem_model_dir = args.stem_model_dir or first_engine.get("stem_model_dir", None)
+    n = len(asset_jobs)
+
+    def _build_cfg(job):
+        cfg = UpmixConfig()
+        apply_asset_job(cfg, job)
+        _apply_cli_flags(cfg, args, args.output_sample_rate is not None)
+        return cfg
+
+    def _apply_per_asset_stems(cfg, job):
+        """Propagate per-asset stems from engine block into cfg.stems."""
+        from upmixer.separation.stem_plan import normalize_stems as _normalize
+        asset_stems = job.engine.get("stems")
+        if asset_stems:
+            cfg.stems = _normalize(asset_stems)
+        elif args.stems and cfg.stems is None:
+            raw = [s.strip() for s in args.stems.split(",") if s.strip()]
+            cfg.stems = _normalize(raw)
+
+    if mode == "stem":
+        from upmixer.separation.stem_pipeline import StemUpmixPipeline
+        first_cfg = _build_cfg(asset_jobs[0])
+        _apply_per_asset_stems(first_cfg, asset_jobs[0])
+        with StemUpmixPipeline(
+            config=first_cfg,
+            model_dir=stem_model_dir,
+        ) as pipeline:
+            for i, job in enumerate(asset_jobs):
+                cfg = _build_cfg(job)
+                _apply_per_asset_stems(cfg, job)
+                input_fmt = args.input_format or job.engine.get("input_format")
+                _log.info("[%d/%d] %s", i + 1, n, job.input)
+                pipeline.config = cfg
+                result = pipeline.process_file(
+                    job.input, job.output,
+                    input_format_override=input_fmt,
+                )
+                if args.json:
+                    print(result.to_json())
+    else:
+        for i, job in enumerate(asset_jobs):
+            cfg = _build_cfg(job)
+            input_fmt = args.input_format or job.engine.get("input_format")
+            _log.info("[%d/%d] %s", i + 1, n, job.input)
+            pipeline_rt = UpmixPipeline(cfg)
+            result = pipeline_rt.process_file(
+                job.input, job.output,
+                input_format_override=input_fmt,
+            )
+            if args.json:
+                print(result.to_json())
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -208,7 +283,6 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
-    # ── Positional args (optional when --manifest provides them) ──────────────
     parser.add_argument(
         "input",
         nargs="?",
@@ -228,7 +302,6 @@ def main() -> None:
         ),
     )
 
-    # ── Manifest ──────────────────────────────────────────────────────────────
     parser.add_argument(
         "--manifest", "-m",
         default=None,
@@ -246,40 +319,56 @@ def main() -> None:
         help="Print all valid manifest keys and their types, then exit.",
     )
 
-    # ── Output format ─────────────────────────────────────────────────────────
+    parser.add_argument(
+        "--inputs",
+        nargs="+",
+        default=None,
+        metavar="FILE",
+        help=(
+            "Two or more input audio files for batch processing (WAV/FLAC). "
+            "Files may be from different directories. Requires --output-dir. "
+            "Example: --inputs /dir1/a.wav /dir2/b.flac /dir3/c.wav"
+        ),
+    )
+    parser.add_argument(
+        "--batch-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Process all WAV/FLAC files in DIR (batch mode). "
+            "Files are sorted by name. Requires --output-dir."
+        ),
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Output directory for batch mode (--inputs or --batch-dir). "
+            "Output filenames are derived from input stems."
+        ),
+    )
+    parser.add_argument(
+        "--batch-workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Parallel workers for realtime batch mode (default: 1). "
+            "Stem mode is always sequential (model reuse requires single process)."
+        ),
+    )
+
     parser.add_argument(
         "--format",
         choices=_OUTPUT_FORMAT_CHOICES,
         default=None,
         help=(
-            "Output channel format (default: 5.1, or as set by --manifest / --profile). "
+            "Output channel format (default: 5.1, or as set by --manifest). "
             f"Choices: {', '.join(_OUTPUT_FORMAT_CHOICES)}."
         ),
     )
 
-    # ── Delivery profile ──────────────────────────────────────────────────────
-    parser.add_argument(
-        "--profile",
-        choices=_PROFILE_CHOICES,
-        default=None,
-        metavar="PROFILE",
-        help=(
-            "Delivery target profile. Sets loudness, sample rate, bit depth, "
-            "and container to match the platform spec. "
-            "Overrides any 'profile' key in the manifest. "
-            "Individual flags (--loudness-target, --output-sample-rate, etc.) "
-            "override the profile. "
-            f"Choices: {', '.join(_PROFILE_CHOICES)}. "
-            "Use --profile-info to print full spec for each profile."
-        ),
-    )
-    parser.add_argument(
-        "--profile-info",
-        action="store_true",
-        help="Print the delivery spec for all built-in profiles and exit.",
-    )
-
-    # ── Input format ──────────────────────────────────────────────────────────
     parser.add_argument(
         "--input-format",
         choices=_INPUT_FORMAT_CHOICES,
@@ -293,7 +382,6 @@ def main() -> None:
         ),
     )
 
-    # ── Processing mode ───────────────────────────────────────────────────────
     parser.add_argument(
         "--mode",
         choices=["realtime", "stem"],
@@ -307,12 +395,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--stem-model",
+        "--stems",
         default=None,
-        metavar="MODEL",
+        metavar="STEM[,STEM...]",
         help=(
-            f"audio-separator model for stem mode (default: {DEFAULT_MODEL}). "
-            "Models are auto-downloaded on first use."
+            "Comma-separated list of stems to extract in stem mode. "
+            "Valid: vocals, bass, drums, guitar, piano, other, kick, snare, "
+            "hi-hat, ride, crash, crowd. "
+            "Default: vocals,bass,drums,guitar,piano,other. "
+            "Example: --stems vocals,kick,snare,crowd"
         ),
     )
     parser.add_argument(
@@ -325,30 +416,24 @@ def main() -> None:
         ),
     )
 
-    # ── Gain controls ─────────────────────────────────────────────────────────
     parser.add_argument("--center-gain",           type=float, default=None, help="Center channel output gain (default: 0.85)")
     parser.add_argument("--surround-gain",         type=float, default=None, help="Side surround channel gain (default: 0.6)")
     parser.add_argument("--back-gain",             type=float, default=None, help="Rear back channel gain for 7.1 formats (default: 0.55)")
     parser.add_argument("--height-gain",           type=float, default=None, help="Height channel gain for Atmos formats (default: 0.55)")
     parser.add_argument("--lfe-gain",              type=float, default=None, help="LFE channel gain (default: 0.5)")
 
-    # ── Center extraction ─────────────────────────────────────────────────────
     parser.add_argument("--center-extraction-gain",type=float, default=None, help="Mid signal → center channel (default: 0.85)")
     parser.add_argument("--center-attenuation",    type=float, default=None, help="Center attenuation in FL/FR (default: 0.5)")
 
-    # ── LFE ───────────────────────────────────────────────────────────────────
     parser.add_argument("--lfe-cutoff",            type=float, default=None, metavar="HZ", help="LFE low-pass cutoff in Hz (default: 120)")
 
-    # ── Height EQ ─────────────────────────────────────────────────────────────
     parser.add_argument("--height-low-rolloff-gain",type=float, default=None, help="Sub-bass gain for height channels (default: 0.15)")
     parser.add_argument("--height-high-shelf-gain", type=float, default=None, help="HF presence boost for height channels (default: 1.5)")
 
-    # ── STFT / processing ─────────────────────────────────────────────────────
     parser.add_argument("--fft-size",   type=int,  default=None, help="STFT window size")
     parser.add_argument("--no-auto-fft",action="store_true",     help="Disable automatic FFT size scaling for high sample rates")
     parser.add_argument("--block-size", type=int,  default=None, help="Streaming block size in samples (default: 4096)")
 
-    # ── Output ────────────────────────────────────────────────────────────────
     parser.add_argument("--no-normalize", action="store_true", help="Disable output energy normalization (mixing phase)")
     parser.add_argument("--content-mix-strength", type=float, default=None, metavar="S", help="Content-aware mixing strength 0.0–1.0 (default: 1.0)")
     parser.add_argument(
@@ -371,13 +456,12 @@ def main() -> None:
             "'wav' = standard multichannel WAV. "
             "'adm-bwf' = Broadcast Wave + ITU-R BS.2076-2 ADM metadata "
             "(Logic Pro, DaVinci Resolve, Pro Tools). "
-            "Default: set by --profile, or 'wav' if no profile."
+            "Default: 'wav' (or as set by manifest)."
         ),
     )
     parser.add_argument("--output-subtype", choices=["PCM_16", "PCM_24", "PCM_32"], default=None, help="Output bit depth (default: PCM_24)")
     parser.add_argument("--output-sample-rate", type=int, default=None, metavar="HZ", help="Resample output (e.g. 48000, 96000). Default: same as input.")
 
-    # ── ITU-R BS.775-4 stereo downmix ─────────────────────────────────────────
     parser.add_argument(
         "--downmix-output",
         default=None,
@@ -393,12 +477,10 @@ def main() -> None:
         help="ITU-R BS.775-4 Annex 8 surround coefficient k_s (default: 0.7071).",
     )
 
-    # ── Preview ───────────────────────────────────────────────────────────────
     parser.add_argument("--preview",          action="store_true", help="Process a short excerpt (default 30 s) instead of the full file.")
     parser.add_argument("--preview-duration", type=float, default=None, metavar="S", help="Preview window length in seconds (default: 30).")
     parser.add_argument("--preview-start",    type=float, default=None, metavar="S", help="Preview start time in seconds (default: auto-center).")
 
-    # ── Mastering: EQ shaping ─────────────────────────────────────────────────
     _EQ_CHOICES = ["spatial-transparent", "spatial-air", "spatial-warm", "spatial-present", "atmos-streaming"]
     parser.add_argument(
         "--mastering-eq",
@@ -420,7 +502,6 @@ def main() -> None:
         help="EQ wet/dry blend: 0.0 = bypass, 1.0 = full effect (default: 1.0).",
     )
 
-    # ── Mastering: bus compressor ─────────────────────────────────────────────
     _COMP_CHOICES = ["transparent", "glue", "warm"]
     parser.add_argument(
         "--mastering-comp",
@@ -439,7 +520,6 @@ def main() -> None:
     parser.add_argument("--mastering-comp-release",   type=float, default=None, metavar="MS",  help="Override compressor release time in ms.")
     parser.add_argument("--mastering-comp-makeup",    type=float, default=None, metavar="DB",  help="Override compressor makeup gain in dB.")
 
-    # ── Mastering: bass control ───────────────────────────────────────────────
     _BASS_CHOICES = ["boost", "cut", "mono", "enhance"]
     parser.add_argument(
         "--mastering-bass",
@@ -459,36 +539,42 @@ def main() -> None:
     parser.add_argument("--mastering-bass-excite",       action="store_true",                    help="Enable bass harmonic exciter (tanh waveshaping on sub-bass band).")
     parser.add_argument("--mastering-bass-lfe",          type=float, default=None, metavar="DB", help="LFE channel gain trim in dB.")
 
-    # ── Mastering: EQ from reference (Match EQ) ───────────────────────────────
     parser.add_argument(
-        "--mastering-eq-reference",
+        "--match-reference",
         default=None,
         metavar="FILE",
         help=(
-            "Derive a per-channel EQ profile from a reference audio file and "
-            "apply it to the master bus (overrides --mastering-eq). "
-            "The reference may be mono through 7.1.4; missing channels are "
-            "estimated from available ones. "
-            "For best results use a reference with the same channel count as "
-            "the target format."
+            "Apply spectral envelope + RMS level matching against a reference "
+            "audio file (mono through 7.1.4). Runs as mastering step 0, before "
+            "preset EQ. For best results use a reference matching the target "
+            "channel count."
         ),
     )
     parser.add_argument(
-        "--mastering-eq-reference-save",
+        "--match-reference-strength",
+        type=float,
         default=None,
-        metavar="PATH",
-        help="Save the generated EQ profile to a YAML or JSON file for reuse.",
+        metavar="S",
+        help="Spectral FIR wet/dry blend for reference matching (0.0–1.0, default 0.7).",
     )
     parser.add_argument(
-        "--generate-eq-profile",
+        "--no-match-reference-spectrum",
         action="store_true",
-        help=(
-            "Analyse --mastering-eq-reference, save the EQ profile to "
-            "--mastering-eq-reference-save, then exit (no upmix performed)."
-        ),
+        help="Disable per-channel spectral correction (keep RMS matching only).",
+    )
+    parser.add_argument(
+        "--no-match-reference-rms",
+        action="store_true",
+        help="Disable global RMS level matching (keep spectral correction only).",
+    )
+    parser.add_argument(
+        "--match-reference-max-db",
+        type=float,
+        default=None,
+        metavar="DB",
+        help="Maximum spectral correction magnitude in dB (default 12.0).",
     )
 
-    # ── Mixing: stem rebalance ────────────────────────────────────────────────
     parser.add_argument(
         "--stem-rebalance",
         default=None,
@@ -510,7 +596,6 @@ def main() -> None:
         ),
     )
 
-    # ── Mixing: per-stem EQ ───────────────────────────────────────────────────
     parser.add_argument(
         "--stem-eq",
         default=None,
@@ -523,28 +608,34 @@ def main() -> None:
         ),
     )
 
-    # ── Verbosity ─────────────────────────────────────────────────────────────
+    parser.add_argument(
+        "--stem-cache-dir",
+        default=None,
+        metavar="DIR",
+        help=(
+            "Cache separated stems to this directory (stem mode only). "
+            "On subsequent runs with the same input file, model, and sample "
+            "rate the cached stems are loaded directly, skipping re-separation. "
+            "Key: SHA-256(abs_path|mtime|model|sample_rate)."
+        ),
+    )
+
+    parser.add_argument(
+        "--cpu-priority",
+        choices=["normal", "low"],
+        default="low",
+        help=(
+            "Process scheduling priority. 'low' calls os.nice(10) and caps "
+            "numpy/torch thread counts to half the logical CPU count, preventing "
+            "the app from saturating the system during heavy processing. "
+            "Default: low."
+        ),
+    )
+
     verbosity = parser.add_mutually_exclusive_group()
     verbosity.add_argument("--quiet",   "-q", action="store_true", help="Suppress all output except warnings and errors.")
     verbosity.add_argument("--verbose", "-v", action="store_true", help="Enable debug-level logging.")
     parser.add_argument("--json", action="store_true", help="Print a JSON summary of the result to stdout when done.")
-
-    # ── Early exits (before full parse) ──────────────────────────────────────
-    if "--profile-info" in sys.argv:
-        for key, p in sorted(PROFILES.items()):
-            print(f"\n{'─' * 60}")
-            print(f"  {p.display_name}  (--profile {p.name})")
-            print(f"{'─' * 60}")
-            print(f"  Loudness target : {p.loudness_target_lkfs:+.1f} LKFS")
-            print(f"  True Peak ceil  : {p.loudness_max_tp:+.1f} dBTP")
-            print(f"  Sample rate     : {p.sample_rate // 1000} kHz")
-            print(f"  Bit depth       : {p.bit_depth}-bit")
-            print(f"  Output type     : {p.output_type}")
-            lfe_str = f"{p.lfe_cutoff_hz} Hz" if p.lfe_cutoff_hz is not None else "default (120 Hz)"
-            print(f"  LFE cutoff      : {lfe_str}")
-            print(f"  Notes           : {p.codec_note}")
-        print()
-        sys.exit(0)
 
     if "--manifest-keys" in sys.argv:
         from upmixer.manifest import list_manifest_keys
@@ -556,7 +647,8 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # ── Logging setup ─────────────────────────────────────────────────────────
+    _apply_resource_limits(args.cpu_priority)
+
     if args.verbose:
         log_level = logging.DEBUG
     elif args.quiet or args.json:
@@ -566,132 +658,116 @@ def main() -> None:
 
     logging.basicConfig(level=log_level, format="%(message)s", stream=sys.stderr)
 
-    # ── Build config ──────────────────────────────────────────────────────────
-    # Start with UpmixConfig defaults, then apply in priority order:
-    #   profile (from manifest or --profile)  <  manifest fields  <  CLI flags
     config = UpmixConfig()
 
-    # Track whether --output-sample-rate was explicitly given (vs. None default)
     sample_rate_set = args.output_sample_rate is not None
 
-    # ── 1. Load and apply manifest ────────────────────────────────────────────
-    manifest_data: dict = {}
-    manifest_job: dict = {}
     if args.manifest is not None:
-        from upmixer.manifest import load_manifest, apply_manifest
-        manifest_data = load_manifest(args.manifest)
-        # Profile from manifest is applied UNLESS --profile is given on CLI
-        # (--profile wins; it will be applied in step 2 and overwrites manifest profile)
-        if args.profile is not None and "profile" in manifest_data:
-            manifest_data = dict(manifest_data)
-            del manifest_data["profile"]   # suppress manifest profile; CLI wins
-        manifest_job = apply_manifest(config, manifest_data)
-        if not sample_rate_set and "output_sample_rate" in manifest_data:
-            sample_rate_set = True  # manifest set it; don't clobber with None
+        from upmixer.manifest import (
+            load_manifest, validate_manifest, parse_manifest, ManifestError,
+        )
+        try:
+            _raw = load_manifest(args.manifest)
+            validate_manifest(_raw)
+        except ManifestError as exc:
+            parser.error(str(exc))
+        _meta, _asset_jobs = parse_manifest(_raw)
+        _run_manifest_assets(_asset_jobs, _meta, args, parser)
+        return
 
-    # ── 2. Apply --profile (CLI wins over manifest profile) ───────────────────
-    if args.profile is not None:
-        profile: DeliveryProfile = PROFILES[args.profile]
-        _apply_profile(config, profile, src="CLI")
-        if not sample_rate_set:
-            config.output_sample_rate = profile.sample_rate
-
-    # ── 3. Apply CLI flags (override manifest + profile) ─────────────────────
     _apply_cli_flags(config, args, sample_rate_set)
 
-    # ── 3a. --generate-eq-profile standalone tool ─────────────────────────────
-    if getattr(args, "generate_eq_profile", False):
-        ref_path = getattr(args, "mastering_eq_reference", None)
-        save_path = getattr(args, "mastering_eq_reference_save", None)
-        if not ref_path:
-            parser.error(
-                "--generate-eq-profile requires --mastering-eq-reference FILE"
-            )
-        if not save_path:
-            parser.error(
-                "--generate-eq-profile requires --mastering-eq-reference-save PATH"
-            )
-        from upmixer.mastering_eq_match import EQMatcher
-        import soundfile as _sf  # type: ignore[import-untyped]
-        _info = _sf.info(ref_path)
-        sr = _info.samplerate
-        from upmixer.formats import FORMAT_MAP, detect_input_format
-        import numpy as _np
-        _data, _sr = _sf.read(ref_path, dtype="float64", always_2d=True)
-        n_ch = _data.shape[1]
-        # Derive channel names from standard layout or use generic names
-        _std = {1: ["M"], 2: ["FL","FR"], 6: ["FL","FR","C","LFE","SL","SR"],
-                8: ["FL","FR","C","LFE","BL","BR","SL","SR"],
-                10: ["FL","FR","C","LFE","SL","SR","BL","BR","TFL","TFR"],
-                12: ["FL","FR","C","LFE","SL","SR","BL","BR","TFL","TFR","TBL","TBR"]}
-        chs = _std.get(n_ch, [f"CH{i}" for i in range(n_ch)])
-        matcher = EQMatcher(sr)
-        bps = matcher.analyze(ref_path, chs)
-        matcher.save_profile(bps, save_path)
-        print(f"EQ profile saved to: {save_path}")
-        sys.exit(0)
+    mode = args.mode or "realtime"
+    stem_model_dir = args.stem_model_dir or None
+    input_format   = args.input_format   or None
 
-    # ── 4. Resolve input / output / job params ────────────────────────────────
-    # Priority: CLI positional args > manifest 'input'/'output' keys
-    input_path  = args.input  or manifest_job.get("input")
-    output_path = args.output or manifest_job.get("output")
+    batch_inputs = args.inputs
+    batch_dir    = args.batch_dir
+    output_dir   = args.output_dir
+    is_batch = bool(batch_inputs or batch_dir)
 
-    if not input_path:
-        parser.error(
-            "input file is required. "
-            "Pass it as a positional argument or set 'input' in the manifest."
+    if is_batch:
+        from upmixer.batch import BatchProcessor, resolve_batch_jobs
+
+        if not output_dir:
+            parser.error("Batch mode requires --output-dir.")
+
+        output_ext = ".wav"  # ADM-BWF uses WAV container; always .wav
+        jobs = resolve_batch_jobs(
+            input_paths=None,
+            batch_dir=batch_dir,
+            output_dir=output_dir,
+            output_ext=output_ext,
+            explicit_jobs=None,
+            batch_inputs=batch_inputs,
         )
-    if not output_path:
-        parser.error(
-            "output file is required. "
-            "Pass it as a positional argument or set 'output' in the manifest."
-        )
+        if not jobs:
+            if batch_dir:
+                parser.error(
+                    f"No input files found in '{batch_dir}'. "
+                    "Make sure the path exists and contains .wav or .flac files."
+                )
+            else:
+                parser.error("No input files found for batch processing.")
 
-    # Resolve mode (CLI > manifest > default realtime)
-    mode = args.mode or manifest_job.get("mode", "realtime")
-
-    # Resolve stem params (CLI > manifest > defaults)
-    stem_model     = args.stem_model     or manifest_job.get("stem_model",     DEFAULT_MODEL)
-    stem_model_dir = args.stem_model_dir or manifest_job.get("stem_model_dir", None)
-    input_format   = args.input_format   or manifest_job.get("input_format",   None)
-
-    # ── 5. Run pipeline ───────────────────────────────────────────────────────
-    if mode == "stem":
-        from upmixer.separation.stem_pipeline import StemUpmixPipeline
-        stem_pipeline = StemUpmixPipeline(
+        workers = args.batch_workers or 1
+        processor = BatchProcessor(
             config=config,
-            model=stem_model,
-            model_dir=stem_model_dir,
+            mode=mode,
+            stem_model_dir=stem_model_dir,
+            workers=workers,
+            progress_callback=lambda done, total, path: (
+                _log.info("[%d/%d] %s", done + 1, total, path) if path else None
+            ),
         )
-        result = stem_pipeline.process_file(
-            input_path, output_path,
-            input_format_override=input_format,
-        )
-    else:
-        pipeline = UpmixPipeline(config)
-        result = pipeline.process_file(
-            input_path, output_path,
-            input_format_override=input_format,
-        )
+        batch_result = processor.process(jobs)
 
-    # ── Optional: save EQ reference profile after run ─────────────────────────
-    ref_save = getattr(args, "mastering_eq_reference_save", None)
-    if ref_save and config.mastering_eq_reference is not None:
-        from upmixer.mastering_eq_match import EQMatcher
-        from upmixer.formats import FORMAT_MAP
-        fmt = FORMAT_MAP.get(config.output_format)
-        ch_names = list(fmt.channels) if fmt else []
-        if ch_names:
-            matcher = EQMatcher(
-                result.sample_rate if hasattr(result, "sample_rate")
-                else (config.output_sample_rate or 48000)
+        for fail in batch_result.failed:
+            _log.error("FAILED: %s — %s", fail["input"], fail["error"])
+
+        if args.json:
+            print(batch_result.to_json())
+        else:
+            _log.info(
+                "Batch complete: %d/%d succeeded in %.1fs",
+                len(batch_result.jobs), len(jobs), batch_result.wall_time_s,
             )
-            bps = matcher.analyze(config.mastering_eq_reference, ch_names)
-            matcher.save_profile(bps, ref_save)
-            print(f"EQ profile saved to: {ref_save}", file=sys.stderr)
 
-    if args.json:
-        print(result.to_json())
+    else:
+        input_path  = args.input
+        output_path = args.output
+
+        if not input_path:
+            parser.error(
+                "input file is required. "
+                "Pass it as a positional argument or use --inputs / --batch-dir "
+                "for batch processing.  For manifest-driven jobs use --manifest."
+            )
+        if not output_path:
+            parser.error(
+                "output file is required. "
+                "Pass it as a positional argument or set 'output' in the manifest."
+            )
+
+        if mode == "stem":
+            from upmixer.separation.stem_pipeline import StemUpmixPipeline
+            stem_pipeline = StemUpmixPipeline(
+                config=config,
+                model_dir=stem_model_dir,
+            )
+            result = stem_pipeline.process_file(
+                input_path, output_path,
+                input_format_override=input_format,
+            )
+        else:
+            pipeline = UpmixPipeline(config)
+            result = pipeline.process_file(
+                input_path, output_path,
+                input_format_override=input_format,
+            )
+
+        if args.json:
+            print(result.to_json())
 
 
 if __name__ == "__main__":

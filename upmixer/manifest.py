@@ -1,96 +1,228 @@
-"""YAML/JSON manifest files for defining upmix jobs.
+"""Unified assets-based manifest for upmix jobs.
 
-A manifest file lets all CLI parameters live in a single file, making
-it easy to version-control complex upmix jobs and run them reproducibly.
+Schema
+------
+Every manifest must declare a ``version`` and an ``assets`` list::
 
-Supported formats
------------------
-* YAML  (``.yaml``, ``.yml``) — requires ``pyyaml``: ``pip install pyyaml``
-* JSON  (``.json``) — no extra dependency
+    version: "1.0.0"
 
-Key naming
+    # Optional informational block — not inherited by assets
+    metadata:
+      name: "My Project"
+      author: "Jane Doe"
+      description: "..."
+
+    # Global pipeline blocks (inherited by every asset unless overridden)
+    engine:
+      mode: stem          # or realtime
+      stem_cache_dir: /tmp/upmixer_stems
+    mixing:
+      channel_layout: 7.1.4
+      stem_rebalance:
+        Vocals: +1.5
+    mastering:
+      loudness:
+        normalize: true
+        target: -18.0
+    routing:
+      center_gain: 0.85
+    format:
+      type: adm-bwf
+      subtype: PCM_24
+      sample_rate: 48000
+
+    # Assets — single file or batch (uniform treatment)
+    assets:
+      - input: tracks/01.flac
+        output: dist/01.wav
+        stem_cache_dir: /tmp/stems/01   # asset-level shortcut
+
+      - input: tracks/02.flac
+        output: dist/02.wav
+        mixing:                         # asset-level block override (deep-merged)
+          stem_rebalance:
+            Vocals: +0.0
+
+Versioning
 ----------
-Manifest keys use the same names as the CLI flags (without the leading
-``--``), with hyphens replaced by underscores.  For example:
+``version`` must match ``MAJOR.MINOR`` or ``MAJOR.MINOR.PATCH`` (SemVer-like).
+Missing or malformed versions raise :class:`ManifestError`.
 
-* ``--output-sample-rate 48000``  →  ``output_sample_rate: 48000``
-* ``--loudness-target -18.0``     →  ``loudness_target: -18.0``
+Extensibility
+-------------
+Modules can register their own YAML block keys without modifying this file::
 
-Priority order
---------------
-CLI flags > manifest values > profile defaults > UpmixConfig defaults.
+    from upmixer.manifest import register_block_keys
 
-Example (YAML)::
+    register_block_keys('mixing', {
+        'reverb': {
+            'room_size': ('config', 'reverb_room_size'),
+            'wet':       ('config', 'reverb_wet'),
+        }
+    })
 
-    input:   stereo.flac
-    output:  atmos.adm.bwf
-    format:  7.1.2
-    mode:    stem
-    profile: atmos-music
+See :func:`register_block` and :func:`register_block_keys`.
 
-    stem_model: BS-Roformer-SW.ckpt
-
-    # Override specific profile values
-    loudness_target: -18.0
-    preview: true
-    preview_duration: 30.0
-
-Job keys (``input``, ``output``, ``mode``, ``input_format``,
-``stem_model``, ``stem_model_dir``) are returned separately from
-:func:`parse_manifest` so the pipeline layer can use them directly.
+Priority
+--------
+CLI flags > per-asset manifest values > global manifest values > UpmixConfig defaults.
 """
 from __future__ import annotations
 
+import glob as _glob
 import json
 import logging
+import os
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from upmixer.config import UpmixConfig
-from upmixer.profiles import PROFILES
 
 _log = logging.getLogger("upmixer")
 
-# ── Field mapping ──────────────────────────────────────────────────────────────
-# manifest key → (UpmixConfig attribute name, Python type for coercion)
-# Only non-None values in the manifest are applied; null / omitted keys are
-# treated as "not specified" and leave the config default intact.
+_SEMVER_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
+
+
+class ManifestError(ValueError):
+    """Raised when a manifest fails structural or version validation."""
+
+
+
+@dataclass
+class ManifestMeta:
+    """Optional informational block from the manifest ``metadata:`` section.
+
+    Not inherited by assets — purely for logging and display.
+    """
+
+    name: str | None = None
+    author: str | None = None
+    description: str | None = None
+
+
+@dataclass
+class AssetJob:
+    """One resolved processing job from the ``assets:`` list.
+
+    ``config`` contains flat UpmixConfig-ready keys after deep-merging global
+    and asset-level blocks.  ``engine`` holds job-level params that are not
+    part of UpmixConfig (mode, stem_model_dir, input_format, stems).
+    """
+
+    input: str
+    output: str
+    config: dict = field(default_factory=dict)
+    engine: dict = field(default_factory=dict)
+
+
+BlockMapping = dict[str, Any]
+
+_BLOCK_REGISTRY: dict[str, BlockMapping] = {
+    "engine": {
+        "mode":           ("engine", "mode"),
+        # stem_model removed — model selection is now automatic based on stems
+        "stem_model_dir": ("engine", "stem_model_dir"),
+        "input_format":   ("engine", "input_format"),
+        "stem_cache_dir": ("config", "stem_cache_dir"),
+        "stems":          ("engine", "stems"),
+    },
+
+    "format": {
+        "type":        ("config", "output_type"),
+        "subtype":     ("config", "output_subtype"),
+        "sample_rate": ("config", "output_sample_rate"),
+    },
+
+    "mixing": {
+        "channel_layout": ("config", "format"),
+        "stem_rebalance": ("config", "stem_rebalance"),
+        "stem_eq":        ("config", "stem_eq_profiles"),
+        "stems":          ("engine", "stems"),
+    },
+
+    "processing": {
+        "preview":          ("config", "preview"),
+        "preview_duration": ("config", "preview_duration"),
+        "preview_start":    ("config", "preview_start"),
+        "fft_size":         ("config", "fft_size"),
+        "block_size":       ("config", "block_size"),
+        "normalize_output": ("config", "normalize_output"),
+    },
+
+    # routing: and mastering: blocks are populated at import time by domain modules
+}
+
+
+def register_block(name: str, mapping: BlockMapping) -> None:
+    """Register a new top-level YAML block.
+
+    Use this to add a completely new section (e.g. a reverb or dynamics plugin
+    that has its own top-level key in the manifest).
+
+    Args:
+        name:    The YAML key name (e.g. ``'reverb'``).
+        mapping: Dict mapping YAML sub-keys to ``(bucket, flat_key)`` leaf
+                 tuples or nested sub-section dicts.
+
+    Example::
+
+        register_block('reverb', {
+            'room_size': ('config', 'reverb_room_size'),
+            'wet':       ('config', 'reverb_wet'),
+        })
+    """
+    _BLOCK_REGISTRY[name] = mapping
+
+
+def register_block_keys(section: str, keys: BlockMapping) -> None:
+    """Add or update keys within an existing block section.
+
+    Use this to extend an existing section like ``'mixing'`` or ``'mastering'``
+    with new sub-keys contributed by a module.
+
+    Args:
+        section: Existing block name (e.g. ``'mixing'``, ``'mastering'``).
+        keys:    Dict of new or updated entries (same format as
+                 :func:`register_block`).
+
+    Example::
+
+        register_block_keys('mastering', {
+            'reverb': {
+                'room_size': ('config', 'reverb_room_size'),
+                'wet':       ('config', 'reverb_wet'),
+            }
+        })
+    """
+    _BLOCK_REGISTRY.setdefault(section, {}).update(keys)
+
 
 _FIELD_MAP: dict[str, tuple[str, type]] = {
-    # Output format
-    "format":                     ("output_format",          str),
-    "output_type":                ("output_type",            str),
-    "output_subtype":             ("output_subtype",         str),
-    "output_sample_rate":         ("output_sample_rate",     int),
-    # Channel routing gains
-    "center_gain":                ("center_gain",            float),
-    "surround_gain":              ("surround_gain",          float),
-    "back_gain":                  ("back_gain",              float),
-    "height_gain":                ("height_gain",            float),
-    "lfe_gain":                   ("lfe_gain",               float),
-    # LFE
-    "lfe_cutoff":                 ("lfe_cutoff_hz",          float),
-    # Center extraction (realtime mode)
-    "center_extraction_gain":     ("center_extraction_gain", float),
-    "center_attenuation":         ("center_attenuation",     float),
-    # Content-aware mixing
-    "content_mix_strength":       ("content_mix_strength",   float),
-    # Height EQ
-    "height_low_rolloff_gain":    ("height_low_rolloff_gain",float),
-    "height_high_shelf_gain":     ("height_high_shelf_gain", float),
-    # STFT / processing
-    "fft_size":                   ("fft_size",               int),
-    "block_size":                 ("block_size",             int),
-    # Energy normalization (mixing phase)
-    "normalize_output":           ("normalize_output",       bool),
-    # Mastering — loudness
-    "loudness_normalize":         ("loudness_normalize",     bool),
-    "loudness_target":            ("loudness_target_lkfs",   float),
-    "loudness_max_tp":            ("loudness_max_tp",        float),
-    # Mastering — EQ shaping (flat keys; also accessible via mastering: section)
-    "mastering_eq_profile":       ("mastering_eq_profile",   str),
-    "mastering_eq_strength":      ("mastering_eq_strength",  float),
-    # Mastering — bus compressor
+    "format":                     ("output_format",            str),
+    "output_type":                ("output_type",              str),
+    "output_subtype":             ("output_subtype",           str),
+    "output_sample_rate":         ("output_sample_rate",       int),
+    "center_gain":                ("center_gain",              float),
+    "surround_gain":              ("surround_gain",            float),
+    "back_gain":                  ("back_gain",                float),
+    "height_gain":                ("height_gain",              float),
+    "lfe_gain":                   ("lfe_gain",                 float),
+    "lfe_cutoff":                 ("lfe_cutoff_hz",            float),
+    "center_extraction_gain":     ("center_extraction_gain",   float),
+    "center_attenuation":         ("center_attenuation",       float),
+    "content_mix_strength":       ("content_mix_strength",     float),
+    "height_low_rolloff_gain":    ("height_low_rolloff_gain",  float),
+    "height_high_shelf_gain":     ("height_high_shelf_gain",   float),
+    "fft_size":                   ("fft_size",                 int),
+    "block_size":                 ("block_size",               int),
+    "normalize_output":           ("normalize_output",         bool),
+    "loudness_normalize":         ("loudness_normalize",       bool),
+    "loudness_target":            ("loudness_target_lkfs",     float),
+    "loudness_max_tp":            ("loudness_max_tp",          float),
+    "mastering_eq_profile":       ("mastering_eq_profile",     str),
+    "mastering_eq_strength":      ("mastering_eq_strength",    float),
     "mastering_comp_profile":     ("mastering_comp_profile",      str),
     "mastering_comp_threshold_db":("mastering_comp_threshold_db", float),
     "mastering_comp_ratio":       ("mastering_comp_ratio",        float),
@@ -98,146 +230,263 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "mastering_comp_release_ms":  ("mastering_comp_release_ms",   float),
     "mastering_comp_knee_db":     ("mastering_comp_knee_db",      float),
     "mastering_comp_makeup_db":   ("mastering_comp_makeup_db",    float),
-    # Mastering — bass control
     "mastering_bass_profile":        ("mastering_bass_profile",        str),
     "mastering_bass_sub_gain_db":    ("mastering_bass_sub_gain_db",    float),
     "mastering_bass_mid_gain_db":    ("mastering_bass_mid_gain_db",    float),
     "mastering_bass_mono_cutoff_hz": ("mastering_bass_mono_cutoff_hz", float),
     "mastering_bass_excite":         ("mastering_bass_excite",         bool),
     "mastering_bass_lfe_gain_db":    ("mastering_bass_lfe_gain_db",    float),
-    # Mastering — EQ from reference (Match EQ)
-    "mastering_eq_reference":        ("mastering_eq_reference",        str),
-    # Mixing — stem rebalance (stem pipeline only)
-    "stem_rebalance":                ("stem_rebalance",                dict),
-    # Mixing — per-stem EQ (stem pipeline only)
-    "stem_eq_profiles":              ("stem_eq_profiles",              dict),
-    # Downmix
-    "downmix_output":             ("downmix_output_path",    str),
-    "downmix_surround_coeff":     ("surround_downmix_coeff", float),
-    # Preview
-    "preview":                    ("preview",                bool),
-    "preview_duration":           ("preview_duration_s",     float),
-    "preview_start":              ("preview_start_s",        float),
-}
-
-# ── Nested mastering: section ─────────────────────────────────────────────────
-# Maps sub-keys inside a ``mastering:`` YAML block to the flat manifest keys
-# that feed into _FIELD_MAP above.  This lets users write either:
-#
-#   mastering_eq_profile: spatial-air        # flat form
-#
-# or the structured form:
-#
-#   mastering:
-#     eq_profile: spatial-air
-#     loudness_normalize: true
-#
-# Both forms produce identical UpmixConfig state.
-
-_MASTERING_KEY_MAP: dict[str, str] = {
-    # EQ
-    "eq_profile":       "mastering_eq_profile",
-    "eq_strength":      "mastering_eq_strength",
-    "eq_reference":     "mastering_eq_reference",
-    # Compressor
-    "comp_profile":     "mastering_comp_profile",
-    "comp_threshold":   "mastering_comp_threshold_db",
-    "comp_ratio":       "mastering_comp_ratio",
-    "comp_attack":      "mastering_comp_attack_ms",
-    "comp_release":     "mastering_comp_release_ms",
-    "comp_knee":        "mastering_comp_knee_db",
-    "comp_makeup":      "mastering_comp_makeup_db",
-    # Bass control
-    "bass_profile":     "mastering_bass_profile",
-    "bass_sub_gain":    "mastering_bass_sub_gain_db",
-    "bass_mid_gain":    "mastering_bass_mid_gain_db",
-    "bass_mono_cutoff": "mastering_bass_mono_cutoff_hz",
-    "bass_excite":      "mastering_bass_excite",
-    "bass_lfe_gain":    "mastering_bass_lfe_gain_db",
-    # Loudness (re-uses existing flat keys)
-    "loudness_normalize": "loudness_normalize",
-    "loudness_target":    "loudness_target",
-    "loudness_max_tp":    "loudness_max_tp",
-}
-
-# ── Nested mixing: section ────────────────────────────────────────────────────
-# Mirrors mastering: section but for mixing-phase params.
-# Usage (YAML):
-#
-#   mixing:
-#     stem_rebalance:
-#       Vocals: +2.0
-#       Drums: -1.0
-#     stem_eq:
-#       Vocals: vocal-presence
-#       Bass: bass-warmth
-
-_MIXING_KEY_MAP: dict[str, str] = {
-    "stem_rebalance": "stem_rebalance",    # dict value passes through as-is
-    "stem_eq":        "stem_eq_profiles",  # renamed for config
+    "mastering_match_ref_path":     ("mastering_match_ref_path",     str),
+    "mastering_match_ref_strength": ("mastering_match_ref_strength",  float),
+    "mastering_match_ref_spectrum": ("mastering_match_ref_spectrum",  bool),
+    "mastering_match_ref_rms":      ("mastering_match_ref_rms",       bool),
+    "mastering_match_ref_max_db":   ("mastering_match_ref_max_db",    float),
+    "stem_rebalance":              ("stem_rebalance",   dict),
+    "stem_eq_profiles":            ("stem_eq_profiles", dict),
+    "stem_cache_dir":              ("stem_cache_dir",   str),
+    "stems":                       ("stems",            list),
+    "downmix_output":              ("downmix_output_path",    str),
+    "downmix_surround_coeff":      ("surround_downmix_coeff", float),
+    "preview":          ("preview",           bool),
+    "preview_duration": ("preview_duration_s", float),
+    "preview_start":    ("preview_start_s",    float),
 }
 
 
-def _expand_nested_sections(data: dict) -> dict:
-    """Expand ``mastering:`` and ``mixing:`` sub-dicts into flat manifest keys.
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Recursively merge *override* into *base*; override wins on conflicts."""
+    result = dict(base)
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
 
-    If *data* contains a ``"mastering"`` key whose value is a mapping, its
-    sub-keys are translated via :data:`_MASTERING_KEY_MAP` and injected into
-    the top-level dict.  Similarly for a ``"mixing"`` key via
-    :data:`_MIXING_KEY_MAP`.  Unknown sub-keys are passed through unchanged
-    (a warning will be emitted by the caller for unrecognised manifest keys).
 
-    The original ``"mastering"`` / ``"mixing"`` keys are removed.  Existing
-    flat keys take priority — nested values do **not** overwrite them.
+def _expand_mapping(
+    data: dict,
+    mapping: BlockMapping,
+    config_out: dict,
+    engine_out: dict,
+) -> None:
+    """Walk *mapping* against *data*, populating *config_out* / *engine_out*."""
+    for yaml_key, entry in mapping.items():
+        if yaml_key not in data or data[yaml_key] is None:
+            continue
+        value = data[yaml_key]
+        if isinstance(entry, tuple):
+            bucket, flat_key = entry
+            if bucket == "config":
+                config_out[flat_key] = value
+            elif bucket == "engine":
+                engine_out[flat_key] = value
+        elif isinstance(entry, dict) and isinstance(value, dict):
+            _expand_mapping(value, entry, config_out, engine_out)
 
-    Args:
-        data: Original manifest dict.
 
-    Returns:
-        Expanded flat dict.  A copy is made when expansion occurs; the
-        original dict is returned unchanged when neither section is present.
+def _expand_blocks(blocks: dict) -> tuple[dict, dict]:
+    """Expand merged config blocks into ``(config_flat, engine_params)``.
+
+    Only block names present in :data:`_BLOCK_REGISTRY` are processed.
+    Unrecognised block names are silently ignored (may belong to a module
+    that has not yet registered its keys).
     """
-    has_mastering = "mastering" in data and isinstance(data.get("mastering"), dict)
-    has_mixing    = "mixing"    in data and isinstance(data.get("mixing"),    dict)
+    config_out: dict = {}
+    engine_out: dict = {}
+    for block_name, block_data in blocks.items():
+        mapping = _BLOCK_REGISTRY.get(block_name)
+        if mapping is None or not isinstance(block_data, dict):
+            continue
+        _expand_mapping(block_data, mapping, config_out, engine_out)
+    return config_out, engine_out
 
-    if not has_mastering and not has_mixing:
-        return data
 
-    skip = set()
-    if has_mastering:
-        skip.add("mastering")
-    if has_mixing:
-        skip.add("mixing")
+def validate_manifest(data: dict) -> None:
+    """Validate the top-level manifest structure.
 
-    expanded = {k: v for k, v in data.items() if k not in skip}
+    Raises:
+        ManifestError: if ``version`` is missing/malformed, ``assets`` is absent
+                       or empty, or any asset entry lacks ``input`` / ``output``.
+    """
+    version = data.get("version")
+    if not version or not _SEMVER_RE.match(str(version).strip()):
+        raise ManifestError(
+            f"Invalid or missing 'version': {version!r}. "
+            'Must be MAJOR.MINOR or MAJOR.MINOR.PATCH (e.g. "1.0" or "1.0.0").'
+        )
 
-    if has_mastering:
-        for sub_key, value in data["mastering"].items():
-            flat_key = _MASTERING_KEY_MAP.get(sub_key, f"mastering_{sub_key}")
-            if flat_key not in expanded:
-                expanded[flat_key] = value
+    assets = data.get("assets")
+    if not isinstance(assets, list) or len(assets) == 0:
+        raise ManifestError(
+            "'assets' must be a non-empty list. "
+            "Each entry needs at least 'input' and 'output' fields."
+        )
 
-    if has_mixing:
-        for sub_key, value in data["mixing"].items():
-            flat_key = _MIXING_KEY_MAP.get(sub_key, sub_key)
-            if flat_key not in expanded:
-                expanded[flat_key] = value
+    for i, asset in enumerate(assets):
+        if not isinstance(asset, dict):
+            raise ManifestError(
+                f"assets[{i}] must be a mapping, got {type(asset).__name__}."
+            )
+        has_explicit = bool(asset.get("input") and asset.get("output"))
+        has_dir = bool(asset.get("input_dir") and asset.get("output_dir"))
+        if not has_explicit and not has_dir:
+            raise ManifestError(
+                f"assets[{i}] needs 'input'+'output' or 'input_dir'+'output_dir'."
+            )
 
-    return expanded
+    if isinstance(data.get("engine"), dict) and "stem_model" in data["engine"]:
+        import warnings
+        warnings.warn(
+            "'engine.stem_model' is no longer supported and will be ignored. "
+            "Model selection is now automatic based on the 'stems' list.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
-# Keys handled at the pipeline / CLI level, not mapped into UpmixConfig.
-_JOB_KEYS: frozenset[str] = frozenset({
-    "input",
-    "output",
-    "mode",
-    "input_format",
-    "stem_model",
-    "stem_model_dir",
-    "profile",
+    _VALID_STEM_NAMES = {
+        "vocals", "bass", "drums", "guitar", "piano", "other",
+        "kick", "snare", "hi-hat", "ride", "crash", "crowd",
+        "Vocals", "Bass", "Drums", "Guitar", "Piano", "Other",
+        "Kick", "Snare", "Hi-Hat", "Ride", "Crash", "Crowd",
+    }
+    _stems_to_check = [
+        data.get("engine", {}).get("stems") if isinstance(data.get("engine"), dict) else None,
+        data.get("mixing", {}).get("stems") if isinstance(data.get("mixing"), dict) else None,
+    ]
+    for asset in assets:
+        if isinstance(asset.get("engine"), dict):
+            _stems_to_check.append(asset["engine"].get("stems"))
+        if isinstance(asset.get("mixing"), dict):
+            _stems_to_check.append(asset["mixing"].get("stems"))
+    for stem_list in _stems_to_check:
+        if stem_list is None:
+            continue
+        if not isinstance(stem_list, list):
+            raise ManifestError(
+                f"'stems' must be a list of stem name strings, "
+                f"got {type(stem_list).__name__}."
+            )
+        for s in stem_list:
+            if s not in _VALID_STEM_NAMES:
+                raise ManifestError(
+                    f"Unknown stem name '{s}'. "
+                    f"Valid names: vocals, bass, drums, guitar, piano, other, "
+                    f"kick, snare, hi-hat, ride, crash, crowd."
+                )
+
+
+_ASSET_NON_BLOCK_KEYS: frozenset[str] = frozenset({
+    "input", "output", "stem_cache_dir",
+    "input_dir", "output_dir", "glob",
 })
 
 
-# ── Loader ─────────────────────────────────────────────────────────────────────
+def parse_manifest(data: dict) -> tuple[ManifestMeta | None, list[AssetJob]]:
+    """Parse a validated manifest dict into ``(ManifestMeta, list[AssetJob])``.
+
+    Call :func:`validate_manifest` first.  Each :class:`AssetJob` has a
+    ``config`` dict of flat UpmixConfig-ready keys (global defaults deep-merged
+    with any asset-level overrides) and an ``engine`` dict for job-level params.
+
+    Args:
+        data: Raw manifest dict from :func:`load_manifest`.
+
+    Returns:
+        Tuple of optional :class:`ManifestMeta` and list of :class:`AssetJob`.
+    """
+    meta: ManifestMeta | None = None
+    meta_raw = data.get("metadata")
+    if isinstance(meta_raw, dict):
+        meta = ManifestMeta(
+            name=meta_raw.get("name"),
+            author=meta_raw.get("author"),
+            description=meta_raw.get("description"),
+        )
+
+    all_block_keys = set(_BLOCK_REGISTRY.keys())
+    global_blocks: dict[str, dict] = {
+        k: v for k, v in data.items()
+        if k in all_block_keys and isinstance(v, dict)
+    }
+
+    jobs: list[AssetJob] = []
+    for asset in data.get("assets", []):
+        asset_blocks: dict[str, dict] = {
+            k: v for k, v in asset.items()
+            if k in all_block_keys and isinstance(v, dict)
+        }
+
+        # Asset-level shortcut: stem_cache_dir → engine.stem_cache_dir
+        if asset.get("stem_cache_dir") is not None:
+            engine_ov = dict(asset_blocks.get("engine", {}))
+            engine_ov.setdefault("stem_cache_dir", asset["stem_cache_dir"])
+            asset_blocks["engine"] = engine_ov
+
+        effective = _deep_merge(global_blocks, asset_blocks)
+
+        config_flat, engine_params = _expand_blocks(effective)
+
+        if asset.get("input_dir"):
+            input_dir = asset["input_dir"]
+            output_dir = asset["output_dir"]
+            glob_pat = asset.get("glob")
+            safe = _glob.escape(input_dir)
+            if glob_pat:
+                files = sorted(_glob.glob(os.path.join(safe, glob_pat)))
+            else:
+                wav = _glob.glob(os.path.join(safe, "*.wav"))
+                flac = _glob.glob(os.path.join(safe, "*.flac"))
+                files = sorted(wav + flac, key=os.path.basename)
+            if not files:
+                _log.warning("assets input_dir=%r matched no .wav/.flac files", input_dir)
+            for f in files:
+                stem = os.path.splitext(os.path.basename(f))[0]
+                out = os.path.join(output_dir, stem + ".wav")
+                jobs.append(AssetJob(
+                    input=f,
+                    output=out,
+                    config=dict(config_flat),
+                    engine=dict(engine_params),
+                ))
+        else:
+            jobs.append(AssetJob(
+                input=asset["input"],
+                output=asset["output"],
+                config=config_flat,
+                engine=engine_params,
+            ))
+
+    return meta, jobs
+
+
+def apply_asset_job(config: UpmixConfig, job: AssetJob) -> None:
+    """Apply an :class:`AssetJob`'s config dict to a :class:`UpmixConfig` in-place.
+
+    Iterates ``job.config``, coerces each value via :data:`_FIELD_MAP`, and
+    sets the corresponding attribute on *config*.  Unknown keys log a warning
+    and are skipped.  ``None`` values are skipped (preserve config default).
+
+    Args:
+        config: Config object to mutate.
+        job:    Resolved asset job from :func:`parse_manifest`.
+    """
+    for key, value in job.config.items():
+        if value is None:
+            continue
+        if key not in _FIELD_MAP:
+            _log.warning("Unknown manifest config key '%s' — ignored", key)
+            continue
+        config_attr, coerce = _FIELD_MAP[key]
+        try:
+            coerced = coerce(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Manifest key '{key}': cannot convert {value!r} to "
+                f"{coerce.__name__}: {exc}"
+            ) from exc
+        setattr(config, config_attr, coerced)
+
 
 def load_manifest(path: str | Path) -> dict[str, Any]:
     """Load a YAML or JSON manifest file and return it as a plain dict.
@@ -246,8 +495,7 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
         path: Path to a ``.yaml``, ``.yml``, or ``.json`` file.
 
     Returns:
-        Dict of manifest key/value pairs.  The dict is always non-None; an
-        empty manifest file returns ``{}``.
+        Dict of manifest key/value pairs.  Empty manifest returns ``{}``.
 
     Raises:
         FileNotFoundError: if *path* does not exist.
@@ -282,102 +530,14 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
     return data or {}
 
 
-# ── Application ────────────────────────────────────────────────────────────────
-
-def apply_manifest(
-    config: UpmixConfig,
-    manifest: dict[str, Any],
-    *,
-    allow_unknown_keys: bool = False,
-) -> dict[str, Any]:
-    """Apply manifest values to a :class:`~upmixer.config.UpmixConfig`.
-
-    Profile (if specified in manifest) is applied first so that individual
-    field values in the manifest can override the profile defaults.
-
-    CLI flag values are NOT applied here — the caller applies them afterwards
-    so they win over the manifest.
-
-    Args:
-        config:            The config object to modify *in-place*.
-        manifest:          Dict loaded by :func:`load_manifest`.
-        allow_unknown_keys: If ``False`` (default), logs a warning for keys
-                           that are neither known config fields nor job keys.
-
-    Returns:
-        ``job_params`` dict containing job-level keys:
-        ``input``, ``output``, ``mode``, ``input_format``,
-        ``stem_model``, ``stem_model_dir``.  Keys absent from the manifest
-        are not present in the returned dict (caller uses ``.get()``).
-    """
-    # ── Expand nested mastering: section into flat keys ───────────────────────
-    manifest = _expand_nested_sections(manifest)
-
-    # ── Apply delivery profile (individual manifest fields override) ──────────
-    profile_name: str | None = manifest.get("profile")
-    if profile_name is not None:
-        if profile_name not in PROFILES:
-            raise ValueError(
-                f"Unknown profile '{profile_name}' in manifest. "
-                f"Valid choices: {sorted(PROFILES.keys())}"
-            )
-        profile = PROFILES[profile_name]
-        config.loudness_normalize   = profile.loudness_normalize
-        config.loudness_target_lkfs = profile.loudness_target_lkfs
-        config.loudness_max_tp      = profile.loudness_max_tp
-        config.output_subtype       = profile.output_subtype
-        config.output_type          = profile.output_type
-        config.output_sample_rate   = profile.sample_rate
-        if profile.lfe_cutoff_hz is not None:
-            config.lfe_cutoff_hz = float(profile.lfe_cutoff_hz)
-        _log.info(
-            "  Manifest profile: %s — %+.1f LKFS / %+.1f dBTP / %d kHz / %s / %s",
-            profile.display_name,
-            profile.loudness_target_lkfs,
-            profile.loudness_max_tp,
-            profile.sample_rate // 1000,
-            profile.output_subtype,
-            profile.output_type,
-        )
-
-    # ── Apply config fields ───────────────────────────────────────────────────
-    for key, value in manifest.items():
-        if value is None:
-            continue  # null / omitted → keep config default
-        if key in _JOB_KEYS:
-            continue  # handled below / by caller
-
-        if key not in _FIELD_MAP:
-            if not allow_unknown_keys:
-                _log.warning("Unknown manifest key '%s' — ignored", key)
-            continue
-
-        config_attr, coerce = _FIELD_MAP[key]
-        try:
-            coerced = coerce(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"Manifest key '{key}': cannot convert {value!r} to {coerce.__name__}: {exc}"
-            ) from exc
-        setattr(config, config_attr, coerced)
-
-    # ── Collect job-level params ──────────────────────────────────────────────
-    job_params: dict[str, Any] = {}
-    for key in _JOB_KEYS - {"profile"}:
-        if key in manifest and manifest[key] is not None:
-            job_params[key] = manifest[key]
-
-    return job_params
-
-
 def list_manifest_keys() -> dict[str, str]:
     """Return a human-readable mapping of manifest keys to config attributes.
 
-    Useful for documentation and ``--manifest-help`` style output.
+    Used by ``--manifest-keys`` CLI flag.
     """
     out: dict[str, str] = {}
     for mk, (ca, t) in sorted(_FIELD_MAP.items()):
         out[mk] = f"{ca}  ({t.__name__})"
-    for jk in sorted(_JOB_KEYS):
-        out[jk] = "job parameter"
+    for key in ("mode", "stem_model_dir", "input_format", "stems"):
+        out[key] = "engine parameter"
     return out

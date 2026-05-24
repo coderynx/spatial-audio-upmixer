@@ -12,6 +12,7 @@ Channel weights follow BS.1770-4 §2.2 Table 1:
 from __future__ import annotations
 
 import math
+import os
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 
@@ -20,7 +21,7 @@ from scipy.signal import sosfilt
 
 from upmixer.formats import ChannelLabel, OutputFormat
 
-_SURROUND_WEIGHT: float = 10.0 ** (1.5 / 10.0)  # ≈ 1.4125
+_SURROUND_WEIGHT: float = 10.0 ** (1.5 / 10.0)
 
 _CH_WEIGHT: dict[ChannelLabel, float] = {
     ChannelLabel.FL:  1.0,
@@ -37,13 +38,11 @@ _CH_WEIGHT: dict[ChannelLabel, float] = {
     ChannelLabel.TBR: _SURROUND_WEIGHT,
 }
 
-_BLOCK_S = 0.400        # 400 ms gating block
-_HOP_S   = 0.100        # 100 ms hop  (75 % overlap)
-_ABS_GATE = -70.0       # absolute gate threshold (LKFS)
-_REL_GATE_OFFSET = -10.0  # relative gate: ungated mean − 10 LU
+_BLOCK_S = 0.400
+_HOP_S   = 0.100
+_ABS_GATE = -70.0
+_REL_GATE_OFFSET = -10.0
 
-
-# ── Filter design ─────────────────────────────────────────────────────────────
 
 def _shelf_sos(Wn: float, dBgain: float, Q: float, fs: int) -> list[float]:
     """High-shelf biquad (Audio EQ Cookbook). Returns [b0,b1,b2,1,a1,a2]."""
@@ -90,8 +89,6 @@ def _k_weighting_sos(sample_rate: int) -> np.ndarray:
     return np.array([s1, s2])
 
 
-# ── Measurement ───────────────────────────────────────────────────────────────
-
 def _channel_weighted_blocks(
     audio: np.ndarray,
     weight: float,
@@ -130,7 +127,6 @@ def measure_integrated_loudness(
     block_len = int(_BLOCK_S * sample_rate)
     hop_len   = int(_HOP_S * sample_rate)
 
-    # Collect (label, weight, audio) for channels that need processing
     tasks = []
     for label in fmt.channels:
         weight = _CH_WEIGHT.get(label, 0.0)
@@ -147,7 +143,7 @@ def measure_integrated_loudness(
         weight, audio = args
         return _channel_weighted_blocks(audio, weight, sos, block_len, hop_len)
 
-    with ThreadPoolExecutor(max_workers=min(len(tasks), 8)) as ex:
+    with ThreadPoolExecutor(max_workers=max(1, min(len(tasks), (os.cpu_count() or 4) // 2, 4))) as ex:
         results = list(ex.map(_process, tasks))
 
     power_blocks: np.ndarray | None = None
@@ -163,13 +159,11 @@ def measure_integrated_loudness(
     if power_blocks is None or len(power_blocks) == 0:
         return -70.0
 
-    # Pass 1 — absolute gate −70 LKFS
     block_lkfs = -0.691 + 10.0 * np.log10(np.maximum(power_blocks, 1e-30))
     abs_mask = block_lkfs >= _ABS_GATE
     if not np.any(abs_mask):
         return -70.0
 
-    # Pass 2 — relative gate −10 LU below absolute-gated mean
     ungated_lkfs = -0.691 + 10.0 * math.log10(max(float(np.mean(power_blocks[abs_mask])), 1e-30))
     rel_mask = abs_mask & (block_lkfs >= ungated_lkfs + _REL_GATE_OFFSET)
 
@@ -193,14 +187,12 @@ def measure_true_peak(channels: dict[str, np.ndarray]) -> float:
     if not audio_list:
         return -120.0
 
-    with ThreadPoolExecutor(max_workers=min(len(audio_list), 8)) as ex:
+    with ThreadPoolExecutor(max_workers=max(1, min(len(audio_list), (os.cpu_count() or 4) // 2, 4))) as ex:
         peaks = list(ex.map(_channel_tp, audio_list))
 
     max_tp = max(peaks) if peaks else 1e-30
     return 20.0 * math.log10(max(max_tp, 1e-30))
 
-
-# ── Normalization ─────────────────────────────────────────────────────────────
 
 def normalize_loudness(
     channels: dict[str, np.ndarray],

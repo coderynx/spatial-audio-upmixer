@@ -35,13 +35,12 @@ class StemFeatures:
     All values are in [0, 1].  Used by StemRouter to scale static routing
     table gains so that spatial placement adapts to the actual audio.
     """
-    stereo_width: float     # 0 = mono, 1 = fully decorrelated
-    high_freq_ratio: float  # energy fraction >= 4 kHz
-    low_freq_ratio: float   # energy fraction <= 200 Hz
-    transient_ratio: float  # fraction of frames with high positive spectral flux
+    stereo_width: float
+    high_freq_ratio: float
+    low_freq_ratio: float
+    transient_ratio: float
 
 
-# Fallback returned for very-short or silent stems
 _NEUTRAL = StemFeatures(
     stereo_width=0.5,
     high_freq_ratio=0.3,
@@ -65,7 +64,6 @@ def analyze_stem(audio: np.ndarray, sample_rate: int) -> StemFeatures:
 
     mono = (L + R) * 0.5
 
-    # ── Stereo width ─────────────────────────────────────────────────────────
     l_e = float(np.mean(L ** 2))
     r_e = float(np.mean(R ** 2))
     if l_e < 1e-20 or r_e < 1e-20:
@@ -74,7 +72,6 @@ def analyze_stem(audio: np.ndarray, sample_rate: int) -> StemFeatures:
         cross = float(np.mean(L * R))
         stereo_width = float(np.clip(1.0 - abs(cross) / math.sqrt(l_e * r_e), 0.0, 1.0))
 
-    # ── Limit analysis window ─────────────────────────────────────────────────
     max_n = min(len(mono), sample_rate * 60)
     chunk = mono[:max_n]
 
@@ -82,13 +79,11 @@ def analyze_stem(audio: np.ndarray, sample_rate: int) -> StemFeatures:
     if nperseg < 64 or float(np.max(np.abs(chunk))) < 1e-8:
         return _NEUTRAL
 
-    # ── Frequency ratios (Welch PSD) ──────────────────────────────────────────
     freqs, psd = welch(chunk, fs=sample_rate, nperseg=nperseg)
     total_power = float(np.sum(psd)) + 1e-30
     high_freq_ratio = float(np.clip(np.sum(psd[freqs >= 4000.0]) / total_power, 0.0, 1.0))
     low_freq_ratio  = float(np.clip(np.sum(psd[freqs <= 200.0])  / total_power, 0.0, 1.0))
 
-    # ── Transient ratio (positive spectral flux) ──────────────────────────────
     seg_len = min(2048, len(chunk))
     _, _, Sxx = spectrogram(
         chunk, fs=sample_rate,

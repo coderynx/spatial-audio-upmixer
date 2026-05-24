@@ -30,7 +30,6 @@ class AudioWriter:
                 )
             ordered.append(channels[key])
 
-        # Stack as (n_samples, n_channels)
         output = np.column_stack(ordered)
 
         sf.write(
