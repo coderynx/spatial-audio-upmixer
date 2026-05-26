@@ -21,6 +21,7 @@ MANIFEST_TO_CANONICAL: dict[str, str] = {
     "other":   "Other",
     "kick":    "Kick",
     "snare":   "Snare",
+    "toms":    "Toms",
     "hi-hat":  "Hi-Hat",
     "ride":    "Ride",
     "crash":   "Crash",

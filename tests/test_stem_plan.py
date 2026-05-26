@@ -30,11 +30,12 @@ class TestNormalizeStems:
     def test_all_manifest_names(self):
         manifest_names = [
             "vocals", "bass", "drums", "guitar", "piano", "other",
-            "kick", "snare", "hi-hat", "ride", "crash", "crowd",
+            "kick", "snare", "toms", "hi-hat", "ride", "crash", "crowd",
         ]
         canonical = normalize_stems(manifest_names)
-        assert len(canonical) == 12
+        assert len(canonical) == 13
         assert "Vocals" in canonical
+        assert "Toms" in canonical
         assert "Hi-Hat" in canonical
         assert "Crowd" in canonical
 

@@ -79,6 +79,7 @@ from pathlib import Path
 from typing import Any
 
 from upmixer.config import UpmixConfig
+from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
 
 _log = logging.getLogger("upmixer")
 
@@ -344,12 +345,9 @@ def validate_manifest(data: dict) -> None:
             stacklevel=2,
         )
 
-    _VALID_STEM_NAMES = {
-        "vocals", "bass", "drums", "guitar", "piano", "other",
-        "kick", "snare", "hi-hat", "ride", "crash", "crowd",
-        "Vocals", "Bass", "Drums", "Guitar", "Piano", "Other",
-        "Kick", "Snare", "Hi-Hat", "Ride", "Crash", "Crowd",
-    }
+    _valid_manifest = set(MANIFEST_TO_CANONICAL.keys())
+    _valid_canonical = set(MANIFEST_TO_CANONICAL.values())
+    _VALID_STEM_NAMES = _valid_manifest | _valid_canonical
     _stems_to_check = [
         data.get("engine", {}).get("stems") if isinstance(data.get("engine"), dict) else None,
         data.get("mixing", {}).get("stems") if isinstance(data.get("mixing"), dict) else None,
@@ -371,8 +369,7 @@ def validate_manifest(data: dict) -> None:
             if s not in _VALID_STEM_NAMES:
                 raise ManifestError(
                     f"Unknown stem name '{s}'. "
-                    f"Valid names: vocals, bass, drums, guitar, piano, other, "
-                    f"kick, snare, hi-hat, ride, crash, crowd."
+                    f"Valid names: {', '.join(sorted(_valid_manifest))}."
                 )
 
 
