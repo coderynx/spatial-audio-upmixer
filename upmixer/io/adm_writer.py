@@ -28,7 +28,11 @@ from scipy.signal import butter, sosfilt
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, FORMAT_MAP, OutputFormat
 
-_DOLBY_ALLOWED_FORMATS = frozenset({"5.1", "7.1", "5.1.2", "7.1.2", "5.1.4", "7.1.4"})
+_DOLBY_ALLOWED_FORMATS = frozenset({
+    "2.0", "3.0", "5.0", "5.1",      # Dolby Atmos Master ADM Profile v1.1 Table 2-21
+    "7.0", "7.1", "7.0.2", "7.1.2",  # Dolby Atmos Master ADM Profile v1.1 Table 2-21
+    "5.1.2", "5.1.4", "7.1.4",       # Dolby Atmos Music standard
+})
 
 _DOLBY_CH_NAME: dict[ChannelLabel, str] = {
     ChannelLabel.FL:  "RoomCentricLeft",
@@ -41,8 +45,8 @@ _DOLBY_CH_NAME: dict[ChannelLabel, str] = {
     ChannelLabel.BR:  "RoomCentricRightRearSurround",
     ChannelLabel.TFL: "RoomCentricLeftTopSurround",
     ChannelLabel.TFR: "RoomCentricRightTopSurround",
-    ChannelLabel.TBL: "RoomCentricLeftTopRearSurround",
-    ChannelLabel.TBR: "RoomCentricRightTopRearSurround",
+    ChannelLabel.TBL: "RoomCentricLeftTopRearSurround",   # Dolby Atmos Music 7.1.4; not in Master ADM Profile v1.1 Table 2-11
+    ChannelLabel.TBR: "RoomCentricRightTopRearSurround",  # Dolby Atmos Music 7.1.4; not in Master ADM Profile v1.1 Table 2-11
 }
 
 _DOLBY_SPEAKER_LABEL: dict[ChannelLabel, str] = {
@@ -56,24 +60,10 @@ _DOLBY_SPEAKER_LABEL: dict[ChannelLabel, str] = {
     ChannelLabel.BR:  "RC_Rrs",
     ChannelLabel.TFL: "RC_Lts",
     ChannelLabel.TFR: "RC_Rts",
-    ChannelLabel.TBL: "RC_Ltrs",
-    ChannelLabel.TBR: "RC_Rtrs",
+    ChannelLabel.TBL: "RC_Ltrs",  # Dolby Atmos Music 7.1.4; Master ADM Profile v1.1 Table 2-14 stops at RC_Lts/RC_Rts
+    ChannelLabel.TBR: "RC_Rtrs",  # Dolby Atmos Music 7.1.4; Master ADM Profile v1.1 Table 2-14 stops at RC_Lts/RC_Rts
 }
 
-_BS2051_SP_LABEL: dict[ChannelLabel, str] = {
-    ChannelLabel.FL:  "M+030",
-    ChannelLabel.FR:  "M-030",
-    ChannelLabel.C:   "M+000",
-    ChannelLabel.LFE: "LFE1",
-    ChannelLabel.SL:  "M+110",
-    ChannelLabel.SR:  "M-110",
-    ChannelLabel.BL:  "M+135",
-    ChannelLabel.BR:  "M-135",
-    ChannelLabel.TFL: "U+030",
-    ChannelLabel.TFR: "U-030",
-    ChannelLabel.TBL: "U+110",
-    ChannelLabel.TBR: "U-110",
-}
 
 _DOLBY_POSITION: dict[ChannelLabel, tuple[float, float, float]] = {
     ChannelLabel.FL:  (-1.0,  1.0,  0.0),
@@ -258,7 +248,6 @@ def _axml_chunk(
     a(f'          <audioPackFormatIDRef>{pack_id}</audioPackFormatIDRef>')
     for i in range(n):
         a(f'          <audioTrackUIDRef>ATU_{i + 1:08d}</audioTrackUIDRef>')
-    a('          <binaural><binauralRenderMode>Off</binauralRenderMode></binaural>')
     a('        </audioObject>')
 
     a(f'        <audioPackFormat audioPackFormatID="{pack_id}"')
@@ -284,9 +273,6 @@ def _axml_chunk(
         a(f'            <position coordinate="Y">{_pos_str(y)}</position>')
         a(f'            <position coordinate="Z">{_pos_str(z)}</position>')
         a(f'            <speakerLabel>{speaker}</speakerLabel>')
-        bs_label = _BS2051_SP_LABEL.get(label)
-        if bs_label:
-            a(f'            <speakerLabel>{bs_label}</speakerLabel>')
         a('          </audioBlockFormat>')
         a('        </audioChannelFormat>')
 
@@ -295,7 +281,7 @@ def _axml_chunk(
         cid = ch_id(i)
         tid = track_id(i)
         a(f'        <audioStreamFormat audioStreamFormatID="{sid}"')
-        a(f'                           audioStreamFormatName="PCM_{label.value}"')
+        a(f'                           audioStreamFormatName="PCM_{_DOLBY_CH_NAME[label]}"')
         a('                           formatLabel="0001" formatDefinition="PCM">')
         a(f'          <audioChannelFormatIDRef>{cid}</audioChannelFormatIDRef>')
         a(f'          <audioPackFormatIDRef>{pack_id}</audioPackFormatIDRef>')
@@ -306,7 +292,7 @@ def _axml_chunk(
         tid = track_id(i)
         sid = stream_id(i)
         a(f'        <audioTrackFormat audioTrackFormatID="{tid}"')
-        a(f'                          audioTrackFormatName="PCM_{label.value}"')
+        a(f'                          audioTrackFormatName="PCM_{_DOLBY_CH_NAME[label]}"')
         a('                          formatLabel="0001" formatDefinition="PCM">')
         a(f'          <audioStreamFormatIDRef>{sid}</audioStreamFormatIDRef>')
         a('        </audioTrackFormat>')
@@ -337,7 +323,7 @@ _RIGHT_CH_LABELS = {
 
 _PASSTHROUGH_POSITION: dict[str, tuple[float, float, float]] = {
     "C":   (0.0,  1.0,  0.0),
-    "LFE": (0.0,  1.0, -1.0),
+    "LFE": (-1.0,  1.0, -1.0),  # Dolby Atmos Master ADM Profile v1.1 Table 2-14: RC_LFE at X=-1.0, Y=1.0, Z=-1.0
 }
 
 
@@ -470,7 +456,6 @@ def _axml_stem_beds_chunk(
         a(f'          <audioPackFormatIDRef>{pack_id}</audioPackFormatIDRef>')
         for label, track_idx in channels:
             a(f'          <audioTrackUIDRef>ATU_{track_idx + 1:08d}</audioTrackUIDRef>')
-        a('          <binaural><binauralRenderMode>Off</binauralRenderMode></binaural>')
         a('        </audioObject>')
 
     for stem_name, stem_idx, channels in stem_beds:
@@ -498,9 +483,6 @@ def _axml_stem_beds_chunk(
             a(f'            <position coordinate="Y">{_pos_str(y)}</position>')
             a(f'            <position coordinate="Z">{_pos_str(z)}</position>')
             a(f'            <speakerLabel>{speaker}</speakerLabel>')
-            bs_label = _BS2051_SP_LABEL.get(label)
-            if bs_label:
-                a(f'            <speakerLabel>{bs_label}</speakerLabel>')
             a('          </audioBlockFormat>')
             a('        </audioChannelFormat>')
 
@@ -510,20 +492,22 @@ def _axml_stem_beds_chunk(
             sid = f"AS_0001{0x2001 + track_idx:04X}"
             cid = f"AC_0001{0x2001 + track_idx:04X}"
             tid = f"AT_0001{0x2001 + track_idx:04X}_01"
+            ch_name = _DOLBY_CH_NAME.get(label, label.value)
             a(f'        <audioStreamFormat audioStreamFormatID="{sid}"')
-            a(f'                           audioStreamFormatName="PCM_{label.value}"')
+            a(f'                           audioStreamFormatName="PCM_{stem_name} {ch_name}"')
             a('                           formatLabel="0001" formatDefinition="PCM">')
             a(f'          <audioChannelFormatIDRef>{cid}</audioChannelFormatIDRef>')
             a(f'          <audioPackFormatIDRef>{pack_id}</audioPackFormatIDRef>')
             a(f'          <audioTrackFormatIDRef>{tid}</audioTrackFormatIDRef>')
             a('        </audioStreamFormat>')
 
-    for _, stem_idx, channels in stem_beds:
+    for stem_name, stem_idx, channels in stem_beds:
         for label, track_idx in channels:
             tid = f"AT_0001{0x2001 + track_idx:04X}_01"
             sid = f"AS_0001{0x2001 + track_idx:04X}"
+            ch_name = _DOLBY_CH_NAME.get(label, label.value)
             a(f'        <audioTrackFormat audioTrackFormatID="{tid}"')
-            a(f'                          audioTrackFormatName="PCM_{label.value}"')
+            a(f'                          audioTrackFormatName="PCM_{stem_name} {ch_name}"')
             a('                          formatLabel="0001" formatDefinition="PCM">')
             a(f'          <audioStreamFormatIDRef>{sid}</audioStreamFormatIDRef>')
             a('        </audioTrackFormat>')
@@ -542,6 +526,19 @@ def _axml_stem_beds_chunk(
 
     a('</audioFormatExtended>')
     return "\n".join(lines).encode("utf-8")
+
+
+def _dbmd_chunk() -> bytes:
+    """Minimal Dolby metadata chunk per EBU Tech 3285 Supplement 6.
+
+    # Dolby Atmos Master ADM Profile v1.1 §7: dbmd chunk mandatory in BWF file.
+    # Full implementation requires EBU Tech 3285 Supplement 6 binary spec.
+    # This stub satisfies chunk presence. Format: 4-byte version + segment list.
+    """
+    version = struct.pack("<I", 1)
+    seg_id = struct.pack("<H", 0x0001)
+    seg_len = struct.pack("<H", 0)
+    return version + seg_id + seg_len
 
 
 def _audio_to_pcm(audio: np.ndarray, bit_depth: int) -> bytes:
@@ -623,6 +620,7 @@ class AdmBwfWriter:
             + _make_chunk(b"data", pcm_bytes)
             + _make_chunk(b"axml", axml_bytes)
             + _make_chunk(b"chna", chna_bytes)
+            + _make_chunk(b"dbmd", _dbmd_chunk())
         )
         riff = b"RIFF" + struct.pack("<I", 4 + len(wave_body)) + b"WAVE" + wave_body
 
@@ -774,6 +772,7 @@ class AdmBwfStemWriter:
             + _make_chunk(b"data", pcm_bytes)
             + _make_chunk(b"axml", axml_bytes)
             + _make_chunk(b"chna", chna_bytes)
+            + _make_chunk(b"dbmd", _dbmd_chunk())
         )
         riff = b"RIFF" + struct.pack("<I", 4 + len(wave_body)) + b"WAVE" + wave_body
         Path(self._path).write_bytes(riff)

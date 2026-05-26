@@ -21,7 +21,7 @@ from scipy.signal import sosfilt
 
 from upmixer.formats import ChannelLabel, OutputFormat
 
-_SURROUND_WEIGHT: float = 10.0 ** (1.5 / 10.0)
+_SURROUND_WEIGHT: float = 1.41  # BS.1770-4 Annex 1 Table 3 literal value
 
 _CH_WEIGHT: dict[ChannelLabel, float] = {
     ChannelLabel.FL:  1.0,
@@ -81,9 +81,17 @@ def _k_weighting_sos(sample_rate: int) -> np.ndarray:
 
     Stage 1: pre-filter  — high shelf +4 dB above ~1.68 kHz
     Stage 2: RLB filter  — 2nd-order HPF at 38.1 Hz
-    Parameters match pyloudnorm / ITU-R BS.1770-4 Annex 1.
-    Cached by sample_rate so repeated calls with the same rate are free.
+    At 48 kHz: exact tabulated values per BS.1770-4 Annex 1 Tables 1-2.
+    At 96 kHz and other rates: analytically re-derived to match 48 kHz
+    frequency response shape, per BS.1770-4 Annex 1 note.
     """
+    if sample_rate == 48000:
+        # BS.1770-4 Annex 1, Table 1 (Stage 1) + Table 2 (Stage 2) — exact values
+        s1 = [1.53512485958697, -2.69169618940638, 1.19839281085285,
+              1.0, -1.69065929318241, 0.73248077421585]
+        s2 = [1.0, -2.0, 1.0,
+              1.0, -1.99004745483398, 0.99007225036621]
+        return np.array([s1, s2])
     s1 = _shelf_sos(1681.974450955533, 3.999843853973347, 0.7071752369554196, sample_rate)
     s2 = _hpf_sos(38.13547087602444, 0.5003270373238773, sample_rate)
     return np.array([s1, s2])
@@ -171,17 +179,20 @@ def measure_integrated_loudness(
     return -0.691 + 10.0 * math.log10(max(float(np.mean(power_blocks[gated])), 1e-30))
 
 
-def measure_true_peak(channels: dict[str, np.ndarray]) -> float:
-    """True Peak across all channels at 4× oversample (BS.1770-4 Annex 2).
+def measure_true_peak(channels: dict[str, np.ndarray], sample_rate: int = 48000) -> float:
+    """True Peak across all channels (BS.1770-4 Annex 2).
 
+    Oversampling factor: 4× at ≤48 kHz, 2× at 96 kHz (both produce 192 kHz output).
     Oversampling is computed in parallel across threads; scipy/numpy release
     the GIL so multi-core systems benefit proportionally to channel count.
     Returns dBTP. LFE is included per spec.
     """
     from scipy.signal import resample_poly
 
+    up = 4 if sample_rate <= 48000 else 2
+
     def _channel_tp(audio: np.ndarray) -> float:
-        return float(np.max(np.abs(resample_poly(audio.astype(np.float64), 4, 1))))
+        return float(np.max(np.abs(resample_poly(audio.astype(np.float64), up, 1))))
 
     audio_list = list(channels.values())
     if not audio_list:
@@ -226,7 +237,7 @@ def normalize_loudness(
     gain_linear = 10.0 ** (gain_db / 20.0)
     adjusted = {k: v * gain_linear for k, v in channels.items()}
 
-    measured_tp = measure_true_peak(adjusted)
+    measured_tp = measure_true_peak(adjusted, sample_rate)
     tp_limited = False
 
     if measured_tp > max_tp_dbtp:
