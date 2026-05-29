@@ -112,11 +112,9 @@ def _channel_weighted_blocks(
     if len(audio) < block_len:
         return None
     filtered = sosfilt(sos, audio.astype(np.float64))
-    n_blocks = (len(filtered) - block_len) // hop_len + 1
-    return np.array([
-        np.mean(filtered[i * hop_len : i * hop_len + block_len] ** 2)
-        for i in range(n_blocks)
-    ]) * weight
+    squared = filtered * filtered
+    windows = np.lib.stride_tricks.sliding_window_view(squared, block_len)[::hop_len]
+    return windows.mean(axis=1) * weight
 
 
 def measure_integrated_loudness(
@@ -183,26 +181,27 @@ def measure_true_peak(channels: dict[str, np.ndarray], sample_rate: int = 48000)
     """True Peak across all channels (BS.1770-4 Annex 2).
 
     Oversampling factor: 4× at ≤48 kHz, 2× at 96 kHz (both produce 192 kHz output).
-    Oversampling is computed in parallel across threads; scipy/numpy release
-    the GIL so multi-core systems benefit proportionally to channel count.
+    Channels are processed serially so only one upsampled buffer exists at a time,
+    keeping peak memory proportional to a single channel rather than all channels.
     Returns dBTP. LFE is included per spec.
     """
     from scipy.signal import resample_poly
 
     up = 4 if sample_rate <= 48000 else 2
 
-    def _channel_tp(audio: np.ndarray) -> float:
-        return float(np.max(np.abs(resample_poly(audio.astype(np.float64), up, 1))))
-
     audio_list = list(channels.values())
     if not audio_list:
         return -120.0
 
-    with ThreadPoolExecutor(max_workers=max(1, min(len(audio_list), (os.cpu_count() or 4) // 2, 4))) as ex:
-        peaks = list(ex.map(_channel_tp, audio_list))
+    max_tp: float = 1e-30
+    for audio in audio_list:
+        upsampled = resample_poly(audio.astype(np.float64), up, 1)
+        peak = float(np.max(np.abs(upsampled)))
+        del upsampled
+        if peak > max_tp:
+            max_tp = peak
 
-    max_tp = max(peaks) if peaks else 1e-30
-    return 20.0 * math.log10(max(max_tp, 1e-30))
+    return 20.0 * math.log10(max_tp)
 
 
 def normalize_loudness(
@@ -235,7 +234,9 @@ def normalize_loudness(
 
     gain_db = min(target_lkfs - measured_lkfs, max_gain_db)
     gain_linear = 10.0 ** (gain_db / 20.0)
-    adjusted = {k: v * gain_linear for k, v in channels.items()}
+    adjusted = {k: v.copy() for k, v in channels.items()}
+    for v in adjusted.values():
+        v *= gain_linear
 
     measured_tp = measure_true_peak(adjusted, sample_rate)
     tp_limited = False
@@ -243,7 +244,8 @@ def normalize_loudness(
     if measured_tp > max_tp_dbtp:
         tp_excess_db = measured_tp - max_tp_dbtp
         tp_gain = 10.0 ** (-tp_excess_db / 20.0)
-        adjusted = {k: v * tp_gain for k, v in adjusted.items()}
+        for v in adjusted.values():
+            v *= tp_gain
         gain_db -= tp_excess_db
         tp_limited = True
 

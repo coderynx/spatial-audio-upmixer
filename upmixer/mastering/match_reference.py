@@ -97,7 +97,6 @@ def _gaussian_smooth_log(
     sigma_oct: float,
 ) -> np.ndarray:
     n = len(log_freqs)
-    smoothed = np.empty(n)
     df = log_freqs[1] - log_freqs[0] if n > 1 else 1.0
     sigma_bins = sigma_oct / max(df, 1e-10)
 
@@ -110,8 +109,7 @@ def _gaussian_smooth_log(
     kernel /= kernel.sum()
 
     padded = np.pad(values, half_w, mode="reflect")
-    for i in range(n):
-        smoothed[i] = np.dot(padded[i: i + 2 * half_w + 1], kernel)
+    smoothed = np.convolve(padded, kernel, mode="valid")
     return smoothed
 
 

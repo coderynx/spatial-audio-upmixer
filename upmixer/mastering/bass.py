@@ -172,19 +172,21 @@ class BassController:
         mid_lin = 10.0 ** (self._mid_db / 20.0)
 
         out: dict[str, np.ndarray] = dict(channels)
+        non_lfe_names = [name for name in channels if name != lfe_key]
 
-        if self._sub_db != 0.0 or self._mid_db != 0.0:
-            for name, ch in channels.items():
-                if name == lfe_key:
-                    continue
-                arr = ch.astype(np.float64)
-                if self._sub_db != 0.0:
-                    arr = self._apply_band_gain(arr, sub_lin, self._sos_sub_lp)
-                if self._mid_db != 0.0:
-                    arr = self._apply_band_gain(
-                        arr, mid_lin, self._sos_mid_lp, self._sos_mid_hp
-                    )
-                out[name] = arr
+        if non_lfe_names and (self._sub_db != 0.0 or self._mid_db != 0.0):
+            X = np.stack(
+                [channels[name].astype(np.float64) for name in non_lfe_names], axis=0
+            )
+            if self._sub_db != 0.0:
+                sub_band = sosfilt(self._sos_sub_lp, X, axis=-1)
+                X = (X - sub_band) + sub_band * sub_lin
+            if self._mid_db != 0.0:
+                mid_lp = sosfilt(self._sos_mid_lp, X, axis=-1)
+                mid_band = sosfilt(self._sos_mid_hp, mid_lp, axis=-1)
+                X = (X - mid_band) + mid_band * mid_lin
+            for i, name in enumerate(non_lfe_names):
+                out[name] = X[i]
             _log.debug(
                 "  BassController: sub=%+.1f dB  mid=%+.1f dB",
                 self._sub_db, self._mid_db,
@@ -194,28 +196,29 @@ class BassController:
             for l_key, r_key in _STEREO_PAIRS:
                 if l_key not in out or r_key not in out:
                     continue
-                l = out[l_key].astype(np.float64)
-                r = out[r_key].astype(np.float64)
-
-                l_low = sosfilt(self._sos_mono_lp, l)
-                r_low = sosfilt(self._sos_mono_lp, r)
-                mono_bass = (l_low + r_low) * 0.5
-
-                out[l_key] = mono_bass + sosfilt(self._sos_mono_hp, l)
-                out[r_key] = mono_bass + sosfilt(self._sos_mono_hp, r)
-
+                LR = np.stack([
+                    out[l_key].astype(np.float64),
+                    out[r_key].astype(np.float64),
+                ], axis=0)
+                lr_low = sosfilt(self._sos_mono_lp, LR, axis=-1)
+                mono_bass = (lr_low[0] + lr_low[1]) * 0.5
+                lr_high = sosfilt(self._sos_mono_hp, LR, axis=-1)
+                out[l_key] = mono_bass + lr_high[0]
+                out[r_key] = mono_bass + lr_high[1]
             _log.debug(
                 "  BassController: bass-mono at %.0f Hz", self._mono_hz
             )
 
         if self._excite:
-            for name, ch in out.items():
-                if name == lfe_key:
-                    continue
-                arr = ch.astype(np.float64)
-                sub = sosfilt(self._sos_sub_lp, arr)
-                harmonics = np.tanh(sub * _EXCITE_DRIVE) * _EXCITE_BLEND
-                out[name] = arr + harmonics
+            excite_names = [name for name in out if name != lfe_key]
+            X = np.stack(
+                [out[name].astype(np.float64) for name in excite_names], axis=0
+            )
+            sub = sosfilt(self._sos_sub_lp, X, axis=-1)
+            harmonics = np.tanh(sub * _EXCITE_DRIVE) * _EXCITE_BLEND
+            X += harmonics
+            for i, name in enumerate(excite_names):
+                out[name] = X[i]
             _log.debug("  BassController: harmonic exciter enabled")
 
         if self._lfe_db != 0.0 and lfe_key in out:
