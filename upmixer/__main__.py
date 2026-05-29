@@ -146,6 +146,16 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.stem_eq_profiles = _parse_key_value_pairs(args.stem_eq, str)
     if args.stem_cache_dir is not None:
         config.stem_cache_dir = args.stem_cache_dir
+    if args.stem_silence_skip is not None:
+        config.stem_silence_skip = args.stem_silence_skip
+    if args.stem_silence_threshold_db is not None:
+        config.stem_silence_threshold_db = args.stem_silence_threshold_db
+    if args.stem_silence_min_duration_s is not None:
+        config.stem_silence_min_duration_s = args.stem_silence_min_duration_s
+    if args.stem_silence_crossfade_ms is not None:
+        config.stem_silence_crossfade_ms = args.stem_silence_crossfade_ms
+    if args.stem_silence_pad_ms is not None:
+        config.stem_silence_pad_ms = args.stem_silence_pad_ms
     if args.stems is not None:
         from upmixer.separation.stem_plan import normalize_stems as _normalize
         raw = [s.strip() for s in args.stems.split(",") if s.strip()]
@@ -617,6 +627,65 @@ def main() -> None:
             "On subsequent runs with the same input file, model, and sample "
             "rate the cached stems are loaded directly, skipping re-separation. "
             "Key: SHA-256(abs_path|mtime|model|sample_rate)."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-silence-skip",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="stem_silence_skip",
+        help=(
+            "Skip separator on silent regions of each stem zone (stem mode only). "
+            "Detects contiguous silent runs and only processes active audio, "
+            "then stitches results back with a short crossfade. "
+            "Default: enabled (--stem-silence-skip)."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-silence-threshold-db",
+        type=float,
+        default=None,
+        metavar="DB",
+        help=(
+            "Peak threshold in dBFS below which a window is considered silent. "
+            "Default: -90.0 dBFS."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-silence-min-duration-s",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Minimum silent run duration in seconds.  Silent gaps shorter than "
+            "this are merged into the surrounding active span. "
+            "Default: 2.0 s."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-silence-crossfade-ms",
+        type=float,
+        default=None,
+        metavar="MS",
+        help=(
+            "Linear fade length in milliseconds applied at each active/silent "
+            "boundary to prevent clicks. Default: 10.0 ms."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-silence-pad-ms",
+        type=float,
+        default=None,
+        metavar="MS",
+        help=(
+            "Padding in milliseconds added to both ends of each active span so "
+            "the separator has musical context near transient boundaries. "
+            "Default: 200.0 ms."
         ),
     )
 

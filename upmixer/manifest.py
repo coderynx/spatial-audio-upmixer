@@ -126,8 +126,13 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         # stem_model removed — model selection is now automatic based on stems
         "stem_model_dir": ("engine", "stem_model_dir"),
         "input_format":   ("engine", "input_format"),
-        "stem_cache_dir": ("config", "stem_cache_dir"),
-        "stems":          ("engine", "stems"),
+        "stem_cache_dir":               ("config", "stem_cache_dir"),
+        "stems":                        ("engine", "stems"),
+        "stem_silence_skip":            ("config", "stem_silence_skip"),
+        "stem_silence_threshold_db":    ("config", "stem_silence_threshold_db"),
+        "stem_silence_min_duration_s":  ("config", "stem_silence_min_duration_s"),
+        "stem_silence_crossfade_ms":    ("config", "stem_silence_crossfade_ms"),
+        "stem_silence_pad_ms":          ("config", "stem_silence_pad_ms"),
     },
 
     "format": {
@@ -246,6 +251,11 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "stem_eq_profiles":            ("stem_eq_profiles", dict),
     "stem_cache_dir":              ("stem_cache_dir",   str),
     "stems":                       ("stems",            list),
+    "stem_silence_skip":           ("stem_silence_skip",           bool),
+    "stem_silence_threshold_db":   ("stem_silence_threshold_db",   float),
+    "stem_silence_min_duration_s": ("stem_silence_min_duration_s", float),
+    "stem_silence_crossfade_ms":   ("stem_silence_crossfade_ms",   float),
+    "stem_silence_pad_ms":         ("stem_silence_pad_ms",         float),
     "downmix_output":              ("downmix_output_path",    str),
     "downmix_surround_coeff":      ("surround_downmix_coeff", float),
     "preview":          ("preview",           bool),

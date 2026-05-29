@@ -12,7 +12,8 @@ Cache structure on disk::
             Vocals__front.wav      # zone-tagged: '@' replaced by '__'
             ...
 
-Cache key: SHA-256 of ``abs_path|mtime|stems_hash|sep_sr|preview_tag``
+Cache key: SHA-256 of
+``abs_path|mtime|stems_hash|sep_sr|preview_tag|silence_params``
 (first 20 hex chars).
 
 ``stems_hash`` is a 20-char digest of the sorted requested stem names
@@ -28,8 +29,10 @@ and triggers a fresh full-file separation.
 Preview stems are **never written** to cache (they are short-lived test
 artifacts and would waste disk space for little benefit).
 
-Cache invalidation: any change to abs_path, mtime, stems_hash, sep_sr, or
-preview window produces a different key → cold miss.
+Cache invalidation: any change to abs_path, mtime, stems_hash, sep_sr,
+preview window, or silence-skip parameters produces a different key → cold
+miss.  Upgrading from a build without silence-skip support will cause a
+one-time cold miss and re-separation.
 
 Stems are stored as float32 PCM_24 WAV (soundfile).  On load, arrays are
 returned as float64 to match the rest of the pipeline.
@@ -70,11 +73,18 @@ def _cache_key(
     is_preview: bool = False,
     preview_duration: float | None = None,
     preview_start: float | None = None,
+    silence_skip: bool = True,
+    silence_threshold_db: float = -90.0,
+    silence_min_duration_s: float = 2.0,
+    silence_crossfade_ms: float = 10.0,
+    silence_pad_ms: float = 200.0,
 ) -> str:
     """Return a 20-char hex cache key for the given separation parameters.
 
     Preview and full-file runs always produce different keys, so a cached
-    preview never masks a subsequent full-file separation.
+    preview never masks a subsequent full-file separation.  Silence-skip
+    parameters are included so changing the threshold or durations invalidates
+    any previously cached stems.
 
     Args:
         stems_hash: 20-char digest from
@@ -85,7 +95,14 @@ def _cache_key(
     abs_path = str(Path(input_path).resolve())
     mtime = os.path.getmtime(abs_path)
     tag = _preview_tag(is_preview, preview_duration, preview_start)
-    raw = f"{abs_path}|{mtime:.6f}|{stems_hash}|{sep_sr}|{tag}"
+    silence_tag = (
+        f"skip={silence_skip}"
+        f"|thr={silence_threshold_db:.1f}"
+        f"|min={silence_min_duration_s:.3f}"
+        f"|xfade={silence_crossfade_ms:.1f}"
+        f"|pad={silence_pad_ms:.1f}"
+    )
+    raw = f"{abs_path}|{mtime:.6f}|{stems_hash}|{sep_sr}|{tag}|{silence_tag}"
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -118,22 +135,37 @@ class StemCache:
         is_preview: bool = False,
         preview_duration: float | None = None,
         preview_start: float | None = None,
+        silence_skip: bool = True,
+        silence_threshold_db: float = -90.0,
+        silence_min_duration_s: float = 2.0,
+        silence_crossfade_ms: float = 10.0,
+        silence_pad_ms: float = 200.0,
     ) -> tuple[dict[str, np.ndarray], int] | None:
         """Try to load cached stems for the given parameters.
 
         Args:
-            input_path:       Original input audio file path.
-            stems_hash:       20-char digest from SeparationPlan.stems_hash.
-            sep_sr:           Target separation sample rate in Hz.
-            is_preview:       Whether this is a preview (sliced) run.
-            preview_duration: Preview window length in seconds.
-            preview_start:    Preview window start in seconds (None = auto-center).
+            input_path:             Original input audio file path.
+            stems_hash:             20-char digest from SeparationPlan.stems_hash.
+            sep_sr:                 Target separation sample rate in Hz.
+            is_preview:             Whether this is a preview (sliced) run.
+            preview_duration:       Preview window length in seconds.
+            preview_start:          Preview window start in seconds.
+            silence_skip:           Whether silence-skip was enabled.
+            silence_threshold_db:   Silence threshold used during separation.
+            silence_min_duration_s: Minimum silent run duration used.
+            silence_crossfade_ms:   Crossfade length used at span boundaries.
+            silence_pad_ms:         Span padding used.
 
         Returns:
             ``(stems_dict, sample_rate)`` on cache hit, or ``None`` on miss.
             Stems are returned as float64 arrays shaped ``(n_samples, 2)``.
         """
-        key = _cache_key(input_path, stems_hash, sep_sr, is_preview, preview_duration, preview_start)
+        key = _cache_key(
+            input_path, stems_hash, sep_sr,
+            is_preview, preview_duration, preview_start,
+            silence_skip, silence_threshold_db, silence_min_duration_s,
+            silence_crossfade_ms, silence_pad_ms,
+        )
         entry_dir = self._root / key
 
         if not entry_dir.exists():
@@ -200,6 +232,11 @@ class StemCache:
         is_preview: bool = False,
         preview_duration: float | None = None,
         preview_start: float | None = None,
+        silence_skip: bool = True,
+        silence_threshold_db: float = -90.0,
+        silence_min_duration_s: float = 2.0,
+        silence_crossfade_ms: float = 10.0,
+        silence_pad_ms: float = 200.0,
     ) -> None:
         """Write stems to the cache.
 
@@ -207,14 +244,19 @@ class StemCache:
         test slices that should not be served to subsequent full-file runs.
 
         Args:
-            input_path:       Original input audio file path.
-            stems_hash:       20-char digest from SeparationPlan.stems_hash.
-            sep_sr:           Target separation sample rate in Hz.
-            stems:            Dict stem_key → ``(n_samples, 2)`` float array.
-            sample_rate:      Actual sample rate of the stems (should equal sep_sr).
-            is_preview:       If ``True``, skip writing (preview stems not cached).
-            preview_duration: Preview window length in seconds.
-            preview_start:    Preview window start in seconds (None = auto-center).
+            input_path:             Original input audio file path.
+            stems_hash:             20-char digest from SeparationPlan.stems_hash.
+            sep_sr:                 Target separation sample rate in Hz.
+            stems:                  Dict stem_key → ``(n_samples, 2)`` float array.
+            sample_rate:            Actual sample rate of the stems.
+            is_preview:             If ``True``, skip writing.
+            preview_duration:       Preview window length in seconds.
+            preview_start:          Preview window start in seconds.
+            silence_skip:           Whether silence-skip was enabled.
+            silence_threshold_db:   Silence threshold used during separation.
+            silence_min_duration_s: Minimum silent run duration used.
+            silence_crossfade_ms:   Crossfade length used at span boundaries.
+            silence_pad_ms:         Span padding used.
         """
         if is_preview:
             _log.debug("  StemCache: preview mode — skipping cache write")
@@ -228,7 +270,12 @@ class StemCache:
 
         abs_path = str(Path(input_path).resolve())
         mtime = os.path.getmtime(abs_path)
-        key = _cache_key(input_path, stems_hash, sep_sr, is_preview, preview_duration, preview_start)
+        key = _cache_key(
+            input_path, stems_hash, sep_sr,
+            is_preview, preview_duration, preview_start,
+            silence_skip, silence_threshold_db, silence_min_duration_s,
+            silence_crossfade_ms, silence_pad_ms,
+        )
         entry_dir = self._root / key
         entry_dir.mkdir(parents=True, exist_ok=True)
 
@@ -243,6 +290,11 @@ class StemCache:
             "stems_hash": stems_hash,
             "sep_sr": sep_sr,
             "stem_keys": list(stems.keys()),
+            "silence_skip": silence_skip,
+            "silence_threshold_db": silence_threshold_db,
+            "silence_min_duration_s": silence_min_duration_s,
+            "silence_crossfade_ms": silence_crossfade_ms,
+            "silence_pad_ms": silence_pad_ms,
         }
         (entry_dir / _METADATA_FILE).write_text(
             json.dumps(meta, indent=2), encoding="utf-8"

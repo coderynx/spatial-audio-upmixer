@@ -236,6 +236,92 @@ class StemUpmixPipeline:
         _log.info("  All stages complete. Final stems: %s", sorted(all_loaded.keys()))
         return all_loaded
 
+    def _execute_plan_with_silence_skip(
+        self,
+        plan: SeparationPlan,
+        zone_audio: np.ndarray,
+        sr: int,
+        sep_sr: int,
+        cfg: UpmixConfig,
+    ) -> dict[str, np.ndarray]:
+        """Run stem separation on active spans only, skipping silent regions.
+
+        Detects contiguous silent runs in *zone_audio*, separates only the
+        active portions, and stitches the per-stem outputs back into
+        full-length arrays with a linear crossfade at each boundary.
+
+        Returns the same dict shape as :meth:`_execute_plan`:
+        ``{stem_name: (n_sep_samples, 2) float32}``.
+        """
+        from upmixer.separation.silence import find_active_spans, stitch_with_crossfade
+
+        n_sr = len(zone_audio)
+        spans = find_active_spans(
+            zone_audio,
+            sr,
+            threshold_db=cfg.stem_silence_threshold_db,
+            min_silence_s=cfg.stem_silence_min_duration_s,
+            pad_ms=cfg.stem_silence_pad_ms,
+        )
+
+        n_sep = int(round(n_sr * sep_sr / sr)) if sep_sr != sr else n_sr
+
+        if not spans:
+            _log.info("  Silence-skip: zone is entirely silent — skipping separator")
+            return {
+                name: np.zeros((n_sep, 2), dtype=np.float32)
+                for name in plan.requested_stems
+            }
+
+        if len(spans) == 1 and spans[0] == (0, n_sr):
+            tmp = tempfile.mktemp(suffix=".wav", prefix="upmixer_full_")
+            try:
+                sf.write(tmp, zone_audio, sr, subtype="PCM_24")
+                return self._execute_plan(plan, tmp, sep_sr)
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+
+        _log.info("  Silence-skip: %d active span(s)", len(spans))
+        fade_samples = max(0, int(cfg.stem_silence_crossfade_ms / 1000.0 * sep_sr))
+        tmp_files: list[str] = []
+        span_data: list[tuple[int, int, dict[str, np.ndarray]]] = []
+
+        try:
+            for s_start, s_end in spans:
+                span_audio = zone_audio[s_start:s_end]
+                tmp = tempfile.mktemp(suffix=".wav", prefix="upmixer_span_")
+                sf.write(tmp, span_audio, sr, subtype="PCM_24")
+                tmp_files.append(tmp)
+                outputs = self._execute_plan(plan, tmp, sep_sr)
+                sep_start = int(round(s_start * sep_sr / sr)) if sep_sr != sr else s_start
+                out_len = max((len(v) for v in outputs.values()), default=0)
+                span_data.append((sep_start, sep_start + out_len, outputs))
+        finally:
+            for tmp in tmp_files:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+
+        if span_data:
+            n_sep = max(n_sep, span_data[-1][1])
+
+        result: dict[str, np.ndarray] = {}
+        for stem_name in plan.requested_stems:
+            tuples = [
+                (
+                    sep_start,
+                    sep_end,
+                    outputs.get(
+                        stem_name,
+                        np.zeros((sep_end - sep_start, 2), dtype=np.float32),
+                    ),
+                )
+                for sep_start, sep_end, outputs in span_data
+            ]
+            result[stem_name] = stitch_with_crossfade(tuples, n_sep, fade_samples)
+
+        return result
+
     def process_file(
         self,
         input_path: str,
@@ -323,6 +409,11 @@ class StemUpmixPipeline:
                 is_preview=cfg.preview,
                 preview_duration=cfg.preview_duration_s,
                 preview_start=cfg.preview_start_s,
+                silence_skip=cfg.stem_silence_skip,
+                silence_threshold_db=cfg.stem_silence_threshold_db,
+                silence_min_duration_s=cfg.stem_silence_min_duration_s,
+                silence_crossfade_ms=cfg.stem_silence_crossfade_ms,
+                silence_pad_ms=cfg.stem_silence_pad_ms,
             )
             if _cache_result is not None:
                 _cache_hit_stems, _ = _cache_result
@@ -366,17 +457,26 @@ class StemUpmixPipeline:
                     zone_frac = 0.15 + 0.60 * (zone_idx / n_zones)
                     _progress(f"    Separating zone: {zone_name}...", zone_frac)
 
-                    if isinstance(pair_src, str):
-                        sep_path = pair_src
-                    else:
-                        tmp = tempfile.mktemp(
-                            suffix=".wav", prefix=f"upmixer_{zone_name}_"
+                    if cfg.stem_silence_skip:
+                        if isinstance(pair_src, str):
+                            _zone_audio, _ = sf.read(pair_src, dtype="float64", always_2d=True)
+                        else:
+                            _zone_audio = pair_src
+                        zone_stems = self._execute_plan_with_silence_skip(
+                            plan, _zone_audio, sr, sep_sr, cfg
                         )
-                        sf.write(tmp, pair_src, sr, subtype="PCM_24")
-                        sep_path = tmp
-                        tmp_files.append(tmp)
+                    else:
+                        if isinstance(pair_src, str):
+                            sep_path = pair_src
+                        else:
+                            tmp = tempfile.mktemp(
+                                suffix=".wav", prefix=f"upmixer_{zone_name}_"
+                            )
+                            sf.write(tmp, pair_src, sr, subtype="PCM_24")
+                            sep_path = tmp
+                            tmp_files.append(tmp)
+                        zone_stems = self._execute_plan(plan, sep_path, sep_sr)
 
-                    zone_stems = self._execute_plan(plan, sep_path, sep_sr)
                     for stem_name, stem_audio in zone_stems.items():
                         key = stem_name if stereo_mode else f"{stem_name}@{zone_name}"
                         all_stems[key] = stem_audio
@@ -392,6 +492,11 @@ class StemUpmixPipeline:
                     is_preview=cfg.preview,
                     preview_duration=cfg.preview_duration_s,
                     preview_start=cfg.preview_start_s,
+                    silence_skip=cfg.stem_silence_skip,
+                    silence_threshold_db=cfg.stem_silence_threshold_db,
+                    silence_min_duration_s=cfg.stem_silence_min_duration_s,
+                    silence_crossfade_ms=cfg.stem_silence_crossfade_ms,
+                    silence_pad_ms=cfg.stem_silence_pad_ms,
                 )
 
         if not all_stems:
