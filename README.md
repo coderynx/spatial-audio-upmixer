@@ -293,8 +293,10 @@ with StemUpmixPipeline(UpmixConfig(), model="BS-Roformer-SW.ckpt") as pipeline:
 | `--center-gain`           | `0.85`                    | Center channel gain                                        |
 | `--surround-gain`         | `0.60`                    | Side surround gain                                         |
 | `--height-gain`           | `0.55`                    | Height channel gain                                        |
-| `--lfe-gain`              | `0.50`                    | LFE gain                                                   |
+| `--lfe-gain`              | `0.3162`                  | LFE gain                                                   |
 | `--lfe-cutoff`            | `120`                     | LFE low-pass cutoff in Hz                                  |
+| `--content-mix-strength`  | `1.0`                     | Analyzer influence on static stem routing                  |
+| `--content-hf-analysis-hz`| `4000`                    | High-frequency threshold for stem analysis                 |
 | `--preview`               | —                         | Process a 30 s excerpt instead of the full file            |
 | `--preview-duration`      | `30.0`                    | Preview window length in seconds                           |
 | `--preview-start`         | auto-center               | Preview start time in seconds                              |

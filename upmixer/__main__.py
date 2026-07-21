@@ -37,6 +37,13 @@ def _positive_int(value: str, option: str) -> int:
     return parsed
 
 
+def _positive_float(value: str, option: str) -> float:
+    parsed = float(value)
+    if parsed <= 0.0:
+        raise argparse.ArgumentTypeError(f"{option} must be greater than 0")
+    return parsed
+
+
 def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_set: bool) -> None:
     """Apply explicitly-set CLI flags to config.
 
@@ -78,6 +85,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.normalize_output = False
     if args.content_mix_strength is not None:
         config.content_mix_strength = max(0.0, min(1.0, args.content_mix_strength))
+    if args.content_hf_analysis_hz is not None:
+        config.content_hf_analysis_hz = args.content_hf_analysis_hz
     if args.no_loudness_normalize:
         config.loudness_normalize = False
     if args.loudness_target is not None:
@@ -445,7 +454,7 @@ def main() -> None:
     parser.add_argument("--surround-gain",         type=float, default=None, help="Side surround channel gain (default: 0.6)")
     parser.add_argument("--back-gain",             type=float, default=None, help="Rear back channel gain for 7.1 formats (default: 0.55)")
     parser.add_argument("--height-gain",           type=float, default=None, help="Height channel gain for Atmos formats (default: 0.55)")
-    parser.add_argument("--lfe-gain",              type=float, default=None, help="LFE channel gain (default: 0.5)")
+    parser.add_argument("--lfe-gain",              type=float, default=None, help="LFE channel gain (default: 0.3162)")
 
     parser.add_argument("--center-extraction-gain",type=float, default=None, help="Mid signal → center channel (default: 0.85)")
     parser.add_argument("--center-attenuation",    type=float, default=None, help="Center attenuation in FL/FR (default: 0.5)")
@@ -461,6 +470,13 @@ def main() -> None:
 
     parser.add_argument("--no-normalize", action="store_true", help="Disable output energy normalization (mixing phase)")
     parser.add_argument("--content-mix-strength", type=float, default=None, metavar="S", help="Content-aware mixing strength 0.0–1.0 (default: 1.0)")
+    parser.add_argument(
+        "--content-hf-analysis-hz",
+        type=lambda value: _positive_float(value, "--content-hf-analysis-hz"),
+        default=None,
+        metavar="HZ",
+        help="High-frequency threshold for stem content analysis (default: 4000)",
+    )
     parser.add_argument(
         "--no-loudness-normalize",
         action="store_true",

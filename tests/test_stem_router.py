@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import numpy as np
+from scipy.signal import sosfilt
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_analyzer import StemFeatures, analyze_stem
-from upmixer.separation.stem_router import StemRouter
+from upmixer.separation.stem_router import StemRouter, _content_scale
 
 
 def _audio(n: int = 48000, frequency: float = 440.0) -> np.ndarray:
@@ -40,11 +41,17 @@ def test_channel_class_controls_change_stem_output():
 
 def test_content_mix_strength_disables_content_scaling():
     stems = {"Vocals": _audio()}
-    flat = _router(content_mix_strength=0.0).route(stems, len(stems["Vocals"]))
+    features = {"Vocals": StemFeatures(0.0, 0.9, 0.8, 0.9)}
+    flat = _router(content_mix_strength=0.0).route(
+        stems, len(stems["Vocals"]), stem_features=features
+    )
+    static = _router(content_mix_strength=0.0).route(stems, len(stems["Vocals"]))
     dynamic = _router(content_mix_strength=1.0).route(
-        stems, len(stems["Vocals"]), stem_features={"Vocals": _features()}
+        stems, len(stems["Vocals"]), stem_features=features
     )
 
+    for channel in flat:
+        np.testing.assert_allclose(flat[channel], static[channel])
     assert not np.allclose(flat["C"], dynamic["C"])
 
 
@@ -80,6 +87,48 @@ def test_custom_routing_overrides_zone_table():
 
     assert np.max(np.abs(channels["C"])) == 0.0
     assert np.max(np.abs(channels["SL"])) > 0.0
+
+
+def test_explicit_empty_zone_routing_does_not_fall_back_to_default():
+    router = _router()
+
+    assert router.get_routing("Bass@height_front") == {}
+    assert router.get_routing("Kick@height_back") == {}
+
+
+def test_neutral_features_preserve_static_routing_weights():
+    features = StemFeatures(0.5, 0.3, 0.2, 0.3)
+
+    for label in FORMAT_MAP["7.1.4"].channels:
+        assert _content_scale(features, label) == 1.0
+
+
+def test_default_lfe_gain_is_applied_once():
+    stems = {"Bass": _audio(frequency=80.0)}
+    config = UpmixConfig(output_format="7.1.4")
+    router = StemRouter(
+        config,
+        FORMAT_MAP["7.1.4"],
+        48000,
+        {"Bass": {"LFE": 1.0}},
+    )
+
+    channels = router.route(stems, len(stems["Bass"]))
+    stem_mono = stems["Bass"][:, 0]
+    expected = config.lfe_gain * sosfilt(router._lfe_sos, stem_mono)
+
+    np.testing.assert_allclose(channels["LFE"], expected)
+
+
+def test_generic_and_percussion_defaults_start_conservative():
+    router = _router()
+    other = router.get_routing("Other")
+    hi_hat = router.get_routing("Hi-Hat")
+    crash = router.get_routing("Crash")
+
+    assert other is not None and other["FL"] > other["SL"] > other["TFL"]
+    assert hi_hat is not None and hi_hat["TFL"] == 0.40
+    assert crash is not None and crash["TFL"] == 0.50
 
 
 def test_analyzer_treats_antiphase_and_hard_pan_as_wide():

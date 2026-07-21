@@ -220,6 +220,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "center_extraction_gain":     ("center_extraction_gain",   float),
     "center_attenuation":         ("center_attenuation",       float),
     "content_mix_strength":       ("content_mix_strength",     float),
+    "content_hf_analysis_hz":     ("content_hf_analysis_hz",   float),
     "height_low_rolloff_gain":    ("height_low_rolloff_gain",  float),
     "height_high_shelf_gain":     ("height_high_shelf_gain",   float),
     "fft_size":                   ("fft_size",                 int),

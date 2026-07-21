@@ -54,14 +54,15 @@ _VOCAL_STEM_NAMES: frozenset[str] = frozenset({
     "Vocals", "Lead Vocals", "Backing Vocals",
 })
 
-_LFE_REFERENCE_GAIN = 10.0 ** (-10.0 / 20.0)
-
-
 def _content_scale(features: StemFeatures, label: ChannelLabel) -> float:
     """Per-channel multiplicative scale driven by stem content analysis.
 
     Applied on top of the static routing table gain so spatial placement
     adapts to the actual audio rather than using fixed gains.
+
+    Each scale is calibrated to 1.0 at the analyzer's neutral feature vector
+    (width=.5, highs=.3, lows=.2, transients=.3).  The static routing table
+    therefore remains the baseline position; analysis applies bounded shifts.
 
     LFE     : boosted by low-frequency energy (bass/kick).
     Center  : boosted when content is mono (vocals, bass, kick) — less for wide stereo.
@@ -76,21 +77,21 @@ def _content_scale(features: StemFeatures, label: ChannelLabel) -> float:
     t = features.transient_ratio
 
     if label == ChannelLabel.LFE:
-        return 0.4 + 0.9 * b
+        return 1.0 + 0.50 * (b - 0.20)
 
     if label == ChannelLabel.C:
-        return 0.55 + 0.65 * (1.0 - w)
+        return 1.0 + 0.35 * (0.50 - w)
 
     if label in _HEIGHT_CHANNELS:
         cymbal_score  = 0.6 * h + 0.4 * t
         ambient_score = 0.5 * w + 0.5 * (1.0 - t)
-        return 0.25 + 0.72 * max(cymbal_score, ambient_score)
+        return 1.0 + 0.50 * (max(cymbal_score, ambient_score) - 0.60)
 
     if label in _SURROUND_CHANNELS:
         sustain = 1.0 - t
-        return 0.20 + 0.80 * (0.60 * w + 0.40 * sustain)
+        return 1.0 + 0.55 * (0.60 * w + 0.40 * sustain - 0.58)
 
-    return 0.60 + 0.40 * (0.55 * t + 0.45 * (1.0 - w))
+    return 1.0 + 0.30 * (0.55 * t + 0.45 * (1.0 - w) - 0.39)
 
 
 
@@ -221,25 +222,25 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "C":   0.20,
         "FL":  0.55,
         "FR":  0.55,
-        "SL":  0.18,
-        "SR":  0.18,
+        "SL":  0.12,
+        "SR":  0.12,
         "LFE": 0.32,
-        "TFL": 0.20,
-        "TFR": 0.20,
-        "TBL": 0.08,
-        "TBR": 0.08,
+        "TFL": 0.12,
+        "TFR": 0.12,
+        "TBL": 0.04,
+        "TBR": 0.04,
     },
     "Other": {
-        "FL":  0.28,
-        "FR":  0.28,
-        "SL":  0.48,
-        "SR":  0.48,
-        "BL":  0.22,
-        "BR":  0.22,
-        "TFL": 0.42,
-        "TFR": 0.42,
-        "TBL": 0.28,
-        "TBR": 0.28,
+        "FL":  0.38,
+        "FR":  0.38,
+        "SL":  0.34,
+        "SR":  0.34,
+        "BL":  0.15,
+        "BR":  0.15,
+        "TFL": 0.22,
+        "TFR": 0.22,
+        "TBL": 0.14,
+        "TBR": 0.14,
     },
     "Guitar": {
         "FL":  0.52,
@@ -262,17 +263,17 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
     },
     "Instrumental": {
         "C":   0.15,
-        "FL":  0.55,
-        "FR":  0.55,
-        "SL":  0.38,
-        "SR":  0.38,
-        "BL":  0.18,
-        "BR":  0.18,
+        "FL":  0.60,
+        "FR":  0.60,
+        "SL":  0.30,
+        "SR":  0.30,
+        "BL":  0.14,
+        "BR":  0.14,
         "LFE": 0.45,
-        "TFL": 0.22,
-        "TFR": 0.22,
-        "TBL": 0.12,
-        "TBR": 0.12,
+        "TFL": 0.15,
+        "TFR": 0.15,
+        "TBL": 0.08,
+        "TBR": 0.08,
     },
     "Lead Vocals": {
         "C":   0.80,
@@ -315,26 +316,26 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
     "Hi-Hat": {
         "FL":  0.42,
         "FR":  0.42,
-        "TFL": 0.55,
-        "TFR": 0.55,
-        "TBL": 0.10,
-        "TBR": 0.10,
+        "TFL": 0.40,
+        "TFR": 0.40,
+        "TBL": 0.06,
+        "TBR": 0.06,
     },
     "Ride": {
         "FL":  0.38,
         "FR":  0.38,
-        "TFL": 0.60,
-        "TFR": 0.60,
+        "TFL": 0.45,
+        "TFR": 0.45,
     },
     "Crash": {
         "FL":  0.35,
         "FR":  0.35,
-        "SL":  0.20,
-        "SR":  0.20,
-        "TFL": 0.65,
-        "TFR": 0.65,
-        "TBL": 0.12,
-        "TBR": 0.12,
+        "SL":  0.15,
+        "SR":  0.15,
+        "TFL": 0.50,
+        "TFR": 0.50,
+        "TBL": 0.08,
+        "TBR": 0.08,
     },
     "Crowd": {
         "SL":  0.28,
@@ -377,7 +378,7 @@ class StemRouter:
             btype="low",
             output="sos",
         )
-        self._lfe_gain = config.lfe_gain * _LFE_REFERENCE_GAIN
+        self._lfe_gain = config.lfe_gain
         self._surround_sos = butter(
             2,
             config.surround_bass_cutoff_hz / (sample_rate / 2.0),
@@ -400,7 +401,12 @@ class StemRouter:
     def _routing_for(self, stem_key: str) -> dict[str, float] | None:
         if "@" in stem_key:
             stem_name, zone = stem_key.rsplit("@", 1)
-            base = ZONE_ROUTING.get(zone, {}).get(stem_name) or DEFAULT_ROUTING.get(stem_name)
+            zone_routing = ZONE_ROUTING.get(zone, {})
+            base = (
+                zone_routing[stem_name]
+                if stem_name in zone_routing
+                else DEFAULT_ROUTING.get(stem_name)
+            )
         else:
             stem_name = stem_key
             base = DEFAULT_ROUTING.get(stem_name)
