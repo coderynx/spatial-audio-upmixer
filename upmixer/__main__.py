@@ -88,6 +88,12 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.content_mix_strength = max(0.0, min(1.0, args.content_mix_strength))
     if args.content_hf_analysis_hz is not None:
         config.content_hf_analysis_hz = args.content_hf_analysis_hz
+    if args.spatial_profile is not None:
+        config.spatial_profile = args.spatial_profile
+    if args.spatial_intensity is not None:
+        config.spatial_intensity = max(0.0, min(1.0, args.spatial_intensity))
+    if args.no_spatial_preanalysis:
+        config.spatial_preanalysis = False
     if args.no_loudness_normalize:
         config.loudness_normalize = False
     if args.loudness_target is not None:
@@ -539,6 +545,14 @@ def main() -> None:
 
     parser.add_argument("--no-normalize", action="store_true", help="Disable output energy normalization (mixing phase)")
     parser.add_argument("--content-mix-strength", type=float, default=None, metavar="S", help="Content-aware mixing strength 0.0–1.0 (default: 1.0)")
+    parser.add_argument(
+        "--spatial-profile",
+        choices=["auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"],
+        default=None,
+        help="Creative spatial profile (default: auto).",
+    )
+    parser.add_argument("--spatial-intensity", type=float, default=None, metavar="S", help="Spatial adaptation strength 0.0–1.0 (default: 1.0)")
+    parser.add_argument("--no-spatial-preanalysis", action="store_true", help="Disable offline spatial analysis.")
     parser.add_argument(
         "--content-hf-analysis-hz",
         type=lambda value: _positive_float(value, "--content-hf-analysis-hz"),

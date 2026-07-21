@@ -7,6 +7,7 @@ import numpy as np
 from scipy.signal import resample_poly
 
 from upmixer.analysis.coherence import CoherenceEstimator
+from upmixer.analysis.spatial import SpatialPlan, analyze_spatial_plan
 from upmixer.analysis.stft import StreamingSTFT
 from upmixer.config import UpmixConfig
 from upmixer.decomposition.direct_ambient import SoftMatrixDecomposer
@@ -36,7 +37,7 @@ class StreamingProcessor:
     This is the class that a GStreamer element would wrap.
     """
 
-    def __init__(self, config: UpmixConfig, sample_rate: int):
+    def __init__(self, config: UpmixConfig, sample_rate: int, spatial_plan: SpatialPlan | None = None):
         self._config = config
         self._sample_rate = sample_rate
 
@@ -58,6 +59,8 @@ class StreamingProcessor:
 
         self._decomposer = SoftMatrixDecomposer(config, sample_rate=sample_rate, n_freq=n_freq)
         self._router = ChannelRouter(config, sample_rate, n_freq)
+        self._spatial_plan = spatial_plan
+        self._frame_index = 0
 
         self._input_buffer_L = np.zeros(0)
         self._input_buffer_R = np.zeros(0)
@@ -104,7 +107,9 @@ class StreamingProcessor:
 
             mid_frame = (X_L + X_R) * 0.5
 
-            channel_spectra = self._router.route_frame(decomp, mid_frame)
+            controls = self._spatial_plan.controls_at(self._frame_index * hop) if self._spatial_plan else None
+            channel_spectra = self._router.route_frame(decomp, mid_frame, controls)
+            self._frame_index += 1
 
             for ch_name, spectrum in channel_spectra.items():
                 samples = self._stft_out[ch_name].synthesize_frame(spectrum)
@@ -138,6 +143,7 @@ class StreamingProcessor:
         n_freq = self._stft_L.n_freq_bins
         self._coherence_state = self._coherence_est.create_state(n_freq)
         self._decomposer.reset()
+        self._frame_index = 0
         self._input_buffer_L = np.zeros(0)
         self._input_buffer_R = np.zeros(0)
 
@@ -147,6 +153,7 @@ class UpmixPipeline:
 
     def __init__(self, config: UpmixConfig | None = None):
         self.config = config or UpmixConfig()
+        self._spatial_plan: SpatialPlan | None = None
 
     def process_file(
         self,
@@ -231,6 +238,11 @@ class UpmixPipeline:
 
             fft_size, hop_size = cfg.resolve_fft_params(sr)
             _log.info("  FFT size: %d, hop: %d", fft_size, hop_size)
+            self._spatial_plan = (
+                analyze_spatial_plan(left, right, sr, cfg) if cfg.spatial_preanalysis else None
+            )
+            if self._spatial_plan is not None:
+                _log.info("  Spatial: %s (confidence %.2f)", self._spatial_plan.profile, self._spatial_plan.confidence)
             channels = self._run_stereo_pipeline(
                 left, right, sr, n_samples, fft_size, hop_size, progress_callback
             )
@@ -243,8 +255,13 @@ class UpmixPipeline:
                 for i, label in enumerate(input_fmt.channels)
             }
             _progress("  Processing (multichannel pass-through + channel derivation)...", 0.2)
+            self._spatial_plan = (
+                analyze_spatial_plan(audio[:, 0], audio[:, 1], sr, cfg) if cfg.spatial_preanalysis else None
+            )
+            if self._spatial_plan is not None:
+                _log.info("  Spatial: %s (confidence %.2f)", self._spatial_plan.profile, self._spatial_plan.confidence)
             upmixer = MultichannelUpmixer(cfg, input_fmt, output_fmt, sr)
-            channels = upmixer.process(input_channels)
+            channels = upmixer.process(input_channels, self._spatial_plan)
             channels = self._post_process_multichannel(channels, sr, audio)
 
         _progress("  Processing complete.", 0.9)
@@ -295,6 +312,8 @@ class UpmixPipeline:
             measured_lkfs=mastering_result.measured_lkfs,
             measured_tp_dbtp=mastering_result.measured_tp_dbtp,
             applied_gain_db=mastering_result.applied_gain_db,
+            spatial_profile=self._spatial_plan.profile if self._spatial_plan else None,
+            spatial_profile_confidence=self._spatial_plan.confidence if self._spatial_plan else None,
             processing_time_seconds=time.monotonic() - t0,
         )
 
@@ -315,7 +334,7 @@ class UpmixPipeline:
         GC pressure and apparent stalls on long high-sample-rate files.
         """
         cfg = self.config
-        processor = StreamingProcessor(cfg, sr)
+        processor = StreamingProcessor(cfg, sr, self._spatial_plan)
         fmt = FORMAT_MAP[cfg.output_format]
         channel_names = [label.value for label in fmt.channels]
 

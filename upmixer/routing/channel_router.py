@@ -116,6 +116,7 @@ class ChannelRouter:
         self,
         decomposition: SoftMatrixResult,
         mid_frame: np.ndarray,
+        spatial_controls: dict[str, float] | None = None,
     ) -> dict[str, np.ndarray]:
         """Route one frame to output channels.
 
@@ -126,30 +127,41 @@ class ChannelRouter:
         cfg = self._config
         d = decomposition
 
-        side_L = d.ambient_L * self._surround_freq_mask
-        side_R = d.ambient_R * self._surround_freq_mask
+        controls = spatial_controls or {}
+        front_gain = controls.get("front", 1.0)
+        surround_gain = controls.get("surround", 1.0)
+        back_gain = controls.get("back", 1.0)
+        height_gain = controls.get("height", 1.0)
+        # Existing transient/harmonic analysis now determines whether side
+        # material is a stable diffuse send rather than dry wide content.
+        diffuse_mask = d.width * (1.0 - d.harmonic_mask) * (1.0 - d.transient_score)
+        side_L = d.ambient_L * self._surround_freq_mask * diffuse_mask
+        side_R = d.ambient_R * self._surround_freq_mask * diffuse_mask
+        detail_gain = 1.0 + 0.4125 * controls.get("detail", 0.0)
 
         channels: dict[str, np.ndarray] = {}
 
-        channels["FL"] = d.front_L
-        channels["FR"] = d.front_R
+        channels["FL"] = front_gain * d.front_L
+        channels["FR"] = front_gain * d.front_R
         channels["C"] = cfg.center_gain * d.center
         channels["LFE"] = self._lfe.extract_frame(mid_frame)
 
-        channels["SL"] = cfg.surround_gain * side_L
-        channels["SR"] = cfg.surround_gain * side_R
+        channels["SL"] = cfg.surround_gain * surround_gain * detail_gain * side_L
+        channels["SR"] = cfg.surround_gain * surround_gain * detail_gain * side_R
 
         if self._format.has_back:
-            channels["BL"] = cfg.back_gain * side_L
-            channels["BR"] = cfg.back_gain * side_R
+            channels["BL"] = cfg.back_gain * back_gain * detail_gain * side_L
+            channels["BR"] = cfg.back_gain * back_gain * detail_gain * side_R
 
         if self._height_filter is not None:
-            channels["TFL"] = self._height_filter.apply_frame(d.signal_L)
-            channels["TFR"] = self._height_filter.apply_frame(d.signal_R)
+            height_source_L = d.signal_L * (0.35 + 0.65 * (1.0 - d.transient_score))
+            height_source_R = d.signal_R * (0.35 + 0.65 * (1.0 - d.transient_score))
+            channels["TFL"] = height_gain * detail_gain * self._height_filter.apply_frame(height_source_L)
+            channels["TFR"] = height_gain * detail_gain * self._height_filter.apply_frame(height_source_R)
 
             if self._format.n_height_channels == 4:
-                channels["TBL"] = self._height_filter.apply_frame(side_L)
-                channels["TBR"] = self._height_filter.apply_frame(side_R)
+                channels["TBL"] = height_gain * detail_gain * self._height_filter.apply_frame(side_L)
+                channels["TBR"] = height_gain * detail_gain * self._height_filter.apply_frame(side_R)
 
         return channels
 

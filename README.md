@@ -50,6 +50,9 @@ upmixer input.wav output.wav --format 5.1
 # Stereo → 7.1.4 Atmos using stem separation
 upmixer input.wav output.wav --format 7.1.4 --mode stem
 
+# Reveal buried, already-present musical detail through spatial contrast
+upmixer input.wav output.wav --format 7.1.4 --spatial-profile detailed
+
 # Write ADM-BWF for import into Logic Pro / DaVinci Resolve / Pro Tools
 upmixer input.wav output.wav --format 7.1.4 --output-type adm-bwf
 
@@ -107,6 +110,9 @@ engine:
 
 mixing:
   channel_layout: 7.1.4
+  spatial:
+    profile: auto       # auto, intimate, rhythmic, spacious, live, detailed
+    intensity: 1.0      # 0 = neutral profile gains, 1 = full adaptation
 
 format: # output file format (separate from output path)
   type: adm-bwf       # ITU-R BS.2076-2 ADM-BWF container (WAV)

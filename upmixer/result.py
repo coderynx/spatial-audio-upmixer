@@ -52,6 +52,8 @@ class UpmixResult:
     measured_tp_dbtp: float | None = None
     applied_gain_db: float | None = None
     stems: list[str] | None = None
+    spatial_profile: str | None = None
+    spatial_profile_confidence: float | None = None
     processing_time_seconds: float = 0.0
 
     def to_dict(self) -> dict:

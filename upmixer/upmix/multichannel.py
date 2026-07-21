@@ -2,6 +2,7 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 
 from upmixer.config import UpmixConfig
+from upmixer.analysis.spatial import SpatialPlan
 from upmixer.formats import ChannelLabel, InputFormat, OutputFormat
 from upmixer.utils import (
     elevation_eq as _elevation_eq,
@@ -39,7 +40,7 @@ class MultichannelUpmixer:
         self._sr = sample_rate
 
     def process(
-        self, input_channels: dict[ChannelLabel, np.ndarray]
+        self, input_channels: dict[ChannelLabel, np.ndarray], spatial_plan: SpatialPlan | None = None
     ) -> dict[str, np.ndarray]:
         """Pass through existing channels and derive any missing output channels."""
         cfg = self._cfg
@@ -138,4 +139,24 @@ class MultichannelUpmixer:
                         haas_decorrelate(hb_src_R, int(sr * 13.0 / 1000.0)), **eq_kwargs
                     )
 
-        return {label.value: out[label.value] for label in fmt.channels}
+        result = {label.value: out[label.value] for label in fmt.channels}
+        if spatial_plan is not None:
+            n = len(next(iter(result.values())))
+            points = np.arange(n)
+            plan_points = np.arange(len(spatial_plan.front)) * spatial_plan.hop_size
+            def envelope(values: np.ndarray) -> np.ndarray:
+                return np.interp(points, plan_points, values) if len(values) else np.ones(n)
+            detail = 1.0 + 0.4125 * envelope(spatial_plan.detail)
+            for label in fmt.channels:
+                # Existing programme channels always remain untouched.
+                if label in input_channels:
+                    continue
+                if label in {ChannelLabel.FL, ChannelLabel.FR, ChannelLabel.C}:
+                    result[label.value] *= envelope(spatial_plan.front)
+                elif label in {ChannelLabel.BL, ChannelLabel.BR}:
+                    result[label.value] *= envelope(spatial_plan.back) * detail
+                elif label in {ChannelLabel.SL, ChannelLabel.SR}:
+                    result[label.value] *= envelope(spatial_plan.surround) * detail
+                elif label in {ChannelLabel.TFL, ChannelLabel.TFR, ChannelLabel.TBL, ChannelLabel.TBR}:
+                    result[label.value] *= envelope(spatial_plan.height) * detail
+        return result
