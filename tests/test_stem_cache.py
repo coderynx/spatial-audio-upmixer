@@ -117,6 +117,32 @@ class TestStemCacheInit:
 # ---------------------------------------------------------------------------
 
 class TestStemCacheSaveLoad:
+    def test_legacy_entry_remains_readable(self, tmp_path):
+        pytest.importorskip("soundfile")
+        from upmixer.separation.stem_cache import _legacy_cache_key
+
+        wav = str(tmp_path / "src.wav")
+        _write_dummy_wav(wav)
+        root = tmp_path / "cache"
+        cache = StemCache(str(root))
+        cache.save(wav, "model", 44100, _make_stems(), 44100)
+        current = root / _cache_key(wav, "model", 44100)
+        legacy = root / _legacy_cache_key(wav, "model", 44100)
+        current.rename(legacy)
+
+        result = cache.load(wav, "model", 44100)
+        assert result is not None
+        assert set(result[0]) == set(_make_stems())
+
+    def test_atomic_save_leaves_no_temp_files(self, tmp_path):
+        pytest.importorskip("soundfile")
+        wav = str(tmp_path / "src.wav")
+        _write_dummy_wav(wav)
+        cache_dir = tmp_path / "cache"
+        cache = StemCache(str(cache_dir))
+        cache.save(wav, "model", 44100, _make_stems(), 44100)
+        assert not list(cache_dir.rglob("*.tmp*"))
+
     def test_save_creates_wav_files(self, tmp_path):
         pytest.importorskip("soundfile")
         wav = str(tmp_path / "src.wav")

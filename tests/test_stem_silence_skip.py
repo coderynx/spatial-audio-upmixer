@@ -317,6 +317,44 @@ class TestExecutePlanWithSilenceSkip:
         for arr in result.values():
             assert arr.shape[0] == n
 
+    def test_all_active_uses_original_source_path(self, tmp_path):
+        pipeline, cfg = self._make_pipeline()
+        plan = self._make_plan()
+        zone_audio = _sine(SR * 5)
+        source = str(tmp_path / "source.wav")
+        import soundfile as sf_mod
+        sf_mod.write(source, zone_audio, SR, subtype="FLOAT")
+        seen = []
+
+        def mock_execute(p, path, sr_val):
+            seen.append(path)
+            return self._fake_execute_plan(p, path, sr_val)
+
+        with patch.object(pipeline, "_execute_plan", side_effect=mock_execute):
+            pipeline._execute_plan_with_silence_skip(
+                plan, zone_audio, SR, SR, cfg, original_path=source,
+            )
+
+        assert seen == [source]
+
+    def test_generated_full_active_wav_preserves_float_samples(self):
+        pipeline, cfg = self._make_pipeline()
+        plan = self._make_plan()
+        zone_audio = _sine(SR * 5)
+        subtypes = []
+
+        def mock_execute(p, path, sr_val):
+            import soundfile as sf_mod
+            subtypes.append(sf_mod.info(path).subtype)
+            return self._fake_execute_plan(p, path, sr_val)
+
+        with patch.object(pipeline, "_execute_plan", side_effect=mock_execute):
+            pipeline._execute_plan_with_silence_skip(
+                plan, zone_audio, SR, SR, cfg,
+            )
+
+        assert subtypes == ["FLOAT"]
+
     def test_silent_head_zeros_in_silent_region(self):
         pipeline, cfg = self._make_pipeline()
         plan = self._make_plan()

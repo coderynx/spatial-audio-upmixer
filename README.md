@@ -103,6 +103,7 @@ metadata: # optional — informational only, not inherited by assets
 engine:
   mode: stem          # or realtime
   stem_cache_dir: /tmp/upmixer_stems
+  stem_batch_size: 4  # optional; omit for backend-aware automatic selection
 
 mixing:
   channel_layout: 7.1.4
@@ -199,8 +200,8 @@ upmixer --manifest examples/batch_album_stem.yaml
 upmixer --batch-dir /albums/ --output-dir /out/ --json
 ```
 
-**Resource usage**: By default upmixer runs at reduced OS priority (`--cpu-priority low`) and caps numpy/torch thread
-counts to half the logical CPU count. Pass `--cpu-priority normal` to disable this.
+**Resource usage**: `--cpu-priority auto` uses all CPU threads for AI stem separation and reduced priority/threading for
+realtime DSP jobs. Pass `--cpu-priority low` to keep a stem job in the background, or `normal` to force full resources.
 
 #### Batch manifest format
 
@@ -282,13 +283,13 @@ with StemUpmixPipeline(UpmixConfig(), model="BS-Roformer-SW.ckpt") as pipeline:
 | `--output-subtype`        | `PCM_24`                  | Bit depth: `PCM_16`, `PCM_24`, `PCM_32`                    |
 | `--no-loudness-normalize` | —                         | Disable BS.1770-4 loudness normalization                   |
 | `--loudness-target`       | `-18.0`                   | Target integrated loudness in LKFS                         |
-| `--stem-model`            | `htdemucs_ft.yaml`        | Separation model                                           |
 | `--stem-model-dir`        | `~/.cache/upmixer-models` | Model cache directory                                      |
+| `--stem-batch-size`       | auto                      | Full-precision inference batch size                        |
 | `--inputs`                | —                         | One or more input files for batch (any directories)        |
 | `--batch-dir`             | —                         | Directory to scan for WAV/FLAC (batch mode)                |
 | `--output-dir`            | —                         | Output directory for batch mode                            |
 | `--batch-workers`         | `1`                       | Parallel workers (realtime batch only)                     |
-| `--cpu-priority`          | `low`                     | `low` = nice(10) + cap threads; `normal` = no limits       |
+| `--cpu-priority`          | `auto`                    | Full resources for stem; reduced resources for realtime   |
 | `--center-gain`           | `0.85`                    | Center channel gain                                        |
 | `--surround-gain`         | `0.60`                    | Side surround gain                                         |
 | `--height-gain`           | `0.55`                    | Height channel gain                                        |
@@ -438,6 +439,11 @@ other`. Additional opt-in stems: `crowd` (isolated before instruments), the drum
 `kick, snare, toms, hi-hat, ride, crash` (extracted from `drums`), and `backing-vocals`. Requesting
 `backing-vocals` runs a second-stage karaoke model on the isolated Vocals stem: its instrumental
 track becomes the backing vocals, and the lead Vocals stem is refined as a side effect.
+
+Stem inference keeps model precision, overlap, segment size, and output sample rate unchanged. Batch size is selected
+from the active CUDA, MPS/CoreML, or CPU backend; accelerator out-of-memory failures retry with a smaller batch. Set
+`--stem-batch-size` for an explicit value. Model-plan cache entries retain every stem already emitted by inference, so
+later requests for a subset can skip separation.
 
 ### Processing pipeline
 

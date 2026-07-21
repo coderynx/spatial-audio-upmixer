@@ -30,6 +30,13 @@ _INPUT_FORMAT_CHOICES = sorted(INPUT_FORMAT_MAP.keys())
 _OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
 
 
+def _positive_int(value: str, option: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"{option} must be at least 1")
+    return parsed
+
+
 def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_set: bool) -> None:
     """Apply explicitly-set CLI flags to config.
 
@@ -146,6 +153,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.stem_eq_profiles = _parse_key_value_pairs(args.stem_eq, str)
     if args.stem_cache_dir is not None:
         config.stem_cache_dir = args.stem_cache_dir
+    if args.stem_batch_size is not None:
+        config.stem_batch_size = args.stem_batch_size
     if args.stem_silence_skip is not None:
         config.stem_silence_skip = args.stem_silence_skip
     if args.stem_silence_threshold_db is not None:
@@ -188,22 +197,27 @@ def _parse_key_value_pairs(s: str, value_type: type) -> dict:
     return result
 
 
-def _apply_resource_limits(cpu_priority: str) -> None:
+def _apply_resource_limits(cpu_priority: str, mode: str) -> None:
+    """Apply mode-aware scheduling and numeric-library thread limits."""
     import os
-    if cpu_priority == "low":
+    effective = "normal" if cpu_priority == "auto" and mode == "stem" else cpu_priority
+    if effective == "auto":
+        effective = "low"
+    if effective == "low":
         try:
             os.nice(10)
         except (OSError, AttributeError):
             pass
+    n_cpu = max(1, os.cpu_count() or 4)
+    n = n_cpu if effective == "normal" else max(1, n_cpu // 2)
     try:
         import torch
-        n = max(1, (os.cpu_count() or 4) // 2)
         torch.set_num_threads(n)
     except ImportError:
         pass
     try:
         from threadpoolctl import threadpool_limits
-        threadpool_limits(limits=max(1, (os.cpu_count() or 4) // 2))
+        threadpool_limits(limits=n)
     except ImportError:
         pass
 
@@ -228,6 +242,7 @@ def _run_manifest_assets(asset_jobs, meta, args, parser) -> None:
 
     first_engine = asset_jobs[0].engine
     mode = args.mode or first_engine.get("mode", "realtime")
+    _apply_resource_limits(args.cpu_priority, mode)
     stem_model_dir = args.stem_model_dir or first_engine.get("stem_model_dir", None)
     n = len(asset_jobs)
 
@@ -624,9 +639,20 @@ def main() -> None:
         metavar="DIR",
         help=(
             "Cache separated stems to this directory (stem mode only). "
-            "On subsequent runs with the same input file, model, and sample "
+            "On subsequent runs with the same input file, model plan, and sample "
             "rate the cached stems are loaded directly, skipping re-separation. "
-            "Key: SHA-256(abs_path|mtime|model|sample_rate)."
+            "Legacy cache entries remain readable."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-batch-size",
+        type=lambda value: _positive_int(value, "--stem-batch-size"),
+        default=None,
+        metavar="N",
+        help=(
+            "Full-precision inference batch size (stem mode only). "
+            "Default: auto-select from accelerator and free memory."
         ),
     )
 
@@ -691,13 +717,12 @@ def main() -> None:
 
     parser.add_argument(
         "--cpu-priority",
-        choices=["normal", "low"],
-        default="low",
+        choices=["auto", "normal", "low"],
+        default="auto",
         help=(
-            "Process scheduling priority. 'low' calls os.nice(10) and caps "
-            "numpy/torch thread counts to half the logical CPU count, preventing "
-            "the app from saturating the system during heavy processing. "
-            "Default: low."
+            "Process scheduling priority and numeric-library thread use. "
+            "'auto' uses full resources for stem mode and reduced resources "
+            "for realtime mode. Default: auto."
         ),
     )
 
@@ -715,8 +740,6 @@ def main() -> None:
         sys.exit(0)
 
     args = parser.parse_args()
-
-    _apply_resource_limits(args.cpu_priority)
 
     if args.verbose:
         log_level = logging.DEBUG
@@ -747,6 +770,7 @@ def main() -> None:
     _apply_cli_flags(config, args, sample_rate_set)
 
     mode = args.mode or "realtime"
+    _apply_resource_limits(args.cpu_priority, mode)
     stem_model_dir = args.stem_model_dir or None
     input_format   = args.input_format   or None
 

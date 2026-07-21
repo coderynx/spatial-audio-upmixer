@@ -402,6 +402,11 @@ class TestSingleAssetParse:
         _, jobs = parse_manifest(data)
         assert jobs[0].config.get("stem_cache_dir") == "/tmp/stems"
 
+    def test_stem_batch_size_from_engine(self):
+        data = _minimal(engine={"mode": "stem", "stem_batch_size": 4})
+        _, jobs = parse_manifest(data)
+        assert jobs[0].config.get("stem_batch_size") == 4
+
     def test_metadata_extracted(self):
         data = _minimal(metadata={
             "name": "My Project",

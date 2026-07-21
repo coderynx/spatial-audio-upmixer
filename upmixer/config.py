@@ -109,6 +109,9 @@ class UpmixConfig:
 
     stem_cache_dir: str | None = None
 
+    # None selects conservative backend-aware inference batching.
+    stem_batch_size: int | None = None
+
     stems: list[str] | None = None
 
     stem_silence_skip: bool = True

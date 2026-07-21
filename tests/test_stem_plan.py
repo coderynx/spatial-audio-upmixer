@@ -61,6 +61,17 @@ class TestNormalizeStems:
 # ── resolve_separation_plan ────────────────────────────────────────────────────
 
 class TestResolveSeparationPlan:
+    def test_primary_subsets_share_inference_cache_identity(self):
+        vocals = resolve_separation_plan(["Vocals"])
+        full = resolve_separation_plan(DEFAULT_STEMS)
+        assert vocals.stems_hash != full.stems_hash
+        assert vocals.inference_hash == full.inference_hash
+
+    def test_extra_stage_changes_inference_cache_identity(self):
+        primary = resolve_separation_plan(["Drums"])
+        drum_subs = resolve_separation_plan(["Kick"])
+        assert primary.inference_hash != drum_subs.inference_hash
+
     def test_default_6stem_single_task(self):
         """No drum subs, no crowd → Stage 1 only."""
         plan = resolve_separation_plan(DEFAULT_STEMS)

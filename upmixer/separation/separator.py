@@ -1,15 +1,72 @@
 """Thin wrapper around python-audio-separator for stem extraction."""
 from __future__ import annotations
 
+import gc
+import inspect
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
 _log = logging.getLogger("upmixer")
+
+_SUCCESSFUL_BATCHES: dict[tuple[str, str], int] = {}
+
+
+def _detect_backend() -> str:
+    """Return accelerator used by torch models without requiring torch."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+        mps = getattr(torch.backends, "mps", None)
+        if mps is not None and mps.is_available():
+            return "mps"
+    except (ImportError, RuntimeError):
+        pass
+    try:
+        import onnxruntime as ort
+        providers = ort.get_available_providers()
+        if "CUDAExecutionProvider" in providers:
+            return "cuda"
+        if "CoreMLExecutionProvider" in providers:
+            return "coreml"
+    except (ImportError, RuntimeError):
+        pass
+    return "cpu"
+
+
+def _automatic_batch_size(backend: str) -> int:
+    """Choose safe full-precision MDXC inference batching."""
+    if backend == "cuda":
+        try:
+            import torch
+            free_bytes, _ = torch.cuda.mem_get_info()
+            free_gib = free_bytes / (1024 ** 3)
+            if free_gib >= 12.0:
+                return 4
+            if free_gib >= 8.0:
+                return 2
+        except (ImportError, RuntimeError):
+            pass
+        return 1
+    if backend in {"mps", "coreml"}:
+        return 2
+    return 1
+
+
+def _is_oom_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return (
+        isinstance(exc, MemoryError)
+        or "out of memory" in message
+        or "cuda oom" in message
+        or "mps backend out of memory" in message
+    )
 
 
 DEFAULT_MODEL = "BS-Roformer-SW.ckpt"
@@ -112,6 +169,7 @@ class StemSeparator:
         model_dir: str | None = None,
         sample_rate: int = 44100,
         log_level: int = logging.WARNING,
+        batch_size: int | None = None,
     ) -> None:
         self._model = model
         self._model_dir = model_dir or str(
@@ -119,6 +177,10 @@ class StemSeparator:
         )
         self._sample_rate = sample_rate
         self._log_level = log_level
+        self._backend = _detect_backend()
+        remembered = _SUCCESSFUL_BATCHES.get((model, self._backend))
+        self._batch_size = batch_size or remembered or _automatic_batch_size(self._backend)
+        self._batch_size_is_auto = batch_size is None
         self._loaded_sep = None
         self._tmp_dir: str | None = None
 
@@ -137,28 +199,75 @@ class StemSeparator:
         audio-separator log records are intercepted and re-emitted through
         the ``upmixer`` logger so callers control verbosity uniformly.
         """
+        _check_import()
         from audio_separator.separator import Separator
 
         if self._loaded_sep is None:
-            _check_import()
-
             _as_log = logging.getLogger("audio_separator.separator.separator")
             if not any(isinstance(h, _ForwardHandler) for h in _as_log.handlers):
                 _as_log.addHandler(_ForwardHandler(_log))
             _as_log.propagate = False
             _as_log.setLevel(self._log_level)
 
-            self._loaded_sep = Separator(
-                model_file_dir=self._model_dir,
-                output_dir=self._ensure_tmp_dir(),
-                output_format="WAV",
-                sample_rate=self._sample_rate,
-                normalization_threshold=0.9,
-                log_level=self._log_level,
+            kwargs = {
+                "model_file_dir": self._model_dir,
+                "output_dir": self._ensure_tmp_dir(),
+                "output_format": "WAV",
+                "sample_rate": self._sample_rate,
+                "normalization_threshold": 0.9,
+                "log_level": self._log_level,
+            }
+            parameters = inspect.signature(Separator).parameters
+            accepts_kwargs = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in parameters.values()
             )
+            if "use_soundfile" in parameters or accepts_kwargs:
+                kwargs["use_soundfile"] = True
+            if "use_autocast" in parameters or accepts_kwargs:
+                kwargs["use_autocast"] = False
+            if "mdxc_params" in parameters or accepts_kwargs:
+                kwargs["mdxc_params"] = {"batch_size": self._batch_size}
+
+            _log.info(
+                "  Separator backend=%s batch=%d precision=float32",
+                self._backend, self._batch_size,
+            )
+            self._loaded_sep = Separator(**kwargs)
             self._loaded_sep.load_model(model_filename=self._model)
 
         return self._loaded_sep
+
+    def _separate_paths(self, audio_path: str) -> list[str]:
+        """Separate with safe lower-batch retries after accelerator OOM."""
+        while True:
+            try:
+                started = time.monotonic()
+                paths = self._get_separator().separate(audio_path)
+                if self._batch_size_is_auto:
+                    _SUCCESSFUL_BATCHES[(self._model, self._backend)] = self._batch_size
+                _log.info(
+                    "  Separator model=%s inference+output=%.2fs",
+                    self._model, time.monotonic() - started,
+                )
+                return paths
+            except Exception as exc:
+                if self._backend == "cpu" or self._batch_size <= 1 or not _is_oom_error(exc):
+                    raise
+                old_batch = self._batch_size
+                self._batch_size = max(1, self._batch_size // 2)
+                _log.warning(
+                    "  Separator OOM at batch=%d; retrying batch=%d",
+                    old_batch, self._batch_size,
+                )
+                self._loaded_sep = None
+                gc.collect()
+                try:
+                    import torch
+                    if self._backend == "cuda":
+                        torch.cuda.empty_cache()
+                except (ImportError, RuntimeError):
+                    pass
 
     def separate(
         self,
@@ -177,8 +286,7 @@ class StemSeparator:
             Unknown/unrecognised stem names are silently skipped.
         """
         tmp_dir = self._ensure_tmp_dir()
-        sep = self._get_separator()
-        output_paths = sep.separate(audio_path)
+        output_paths = self._separate_paths(audio_path)
 
         _overrides = MODEL_STEM_OVERRIDES.get(self._model)
         stems: dict[str, np.ndarray] = {}
@@ -237,8 +345,7 @@ class StemSeparator:
               ``on_disk`` — canonical_name → absolute WAV path for kept stems.
         """
         tmp_dir = self._ensure_tmp_dir()
-        sep = self._get_separator()
-        output_paths = sep.separate(audio_path)
+        output_paths = self._separate_paths(audio_path)
 
         _log.debug(
             "[separator] model=%s produced %d output file(s): %s",
@@ -312,6 +419,12 @@ class StemSeparator:
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
             self._tmp_dir = None
         self._loaded_sep = None
+
+    def __enter__(self) -> "StemSeparator":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.close()
 
     def __del__(self) -> None:
         self.close()
