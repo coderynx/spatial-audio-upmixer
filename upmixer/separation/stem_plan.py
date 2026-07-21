@@ -81,6 +81,7 @@ class SeparationPlan:
     tasks: list[SeparationTask]
     requested_stems: frozenset[str]
     stems_hash: str
+    inference_hash: str = ""
 
 
 
@@ -136,6 +137,9 @@ def resolve_separation_plan(canonical: list[str]) -> SeparationPlan:
     """
     requested = frozenset(canonical) if canonical else frozenset(DEFAULT_STEMS)
 
+    if requested & DRUM_SUB_STEMS:
+        requested = requested - {"Drums"}
+
     tasks: list[SeparationTask] = []
 
     crowd_needed = "Crowd" in requested
@@ -178,9 +182,14 @@ def resolve_separation_plan(canonical: list[str]) -> SeparationPlan:
         ))
 
     stems_hash = hashlib.sha256("|".join(sorted(requested)).encode()).hexdigest()[:20]
+    inference_identity = "|".join(
+        f"{task.model}:{task.input_source}" for task in tasks
+    )
+    inference_hash = hashlib.sha256(inference_identity.encode()).hexdigest()[:20]
 
     return SeparationPlan(
         tasks=tasks,
         requested_stems=requested,
         stems_hash=stems_hash,
+        inference_hash=inference_hash,
     )

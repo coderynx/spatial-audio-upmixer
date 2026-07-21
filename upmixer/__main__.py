@@ -30,6 +30,20 @@ _INPUT_FORMAT_CHOICES = sorted(INPUT_FORMAT_MAP.keys())
 _OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
 
 
+def _positive_int(value: str, option: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError(f"{option} must be at least 1")
+    return parsed
+
+
+def _positive_float(value: str, option: str) -> float:
+    parsed = float(value)
+    if parsed <= 0.0:
+        raise argparse.ArgumentTypeError(f"{option} must be greater than 0")
+    return parsed
+
+
 def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_set: bool) -> None:
     """Apply explicitly-set CLI flags to config.
 
@@ -71,6 +85,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.normalize_output = False
     if args.content_mix_strength is not None:
         config.content_mix_strength = max(0.0, min(1.0, args.content_mix_strength))
+    if args.content_hf_analysis_hz is not None:
+        config.content_hf_analysis_hz = args.content_hf_analysis_hz
     if args.no_loudness_normalize:
         config.loudness_normalize = False
     if args.loudness_target is not None:
@@ -146,6 +162,18 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.stem_eq_profiles = _parse_key_value_pairs(args.stem_eq, str)
     if args.stem_cache_dir is not None:
         config.stem_cache_dir = args.stem_cache_dir
+    if args.stem_batch_size is not None:
+        config.stem_batch_size = args.stem_batch_size
+    if args.stem_silence_skip is not None:
+        config.stem_silence_skip = args.stem_silence_skip
+    if args.stem_silence_threshold_db is not None:
+        config.stem_silence_threshold_db = args.stem_silence_threshold_db
+    if args.stem_silence_min_duration_s is not None:
+        config.stem_silence_min_duration_s = args.stem_silence_min_duration_s
+    if args.stem_silence_crossfade_ms is not None:
+        config.stem_silence_crossfade_ms = args.stem_silence_crossfade_ms
+    if args.stem_silence_pad_ms is not None:
+        config.stem_silence_pad_ms = args.stem_silence_pad_ms
     if args.stems is not None:
         from upmixer.separation.stem_plan import normalize_stems as _normalize
         raw = [s.strip() for s in args.stems.split(",") if s.strip()]
@@ -178,22 +206,27 @@ def _parse_key_value_pairs(s: str, value_type: type) -> dict:
     return result
 
 
-def _apply_resource_limits(cpu_priority: str) -> None:
+def _apply_resource_limits(cpu_priority: str, mode: str) -> None:
+    """Apply mode-aware scheduling and numeric-library thread limits."""
     import os
-    if cpu_priority == "low":
+    effective = "normal" if cpu_priority == "auto" and mode == "stem" else cpu_priority
+    if effective == "auto":
+        effective = "low"
+    if effective == "low":
         try:
             os.nice(10)
         except (OSError, AttributeError):
             pass
+    n_cpu = max(1, os.cpu_count() or 4)
+    n = n_cpu if effective == "normal" else max(1, n_cpu // 2)
     try:
         import torch
-        n = max(1, (os.cpu_count() or 4) // 2)
         torch.set_num_threads(n)
     except ImportError:
         pass
     try:
         from threadpoolctl import threadpool_limits
-        threadpool_limits(limits=max(1, (os.cpu_count() or 4) // 2))
+        threadpool_limits(limits=n)
     except ImportError:
         pass
 
@@ -218,6 +251,7 @@ def _run_manifest_assets(asset_jobs, meta, args, parser) -> None:
 
     first_engine = asset_jobs[0].engine
     mode = args.mode or first_engine.get("mode", "realtime")
+    _apply_resource_limits(args.cpu_priority, mode)
     stem_model_dir = args.stem_model_dir or first_engine.get("stem_model_dir", None)
     n = len(asset_jobs)
 
@@ -420,7 +454,7 @@ def main() -> None:
     parser.add_argument("--surround-gain",         type=float, default=None, help="Side surround channel gain (default: 0.6)")
     parser.add_argument("--back-gain",             type=float, default=None, help="Rear back channel gain for 7.1 formats (default: 0.55)")
     parser.add_argument("--height-gain",           type=float, default=None, help="Height channel gain for Atmos formats (default: 0.55)")
-    parser.add_argument("--lfe-gain",              type=float, default=None, help="LFE channel gain (default: 0.5)")
+    parser.add_argument("--lfe-gain",              type=float, default=None, help="LFE channel gain (default: 0.3162)")
 
     parser.add_argument("--center-extraction-gain",type=float, default=None, help="Mid signal → center channel (default: 0.85)")
     parser.add_argument("--center-attenuation",    type=float, default=None, help="Center attenuation in FL/FR (default: 0.5)")
@@ -436,6 +470,13 @@ def main() -> None:
 
     parser.add_argument("--no-normalize", action="store_true", help="Disable output energy normalization (mixing phase)")
     parser.add_argument("--content-mix-strength", type=float, default=None, metavar="S", help="Content-aware mixing strength 0.0–1.0 (default: 1.0)")
+    parser.add_argument(
+        "--content-hf-analysis-hz",
+        type=lambda value: _positive_float(value, "--content-hf-analysis-hz"),
+        default=None,
+        metavar="HZ",
+        help="High-frequency threshold for stem content analysis (default: 4000)",
+    )
     parser.add_argument(
         "--no-loudness-normalize",
         action="store_true",
@@ -454,14 +495,13 @@ def main() -> None:
         default=None,
         help=(
             "'wav' = standard multichannel WAV. "
-            "'adm-bwf' = Broadcast Wave + ITU-R BS.2076-2 ADM metadata "
+            "'adm-bwf' = Dolby ADM-BWF. "
             "(Logic Pro, DaVinci Resolve, Pro Tools). "
             "Default: 'wav' (or as set by manifest)."
         ),
     )
     parser.add_argument("--output-subtype", choices=["PCM_16", "PCM_24", "PCM_32"], default=None, help="Output bit depth (default: PCM_24)")
     parser.add_argument("--output-sample-rate", type=int, default=None, metavar="HZ", help="Resample output (e.g. 48000, 96000). Default: same as input.")
-
     parser.add_argument(
         "--downmix-output",
         default=None,
@@ -614,21 +654,90 @@ def main() -> None:
         metavar="DIR",
         help=(
             "Cache separated stems to this directory (stem mode only). "
-            "On subsequent runs with the same input file, model, and sample "
+            "On subsequent runs with the same input file, model plan, and sample "
             "rate the cached stems are loaded directly, skipping re-separation. "
-            "Key: SHA-256(abs_path|mtime|model|sample_rate)."
+            "Legacy cache entries remain readable."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-batch-size",
+        type=lambda value: _positive_int(value, "--stem-batch-size"),
+        default=None,
+        metavar="N",
+        help=(
+            "Full-precision inference batch size (stem mode only). "
+            "Default: auto-select from accelerator and free memory."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-silence-skip",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="stem_silence_skip",
+        help=(
+            "Skip separator on silent regions of each stem zone (stem mode only). "
+            "Detects contiguous silent runs and only processes active audio, "
+            "then stitches results back with a short crossfade. "
+            "Default: enabled (--stem-silence-skip)."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-silence-threshold-db",
+        type=float,
+        default=None,
+        metavar="DB",
+        help=(
+            "Peak threshold in dBFS below which a window is considered silent. "
+            "Default: -90.0 dBFS."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-silence-min-duration-s",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Minimum silent run duration in seconds.  Silent gaps shorter than "
+            "this are merged into the surrounding active span. "
+            "Default: 2.0 s."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-silence-crossfade-ms",
+        type=float,
+        default=None,
+        metavar="MS",
+        help=(
+            "Linear fade length in milliseconds applied at each active/silent "
+            "boundary to prevent clicks. Default: 10.0 ms."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-silence-pad-ms",
+        type=float,
+        default=None,
+        metavar="MS",
+        help=(
+            "Padding in milliseconds added to both ends of each active span so "
+            "the separator has musical context near transient boundaries. "
+            "Default: 200.0 ms."
         ),
     )
 
     parser.add_argument(
         "--cpu-priority",
-        choices=["normal", "low"],
-        default="low",
+        choices=["auto", "normal", "low"],
+        default="auto",
         help=(
-            "Process scheduling priority. 'low' calls os.nice(10) and caps "
-            "numpy/torch thread counts to half the logical CPU count, preventing "
-            "the app from saturating the system during heavy processing. "
-            "Default: low."
+            "Process scheduling priority and numeric-library thread use. "
+            "'auto' uses full resources for stem mode and reduced resources "
+            "for realtime mode. Default: auto."
         ),
     )
 
@@ -646,8 +755,6 @@ def main() -> None:
         sys.exit(0)
 
     args = parser.parse_args()
-
-    _apply_resource_limits(args.cpu_priority)
 
     if args.verbose:
         log_level = logging.DEBUG
@@ -678,6 +785,7 @@ def main() -> None:
     _apply_cli_flags(config, args, sample_rate_set)
 
     mode = args.mode or "realtime"
+    _apply_resource_limits(args.cpu_priority, mode)
     stem_model_dir = args.stem_model_dir or None
     input_format   = args.input_format   or None
 

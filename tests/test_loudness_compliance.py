@@ -14,6 +14,7 @@ import math
 from unittest.mock import patch
 
 import numpy as np
+from scipy.signal import sosfreqz
 
 from upmixer.formats import ChannelLabel, FORMAT_MAP
 from upmixer.loudness import (
@@ -30,8 +31,8 @@ SR96 = 96000
 FMT_51  = FORMAT_MAP["5.1"]
 FMT_714 = FORMAT_MAP["7.1.4"]
 
-_SURROUND_LABELS = [
-    ChannelLabel.SL, ChannelLabel.SR,
+_SIDE_SURROUND_LABELS = [ChannelLabel.SL, ChannelLabel.SR]
+_UNITY_IMMERSIVE_LABELS = [
     ChannelLabel.BL, ChannelLabel.BR,
     ChannelLabel.TFL, ChannelLabel.TFR,
     ChannelLabel.TBL, ChannelLabel.TBR,
@@ -105,6 +106,14 @@ def test_k_weighting_96k_valid_sos():
     np.testing.assert_array_equal(sos[:, 3], [1.0, 1.0])
 
 
+def test_k_weighting_96k_matches_48k_response():
+    freqs = np.geomspace(10.0, 20_000.0, 2000)
+    _, h48 = sosfreqz(_k_weighting_sos(SR48), worN=freqs, fs=SR48)
+    _, h96 = sosfreqz(_k_weighting_sos(SR96), worN=freqs, fs=SR96)
+    delta_db = 20 * np.log10(np.abs(h96) / np.abs(h48))
+    assert np.max(np.abs(delta_db)) < 0.02
+
+
 def test_k_weighting_cached():
     assert _k_weighting_sos(SR48) is _k_weighting_sos(SR48)
 
@@ -126,9 +135,14 @@ def test_front_weights_unity():
         assert _CH_WEIGHT[label] == 1.0, f"{label} weight != 1.0"
 
 
-def test_surround_height_weights_are_1_41():
-    for label in _SURROUND_LABELS:
+def test_side_surround_weights_are_1_41():
+    for label in _SIDE_SURROUND_LABELS:
         assert _CH_WEIGHT[label] == 1.41, f"{label} weight != 1.41"
+
+
+def test_rear_and_height_weights_are_unity():
+    for label in _UNITY_IMMERSIVE_LABELS:
+        assert _CH_WEIGHT[label] == 1.0, f"{label} weight != 1.0"
 
 
 # ---------------------------------------------------------------------------
@@ -203,34 +217,10 @@ def test_true_peak_near_full_scale():
     assert result <= 3.0
 
 
-def test_true_peak_oversampling_factor_48k():
-    n = 480
-    audio = np.zeros(n)
-    captured_up: list[int] = []
-
-    def fake_resample(x, up, down):
-        captured_up.append(up)
-        return np.zeros(up * len(x))
-
-    with patch("scipy.signal.resample_poly", side_effect=fake_resample):
-        measure_true_peak({"FL": audio}, sample_rate=SR48)
-
-    assert captured_up[0] == 4, f"Expected 4x oversampling at 48 kHz, got {captured_up[0]}x"
-
-
-def test_true_peak_oversampling_factor_96k():
-    n = 960
-    audio = np.zeros(n)
-    captured_up: list[int] = []
-
-    def fake_resample(x, up, down):
-        captured_up.append(up)
-        return np.zeros(up * len(x))
-
-    with patch("scipy.signal.resample_poly", side_effect=fake_resample):
-        measure_true_peak({"FL": audio}, sample_rate=SR96)
-
-    assert captured_up[0] == 2, f"Expected 2x oversampling at 96 kHz, got {captured_up[0]}x"
+def test_true_peak_uses_bs1770_fir_at_48k_and_96k():
+    audio = np.sin(2 * np.pi * 997 * np.arange(SR48) / SR48)
+    assert measure_true_peak({"FL": audio}, SR48) > -0.1
+    assert measure_true_peak({"FL": audio}, SR96) > -0.1
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +230,7 @@ def test_true_peak_oversampling_factor_96k():
 def test_normalize_info_dict_keys():
     channels = _sine_channels(997.0, 0.1, 3.0, SR48, [ChannelLabel.FL, ChannelLabel.FR])
     _, info = normalize_loudness(channels, SR48, FMT_51)
-    assert set(info.keys()) == {"measured_lkfs", "measured_tp_dbtp", "applied_gain_db", "tp_limited"}
+    assert set(info.keys()) == {"pre_lkfs", "measured_lkfs", "measured_tp_dbtp", "applied_gain_db", "tp_limited"}
 
 
 def test_normalize_reaches_target_lkfs():

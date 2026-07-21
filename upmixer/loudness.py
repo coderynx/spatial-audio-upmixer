@@ -12,12 +12,10 @@ Channel weights follow BS.1770-4 §2.2 Table 1:
 from __future__ import annotations
 
 import math
-import os
-from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
 import numpy as np
-from scipy.signal import sosfilt
+from scipy.signal import sosfilt, upfirdn
 
 from upmixer.formats import ChannelLabel, OutputFormat
 
@@ -30,12 +28,14 @@ _CH_WEIGHT: dict[ChannelLabel, float] = {
     ChannelLabel.LFE: 0.0,
     ChannelLabel.SL:  _SURROUND_WEIGHT,
     ChannelLabel.SR:  _SURROUND_WEIGHT,
-    ChannelLabel.BL:  _SURROUND_WEIGHT,
-    ChannelLabel.BR:  _SURROUND_WEIGHT,
-    ChannelLabel.TFL: _SURROUND_WEIGHT,
-    ChannelLabel.TFR: _SURROUND_WEIGHT,
-    ChannelLabel.TBL: _SURROUND_WEIGHT,
-    ChannelLabel.TBR: _SURROUND_WEIGHT,
+    # BS.1770-5 Annex 3 Table 5: rear (M±135) and upper channels
+    # have unity gain.  Only ear-level side channels receive +1.5 dB.
+    ChannelLabel.BL:  1.0,
+    ChannelLabel.BR:  1.0,
+    ChannelLabel.TFL: 1.0,
+    ChannelLabel.TFR: 1.0,
+    ChannelLabel.TBL: 1.0,
+    ChannelLabel.TBR: 1.0,
 }
 
 _BLOCK_S = 0.400
@@ -44,35 +44,24 @@ _ABS_GATE = -70.0
 _REL_GATE_OFFSET = -10.0
 
 
-def _shelf_sos(Wn: float, dBgain: float, Q: float, fs: int) -> list[float]:
-    """High-shelf biquad (Audio EQ Cookbook). Returns [b0,b1,b2,1,a1,a2]."""
-    A = 10.0 ** (dBgain / 40.0)
-    w0 = 2.0 * math.pi * Wn / fs
-    cos_w0 = math.cos(w0)
-    alpha = math.sin(w0) / (2.0 * Q)
-    two_sqA_alpha = 2.0 * math.sqrt(A) * alpha
+def _retarget_biquad(section: list[float], sample_rate: int) -> list[float]:
+    """Retarget an exact 48 kHz digital biquad by inverse/forward bilinear maps."""
+    b0, b1, b2, _, a1, a2 = section
+    k = 2.0 * 48_000.0
 
-    b0 =  A * ((A + 1.0) + (A - 1.0) * cos_w0 + two_sqA_alpha)
-    b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cos_w0)
-    b2 =  A * ((A + 1.0) + (A - 1.0) * cos_w0 - two_sqA_alpha)
-    a0 =       (A + 1.0) - (A - 1.0) * cos_w0 + two_sqA_alpha
-    a1 =  2.0 * ((A - 1.0) - (A + 1.0) * cos_w0)
-    a2 =       (A + 1.0) - (A - 1.0) * cos_w0 - two_sqA_alpha
-    return [b0 / a0, b1 / a0, b2 / a0, 1.0, a1 / a0, a2 / a0]
+    def _to_analog(c0: float, c1: float, c2: float) -> list[float]:
+        return [
+            (c0 - c1 + c2) / (k * k),
+            2.0 * (c0 - c2) / k,
+            c0 + c1 + c2,
+        ]
 
+    b_a = _to_analog(b0, b1, b2)
+    a_a = _to_analog(1.0, a1, a2)
+    from scipy.signal import bilinear
 
-def _hpf_sos(Wn: float, Q: float, fs: int) -> list[float]:
-    """2nd-order HPF biquad (Audio EQ Cookbook). Returns [b0,b1,b2,1,a1,a2]."""
-    w0 = 2.0 * math.pi * Wn / fs
-    cos_w0 = math.cos(w0)
-    alpha = math.sin(w0) / (2.0 * Q)
-    b0 = (1.0 + cos_w0) / 2.0
-    b1 = -(1.0 + cos_w0)
-    b2 = (1.0 + cos_w0) / 2.0
-    a0 = 1.0 + alpha
-    a1 = -2.0 * cos_w0
-    a2 = 1.0 - alpha
-    return [b0 / a0, b1 / a0, b2 / a0, 1.0, a1 / a0, a2 / a0]
+    b_z, a_z = bilinear(b_a, a_a, fs=sample_rate)
+    return [b_z[0], b_z[1], b_z[2], 1.0, a_z[1], a_z[2]]
 
 
 @lru_cache(maxsize=8)
@@ -92,9 +81,14 @@ def _k_weighting_sos(sample_rate: int) -> np.ndarray:
         s2 = [1.0, -2.0, 1.0,
               1.0, -1.99004745483398, 0.99007225036621]
         return np.array([s1, s2])
-    s1 = _shelf_sos(1681.974450955533, 3.999843853973347, 0.7071752369554196, sample_rate)
-    s2 = _hpf_sos(38.13547087602444, 0.5003270373238773, sample_rate)
-    return np.array([s1, s2])
+    s1_48 = [1.53512485958697, -2.69169618940638, 1.19839281085285,
+              1.0, -1.69065929318241, 0.73248077421585]
+    s2_48 = [1.0, -2.0, 1.0,
+              1.0, -1.99004745483398, 0.99007225036621]
+    return np.array([
+        _retarget_biquad(s1_48, sample_rate),
+        _retarget_biquad(s2_48, sample_rate),
+    ])
 
 
 def _channel_weighted_blocks(
@@ -112,11 +106,14 @@ def _channel_weighted_blocks(
     if len(audio) < block_len:
         return None
     filtered = sosfilt(sos, audio.astype(np.float64))
-    n_blocks = (len(filtered) - block_len) // hop_len + 1
-    return np.array([
-        np.mean(filtered[i * hop_len : i * hop_len + block_len] ** 2)
-        for i in range(n_blocks)
-    ]) * weight
+    np.square(filtered, out=filtered)
+    np.cumsum(filtered, out=filtered)
+    starts = np.arange(0, len(audio) - block_len + 1, hop_len)
+    ends = starts + block_len - 1
+    block_sums = filtered[ends].copy()
+    nonzero = starts > 0
+    block_sums[nonzero] -= filtered[starts[nonzero] - 1]
+    return block_sums * (weight / block_len)
 
 
 def measure_integrated_loudness(
@@ -126,8 +123,7 @@ def measure_integrated_loudness(
 ) -> float:
     """BS.1770-4 integrated loudness with absolute + relative two-pass gating.
 
-    Channel K-weighting is computed in parallel across threads (scipy releases
-    the GIL, so actual concurrency is achieved on multi-core systems).
+    Processes one channel at a time to bound memory for long immersive masters.
 
     Returns LKFS. Returns -70.0 for silence or content shorter than one block.
     """
@@ -147,15 +143,9 @@ def measure_integrated_loudness(
     if not tasks:
         return -70.0
 
-    def _process(args):
-        weight, audio = args
-        return _channel_weighted_blocks(audio, weight, sos, block_len, hop_len)
-
-    with ThreadPoolExecutor(max_workers=max(1, min(len(tasks), (os.cpu_count() or 4) // 2, 4))) as ex:
-        results = list(ex.map(_process, tasks))
-
     power_blocks: np.ndarray | None = None
-    for meansq in results:
+    for weight, audio in tasks:
+        meansq = _channel_weighted_blocks(audio, weight, sos, block_len, hop_len)
         if meansq is None:
             continue
         if power_blocks is None:
@@ -179,30 +169,60 @@ def measure_integrated_loudness(
     return -0.691 + 10.0 * math.log10(max(float(np.mean(power_blocks[gated])), 1e-30))
 
 
+_TRUE_PEAK_FIR_4X = np.array([
+    0.0017089843750, -0.0291748046875, -0.0189208984375, -0.0083007812500,
+    0.0109863281250, 0.0292968750000, 0.0330810546875, 0.0148925781250,
+    -0.0196533203125, -0.0517578125000, -0.0582275390625, -0.0266113281250,
+    0.0332031250000, 0.0891113281250, 0.1015625000000, 0.0476074218750,
+    -0.0594482421875, -0.1665039062500, -0.2003173828125, -0.1022949218750,
+    0.1373291015625, 0.4650878906250, 0.7797851562500, 0.9721679687500,
+    0.9721679687500, 0.7797851562500, 0.4650878906250, 0.1373291015625,
+    -0.1022949218750, -0.2003173828125, -0.1665039062500, -0.0594482421875,
+    0.0476074218750, 0.1015625000000, 0.0891113281250, 0.0332031250000,
+    -0.0266113281250, -0.0582275390625, -0.0517578125000, -0.0196533203125,
+    0.0148925781250, 0.0330810546875, 0.0292968750000, 0.0109863281250,
+    -0.0083007812500, -0.0189208984375, -0.0291748046875, 0.0017089843750,
+], dtype=np.float64)
+
+
+def _true_peak_channel(audio: np.ndarray, chunk_size: int = 262_144) -> float:
+    """Meter one channel with bounded-memory BS.1770 4x interpolation."""
+    if len(audio) == 0:
+        return 0.0
+    history = np.zeros(len(_TRUE_PEAK_FIR_4X) - 1, dtype=np.float64)
+    peak = 0.0
+    for start in range(0, len(audio), chunk_size):
+        chunk = np.asarray(audio[start:start + chunk_size], dtype=np.float64)
+        padded = np.concatenate((history, chunk))
+        upsampled = upfirdn(_TRUE_PEAK_FIR_4X, padded, up=4)
+        begin = len(history) * 4
+        end = begin + len(chunk) * 4
+        peak = max(peak, float(np.max(np.abs(upsampled[begin:end]))))
+        history = padded[-len(history):]
+    tail = upfirdn(_TRUE_PEAK_FIR_4X, history, up=4)
+    peak = max(peak, float(np.max(np.abs(tail[-(len(_TRUE_PEAK_FIR_4X) - 1):]))))
+    return peak
+
+
 def measure_true_peak(channels: dict[str, np.ndarray], sample_rate: int = 48000) -> float:
     """True Peak across all channels (BS.1770-4 Annex 2).
 
-    Oversampling factor: 4× at ≤48 kHz, 2× at 96 kHz (both produce 192 kHz output).
-    Oversampling is computed in parallel across threads; scipy/numpy release
-    the GIL so multi-core systems benefit proportionally to channel count.
+    Uses BS.1770-5 Annex 2 order-48 4-phase FIR interpolation.  Four-times
+    oversampling is retained at 96 kHz because higher ratios are permitted.
+    Channels and samples are processed in bounded chunks.
     Returns dBTP. LFE is included per spec.
     """
-    from scipy.signal import resample_poly
-
-    up = 4 if sample_rate <= 48000 else 2
-
-    def _channel_tp(audio: np.ndarray) -> float:
-        return float(np.max(np.abs(resample_poly(audio.astype(np.float64), up, 1))))
-
     audio_list = list(channels.values())
     if not audio_list:
         return -120.0
 
-    with ThreadPoolExecutor(max_workers=max(1, min(len(audio_list), (os.cpu_count() or 4) // 2, 4))) as ex:
-        peaks = list(ex.map(_channel_tp, audio_list))
+    max_tp: float = 1e-30
+    for audio in audio_list:
+        peak = _true_peak_channel(audio)
+        if peak > max_tp:
+            max_tp = peak
 
-    max_tp = max(peaks) if peaks else 1e-30
-    return 20.0 * math.log10(max(max_tp, 1e-30))
+    return 20.0 * math.log10(max_tp)
 
 
 def normalize_loudness(
@@ -232,10 +252,12 @@ def normalize_loudness(
             measured_lkfs, measured_tp_dbtp, applied_gain_db, tp_limited.
     """
     measured_lkfs = measure_integrated_loudness(channels, sample_rate, fmt)
-
-    gain_db = min(target_lkfs - measured_lkfs, max_gain_db)
+    measurable = measured_lkfs > _ABS_GATE
+    gain_db = min(target_lkfs - measured_lkfs, max_gain_db) if measurable else 0.0
     gain_linear = 10.0 ** (gain_db / 20.0)
-    adjusted = {k: v * gain_linear for k, v in channels.items()}
+    adjusted = {k: v.copy() for k, v in channels.items()}
+    for v in adjusted.values():
+        v *= gain_linear
 
     measured_tp = measure_true_peak(adjusted, sample_rate)
     tp_limited = False
@@ -243,13 +265,17 @@ def normalize_loudness(
     if measured_tp > max_tp_dbtp:
         tp_excess_db = measured_tp - max_tp_dbtp
         tp_gain = 10.0 ** (-tp_excess_db / 20.0)
-        adjusted = {k: v * tp_gain for k, v in adjusted.items()}
+        for v in adjusted.values():
+            v *= tp_gain
         gain_db -= tp_excess_db
         tp_limited = True
 
+    final_lkfs = measure_integrated_loudness(adjusted, sample_rate, fmt)
+    final_tp = measure_true_peak(adjusted, sample_rate)
     return adjusted, {
-        "measured_lkfs":    measured_lkfs,
-        "measured_tp_dbtp": measured_tp,
+        "pre_lkfs":         measured_lkfs,
+        "measured_lkfs":    final_lkfs,
+        "measured_tp_dbtp": final_tp,
         "applied_gain_db":  gain_db,
         "tp_limited":       tp_limited,
     }

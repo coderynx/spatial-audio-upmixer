@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from scipy.signal import freqz
 
 from upmixer.mastering.eq import EQ_PROFILES, EQ_PROFILE_NAMES, SpectralShaper, _build_fir
 
@@ -52,9 +53,9 @@ class TestBuildFir:
         assert isinstance(ir, np.ndarray)
 
     def test_fir_length(self):
-        # minimum_phase returns (n_taps // 2 + 1) length
+        # half=False preserves requested magnitude response and tap count.
         ir = _build_fir("spatial-air", 44100, 1023)
-        assert len(ir) == 1023 // 2 + 1
+        assert len(ir) == 1023
 
     def test_fir_cached(self):
         ir1 = _build_fir("spatial-warm", 48000, 1023)
@@ -71,6 +72,12 @@ class TestBuildFir:
             ir = _build_fir(name, 48000, 1023)
             assert len(ir) > 0
             assert np.all(np.isfinite(ir))
+
+    def test_profile_gain_is_not_halved_by_minimum_phase_conversion(self):
+        ir = _build_fir("spatial-air", 48000, 1023)
+        freqs, response = freqz(ir, worN=131072, fs=48000)
+        gain = 20 * np.log10(abs(response[np.argmin(abs(freqs - 15000))]))
+        assert gain == pytest.approx(2.5, abs=0.1)
 
 
 # ---------------------------------------------------------------------------

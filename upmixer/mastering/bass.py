@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-from scipy.signal import butter, sosfilt
+from scipy.signal import butter, sosfilt, sosfiltfilt
 
 _log = logging.getLogger("upmixer")
 
@@ -130,10 +130,8 @@ class BassController:
         if self._mono_hz is not None:
             mono_norm = float(np.clip(self._mono_hz / nyq, 1e-4, 0.999))
             self._sos_mono_lp = butter(2, mono_norm, btype="low",  output="sos")
-            self._sos_mono_hp = butter(2, mono_norm, btype="high", output="sos")
         else:
             self._sos_mono_lp = None
-            self._sos_mono_hp = None
 
 
     def _apply_band_gain(
@@ -172,19 +170,19 @@ class BassController:
         mid_lin = 10.0 ** (self._mid_db / 20.0)
 
         out: dict[str, np.ndarray] = dict(channels)
+        non_lfe_names = [name for name in channels if name != lfe_key]
 
-        if self._sub_db != 0.0 or self._mid_db != 0.0:
-            for name, ch in channels.items():
-                if name == lfe_key:
-                    continue
-                arr = ch.astype(np.float64)
+        if non_lfe_names and (self._sub_db != 0.0 or self._mid_db != 0.0):
+            for name in non_lfe_names:
+                shaped = channels[name].astype(np.float64)
                 if self._sub_db != 0.0:
-                    arr = self._apply_band_gain(arr, sub_lin, self._sos_sub_lp)
+                    sub_band = sosfilt(self._sos_sub_lp, shaped)
+                    shaped = (shaped - sub_band) + sub_band * sub_lin
                 if self._mid_db != 0.0:
-                    arr = self._apply_band_gain(
-                        arr, mid_lin, self._sos_mid_lp, self._sos_mid_hp
-                    )
-                out[name] = arr
+                    mid_lp = sosfilt(self._sos_mid_lp, shaped)
+                    mid_band = sosfilt(self._sos_mid_hp, mid_lp)
+                    shaped = (shaped - mid_band) + mid_band * mid_lin
+                out[name] = shaped
             _log.debug(
                 "  BassController: sub=%+.1f dB  mid=%+.1f dB",
                 self._sub_db, self._mid_db,
@@ -194,28 +192,28 @@ class BassController:
             for l_key, r_key in _STEREO_PAIRS:
                 if l_key not in out or r_key not in out:
                     continue
-                l = out[l_key].astype(np.float64)
-                r = out[r_key].astype(np.float64)
-
-                l_low = sosfilt(self._sos_mono_lp, l)
-                r_low = sosfilt(self._sos_mono_lp, r)
-                mono_bass = (l_low + r_low) * 0.5
-
-                out[l_key] = mono_bass + sosfilt(self._sos_mono_hp, l)
-                out[r_key] = mono_bass + sosfilt(self._sos_mono_hp, r)
-
+                LR = np.stack([
+                    out[l_key].astype(np.float64),
+                    out[r_key].astype(np.float64),
+                ], axis=0)
+                if LR.shape[-1] > 15:
+                    lr_low = sosfiltfilt(self._sos_mono_lp, LR, axis=-1)
+                else:
+                    lr_low = sosfilt(self._sos_mono_lp, LR, axis=-1)
+                mono_bass = (lr_low[0] + lr_low[1]) * 0.5
+                out[l_key] = mono_bass + (LR[0] - lr_low[0])
+                out[r_key] = mono_bass + (LR[1] - lr_low[1])
             _log.debug(
                 "  BassController: bass-mono at %.0f Hz", self._mono_hz
             )
 
         if self._excite:
-            for name, ch in out.items():
-                if name == lfe_key:
-                    continue
-                arr = ch.astype(np.float64)
-                sub = sosfilt(self._sos_sub_lp, arr)
+            excite_names = [name for name in out if name != lfe_key]
+            for name in excite_names:
+                signal = out[name].astype(np.float64)
+                sub = sosfilt(self._sos_sub_lp, signal)
                 harmonics = np.tanh(sub * _EXCITE_DRIVE) * _EXCITE_BLEND
-                out[name] = arr + harmonics
+                out[name] = signal + harmonics
             _log.debug("  BassController: harmonic exciter enabled")
 
         if self._lfe_db != 0.0 and lfe_key in out:

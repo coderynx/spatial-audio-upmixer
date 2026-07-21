@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from scipy.signal import fftconvolve, firwin2, minimum_phase
@@ -95,7 +96,10 @@ def _build_fir_from_breakpoints(
     gains_lin = [p[1] for p in pairs]
 
     h_lp = firwin2(n_taps, freqs_norm, gains_lin)
-    h_mp = minimum_phase(h_lp)
+    # ``half=True`` (SciPy default) returns a half-length filter whose
+    # magnitude is the square root of the requested response.  Keep full
+    # length so breakpoint dB values remain exact.
+    h_mp = minimum_phase(h_lp, half=False)
     _PC_FIR_CACHE[cache_key] = h_mp
     return h_mp
 
@@ -174,7 +178,7 @@ def _build_fir(profile: str, sample_rate: int, n_taps: int) -> np.ndarray:
 
     h_lp = firwin2(n_taps, freqs_norm, gains_lin)
 
-    h_mp = minimum_phase(h_lp)
+    h_mp = minimum_phase(h_lp, half=False)
 
     _FIR_CACHE[cache_key] = h_mp
     return h_mp
@@ -251,14 +255,24 @@ class SpectralShaper:
         if self._strength == 0.0:
             return channels
         ir = self._get_ir()
+        strength = self._strength
         _log.info(
             "  EQ shaping: profile=%s  strength=%.2f  IR=%d taps",
-            self._profile, self._strength, len(ir),
+            self._profile, strength, len(ir),
         )
+        to_process = [(name, ch) for name, ch in channels.items() if name != lfe_key]
+        if to_process:
+            # Full-file FFT convolution has substantial temporary buffers.
+            # Bound parallelism so immersive beds do not multiply peak RAM.
+            n_workers = min(len(to_process), 2)
+            with ThreadPoolExecutor(max_workers=n_workers) as ex:
+                processed_arrays = list(ex.map(
+                    lambda nc: _apply_fir(nc[1], ir, strength), to_process
+                ))
+            processed = {name: arr for (name, _), arr in zip(to_process, processed_arrays)}
+        else:
+            processed = {}
         out: dict[str, np.ndarray] = {}
         for name, ch in channels.items():
-            if name == lfe_key:
-                out[name] = ch
-            else:
-                out[name] = _apply_fir(ch, ir, self._strength)
+            out[name] = processed[name] if name in processed else ch
         return out

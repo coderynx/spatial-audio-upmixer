@@ -29,10 +29,10 @@ manifest = [
     "pyyaml>=6.0",
 ]
 separation-cpu = [
-    "audio-separator[cpu]>=0.24",
+    "audio-separator[cpu]>=0.44.5",
 ]
 separation-gpu = [
-    "audio-separator[gpu]>=0.24",
+    "audio-separator[gpu]>=0.44.5",
 ]
 
 [project.scripts]
@@ -41,3 +41,8 @@ upmixer = "upmixer.__main__:main"
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+markers = [
+    "perf: performance benchmarks (run with -m perf; skipped in CI by default)",
+]

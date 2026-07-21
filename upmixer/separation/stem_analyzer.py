@@ -2,8 +2,8 @@
 
 Extracts four normalized features from each separated stem:
 
-  stereo_width   — Pearson de-correlation of L vs R channels.
-                   0 = mono, 1 = fully uncorrelated.
+  stereo_width   — Signed L/R coherence measure.
+                   0 = mono, 1 = uncorrelated, anti-phase, or hard-panned.
                    Drives surround channel gain scaling.
 
   high_freq_ratio — Fraction of total spectral energy at or above 4 kHz.
@@ -49,47 +49,69 @@ _NEUTRAL = StemFeatures(
 )
 
 
-def analyze_stem(audio: np.ndarray, sample_rate: int) -> StemFeatures:
+def analyze_stem(
+    audio: np.ndarray,
+    sample_rate: int,
+    high_frequency_hz: float = 4000.0,
+) -> StemFeatures:
     """Compute content features from a (n_samples, ≥1) float array.
 
-    Uses up to 60 s of audio so analysis time is bounded regardless of
-    track length.  Returns _NEUTRAL for silence or sub-threshold content.
+    Uses up to 60 s sampled across the track so analysis time and memory stay
+    bounded regardless of track length.  Returns _NEUTRAL for silence.
     """
     if audio.ndim == 1:
-        L = audio.astype(np.float64)
-        R = L
+        left = audio
+        right = audio
     else:
-        L = audio[:, 0].astype(np.float64)
-        R = audio[:, 1].astype(np.float64) if audio.shape[1] > 1 else L
+        left = audio[:, 0]
+        right = audio[:, 1] if audio.shape[1] > 1 else left
 
-    mono = (L + R) * 0.5
-
-    l_e = float(np.mean(L ** 2))
-    r_e = float(np.mean(R ** 2))
-    if l_e < 1e-20 or r_e < 1e-20:
-        stereo_width = 0.0
-    else:
-        cross = float(np.mean(L * R))
-        stereo_width = float(np.clip(1.0 - abs(cross) / math.sqrt(l_e * r_e), 0.0, 1.0))
-
-    max_n = min(len(mono), sample_rate * 60)
-    chunk = mono[:max_n]
-
-    nperseg = min(4096, len(chunk))
-    if nperseg < 64 or float(np.max(np.abs(chunk))) < 1e-8:
+    max_n = min(len(left), sample_rate * 60)
+    if max_n < 64:
         return _NEUTRAL
 
-    freqs, psd = welch(chunk, fs=sample_rate, nperseg=nperseg)
+    if len(left) > max_n:
+        n_windows = min(3, len(left) // max(1, sample_rate))
+        n_windows = max(1, n_windows)
+        window_n = max_n // n_windows
+        starts = np.linspace(0, len(left) - window_n, n_windows, dtype=int)
+        L = np.concatenate([left[s:s + window_n] for s in starts]).astype(np.float64)
+        R = np.concatenate([right[s:s + window_n] for s in starts]).astype(np.float64)
+    else:
+        L = left[:max_n].astype(np.float64)
+        R = right[:max_n].astype(np.float64)
+
+    l_e = float(np.dot(L, L) / len(L))
+    r_e = float(np.dot(R, R) / len(R))
+    if max(l_e, r_e) < 1e-20:
+        return _NEUTRAL
+    if min(l_e, r_e) < 1e-20:
+        stereo_width = 1.0
+    else:
+        correlation = float(np.dot(L, R) / (len(L) * math.sqrt(l_e * r_e)))
+        stereo_width = float(np.clip(1.0 - correlation, 0.0, 1.0))
+
+    nperseg = min(4096, len(L))
+
+    freqs, psd_l = welch(L, fs=sample_rate, nperseg=nperseg)
+    _, psd_r = welch(R, fs=sample_rate, nperseg=nperseg)
+    psd = (psd_l + psd_r) * 0.5
     total_power = float(np.sum(psd)) + 1e-30
-    high_freq_ratio = float(np.clip(np.sum(psd[freqs >= 4000.0]) / total_power, 0.0, 1.0))
+    high_freq_ratio = float(np.clip(np.sum(psd[freqs >= high_frequency_hz]) / total_power, 0.0, 1.0))
     low_freq_ratio  = float(np.clip(np.sum(psd[freqs <= 200.0])  / total_power, 0.0, 1.0))
 
-    seg_len = min(2048, len(chunk))
-    _, _, Sxx = spectrogram(
-        chunk, fs=sample_rate,
+    seg_len = min(2048, len(L))
+    _, _, s_l = spectrogram(
+        L, fs=sample_rate,
         nperseg=seg_len,
         noverlap=seg_len * 3 // 4,
     )
+    _, _, s_r = spectrogram(
+        R, fs=sample_rate,
+        nperseg=seg_len,
+        noverlap=seg_len * 3 // 4,
+    )
+    Sxx = (s_l + s_r) * 0.5
     if Sxx.shape[1] > 1:
         flux = np.sum(np.maximum(np.diff(Sxx, axis=1), 0.0), axis=0)
         threshold = float(np.percentile(flux, 75)) + 1e-30
@@ -108,6 +130,7 @@ def analyze_stem(audio: np.ndarray, sample_rate: int) -> StemFeatures:
 def analyze_stems(
     stems: dict[str, np.ndarray],
     sample_rate: int,
+    high_frequency_hz: float = 4000.0,
     max_workers: int = 4,
 ) -> dict[str, StemFeatures]:
     """Analyze all stems in parallel.  Returns {stem_key: StemFeatures}."""
@@ -116,7 +139,7 @@ def analyze_stems(
         return {}
 
     def _analyze(key: str) -> StemFeatures:
-        return analyze_stem(stems[key], sample_rate)
+        return analyze_stem(stems[key], sample_rate, high_frequency_hz)
 
     with ThreadPoolExecutor(max_workers=min(len(keys), max_workers)) as ex:
         features = list(ex.map(_analyze, keys))

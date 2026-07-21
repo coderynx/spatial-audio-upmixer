@@ -30,7 +30,8 @@ class UpmixConfig:
     center_attenuation: float = 0.5
 
     center_gain: float = 0.85
-    lfe_gain: float = 0.5
+    # BS.775-4 Annex 7: LFE programme level is 10 dB below full-range beds.
+    lfe_gain: float = 0.31622776601683794
     surround_gain: float = 0.6
     back_gain: float = 0.55
     height_gain: float = 0.55
@@ -109,7 +110,16 @@ class UpmixConfig:
 
     stem_cache_dir: str | None = None
 
+    # None selects conservative backend-aware inference batching.
+    stem_batch_size: int | None = None
+
     stems: list[str] | None = None
+
+    stem_silence_skip: bool = True
+    stem_silence_threshold_db: float = -90.0
+    stem_silence_min_duration_s: float = 2.0
+    stem_silence_crossfade_ms: float = 10.0
+    stem_silence_pad_ms: float = 200.0
 
     def resolve_fft_params(self, actual_sample_rate: int) -> tuple[int, int]:
         """Returns (fft_size, hop_size) after applying sample rate adaptation."""

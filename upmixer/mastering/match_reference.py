@@ -97,7 +97,6 @@ def _gaussian_smooth_log(
     sigma_oct: float,
 ) -> np.ndarray:
     n = len(log_freqs)
-    smoothed = np.empty(n)
     df = log_freqs[1] - log_freqs[0] if n > 1 else 1.0
     sigma_bins = sigma_oct / max(df, 1e-10)
 
@@ -110,8 +109,7 @@ def _gaussian_smooth_log(
     kernel /= kernel.sum()
 
     padded = np.pad(values, half_w, mode="reflect")
-    for i in range(n):
-        smoothed[i] = np.dot(padded[i: i + 2 * half_w + 1], kernel)
+    smoothed = np.convolve(padded, kernel, mode="valid")
     return smoothed
 
 
@@ -237,6 +235,7 @@ class ReferenceMatchProcessor:
 
         self._ref_data: np.ndarray | None = None
         self._proxy_table: dict[str, Any] | None = None
+        self._proxy_cache: dict[str, np.ndarray] = {}
 
 
     def _load_if_needed(self) -> None:
@@ -251,6 +250,13 @@ class ReferenceMatchProcessor:
             n_ch,
             self._ref_data.shape[0],
         )
+
+    def _reference_proxy(self, proxy: Any) -> np.ndarray:
+        """Resolve each reference proxy once; some are full-file filtered copies."""
+        key = str(proxy)
+        if key not in self._proxy_cache:
+            self._proxy_cache[key] = _resolve_proxy(self._ref_data, proxy, self._sr)
+        return self._proxy_cache[key]
 
     def _compute_spectral_breakpoints(
         self,
@@ -321,7 +327,7 @@ class ReferenceMatchProcessor:
             proxy = proxy_table.get(ch_name, "mid")
             if proxy == "mid_lp":
                 continue
-            ref_ch = _resolve_proxy(ref_data, proxy, self._sr)
+            ref_ch = self._reference_proxy(proxy)
             ref_rms_vals.append(float(np.sqrt(np.mean(ref_ch ** 2) + _EPS)))
 
         if not ref_rms_vals:
@@ -386,7 +392,7 @@ class ReferenceMatchProcessor:
             for name in list(out.keys()):
                 ch = out[name].astype(np.float64)
                 proxy = proxy_table.get(name, "mid")
-                ref_ch = _resolve_proxy(ref_data, proxy, self._sr)
+                ref_ch = self._reference_proxy(proxy)
 
                 bps = self._compute_spectral_breakpoints(ref_ch, ch)
                 ir = _build_fir_from_breakpoints(bps, self._sr, self._n_taps)
