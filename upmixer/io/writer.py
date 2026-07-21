@@ -5,6 +5,7 @@ import soundfile as sf
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
+from upmixer.io.atomic import atomic_output_path
 
 
 class AudioWriter:
@@ -32,9 +33,13 @@ class AudioWriter:
 
         output = np.column_stack(ordered)
 
-        sf.write(
-            str(self._path),
-            output,
-            self._sample_rate,
-            subtype=self._config.output_subtype,
-        )
+        with atomic_output_path(self._path) as temporary:
+            sf.write(
+                str(temporary),
+                output,
+                self._sample_rate,
+                subtype=self._config.output_subtype,
+            )
+            info = sf.info(str(temporary))
+            if info.samplerate != self._sample_rate or info.channels != len(ordered):
+                raise RuntimeError("Written audio metadata does not match requested output")

@@ -198,6 +198,13 @@ upmixer --manifest examples/batch_album_stem.yaml
 
 # Get a JSON summary of all results
 upmixer --batch-dir /albums/ --output-dir /out/ --json
+
+# Safely inspect a recursive batch before starting it
+upmixer --batch-dir /albums/ --output-dir /out/ --recursive \
+        --output-template '{relative_stem}.wav' --dry-run
+
+# Resume only outputs recorded with matching input and settings
+upmixer --batch-dir /albums/ --output-dir /out/ --resume --report run-report.json
 ```
 
 **Resource usage**: `--cpu-priority auto` uses all CPU threads for AI stem separation and reduced priority/threading for
@@ -303,6 +310,13 @@ with StemUpmixPipeline(UpmixConfig(), model="BS-Roformer-SW.ckpt") as pipeline:
 | `-q` / `--quiet`          | —                         | Suppress all output except errors                          |
 | `-v` / `--verbose`        | —                         | Debug logging                                              |
 | `--json`                  | —                         | Print `UpmixResult` / `BatchResult` as JSON to stdout      |
+| `--dry-run`               | —                         | Validate and list resolved jobs without writing audio       |
+| `--overwrite`             | —                         | Explicitly replace existing outputs                         |
+| `--resume`                | —                         | Skip outputs verified by the saved run state                |
+| `--report`                | —                         | Write a portable JSON run report                            |
+| `--recursive`             | —                         | Scan nested directories in `--batch-dir`                   |
+| `--include`               | WAV/FLAC                  | Repeatable glob filter for batch directory scanning         |
+| `--output-template`       | `{stem}{ext}`              | Output name fields: `stem`, `name`, `ext`, `relative_stem` |
 
 ### Delivery targets
 

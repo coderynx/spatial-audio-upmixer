@@ -33,9 +33,11 @@ import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Callable
 
 from upmixer.config import UpmixConfig
+from upmixer.execution import PreflightError, RunState, preflight_job
 from upmixer.result import UpmixResult
 
 _log = logging.getLogger("upmixer")
@@ -56,6 +58,7 @@ class BatchResult:
 
     jobs: list[UpmixResult] = field(default_factory=list)
     failed: list[dict] = field(default_factory=list)
+    skipped: list[dict] = field(default_factory=list)
     total_audio_duration_s: float = 0.0
     wall_time_s: float = 0.0
 
@@ -63,10 +66,11 @@ class BatchResult:
         return {
             "jobs": [r.to_dict() for r in self.jobs],
             "failed": self.failed,
+            "skipped": self.skipped,
             "total_audio_duration_s": self.total_audio_duration_s,
             "wall_time_s": self.wall_time_s,
             "succeeded": len(self.jobs),
-            "total": len(self.jobs) + len(self.failed),
+            "total": len(self.jobs) + len(self.failed) + len(self.skipped),
         }
 
     def to_json(self, indent: int = 2) -> str:
@@ -80,6 +84,9 @@ def resolve_batch_jobs(
     output_ext: str = ".wav",
     explicit_jobs: list[dict] | None = None,
     batch_inputs: list[str] | None = None,
+    recursive: bool = False,
+    include_patterns: list[str] | None = None,
+    output_template: str = "{stem}{ext}",
 ) -> list[BatchJob]:
     """Build a list of BatchJobs from various input sources.
 
@@ -101,8 +108,22 @@ def resolve_batch_jobs(
             raise ValueError(
                 f"output_dir required to derive output path for: {input_path}"
             )
-        stem = os.path.splitext(os.path.basename(input_path))[0]
-        return os.path.join(output_dir, stem + output_ext)
+        basename = os.path.basename(input_path)
+        stem = os.path.splitext(basename)[0]
+        relative = os.path.relpath(input_path, batch_dir) if batch_dir else basename
+        relative_stem = os.path.splitext(relative)[0]
+        try:
+            rendered = output_template.format(
+                stem=stem, name=basename, ext=output_ext, relative_stem=relative_stem,
+            )
+        except KeyError as exc:
+            raise ValueError(
+                f"Unknown output template field {exc}. Valid: stem, name, ext, relative_stem."
+            ) from exc
+        rendered_path = os.path.normpath(rendered)
+        if os.path.isabs(rendered_path) or rendered_path.startswith(".." + os.sep):
+            raise ValueError("output_template must resolve inside output_dir")
+        return os.path.join(output_dir, rendered_path)
 
     if explicit_jobs:
         jobs: list[BatchJob] = []
@@ -128,9 +149,12 @@ def resolve_batch_jobs(
 
     if batch_dir:
         safe_dir = glob.escape(batch_dir)
-        wav_files = sorted(glob.glob(os.path.join(safe_dir, "*.wav")))
-        flac_files = sorted(glob.glob(os.path.join(safe_dir, "*.flac")))
-        all_files = sorted(wav_files + flac_files, key=os.path.basename)
+        patterns = include_patterns or ["*.wav", "*.flac"]
+        all_files: list[str] = []
+        for pattern in patterns:
+            search = os.path.join(safe_dir, "**", pattern) if recursive else os.path.join(safe_dir, pattern)
+            all_files.extend(glob.glob(search, recursive=recursive))
+        all_files = sorted(set(all_files), key=lambda path: os.path.relpath(path, batch_dir))
         return [
             BatchJob(input_path=p, output_path=_derive_output(p))
             for p in all_files
@@ -180,26 +204,67 @@ class BatchProcessor:
         stem_model_dir: str | None = None,
         workers: int = 1,
         progress_callback: Callable[[int, int, str], None] | None = None,
+        overwrite: bool = True,
+        resume: bool = False,
+        state_file: str | None = None,
     ) -> None:
         self._config = config
         self._mode = mode
         self._stem_model_dir = stem_model_dir
         self._workers = max(1, workers)
         self._progress = progress_callback
+        self._overwrite = overwrite
+        self._resume = resume
+        self._state = RunState.load(state_file) if state_file else None
 
     def process(self, jobs: list[BatchJob]) -> BatchResult:
         """Run all jobs and return a BatchResult."""
         t0 = time.monotonic()
         result = BatchResult()
+        planned, skipped = self._preflight(jobs)
+        result.skipped.extend(skipped)
         total = len(jobs)
 
         if self._mode == "stem":
-            result = self._process_stem(jobs, total)
+            processed = self._process_stem(planned, total)
         else:
-            result = self._process_realtime(jobs, total)
+            processed = self._process_realtime(planned, total)
 
+        result.jobs.extend(processed.jobs)
+        result.failed.extend(processed.failed)
+        result.total_audio_duration_s = processed.total_audio_duration_s
         result.wall_time_s = time.monotonic() - t0
         return result
+
+    def _preflight(self, jobs: list[BatchJob]) -> tuple[list[BatchJob], list[dict]]:
+        """Validate every job before any output is created."""
+        seen: set[str] = set()
+        planned: list[BatchJob] = []
+        skipped: list[dict] = []
+        for job in jobs:
+            plan = preflight_job(
+                job.input_path, job.output_path, self._config, job.input_format_override,
+            )
+            output = str(Path(job.output_path).resolve())
+            if output in seen:
+                raise PreflightError(f"Multiple batch jobs resolve to output: {job.output_path}")
+            seen.add(output)
+            exists = Path(job.output_path).exists()
+            if exists and self._resume and self._state and self._state.matches(plan):
+                skipped.append({"input": job.input_path, "output": job.output_path, "reason": "resume"})
+            elif exists and not self._overwrite:
+                raise PreflightError(
+                    f"Output already exists: {job.output_path}. Use --overwrite or --resume."
+                )
+            else:
+                planned.append(job)
+        return planned, skipped
+
+    def _record_state(self, job: BatchJob, result: UpmixResult) -> None:
+        if self._state is None:
+            return
+        plan = preflight_job(job.input_path, job.output_path, self._config, job.input_format_override)
+        self._state.record(plan, result)
 
     _DEFAULT_STEM_CACHE_DIR: str = os.path.join(
         os.path.expanduser("~"), ".cache", "upmixer-stems"
@@ -231,6 +296,7 @@ class BatchProcessor:
                         input_format_override=job.input_format_override,
                     )
                     result.jobs.append(r)
+                    self._record_state(job, r)
                     result.total_audio_duration_s += r.duration_seconds
                 except Exception as exc:
                     _log.error("FAILED: %s — %s", job.input_path, exc)
@@ -262,6 +328,7 @@ class BatchProcessor:
                         input_format_override=job.input_format_override,
                     )
                     result.jobs.append(r)
+                    self._record_state(job, r)
                     result.total_audio_duration_s += r.duration_seconds
                 except Exception as exc:
                     _log.error("FAILED: %s — %s", job.input_path, exc)
@@ -295,6 +362,7 @@ class BatchProcessor:
                     try:
                         r = fut.result()
                         result.jobs.append(r)
+                        self._record_state(job, r)
                         result.total_audio_duration_s += r.duration_seconds
                     except Exception as exc:
                         _log.error("FAILED: %s — %s", job.input_path, exc)
