@@ -30,7 +30,8 @@ class UpmixConfig:
     center_attenuation: float = 0.5
 
     center_gain: float = 0.85
-    lfe_gain: float = 0.5
+    # BS.775-4 Annex 7: LFE programme level is 10 dB below full-range beds.
+    lfe_gain: float = 0.31622776601683794
     surround_gain: float = 0.6
     back_gain: float = 0.55
     height_gain: float = 0.55

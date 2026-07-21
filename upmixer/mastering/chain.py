@@ -23,13 +23,13 @@ Processing order
    bass mono-maker for L/R pairs, harmonic exciter, LFE gain trim.  Controlled
    by ``config.mastering_bass_profile`` and individual ``mastering_bass_*``
    params.  Disabled when both profile and all individual params are unset.
-3. **ITU-R BS.1770-4 loudness normalization** (if
+3. **Soft limiting** — optional final analogue-style protection before
+   standards measurement.
+4. **ITU-R BS.1770-5 loudness normalization** (if
    ``config.loudness_normalize`` is ``True``).  A scalar linear gain is applied
    to all channels simultaneously — no dynamic processing, no clipping.
-4. **Dolby Atmos True Peak ceiling** — if the post-LN peak exceeds
+5. **Dolby Atmos True Peak ceiling** — if the post-LN peak exceeds
    ``config.loudness_max_tp`` dBTP, a second linear gain reduction is applied.
-5. **Tanh soft-limiter** (always applied) — catches any residual transient
-   peaks without hard-clipping.
 
 Standards compliance (``atmos-music`` profile)
 -----------------------------------------------
@@ -73,10 +73,10 @@ class MasteringResult:
     """
 
     measured_lkfs: float | None = None
-    """BS.1770-4 integrated loudness *before* normalization, in LKFS."""
+    """BS.1770-5 integrated loudness of delivered PCM, in LKFS."""
 
     measured_tp_dbtp: float | None = None
-    """Maximum True Peak across all channels *after* loudness gain, in dBTP."""
+    """Maximum True Peak across delivered PCM, in dBTP."""
 
     applied_gain_db: float | None = None
     """Total gain applied (loudness gain ± TP correction), in dB."""
@@ -209,6 +209,13 @@ class MasteringChain:
             )
             channels = bass.process(channels)
 
+        # Limiting must precede loudness/true-peak measurement.  Any
+        # post-measurement waveform change invalidates delivery metadata.
+        channels = {
+            name: soft_limit(ch, cfg.peak_limit_threshold)
+            for name, ch in channels.items()
+        }
+
         if cfg.loudness_normalize:
             _log.info("  Normalizing loudness (BS.1770-4)...")
             from upmixer.loudness import normalize_loudness
@@ -229,16 +236,10 @@ class MasteringChain:
             )
             _log.info(
                 "  Loudness: %.1f LKFS → %.1f LKFS  gain %+.1f dB  TP %.1f dBTP%s",
-                result.measured_lkfs,
+                ln_info["pre_lkfs"],
                 cfg.loudness_target_lkfs,
                 result.applied_gain_db,
                 result.measured_tp_dbtp,
                 "  [TP limited]" if result.tp_limited else "",
             )
-
-        channels = {
-            name: soft_limit(ch, cfg.peak_limit_threshold)
-            for name, ch in channels.items()
-        }
-
         return channels, result

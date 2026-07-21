@@ -249,18 +249,21 @@ class UpmixPipeline:
 
         _progress("  Processing complete.", 0.9)
 
-        _progress("  Mastering...", 0.93)
-        mastering = MasteringChain(cfg)
-        channels, mastering_result = mastering.process(channels, sr, output_fmt)
-
         out_sr = cfg.output_sample_rate if cfg.output_sample_rate else sr
-        # Dolby Atmos Music Delivery Specification v2022.07: ADM-BWF requires 48 kHz.
-        if cfg.output_type == "adm-bwf" and cfg.output_sample_rate is None and out_sr != 48000:
-            out_sr = 48000
-            _log.info("  ADM-BWF: output forced to 48 kHz (Dolby spec)")
+        if cfg.output_type == "adm-bwf":
+            if cfg.output_sample_rate is None:
+                out_sr = 48_000
+            if out_sr not in (48_000, 96_000):
+                raise ValueError("Dolby ADM-BWF requires a 48 kHz or 96 kHz output sample rate")
+            if cfg.output_subtype != "PCM_24":
+                raise ValueError("Dolby ADM-BWF requires output_subtype='PCM_24'")
         if out_sr != sr:
             channels = self._resample_channels(channels, sr, out_sr)
             _log.info("  Resampled: %d Hz → %d Hz", sr, out_sr)
+
+        _progress("  Mastering...", 0.93)
+        mastering = MasteringChain(cfg)
+        channels, mastering_result = mastering.process(channels, out_sr, output_fmt)
 
         if cfg.output_type == "adm-bwf":
             writer = AdmBwfWriter(output_path, out_sr, cfg)
@@ -427,7 +430,13 @@ class UpmixPipeline:
     ) -> None:
         """Write ITU-R BS.775-4 Table 2 stereo downmix to cfg.downmix_output_path."""
         import soundfile as sf
+        from upmixer.loudness import measure_true_peak
+
         L, R = itu_downmix_stereo(channels, surround_coeff=cfg.surround_downmix_coeff)
         stereo = np.column_stack([L, R])
+        tp = measure_true_peak({"FL": L, "FR": R}, sample_rate)
+        if tp > cfg.loudness_max_tp:
+            stereo *= 10.0 ** ((cfg.loudness_max_tp - tp) / 20.0)
+            _log.warning("  Downmix gain reduced %.2f dB to protect true peak", cfg.loudness_max_tp - tp)
         sf.write(cfg.downmix_output_path, stereo, sample_rate, subtype=cfg.output_subtype)
         _log.info("  Downmix: %s", cfg.downmix_output_path)

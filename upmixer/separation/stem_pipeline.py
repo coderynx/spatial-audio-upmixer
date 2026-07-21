@@ -428,9 +428,13 @@ class StemUpmixPipeline:
 
         # Why this matters: a 192 kHz / 408 s input with ADM-BWF output produces
         out_sr: int = cfg.output_sample_rate or sr
-        if cfg.output_type == "adm-bwf" and cfg.output_sample_rate is None and out_sr != 48_000:
-            out_sr = 48_000
-            _log.info("  ADM-BWF: output forced to 48 kHz (Dolby spec)")
+        if cfg.output_type == "adm-bwf":
+            if cfg.output_sample_rate is None:
+                out_sr = 48_000
+            if out_sr not in (48_000, 96_000):
+                raise ValueError("Dolby ADM-BWF requires a 48 kHz or 96 kHz output sample rate")
+            if cfg.output_subtype != "PCM_24":
+                raise ValueError("Dolby ADM-BWF requires output_subtype='PCM_24'")
         sep_sr = out_sr
 
         _stem_cache = None
@@ -665,8 +669,14 @@ class StemUpmixPipeline:
             writer.write(channels)
 
         if cfg.downmix_output_path:
+            from upmixer.loudness import measure_true_peak
+
             L, R = itu_downmix_stereo(channels, surround_coeff=cfg.surround_downmix_coeff)
-            sf.write(cfg.downmix_output_path, np.column_stack([L, R]), out_sr, subtype=cfg.output_subtype)
+            stereo = np.column_stack([L, R])
+            tp = measure_true_peak({"FL": L, "FR": R}, out_sr)
+            if tp > cfg.loudness_max_tp:
+                stereo *= 10.0 ** ((cfg.loudness_max_tp - tp) / 20.0)
+            sf.write(cfg.downmix_output_path, stereo, out_sr, subtype=cfg.output_subtype)
             _log.info("  Downmix: %s", cfg.downmix_output_path)
 
         _progress(f"Output: {output_path}", 1.0)

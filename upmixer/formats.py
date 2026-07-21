@@ -59,8 +59,8 @@ SURROUND_71 = OutputFormat(
     name="7.1",
     channels=(
         ChannelLabel.FL, ChannelLabel.FR, ChannelLabel.C,
-        ChannelLabel.LFE, ChannelLabel.BL, ChannelLabel.BR,
-        ChannelLabel.SL, ChannelLabel.SR,
+        ChannelLabel.LFE, ChannelLabel.SL, ChannelLabel.SR,
+        ChannelLabel.BL, ChannelLabel.BR,
     ),
 )
 
@@ -86,8 +86,8 @@ SURROUND_712 = OutputFormat(
     name="7.1.2",
     channels=(
         ChannelLabel.FL, ChannelLabel.FR, ChannelLabel.C,
-        ChannelLabel.LFE, ChannelLabel.BL, ChannelLabel.BR,
-        ChannelLabel.SL, ChannelLabel.SR,
+        ChannelLabel.LFE, ChannelLabel.SL, ChannelLabel.SR,
+        ChannelLabel.BL, ChannelLabel.BR,
         ChannelLabel.TFL, ChannelLabel.TFR,
     ),
 )

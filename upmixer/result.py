@@ -28,9 +28,9 @@ class UpmixResult:
         n_channels_in: Number of input channels.
         n_channels_out: Number of output channels written.
         mode: Processing mode — ``"realtime"`` (STFT coherence) or ``"stem"``.
-        measured_lkfs: Integrated loudness before normalization (BS.1770-4),
+        measured_lkfs: Delivered integrated loudness (BS.1770-5),
             or *None* if loudness normalization was disabled.
-        measured_tp_dbtp: True Peak before normalization in dBTP, or *None*.
+        measured_tp_dbtp: Delivered True Peak in dBTP, or *None*.
         applied_gain_db: Linear gain applied for loudness normalization in dB,
             or *None*.
         stems: Canonical stem names used during separation (stem mode only),

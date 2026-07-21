@@ -479,14 +479,13 @@ def main() -> None:
         default=None,
         help=(
             "'wav' = standard multichannel WAV. "
-            "'adm-bwf' = Broadcast Wave + ITU-R BS.2076-2 ADM metadata "
+            "'adm-bwf' = Dolby ADM-BWF. "
             "(Logic Pro, DaVinci Resolve, Pro Tools). "
             "Default: 'wav' (or as set by manifest)."
         ),
     )
     parser.add_argument("--output-subtype", choices=["PCM_16", "PCM_24", "PCM_32"], default=None, help="Output bit depth (default: PCM_24)")
     parser.add_argument("--output-sample-rate", type=int, default=None, metavar="HZ", help="Resample output (e.g. 48000, 96000). Default: same as input.")
-
     parser.add_argument(
         "--downmix-output",
         default=None,

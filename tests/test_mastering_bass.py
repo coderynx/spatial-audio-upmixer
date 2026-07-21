@@ -171,6 +171,15 @@ class TestBassControllerEQ:
 # ---------------------------------------------------------------------------
 
 class TestBassMonoMaker:
+    def test_mono_content_is_preserved_at_crossover(self):
+        t = np.linspace(0, 4, 4 * 48_000, endpoint=False)
+        signal = np.sin(2 * np.pi * 100 * t)
+        out = _make_bc(mono_cutoff_hz=100.0, sample_rate=48_000).process(
+            {"FL": signal, "FR": signal}
+        )
+        ratio = np.sqrt(np.mean(out["FL"][48_000:] ** 2) / np.mean(signal[48_000:] ** 2))
+        assert ratio == pytest.approx(1.0, abs=1e-3)
+
     def test_bass_mono_makes_lr_more_similar(self):
         """After bass-mono, FL and FR low-freq difference should drop significantly."""
         t = np.linspace(0, 2, 2 * 44100, endpoint=False)
