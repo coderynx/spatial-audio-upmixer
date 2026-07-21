@@ -600,7 +600,11 @@ class StemUpmixPipeline:
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
 
         _progress("  Analyzing stem content...", 0.75)
-        stem_features = analyze_stems(all_stems, sep_sr)
+        stem_features = analyze_stems(
+            all_stems,
+            sep_sr,
+            high_frequency_hz=cfg.content_hf_analysis_hz,
+        )
         for stem_key, feat in sorted(stem_features.items()):
             name = stem_key.split("@")[0]
             zone = f"@{stem_key.split('@')[1]}" if "@" in stem_key else ""
@@ -619,21 +623,22 @@ class StemUpmixPipeline:
             stem_features=stem_features,
         )
 
-        if cfg.normalize_output:
-            stem_input_energy = sum(
-                float(np.sum(s ** 2)) for s in all_stems.values()
-            )
-            stem_output_energy = sum(
-                float(np.sum(ch ** 2)) for ch in channels.values()
-            )
-            if stem_output_energy > 1e-20:
-                scale = min(1.0, np.sqrt(stem_input_energy / stem_output_energy))
-                channels = {k: v * scale for k, v in channels.items()}
-
         for ch_name, ch_audio in passthrough_resampled.items():
             if ch_name in channels:
                 n = min(len(ch_audio), n_samples)
                 channels[ch_name][:n] += ch_audio[:n]
+
+        if cfg.normalize_output:
+            if sr != sep_sr:
+                g = math.gcd(sr, sep_sr)
+                source_audio = resample_poly(audio_full, sep_sr // g, sr // g, axis=0)
+            else:
+                source_audio = audio_full
+            source_energy = float(np.vdot(source_audio, source_audio).real)
+            output_energy = sum(float(np.vdot(ch, ch).real) for ch in channels.values())
+            if source_energy > 1e-20 and output_energy > 1e-20:
+                scale = np.sqrt(source_energy / output_energy)
+                channels = {name: ch * scale for name, ch in channels.items()}
 
         _progress("  Mastering...", 0.90)
         mastering = MasteringChain(cfg)

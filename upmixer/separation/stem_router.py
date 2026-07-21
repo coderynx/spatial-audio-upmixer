@@ -41,6 +41,7 @@ from scipy.signal import butter, sosfilt
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, OutputFormat
 from upmixer.separation.stem_analyzer import StemFeatures
+from upmixer.utils import diffuse_send
 
 _LEFT_CHANNELS  = {ChannelLabel.FL, ChannelLabel.SL, ChannelLabel.BL, ChannelLabel.TFL, ChannelLabel.TBL}
 _RIGHT_CHANNELS = {ChannelLabel.FR, ChannelLabel.SR, ChannelLabel.BR, ChannelLabel.TFR, ChannelLabel.TBR}
@@ -52,6 +53,8 @@ _HEIGHT_CHANNELS   = {ChannelLabel.TFL, ChannelLabel.TFR, ChannelLabel.TBL, Chan
 _VOCAL_STEM_NAMES: frozenset[str] = frozenset({
     "Vocals", "Lead Vocals", "Backing Vocals",
 })
+
+_LFE_REFERENCE_GAIN = 10.0 ** (-10.0 / 20.0)
 
 
 def _content_scale(features: StemFeatures, label: ChannelLabel) -> float:
@@ -350,7 +353,8 @@ class StemRouter:
     """Mix separated stems into output channels using spatial routing tables.
 
     Stems keyed as "StemName@zone" are routed via ZONE_ROUTING[zone][StemName].
-    Unzoned stems (no "@") fall back to DEFAULT_ROUTING or custom_routing.
+    Custom routing entries merge over built-in routes.  Zone-specific custom
+    keys (``"Stem@zone"``) take precedence over stem-name entries.
 
     Channels listed in passthrough_channels are skipped during routing; the
     pipeline injects those channels directly from the source material.
@@ -365,7 +369,7 @@ class StemRouter:
     ) -> None:
         self._config = config
         self._fmt = output_fmt
-        self._fallback_routing = routing or DEFAULT_ROUTING
+        self._custom_routing = routing or {}
         self._sr = sample_rate
         self._lfe_sos = butter(
             config.lfe_filter_order,
@@ -373,7 +377,55 @@ class StemRouter:
             btype="low",
             output="sos",
         )
-        self._lfe_gain = config.lfe_gain
+        self._lfe_gain = config.lfe_gain * _LFE_REFERENCE_GAIN
+        self._surround_sos = butter(
+            2,
+            config.surround_bass_cutoff_hz / (sample_rate / 2.0),
+            btype="high",
+            output="sos",
+        )
+        self._height_low_sos = butter(
+            1,
+            config.height_low_rolloff_hz / (sample_rate / 2.0),
+            btype="low",
+            output="sos",
+        )
+        self._height_high_sos = butter(
+            2,
+            config.height_crossover_hz / (sample_rate / 2.0),
+            btype="high",
+            output="sos",
+        )
+
+    def _routing_for(self, stem_key: str) -> dict[str, float] | None:
+        if "@" in stem_key:
+            stem_name, zone = stem_key.rsplit("@", 1)
+            base = ZONE_ROUTING.get(zone, {}).get(stem_name) or DEFAULT_ROUTING.get(stem_name)
+        else:
+            stem_name = stem_key
+            base = DEFAULT_ROUTING.get(stem_name)
+
+        custom = self._custom_routing.get(stem_key) or self._custom_routing.get(stem_name)
+        if base is None:
+            return dict(custom) if custom else None
+        return {**base, **custom} if custom else base
+
+    def _channel_gain(self, label: ChannelLabel) -> float:
+        if label == ChannelLabel.C:
+            return self._config.center_gain
+        if label in {ChannelLabel.BL, ChannelLabel.BR}:
+            return self._config.back_gain
+        if label in {ChannelLabel.SL, ChannelLabel.SR}:
+            return self._config.surround_gain
+        if label in _HEIGHT_CHANNELS:
+            return self._config.height_gain
+        return 1.0
+
+    def _height_send(self, signal: np.ndarray) -> np.ndarray:
+        low = sosfilt(self._height_low_sos, signal)
+        shaped = signal - low * (1.0 - self._config.height_low_rolloff_gain)
+        high = sosfilt(self._height_high_sos, shaped)
+        return shaped + high * (self._config.height_high_shelf_gain - 1.0)
 
     def route(
         self,
@@ -401,17 +453,11 @@ class StemRouter:
             label.value: np.zeros(n_samples, dtype=np.float64)
             for label in self._fmt.channels
         }
+        lfe_bus = np.zeros(n_samples, dtype=np.float64)
 
         for stem_key, audio in stems.items():
-            if "@" in stem_key:
-                stem_name, zone = stem_key.rsplit("@", 1)
-                stem_routing = (
-                    ZONE_ROUTING.get(zone, {}).get(stem_name)
-                    or self._fallback_routing.get(stem_name)
-                )
-            else:
-                stem_name = stem_key
-                stem_routing = self._fallback_routing.get(stem_name)
+            stem_name = stem_key.rsplit("@", 1)[0]
+            stem_routing = self._routing_for(stem_key)
 
             if not stem_routing:
                 continue
@@ -419,46 +465,80 @@ class StemRouter:
             features = stem_features.get(stem_key) if stem_features else None
 
             n = min(len(audio), n_samples)
-            stem_L = audio[:n, 0].astype(np.float64)
-            stem_R = audio[:n, 1].astype(np.float64) if audio.shape[1] > 1 else stem_L.copy()
+            stem_L = audio[:n, 0].astype(np.float64, copy=False)
+            stem_R = audio[:n, 1].astype(np.float64, copy=False) if audio.shape[1] > 1 else stem_L
             stem_mono = (stem_L + stem_R) * 0.5
+            needs_surround = any(
+                label in _SURROUND_CHANNELS and label.value in stem_routing
+                for label in self._fmt.channels
+            )
+            needs_height = any(
+                label in _HEIGHT_CHANNELS and label.value in stem_routing
+                for label in self._fmt.channels
+            )
+            surround_L = (
+                diffuse_send(sosfilt(self._surround_sos, stem_L), self._sr, delay_ms=31.0)
+                if needs_surround else stem_L
+            )
+            surround_R = (
+                diffuse_send(sosfilt(self._surround_sos, stem_R), self._sr, delay_ms=37.0)
+                if needs_surround else stem_R
+            )
+            height_L = (
+                diffuse_send(self._height_send(stem_L), self._sr, delay_ms=23.0)
+                if needs_height else stem_L
+            )
+            height_R = (
+                diffuse_send(self._height_send(stem_R), self._sr, delay_ms=29.0)
+                if needs_height else stem_R
+            )
 
             c_redirect: float = 0.0
             if "C" in skip and "C" in stem_routing and stem_name in _VOCAL_STEM_NAMES:
                 c_redirect = stem_routing["C"] * 0.5
 
-            lfe_signal: np.ndarray | None = None
-
+            route_items: list[tuple[ChannelLabel, float, np.ndarray]] = []
             for label in self._fmt.channels:
                 ch = label.value
                 if ch in skip or ch not in stem_routing:
                     continue
 
-                gain = stem_routing[ch]
+                gain = stem_routing[ch] * self._channel_gain(label)
                 if c_redirect > 0.0 and label in (ChannelLabel.FL, ChannelLabel.FR):
                     gain += c_redirect
                 if features is not None:
-                    gain = gain * _content_scale(features, label)
+                    content_scale = _content_scale(features, label)
+                    gain *= 1.0 + self._config.content_mix_strength * (content_scale - 1.0)
 
                 if label == ChannelLabel.LFE:
-                    if lfe_signal is None:
-                        lfe_signal = self._lfe_gain * sosfilt(self._lfe_sos, stem_mono)
-                    channels[ch][:n] += gain * lfe_signal
+                    lfe_bus[:n] += gain * stem_mono
                 elif label in _LEFT_CHANNELS:
-                    channels[ch][:n] += gain * stem_L
+                    signal = height_L if label in _HEIGHT_CHANNELS else (
+                        surround_L if label in _SURROUND_CHANNELS else stem_L
+                    )
+                    route_items.append((label, gain, signal))
                 elif label in _RIGHT_CHANNELS:
-                    channels[ch][:n] += gain * stem_R
+                    signal = height_R if label in _HEIGHT_CHANNELS else (
+                        surround_R if label in _SURROUND_CHANNELS else stem_R
+                    )
+                    route_items.append((label, gain, signal))
                 elif label == ChannelLabel.C:
-                    channels[ch][:n] += gain * stem_mono
+                    route_items.append((label, gain, stem_mono))
+
+            input_energy = float(np.dot(stem_L, stem_L) + np.dot(stem_R, stem_R))
+            routed_energy = sum(
+                gain * gain * float(np.dot(signal, signal))
+                for _, gain, signal in route_items
+            )
+            route_scale = np.sqrt(input_energy / routed_energy) if routed_energy > 1e-20 else 1.0
+            for label, gain, signal in route_items:
+                channels[label.value][:n] += route_scale * gain * signal
+
+        if "LFE" in channels:
+            channels["LFE"] += self._lfe_gain * sosfilt(self._lfe_sos, lfe_bus)
 
         return channels
 
     def get_routing(self, stem_key: str) -> dict[str, float] | None:
         """Return effective routing dict for a stem key ("StemName" or "StemName@zone")."""
-        if "@" in stem_key:
-            stem_name, zone = stem_key.rsplit("@", 1)
-            return (
-                ZONE_ROUTING.get(zone, {}).get(stem_name)
-                or self._fallback_routing.get(stem_name)
-            )
-        return self._fallback_routing.get(stem_key)
+        return self._routing_for(stem_key)

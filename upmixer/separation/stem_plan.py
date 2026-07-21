@@ -137,6 +137,9 @@ def resolve_separation_plan(canonical: list[str]) -> SeparationPlan:
     """
     requested = frozenset(canonical) if canonical else frozenset(DEFAULT_STEMS)
 
+    if requested & DRUM_SUB_STEMS:
+        requested = requested - {"Drums"}
+
     tasks: list[SeparationTask] = []
 
     crowd_needed = "Crowd" in requested

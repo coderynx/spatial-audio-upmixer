@@ -125,17 +125,15 @@ class TestResolveSeparationPlan:
         assert stage2.input_source == "Drums"
         assert stage2.keep_stems == frozenset({"Kick", "Hi-Hat"})
 
-    def test_drums_and_sub_stems_both_stages(self):
-        """User wants both Drums (whole) and Kick (sub) → Stage 1 keeps Drums,
-        Stage 2 extracts Kick."""
+    def test_drum_sub_stems_replace_parent_in_final_mix(self):
+        """Parent Drums must not be mixed with its derived sub-stems."""
         canonical = normalize_stems(["drums", "kick"])
         plan = resolve_separation_plan(canonical)
         assert len(plan.tasks) == 2
 
         stage1, stage2 = plan.tasks
-        assert "Drums" in stage1.keep_stems     # final output
-        assert "Drums" in plan.requested_stems  # user asked for it
-
+        assert "Drums" not in stage1.keep_stems
+        assert "Drums" not in plan.requested_stems
         assert stage2.keep_stems == frozenset({"Kick"})
 
     def test_backing_vocals_only_two_stages(self):
