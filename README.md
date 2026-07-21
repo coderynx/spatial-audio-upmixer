@@ -1,4 +1,4 @@
-# upmixer
+# Spatial Audio Upmixer
 
 A command-line tool and Python library for upmixing audio from stereo or surround formats to Dolby Atmos and other
 multichannel layouts.
