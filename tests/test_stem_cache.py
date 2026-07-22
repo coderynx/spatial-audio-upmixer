@@ -215,7 +215,7 @@ class TestStemCacheSaveLoad:
         loaded_stems, _ = cache.load(wav, "model", 44100)
         assert set(loaded_stems.keys()) == set(stems.keys())
 
-    def test_output_is_float64(self, tmp_path):
+    def test_output_is_float32(self, tmp_path):
         pytest.importorskip("soundfile")
         wav = str(tmp_path / "src.wav")
         _write_dummy_wav(wav)
@@ -225,7 +225,7 @@ class TestStemCacheSaveLoad:
 
         loaded_stems, _ = cache.load(wav, "model", 44100)
         for arr in loaded_stems.values():
-            assert arr.dtype == np.float64
+            assert arr.dtype == np.float32
 
 
 # ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ Usage:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import os
@@ -92,6 +93,20 @@ def _cacheable_plan_stems(plan: SeparationPlan) -> frozenset[str]:
     )
 
 
+def _stem_cache_identity(plan: SeparationPlan, config: UpmixConfig) -> str:
+    """Return model-plan identity including output-affecting inference overrides."""
+    base = plan.inference_hash or plan.stems_hash
+    options = (
+        config.stem_batch_size,
+        config.stem_segment_size,
+        config.stem_chunk_duration_s,
+    )
+    if all(value is None for value in options):
+        return base
+    raw = f"{base}|batch={options[0]}|segment={options[1]}|chunk={options[2]}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:20]
+
+
 class StemUpmixPipeline:
     """File-based upmix pipeline using instrument stem separation.
 
@@ -127,6 +142,7 @@ class StemUpmixPipeline:
         self._separators: dict[str, StemSeparator] = {}
         self._separator_sr: int | None = None
         self._separator_batch_size: int | None = None
+        self._separator_settings: tuple[object, ...] | None = None
 
     def _get_or_create_separator(self, model: str, sep_sr: int) -> StemSeparator:
         """Return a ready StemSeparator for the given model and sample rate.
@@ -135,11 +151,31 @@ class StemUpmixPipeline:
         sample rate changes between calls all cached separators are recreated
         (in practice all stages of a single plan run at the same sep_sr).
         """
-        sep_log_level = logging.DEBUG if _log.isEnabledFor(logging.DEBUG) else logging.WARNING
+        sep_log_level = (
+            logging.DEBUG if _log.isEnabledFor(logging.DEBUG) else logging.WARNING
+        )
         requested_batch = self.config.stem_batch_size
         if requested_batch is not None and requested_batch < 1:
             raise ValueError("stem_batch_size must be at least 1")
-        if self._separator_sr != sep_sr or self._separator_batch_size != requested_batch:
+        requested_segment = self.config.stem_segment_size
+        if requested_segment is not None and requested_segment < 1:
+            raise ValueError("stem_segment_size must be at least 1")
+        requested_chunk = self.config.stem_chunk_duration_s
+        if requested_chunk is not None and requested_chunk <= 0:
+            raise ValueError("stem_chunk_duration_s must be greater than 0")
+        requested_cache_size = self.config.stem_model_cache_size
+        if requested_cache_size is not None and requested_cache_size < 1:
+            raise ValueError("stem_model_cache_size must be at least 1")
+        requested_settings = (
+            requested_batch,
+            requested_segment,
+            requested_chunk,
+            requested_cache_size,
+        )
+        if (
+            self._separator_sr != sep_sr
+            or self._separator_settings != requested_settings
+        ):
             if self._separators:
                 _log.info(
                     "  Separator settings changed; re-creating loaded models."
@@ -149,15 +185,30 @@ class StemUpmixPipeline:
             self._separators = {}
             self._separator_sr = sep_sr
             self._separator_batch_size = requested_batch
+            self._separator_settings = requested_settings
         if model not in self._separators:
-            self._separators[model] = StemSeparator(
+            separator = StemSeparator(
                 model=model,
                 model_dir=self._model_dir,
                 sample_rate=sep_sr,
                 log_level=sep_log_level,
                 batch_size=requested_batch,
+                segment_size=requested_segment,
+                chunk_duration_s=requested_chunk,
             )
-        return self._separators[model]
+            cache_size = requested_cache_size
+            if cache_size is None and separator.backend == "cpu":
+                cache_size = 1
+            while cache_size is not None and len(self._separators) >= cache_size:
+                old_model = next(iter(self._separators))
+                old_separator = self._separators.pop(old_model)
+                _log.info("  Releasing separator model=%s to bound RAM", old_model)
+                old_separator.close()
+            self._separators[model] = separator
+        else:
+            separator = self._separators.pop(model)
+            self._separators[model] = separator
+        return separator
 
     def close(self) -> None:
         """Release all separators and unload neural network models."""
@@ -166,6 +217,7 @@ class StemUpmixPipeline:
         self._separators = {}
         self._separator_sr = None
         self._separator_batch_size = None
+        self._separator_settings = None
 
     def __enter__(self) -> "StemUpmixPipeline":
         return self
@@ -230,6 +282,16 @@ class StemUpmixPipeline:
             sep = self._get_or_create_separator(task.model, sep_sr)
             loaded, on_disk = sep.separate_to_file(input_path_for_task, keep_on_disk)
 
+            for name, path in on_disk.items():
+                stable_path = _temporary_wav_path("upmixer_intermediate_")
+                try:
+                    os.replace(path, stable_path)
+                except OSError:
+                    if os.path.exists(stable_path):
+                        os.unlink(stable_path)
+                    raise
+                on_disk[name] = stable_path
+
             _log.info(
                 "  [stage %d/%d] produced: loaded=%s  on_disk=%s",
                 stage_idx + 1,
@@ -279,7 +341,10 @@ class StemUpmixPipeline:
         Returns the same dict shape as :meth:`_execute_plan`:
         ``{stem_name: (n_sep_samples, 2) float32}``.
         """
-        from upmixer.separation.silence import find_active_spans, stitch_with_crossfade
+        from upmixer.separation.silence import (
+            find_active_spans,
+            write_crossfaded_span,
+        )
 
         n_sr = len(zone_audio)
         silence_started = time.monotonic()
@@ -318,41 +383,41 @@ class StemUpmixPipeline:
 
         _log.info("  Silence-skip: %d active span(s)", len(spans))
         fade_samples = max(0, int(cfg.stem_silence_crossfade_ms / 1000.0 * sep_sr))
-        tmp_files: list[str] = []
-        span_data: list[tuple[int, int, dict[str, np.ndarray]]] = []
+        stem_names = _cacheable_plan_stems(plan)
+        result = {
+            stem_name: np.zeros((n_sep, 2), dtype=np.float32)
+            for stem_name in stem_names
+        }
 
-        try:
-            for s_start, s_end in spans:
-                span_audio = zone_audio[s_start:s_end]
-                tmp = _temporary_wav_path("upmixer_span_")
+        for s_start, s_end in spans:
+            span_audio = zone_audio[s_start:s_end]
+            tmp = _temporary_wav_path("upmixer_span_")
+            try:
                 sf.write(tmp, span_audio, sr, subtype="FLOAT")
-                tmp_files.append(tmp)
                 outputs = self._execute_plan(plan, tmp, sep_sr)
-                sep_start = int(round(s_start * sep_sr / sr)) if sep_sr != sr else s_start
+                sep_start = (
+                    int(round(s_start * sep_sr / sr))
+                    if sep_sr != sr else s_start
+                )
                 out_len = max((len(v) for v in outputs.values()), default=0)
-                span_data.append((sep_start, sep_start + out_len, outputs))
-        finally:
-            for tmp in tmp_files:
+            finally:
                 if os.path.exists(tmp):
                     os.unlink(tmp)
 
-        if span_data:
-            n_sep = max(n_sep, span_data[-1][1])
-
-        result: dict[str, np.ndarray] = {}
-        for stem_name in _cacheable_plan_stems(plan):
-            tuples = [
-                (
-                    sep_start,
-                    sep_end,
-                    outputs.get(
-                        stem_name,
-                        np.zeros((sep_end - sep_start, 2), dtype=np.float32),
-                    ),
-                )
-                for sep_start, sep_end, outputs in span_data
-            ]
-            result[stem_name] = stitch_with_crossfade(tuples, n_sep, fade_samples)
+            required_length = sep_start + out_len
+            if required_length > n_sep:
+                for stem_name in stem_names:
+                    result[stem_name].resize((required_length, 2), refcheck=False)
+                    result[stem_name][n_sep:] = 0.0
+                n_sep = required_length
+            for stem_name, output in outputs.items():
+                if stem_name in result:
+                    write_crossfaded_span(
+                        result[stem_name], sep_start, sep_start + out_len,
+                        output, fade_samples,
+                    )
+            del outputs
+            output = None
 
         return result
 
@@ -388,7 +453,7 @@ class StemUpmixPipeline:
 
         reader = AudioReader(input_path)
         read_started = time.monotonic()
-        audio_full, sr = reader.read()
+        audio_full, sr = reader.read(dtype="float32")
         _log.debug("  Timing input-read=%.3fs", time.monotonic() - read_started)
 
         if input_format_override is not None:
@@ -446,7 +511,14 @@ class StemUpmixPipeline:
         if cfg.stem_cache_dir:
             from upmixer.separation.stem_cache import StemCache
             _stem_cache = StemCache(cfg.stem_cache_dir)
-            cache_identity = plan.inference_hash or plan.stems_hash
+            cache_identity = _stem_cache_identity(plan, cfg)
+            custom_inference_tuning = any(
+                value is not None for value in (
+                    cfg.stem_batch_size,
+                    cfg.stem_segment_size,
+                    cfg.stem_chunk_duration_s,
+                )
+            )
             cache_started = time.monotonic()
             _cache_result = _stem_cache.load(
                 input_path, cache_identity, sep_sr,
@@ -460,7 +532,11 @@ class StemUpmixPipeline:
                 silence_pad_ms=cfg.stem_silence_pad_ms,
             )
             # Read caches created before model-plan keys were introduced.
-            if _cache_result is None and cache_identity != plan.stems_hash:
+            if (
+                _cache_result is None
+                and not custom_inference_tuning
+                and cache_identity != plan.stems_hash
+            ):
                 _cache_result = _stem_cache.load(
                     input_path, plan.stems_hash, sep_sr,
                     is_preview=cfg.preview,
@@ -475,6 +551,7 @@ class StemUpmixPipeline:
             _log.debug("  Timing cache-read=%.3fs", time.monotonic() - cache_started)
             if _cache_result is not None:
                 _cache_hit_stems, _ = _cache_result
+                _cache_result = None
 
         if input_fmt.n_channels <= 2:
             if _preview_stereo_forced_array:
@@ -508,6 +585,7 @@ class StemUpmixPipeline:
 
         if _cache_hit_stems is not None:
             all_stems = _cache_hit_stems
+            _cache_hit_stems = None
             _log.info("  Stem cache: using cached stems (separation skipped)")
         else:
             tmp_files: list[str] = []
@@ -544,6 +622,7 @@ class StemUpmixPipeline:
                     for stem_name, stem_audio in zone_stems.items():
                         key = stem_name if stereo_mode else f"{stem_name}@{zone_name}"
                         all_stems[key] = stem_audio
+                    del zone_stems
 
             finally:
                 for tmp in tmp_files:
@@ -553,7 +632,7 @@ class StemUpmixPipeline:
             if _stem_cache is not None and all_stems:
                 cache_started = time.monotonic()
                 _stem_cache.save(
-                    input_path, plan.inference_hash or plan.stems_hash,
+                    input_path, cache_identity,
                     sep_sr, all_stems, sep_sr,
                     is_preview=cfg.preview,
                     preview_duration=cfg.preview_duration_s,
@@ -565,6 +644,11 @@ class StemUpmixPipeline:
                     silence_pad_ms=cfg.stem_silence_pad_ms,
                 )
                 _log.debug("  Timing cache-write=%.3fs", time.monotonic() - cache_started)
+
+        pair_src = None
+        _zone_audio = None
+        stem_audio = None
+        front_arr = None
 
         # Models often emit more stems than requested. Cache those free outputs,
         # then keep only requested stems out of routing and mixing.
@@ -593,9 +677,9 @@ class StemUpmixPipeline:
                 for ch_name, ch_audio in passthrough.items():
                     passthrough_resampled[ch_name] = resample_poly(
                         ch_audio, up, down
-                    ).astype(np.float64)
+                    ).astype(np.float32, copy=False)
             else:
-                passthrough_resampled = {k: v.astype(np.float64) for k, v in passthrough.items()}
+                passthrough_resampled = passthrough
 
         source_zones = _resample_zones(source_zones, sr, sep_sr)
 
@@ -616,12 +700,13 @@ class StemUpmixPipeline:
 
         # Analyze the separated stereo reconstruction at routing sample rate.
         # This keeps creative timing aligned with cached/resampled stems.
-        mix_l = np.zeros(n_samples, dtype=np.float64)
-        mix_r = np.zeros(n_samples, dtype=np.float64)
+        mix_l = np.zeros(n_samples, dtype=np.float32)
+        mix_r = np.zeros(n_samples, dtype=np.float32)
         for stem in all_stems.values():
             n = min(len(stem), n_samples)
             mix_l[:n] += stem[:n, 0]
             mix_r[:n] += stem[:n, 1] if stem.shape[1] > 1 else stem[:n, 0]
+        stem = None
         spatial_plan = analyze_spatial_plan(mix_l, mix_r, sep_sr, cfg) if cfg.spatial_preanalysis else None
         if spatial_plan is not None:
             _log.info("  Spatial: %s (confidence %.2f)", spatial_plan.profile, spatial_plan.confidence)
@@ -655,6 +740,7 @@ class StemUpmixPipeline:
             if ch_name in channels:
                 n = min(len(ch_audio), n_samples)
                 channels[ch_name][:n] += ch_audio[:n]
+        ch_audio = None
 
         channels = apply_source_anchor(
             channels, source_zones, output_fmt, cfg.stem_source_anchor_strength,
@@ -671,6 +757,10 @@ class StemUpmixPipeline:
             if source_energy > 1e-20 and output_energy > 1e-20:
                 scale = np.sqrt(source_energy / output_energy)
                 channels = {name: ch * scale for name, ch in channels.items()}
+            del source_audio
+
+        del all_stems, audio_full, source_zones, sep_zones, passthrough
+        del passthrough_resampled, mix_l, mix_r, stem_features, spatial_plan
 
         _progress("  Mastering...", 0.90)
         mastering = MasteringChain(cfg)
@@ -737,11 +827,11 @@ def _extract_zones(
     """Split multichannel audio into stereo pairs by spatial zone and passthrough channels.
 
     Returns:
-        zones: zone_name → (n_samples, 2) float64 array for stem separation.
-        passthrough: channel_name → (n_samples,) float64 array for direct injection.
+        zones: zone_name → (n_samples, 2) float32 array for stem separation.
+        passthrough: channel_name → (n_samples,) float32 view for direct injection.
     """
     ch_map = {
-        label: audio[:, i].astype(np.float64)
+        label: audio[:, i]
         for i, label in enumerate(input_fmt.channels)
     }
 
@@ -775,10 +865,10 @@ def _resample_zones(
 ) -> dict[str, np.ndarray]:
     """Return source zones at routing sample rate."""
     if source_sr == target_sr:
-        return {name: audio.astype(np.float64, copy=False) for name, audio in zones.items()}
+        return zones
     divisor = math.gcd(source_sr, target_sr)
     up, down = target_sr // divisor, source_sr // divisor
     return {
-        name: resample_poly(audio, up, down, axis=0).astype(np.float64)
+        name: resample_poly(audio, up, down, axis=0).astype(np.float32, copy=False)
         for name, audio in zones.items()
     }

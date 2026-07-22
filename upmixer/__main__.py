@@ -171,6 +171,12 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.stem_cache_dir = args.stem_cache_dir
     if args.stem_batch_size is not None:
         config.stem_batch_size = args.stem_batch_size
+    if args.stem_segment_size is not None:
+        config.stem_segment_size = args.stem_segment_size
+    if args.stem_chunk_duration_s is not None:
+        config.stem_chunk_duration_s = args.stem_chunk_duration_s
+    if args.stem_model_cache_size is not None:
+        config.stem_model_cache_size = args.stem_model_cache_size
     if args.stem_silence_skip is not None:
         config.stem_silence_skip = args.stem_silence_skip
     if args.stem_silence_threshold_db is not None:
@@ -231,6 +237,11 @@ def _apply_resource_limits(cpu_priority: str, mode: str) -> None:
     try:
         import torch
         torch.set_num_threads(n)
+        try:
+            set_interop_threads = getattr(torch, "set_num_interop_threads")
+            set_interop_threads(1)
+        except (AttributeError, RuntimeError):
+            pass
     except ImportError:
         pass
     try:
@@ -753,6 +764,39 @@ def main() -> None:
         help=(
             "Full-precision inference batch size (stem mode only). "
             "Default: auto-select from accelerator and free memory."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-segment-size",
+        type=lambda value: _positive_int(value, "--stem-segment-size"),
+        default=None,
+        metavar="N",
+        help=(
+            "MDXC inference segment size (stem mode only). Smaller values "
+            "reduce CPU RAM use. Default: auto-select from VM memory."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-chunk-duration-s",
+        type=lambda value: _positive_float(value, "--stem-chunk-duration-s"),
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Split long separator inputs into bounded-memory chunks. "
+            "Default: auto-select for low-memory CPU inference."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-model-cache-size",
+        type=lambda value: _positive_int(value, "--stem-model-cache-size"),
+        default=None,
+        metavar="N",
+        help=(
+            "Maximum resident separator models. Default: one on CPU, "
+            "unlimited on accelerators."
         ),
     )
 

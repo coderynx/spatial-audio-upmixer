@@ -16,9 +16,9 @@ class AudioReader:
         self._n_samples = info.frames
         self._channels = info.channels
 
-    def read(self) -> tuple[np.ndarray, int]:
-        """Returns (audio_data [n_samples, n_channels], sample_rate)."""
-        audio, sr = sf.read(str(self._path), dtype="float64")
+    def read(self, dtype: str = "float64") -> tuple[np.ndarray, int]:
+        """Returns audio data and sample rate using requested NumPy dtype."""
+        audio, sr = sf.read(str(self._path), dtype=dtype)
         if audio.ndim == 1:
             audio = audio[:, np.newaxis]
         return audio, sr

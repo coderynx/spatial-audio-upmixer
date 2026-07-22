@@ -252,3 +252,22 @@ class TestStemCacheKeyContract:
         path = self._make_dummy_file(tmp_path)
         key = _cache_key(path, "somehash", 48000)
         assert len(key) == 20
+
+
+def test_stem_cache_identity_changes_for_inference_overrides():
+    from upmixer.config import UpmixConfig
+    from upmixer.separation.stem_pipeline import _stem_cache_identity
+
+    plan = resolve_separation_plan(["Vocals", "Bass"])
+    default_identity = _stem_cache_identity(plan, UpmixConfig())
+    tuned_identity = _stem_cache_identity(
+        plan,
+        UpmixConfig(
+            stem_batch_size=1,
+            stem_segment_size=128,
+            stem_chunk_duration_s=300.0,
+        ),
+    )
+
+    assert default_identity == plan.inference_hash
+    assert tuned_identity != default_identity

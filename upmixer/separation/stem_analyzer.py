@@ -75,11 +75,11 @@ def analyze_stem(
         n_windows = max(1, n_windows)
         window_n = max_n // n_windows
         starts = np.linspace(0, len(left) - window_n, n_windows, dtype=int)
-        L = np.concatenate([left[s:s + window_n] for s in starts]).astype(np.float64)
-        R = np.concatenate([right[s:s + window_n] for s in starts]).astype(np.float64)
+        L = np.concatenate([left[s:s + window_n] for s in starts]).astype(np.float32)
+        R = np.concatenate([right[s:s + window_n] for s in starts]).astype(np.float32)
     else:
-        L = left[:max_n].astype(np.float64)
-        R = right[:max_n].astype(np.float64)
+        L = left[:max_n].astype(np.float32, copy=False)
+        R = right[:max_n].astype(np.float32, copy=False)
 
     l_e = float(np.dot(L, L) / len(L))
     r_e = float(np.dot(R, R) / len(R))
@@ -131,7 +131,7 @@ def analyze_stems(
     stems: dict[str, np.ndarray],
     sample_rate: int,
     high_frequency_hz: float = 4000.0,
-    max_workers: int = 4,
+    max_workers: int = 2,
 ) -> dict[str, StemFeatures]:
     """Analyze all stems in parallel.  Returns {stem_key: StemFeatures}."""
     keys = list(stems.keys())

@@ -153,6 +153,12 @@ Model files are cached under `~/.cache/upmixer-models` by default. `--stem-cache
 for repeat runs. Stem silence skipping is enabled by default, and inference batch size is selected from the available
 CPU, CUDA, MPS, or CoreML resources unless `--stem-batch-size` is supplied.
 
+CPU inference adapts to VM/container memory. Systems with at most 12 GiB use smaller MDXC segments and split long
+inputs into bounded-memory chunks; CPU runs keep one model resident to prevent hierarchical plans from stacking model
+weights. Override these limits with `--stem-segment-size`, `--stem-chunk-duration-s`, and
+`--stem-model-cache-size`. For a 4-core, low-memory VM, keep `--cpu-priority auto`, batch size 1, and place
+`--stem-cache-dir` on the SSD.
+
 Stem separation is provided through
 [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) by nomadkaraoke, using supported Demucs,
 MDX, and RoFormer-family models.

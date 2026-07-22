@@ -120,30 +120,41 @@ def stitch_with_crossfade(
     out = np.zeros((total_length, 2), dtype=np.float32)
 
     for s_start, s_end, audio in span_outputs:
-        span_len = s_end - s_start
-        if span_len <= 0:
-            continue
-        n_audio = len(audio)
-
-        if n_audio >= span_len:
-            chunk = audio[:span_len].astype(np.float32)
-        else:
-            chunk = np.zeros((span_len, 2), dtype=np.float32)
-            chunk[:n_audio] = audio.astype(np.float32)
-
-        if fade_samples > 0:
-            fade_len = min(fade_samples, span_len // 2)
-            if fade_len > 0:
-                ramp = np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
-                chunk[:fade_len] *= ramp[:, np.newaxis]
-                chunk[span_len - fade_len:] *= ramp[::-1, np.newaxis]
-
-        actual_end = min(s_end, total_length)
-        write_len = actual_end - s_start
-        if write_len > 0:
-            out[s_start:actual_end] = chunk[:write_len]
+        write_crossfaded_span(out, s_start, s_end, audio, fade_samples)
 
     return out
+
+
+def write_crossfaded_span(
+    out: np.ndarray,
+    start: int,
+    end: int,
+    audio: np.ndarray,
+    fade_samples: int,
+) -> None:
+    """Write one separator span into an existing float32 stereo buffer."""
+    span_len = end - start
+    if span_len <= 0 or start >= len(out):
+        return
+    actual_end = min(end, len(out))
+    write_len = actual_end - start
+    if write_len <= 0:
+        return
+
+    chunk = np.zeros((write_len, 2), dtype=np.float32)
+    copy_len = min(len(audio), write_len)
+    if copy_len > 0:
+        chunk[:copy_len] = audio[:copy_len]
+
+    if fade_samples > 0:
+        fade_len = min(fade_samples, span_len // 2, write_len)
+        if fade_len > 0:
+            ramp = np.linspace(0.0, 1.0, fade_len, dtype=np.float32)
+            chunk[:fade_len] *= ramp[:, np.newaxis]
+            if actual_end == end:
+                chunk[write_len - fade_len:] *= ramp[::-1, np.newaxis]
+
+    out[start:actual_end] = chunk
 
 
 def _mask_to_runs(mask: np.ndarray) -> list[tuple[int, int]]:
