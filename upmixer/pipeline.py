@@ -23,9 +23,68 @@ from upmixer.io.writer import AudioWriter
 from upmixer.mastering import MasteringChain
 from upmixer.result import UpmixResult
 from upmixer.routing.channel_router import ChannelRouter
-from upmixer.utils import normalize_energy, preview_slice, itu_downmix_stereo
+from upmixer.utils import preview_slice, itu_downmix_stereo
 
 _log = logging.getLogger("upmixer")
+
+
+class _LinkedEnergyController:
+    """Bound aggregate routed energy without file-wide lookahead."""
+
+    def __init__(self, sample_rate: int, hop_size: int):
+        self._attack_alpha = math.exp(-hop_size / (sample_rate * 0.020))
+        self._release_alpha = math.exp(-hop_size / (sample_rate * 0.500))
+        self._gain = 1.0
+
+    def apply(
+        self,
+        spectra: dict[str, np.ndarray],
+        source_left: np.ndarray,
+        source_right: np.ndarray,
+    ) -> dict[str, np.ndarray]:
+        source_energy = float(
+            np.vdot(source_left, source_left).real
+            + np.vdot(source_right, source_right).real
+        )
+        routed_energy = float(sum(np.vdot(frame, frame).real for frame in spectra.values()))
+        if source_energy <= 1e-20 or routed_energy <= 1e-20:
+            return spectra
+
+        target = math.sqrt(source_energy / routed_energy)
+        target = float(np.clip(target, 10.0 ** (-6.0 / 20.0), 10.0 ** (6.0 / 20.0)))
+        alpha = self._attack_alpha if target < self._gain else self._release_alpha
+        self._gain = alpha * self._gain + (1.0 - alpha) * target
+        return {name: frame * self._gain for name, frame in spectra.items()}
+
+    def reset(self) -> None:
+        self._gain = 1.0
+
+
+class _AllPassDecorrelator:
+    """First-order all-pass decorrelator for rear auxiliary sends."""
+
+    def __init__(self, coefficient: float = 0.7):
+        self._coefficient = coefficient
+        self._previous_input = 0.0
+        self._previous_output = 0.0
+
+    def process(self, samples: np.ndarray) -> np.ndarray:
+        output = np.empty_like(samples)
+        a = self._coefficient
+        x_prev = self._previous_input
+        y_prev = self._previous_output
+        for i, sample in enumerate(samples):
+            value = -a * sample + x_prev + a * y_prev
+            output[i] = value
+            x_prev = sample
+            y_prev = value
+        self._previous_input = x_prev
+        self._previous_output = y_prev
+        return output
+
+    def reset(self) -> None:
+        self._previous_input = 0.0
+        self._previous_output = 0.0
 
 
 class StreamingProcessor:
@@ -59,11 +118,19 @@ class StreamingProcessor:
 
         self._decomposer = SoftMatrixDecomposer(config, sample_rate=sample_rate, n_freq=n_freq)
         self._router = ChannelRouter(config, sample_rate, n_freq)
+        self._energy_controller = (
+            _LinkedEnergyController(sample_rate, hop_size) if config.normalize_output else None
+        )
+        self._rear_decorrelators = {
+            name: _AllPassDecorrelator()
+            for name in ("BL", "BR") if name in self._stft_out
+        }
         self._spatial_plan = spatial_plan
         self._frame_index = 0
 
         self._input_buffer_L = np.zeros(0)
         self._input_buffer_R = np.zeros(0)
+        self._flushed = False
 
     def process_block(
         self, left: np.ndarray, right: np.ndarray
@@ -77,43 +144,54 @@ class StreamingProcessor:
         Returns:
             Dict mapping channel name -> 1D array of output samples.
         """
-        self._input_buffer_L = np.concatenate([self._input_buffer_L, left])
-        self._input_buffer_R = np.concatenate([self._input_buffer_R, right])
+        if self._flushed:
+            raise RuntimeError("Cannot process more blocks after flush(); call reset() first")
+        left = np.asarray(left, dtype=np.float64)
+        right = np.asarray(right, dtype=np.float64)
+        if left.ndim != 1 or right.ndim != 1:
+            raise ValueError("left and right must be 1D arrays")
+        if len(left) != len(right):
+            raise ValueError("left and right must have equal lengths")
+
+        input_L = np.concatenate([self._input_buffer_L, left])
+        input_R = np.concatenate([self._input_buffer_R, right])
 
         hop = self._hop_size
         output_chunks: dict[str, list[np.ndarray]] = {
             ch: [] for ch in self._stft_out
         }
 
-        while len(self._input_buffer_L) >= hop:
-            hop_L = self._input_buffer_L[:hop]
-            hop_R = self._input_buffer_R[:hop]
-            self._input_buffer_L = self._input_buffer_L[hop:]
-            self._input_buffer_R = self._input_buffer_R[hop:]
+        complete = len(input_L) // hop * hop
+        for start in range(0, complete, hop):
+            hop_L = input_L[start:start + hop]
+            hop_R = input_R[start:start + hop]
 
             X_L = self._stft_L.analyze_frame(hop_L)
             X_R = self._stft_R.analyze_frame(hop_R)
 
-            if X_L is None or X_R is None:
-                for ch in output_chunks:
-                    output_chunks[ch].append(np.zeros(hop))
-                continue
-
             coherence = self._coherence_est.estimate_frame(
                 X_L, X_R, self._coherence_state
             )
+            directness = self._coherence_est.directness_frame(self._coherence_state)
 
-            decomp = self._decomposer.decompose_frame(X_L, X_R, coherence)
+            decomp = self._decomposer.decompose_frame(X_L, X_R, coherence, directness)
 
             mid_frame = (X_L + X_R) * 0.5
 
             controls = self._spatial_plan.controls_at(self._frame_index * hop) if self._spatial_plan else None
             channel_spectra = self._router.route_frame(decomp, mid_frame, controls)
+            if self._energy_controller is not None:
+                channel_spectra = self._energy_controller.apply(channel_spectra, X_L, X_R)
             self._frame_index += 1
 
             for ch_name, spectrum in channel_spectra.items():
                 samples = self._stft_out[ch_name].synthesize_frame(spectrum)
+                if ch_name in self._rear_decorrelators:
+                    samples = self._rear_decorrelators[ch_name].process(samples)
                 output_chunks[ch_name].append(samples)
+
+        self._input_buffer_L = input_L[complete:].copy()
+        self._input_buffer_R = input_R[complete:].copy()
 
         result = {}
         for ch_name, chunks in output_chunks.items():
@@ -125,11 +203,15 @@ class StreamingProcessor:
         return result
 
     def flush(self) -> dict[str, np.ndarray]:
-        """Flush remaining samples by padding with zeros."""
-        remaining = self._hop_size - len(self._input_buffer_L)
-        if remaining > 0 and len(self._input_buffer_L) > 0:
-            return self.process_block(np.zeros(remaining), np.zeros(remaining))
-        return {ch: np.zeros(0) for ch in self._stft_out}
+        """Finish partial input and emit the delayed WOLA tail once."""
+        if self._flushed:
+            return {ch: np.zeros(0) for ch in self._stft_out}
+
+        remaining = (-len(self._input_buffer_L)) % self._hop_size
+        pad = remaining + self.latency_samples
+        output = self.process_block(np.zeros(pad), np.zeros(pad))
+        self._flushed = True
+        return output
 
     @property
     def latency_samples(self) -> int:
@@ -143,9 +225,14 @@ class StreamingProcessor:
         n_freq = self._stft_L.n_freq_bins
         self._coherence_state = self._coherence_est.create_state(n_freq)
         self._decomposer.reset()
+        if self._energy_controller is not None:
+            self._energy_controller.reset()
+        for decorrelator in self._rear_decorrelators.values():
+            decorrelator.reset()
         self._frame_index = 0
         self._input_buffer_L = np.zeros(0)
         self._input_buffer_R = np.zeros(0)
+        self._flushed = False
 
 
 class UpmixPipeline:
@@ -246,7 +333,7 @@ class UpmixPipeline:
             channels = self._run_stereo_pipeline(
                 left, right, sr, n_samples, fft_size, hop_size, progress_callback
             )
-            channels = self._post_process(channels, sr, left, right)
+            channels = self._post_process(channels)
         else:
             from upmixer.upmix.multichannel import MultichannelUpmixer
 
@@ -340,8 +427,7 @@ class UpmixPipeline:
 
         latency = fft_size - hop_size
 
-        tail_len = latency + fft_size
-        buf_size = n_samples + tail_len + hop_size
+        buf_size = n_samples + latency + hop_size
         out_buf: dict[str, np.ndarray] = {
             ch: np.zeros(buf_size) for ch in channel_names
         }
@@ -371,9 +457,6 @@ class UpmixPipeline:
                     frac = 0.2 + 0.6 * (block_idx + 1) / n_blocks
                     progress_callback(f"  Block {block_idx + 1}/{n_blocks}", frac)
 
-        tail_zeros = np.zeros(tail_len)
-        write_ptr += _write_block(processor.process_block(tail_zeros, tail_zeros))
-
         flush_out = processor.flush()
         if flush_out and len(next(iter(flush_out.values()))) > 0:
             write_ptr += _write_block(flush_out)
@@ -390,23 +473,8 @@ class UpmixPipeline:
 
         return channels
 
-    def _post_process(
-        self,
-        channels: dict[str, np.ndarray],
-        sr: int,
-        original_left: np.ndarray,
-        original_right: np.ndarray,
-    ) -> dict[str, np.ndarray]:
-        """Mixing-phase post-processing for stereo-sourced output: energy normalization.
-
-        Soft-limiting and loudness normalization are handled by the mastering
-        chain after this method returns.
-        """
-        cfg = self.config
-
-        if cfg.normalize_output:
-            channels = normalize_energy(channels, original_left, original_right)
-
+    def _post_process(self, channels: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """Return stereo-sourced mixing output for the mastering chain."""
         return channels
 
     def _post_process_multichannel(

@@ -24,6 +24,10 @@ class StreamingSTFT:
 
     def __init__(self, config: UpmixConfig, sample_rate: int):
         fft_size, hop_size = config.resolve_fft_params(sample_rate)
+        if fft_size <= 0 or hop_size <= 0 or hop_size > fft_size:
+            raise ValueError("fft_size and hop_size must be positive, with hop_size <= fft_size")
+        if fft_size % hop_size:
+            raise ValueError("fft_size must be an exact multiple of hop_size for WOLA reconstruction")
         self._fft_size = fft_size
         self._hop_size = hop_size
         self._sample_rate = sample_rate
@@ -32,14 +36,16 @@ class StreamingSTFT:
         self._synth_window = _compute_synthesis_window(self._window, hop_size)
 
         self._input_buffer = np.zeros(fft_size, dtype=np.float64)
-        self._input_fill = 0
+        # The leading zero pad is real analysis history, not unfilled input.
+        # Priming this way places the first source hop at the end of its first
+        # window and avoids attenuating the beginning of every stream.
+        self._input_fill = fft_size - hop_size
         self._output_buffer = np.zeros(fft_size, dtype=np.float64)
 
-    def analyze_frame(self, new_samples: np.ndarray) -> np.ndarray | None:
+    def analyze_frame(self, new_samples: np.ndarray) -> np.ndarray:
         """Feed hop_size new samples, get one frequency-domain frame.
 
-        Returns complex array of shape (n_freq_bins,), or None if
-        the initial buffer hasn't filled yet.
+        Returns complex array of shape (n_freq_bins,).
         """
         hop = self._hop_size
         fft = self._fft_size
@@ -48,9 +54,6 @@ class StreamingSTFT:
         self._input_buffer[: fft - hop] = self._input_buffer[hop:]
         self._input_buffer[fft - hop :] = new_samples
         self._input_fill = min(self._input_fill + hop, fft)
-
-        if self._input_fill < fft:
-            return None
 
         windowed = self._input_buffer * self._window
         return np.fft.rfft(windowed)
@@ -85,12 +88,12 @@ class StreamingSTFT:
 
     @property
     def latency_samples(self) -> int:
-        return self._fft_size
+        return self._fft_size - self._hop_size
 
     def reset(self) -> None:
         self._input_buffer[:] = 0.0
         self._output_buffer[:] = 0.0
-        self._input_fill = 0
+        self._input_fill = self._fft_size - self._hop_size
 
 
 class STFTAnalyzer:

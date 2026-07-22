@@ -100,6 +100,27 @@ def test_streaming_round_trip(sample_rate):
     assert error < 1e-6, f"Streaming reconstruction error: {error}"
 
 
+def test_streaming_startup_and_tail_are_lossless(sample_rate):
+    """Leading pad and drained tail preserve every source sample."""
+    config = UpmixConfig(auto_fft_size=False)
+    stream = StreamingSTFT(config, sample_rate)
+    hop = stream.hop_size
+    rng = np.random.default_rng(9)
+    signal = rng.standard_normal(hop * 5 + 137)
+    padded = np.pad(signal, (0, (-len(signal)) % hop))
+
+    chunks = []
+    for start in range(0, len(padded), hop):
+        chunks.append(stream.synthesize_frame(stream.analyze_frame(padded[start:start + hop])))
+    for _ in range(stream.latency_samples // hop):
+        chunks.append(stream.synthesize_frame(stream.analyze_frame(np.zeros(hop))))
+
+    output = np.concatenate(chunks)
+    recovered = output[stream.latency_samples:stream.latency_samples + len(signal)]
+    np.testing.assert_allclose(recovered, signal, atol=1e-6)
+    assert stream.latency_samples == stream.fft_size - stream.hop_size
+
+
 def test_auto_fft_size_192k():
     """Auto FFT size should scale up for 192kHz."""
     config = UpmixConfig(auto_fft_size=True)

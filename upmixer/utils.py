@@ -193,19 +193,3 @@ def itu_downmix_mono(
     SR = _ch("SR") + (_ITU_C_COEFF * _ch("BR") if "BR" in channels else 0.0)
 
     return (_ITU_C_COEFF * (_ch("FL") + _ch("FR")) + _ch("C") + surround_coeff * (SL + SR)).astype(np.float64)
-
-
-def normalize_energy(
-    channels: dict[str, np.ndarray],
-    original_left: np.ndarray,
-    original_right: np.ndarray,
-) -> dict[str, np.ndarray]:
-    """Scale output channels so total energy matches the original stereo signal."""
-    original_energy = np.sum(original_left**2) + np.sum(original_right**2)
-    output_energy = sum(np.sum(ch**2) for ch in channels.values())
-
-    if output_energy < 1e-20:
-        return channels
-
-    scale = np.sqrt(original_energy / output_energy)
-    return {name: ch * scale for name, ch in channels.items()}

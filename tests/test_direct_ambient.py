@@ -83,3 +83,18 @@ def test_no_phase_artifacts(stereo_mix, sample_rate):
     # This means |front_L| <= |X_L| always (gain reduction only)
     assert np.all(np.abs(result.front_L) <= np.abs(X_L) + 1e-10)
     assert np.all(np.abs(result.front_R) <= np.abs(X_R) + 1e-10)
+
+
+def test_quadrature_signal_does_not_leak_to_streaming_center():
+    """Equal levels with a 90-degree phase offset are not center-panned."""
+    config = UpmixConfig(auto_fft_size=False)
+    estimator = CoherenceEstimator(config)
+    state = estimator.create_state(32)
+    decomposer = SoftMatrixDecomposer(config, n_freq=32)
+    left = np.ones(32, dtype=np.complex128)
+    right = 1j * np.ones(32, dtype=np.complex128)
+
+    coherence = estimator.estimate_frame(left, right, state)
+    result = decomposer.decompose_frame(left, right, coherence, estimator.directness_frame(state))
+
+    assert np.max(np.abs(result.center)) < 1e-12

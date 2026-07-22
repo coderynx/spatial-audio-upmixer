@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.ndimage import median_filter
 
 from upmixer.config import UpmixConfig
 
@@ -66,13 +67,8 @@ class HarmonicityEstimator:
 
     @staticmethod
     def _local_median(mag: np.ndarray, k: int) -> np.ndarray:
-        """Sliding (2k+1)-bin median using reflect padding and stride tricks."""
-        n = len(mag)
-        padded = np.pad(mag, k, mode="reflect")
-        shape = (n, 2 * k + 1)
-        strides = (padded.strides[0], padded.strides[0])
-        windows = np.lib.stride_tricks.as_strided(padded, shape=shape, strides=strides)
-        return np.median(windows, axis=1)
+        """Sliding (2k+1)-bin median with NumPy-reflect-compatible edges."""
+        return median_filter(mag, size=2 * k + 1, mode="mirror")
 
     def reset(self, state: HarmonicityState) -> None:
         state.smoothed_mask[:] = 0.0
