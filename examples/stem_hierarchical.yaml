@@ -18,14 +18,14 @@
 #   MDX23C-DrumSep-aufr33-jarredou.ckpt
 #   Input: Drums stem produced by Stage 1.
 #   Outputs: Kick, Snare, Toms, Hi-Hat, Ride, Crash
-#   The intermediate Drums stem is deleted after extraction (unless also
-#   present in the stems list as an explicit output).
+#   The intermediate Drums stem is deleted after extraction. Requested drum
+#   sub-stems replace the parent Drums stem in the final mix.
 #
-# Stage 3 — Vocal sub-separation (only when "backing-vocals" is requested):
+# Stage 3 — Vocal sub-separation (when lead/backing vocal stems are requested):
 #   mel_band_roformer_karaoke_gabox_v2.ckpt
 #   Input: Vocals stem produced by Stage 1.
-#   Outputs: Vocals (refined lead), Backing Vocals (the model's instrumental track).
-#   When "vocals" is also requested, the refined lead replaces the Stage 1 Vocals.
+#   Outputs: Lead Vocals, Backing Vocals (the model's instrumental track).
+#   Requested vocal children replace the Stage 1 Vocals parent in the final mix.
 #
 # Requires: pip install "upmixer[separation-cpu]"
 # Usage:    upmixer --manifest examples/stem_hierarchical.yaml --preview
@@ -102,19 +102,18 @@ assets:
     output: studio_master.wav
     mixing:
       stems:
-        - vocals
-        - backing-vocals  # triggers Stage 3 (karaoke) — refines vocals, adds backing vocals
+        - lead-vocals
+        - backing-vocals  # triggers Stage 3 (karaoke) — separate lead and backing vocals
         - drums       # whole drums stem (Stage 1 only, no Stage 2)
         - bass
 
-  # Asset 3: drum-only extraction — requests drum sub-stems plus whole Drums.
-  # Stage 1 keeps Drums as a final output AND feeds it into Stage 2 for sub-stems.
+  # Asset 3: drum-only extraction — requests drum sub-stems.
+  # Stage 1 Drums is internal input for Stage 2; sub-stems reach final mix.
   - input:  live_drums.flac
     output: live_drums_master.wav
     mixing:
       stems:
-        - drums       # whole Drums stem kept (Stage 1 output)
-        - kick        # sub-stems (Stage 2 from Drums)
+        - kick        # sub-stems (Stage 2 from internal Drums)
         - snare
         - toms
         - hi-hat

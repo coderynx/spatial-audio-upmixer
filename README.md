@@ -140,13 +140,18 @@ Additional requested stems activate specialized stages:
 
 - `crowd` isolates audience content before primary instrument separation.
 - `kick`, `snare`, `toms`, `hi-hat`, `ride`, and `crash` subdivide the isolated drums stem.
-- `backing-vocals` refines the lead vocal stem and extracts backing vocals.
+- `lead-vocals` and `backing-vocals` subdivide the primary vocals stem.
+
+Requesting a drum or vocal child replaces its parent in the final mix. For example,
+request `lead-vocals,backing-vocals` to mix both refined vocal stems; do not also
+request `vocals`. `crowd` remains a final stem while its crowd-free residual feeds
+the primary instrument separation stage.
 
 For example:
 
 ```bash
 upmixer live.wav live_714.wav --mode stem --format 7.1.4 \
-  --stems vocals,backing-vocals,bass,kick,snare,toms,crowd
+  --stems lead-vocals,backing-vocals,bass,kick,snare,toms,crowd
 ```
 
 Model files are cached under `~/.cache/upmixer-models` by default. `--stem-cache-dir` separately caches generated stems

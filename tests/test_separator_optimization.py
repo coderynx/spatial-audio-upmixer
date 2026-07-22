@@ -6,11 +6,13 @@ import types
 from unittest.mock import patch
 
 from upmixer.separation.separator import (
+    MODEL_STEM_OVERRIDES,
     StemSeparator,
     _SUCCESSFUL_BATCHES,
     _automatic_batch_size,
     _automatic_cpu_tuning,
     _is_oom_error,
+    _parse_stem_name,
 )
 
 
@@ -167,3 +169,13 @@ def test_separator_receives_full_precision_batch_options(tmp_path):
         "sample_rate": 96000,
         "model": "model.ckpt",
     }
+
+
+def test_karaoke_output_names_map_to_vocal_children():
+    overrides = MODEL_STEM_OVERRIDES[
+        "mel_band_roformer_karaoke_gabox_v2.ckpt"
+    ]
+
+    assert _parse_stem_name("song_(Lead Vocals)_karaoke.wav", overrides) == "Lead Vocals"
+    assert _parse_stem_name("song_(Vocals)_karaoke.wav", overrides) == "Lead Vocals"
+    assert _parse_stem_name("song_(Instrumental)_karaoke.wav", overrides) == "Backing Vocals"

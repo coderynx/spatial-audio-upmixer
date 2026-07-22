@@ -25,6 +25,7 @@ MANIFEST_TO_CANONICAL: dict[str, str] = {
     "ride":    "Ride",
     "crash":   "Crash",
     "crowd":   "Crowd",
+    "lead-vocals": "Lead Vocals",
     "backing-vocals": "Backing Vocals",
 }
 
@@ -40,9 +41,16 @@ MODEL_PRIMARY = "BS-Roformer-SW.ckpt"
 MODEL_DRUMS = "MDX23C-DrumSep-aufr33-jarredou.ckpt"
 
 MODEL_KARAOKE = "mel_band_roformer_karaoke_gabox_v2.ckpt"
+_KARAOKE_OUTPUT_CACHE_TAG = "lead-vocals-v2"
 
 PRIMARY_OUTPUT_STEMS: frozenset[str] = frozenset({"Vocals", "Bass", "Drums", "Guitar", "Piano", "Other"})
 DRUM_SUB_STEMS: frozenset[str] = frozenset({"Kick", "Snare", "Toms", "Hi-Hat", "Ride", "Crash"})
+VOCAL_SUB_STEMS: frozenset[str] = frozenset({"Lead Vocals", "Backing Vocals"})
+
+_CHILD_STEMS_BY_PARENT: dict[str, frozenset[str]] = {
+    "Drums": DRUM_SUB_STEMS,
+    "Vocals": VOCAL_SUB_STEMS,
+}
 
 
 
@@ -71,7 +79,7 @@ class SeparationPlan:
     """Ordered list of model invocations derived from the requested stems.
 
     Attributes:
-        tasks:           Tasks in execution order (Stage 0 → 1 → 2).
+        tasks:           Tasks in execution order.
         requested_stems: Canonical names of all final output stems.
         stems_hash:      20-char hex digest of the sorted stem set; used as the
                          stem-cache key component so different stem selections
@@ -124,8 +132,8 @@ def resolve_separation_plan(canonical: list[str]) -> SeparationPlan:
 
     The resolver determines which of the three model tiers to invoke and in
     what order, ensuring that crowd isolation runs before primary separation
-    when requested, and that drum sub-stems are extracted hierarchically from
-    the primary model's Drums output.
+    when requested, and that drum and vocal sub-stems are extracted
+    hierarchically from primary-model parent stems.
 
     Args:
         canonical: Canonical (title-case) stem names — output of
@@ -137,8 +145,9 @@ def resolve_separation_plan(canonical: list[str]) -> SeparationPlan:
     """
     requested = frozenset(canonical) if canonical else frozenset(DEFAULT_STEMS)
 
-    if requested & DRUM_SUB_STEMS:
-        requested = requested - {"Drums"}
+    for parent, children in _CHILD_STEMS_BY_PARENT.items():
+        if requested & children:
+            requested = requested - {parent}
 
     tasks: list[SeparationTask] = []
 
@@ -153,9 +162,9 @@ def resolve_separation_plan(canonical: list[str]) -> SeparationPlan:
 
     primary_needed = bool(requested & PRIMARY_OUTPUT_STEMS)
     drum_sub_needed = bool(requested & DRUM_SUB_STEMS)
-    backing_needed = "Backing Vocals" in requested
+    vocal_sub_needed = bool(requested & VOCAL_SUB_STEMS)
 
-    if primary_needed or drum_sub_needed or backing_needed:
+    if primary_needed or drum_sub_needed or vocal_sub_needed:
         stage1_input = "_crowd_other" if crowd_needed else "original"
         stage1_keep = requested & PRIMARY_OUTPUT_STEMS
         tasks.append(SeparationTask(
@@ -173,18 +182,25 @@ def resolve_separation_plan(canonical: list[str]) -> SeparationPlan:
             keep_stems=requested & DRUM_SUB_STEMS,
         ))
 
-    if backing_needed:
+    if vocal_sub_needed:
         tasks.append(SeparationTask(
             model=MODEL_KARAOKE,
             input_source="Vocals",
-            output_stems=frozenset({"Vocals", "Backing Vocals"}),
-            keep_stems=requested & frozenset({"Vocals", "Backing Vocals"}),
+            output_stems=VOCAL_SUB_STEMS,
+            keep_stems=requested & VOCAL_SUB_STEMS,
         ))
 
     stems_hash = hashlib.sha256("|".join(sorted(requested)).encode()).hexdigest()[:20]
-    inference_identity = "|".join(
-        f"{task.model}:{task.input_source}" for task in tasks
-    )
+    inference_identity_parts: list[str] = []
+    for task in tasks:
+        output_tag = (
+            _KARAOKE_OUTPUT_CACHE_TAG if task.model == MODEL_KARAOKE else ""
+        )
+        inference_identity_parts.append(
+            f"{task.model}:{task.input_source}:"
+            f"{','.join(sorted(task.output_stems))}:{output_tag}"
+        )
+    inference_identity = "|".join(inference_identity_parts)
     inference_hash = hashlib.sha256(inference_identity.encode()).hexdigest()[:20]
 
     return SeparationPlan(
