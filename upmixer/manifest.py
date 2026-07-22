@@ -146,6 +146,7 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "channel_layout": ("config", "format"),
         "stem_rebalance": ("config", "stem_rebalance"),
         "stem_eq":        ("config", "stem_eq_profiles"),
+        "stem_source_anchor_strength": ("config", "stem_source_anchor_strength"),
         "spatial": {
             "profile": ("config", "spatial_profile"),
             "intensity": ("config", "spatial_intensity"),
@@ -267,6 +268,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "stem_silence_min_duration_s": ("stem_silence_min_duration_s", float),
     "stem_silence_crossfade_ms":   ("stem_silence_crossfade_ms",   float),
     "stem_silence_pad_ms":         ("stem_silence_pad_ms",         float),
+    "stem_source_anchor_strength": ("stem_source_anchor_strength", float),
     "downmix_output":              ("downmix_output_path",    str),
     "downmix_surround_coeff":      ("surround_downmix_coeff", float),
     "preview":          ("preview",           bool),

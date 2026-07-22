@@ -18,6 +18,7 @@ engine:
 # ── Mixing (stem mode only) ───────────────────────────────────────────────────
 mixing:
   channel_layout: 7.1.4
+  stem_source_anchor_strength: 1.0  # blend stem content with original native source pairs
   # Stem rebalance: bring vocals forward, tighten bass
   # stem_rebalance:
   #   Vocals: +1.0

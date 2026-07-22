@@ -51,6 +51,7 @@ from upmixer.io.writer import AudioWriter
 from upmixer.mastering import MasteringChain
 from upmixer.result import UpmixResult
 from upmixer.separation.separator import StemSeparator
+from upmixer.separation.source_anchor import apply_source_anchor
 from upmixer.separation.stem_analyzer import analyze_stems
 from upmixer.separation.stem_plan import (
     DEFAULT_STEMS,
@@ -377,6 +378,8 @@ class StemUpmixPipeline:
         """
         t0 = time.monotonic()
         cfg = self.config
+        if not 0.0 <= cfg.stem_source_anchor_strength <= 1.0:
+            raise ValueError("stem_source_anchor_strength must be between 0.0 and 1.0")
 
         def _progress(msg: str, frac: float) -> None:
             _log.info(msg)
@@ -486,10 +489,15 @@ class StemUpmixPipeline:
                 sep_zones = {"front": input_path}
             passthrough: dict[str, np.ndarray] = {}
             stereo_mode = True
+            source_zones = {"front": _as_stereo_pair(audio_full)}
             _log.info("  Mode: stereo — single zone, full-3D routing")
         else:
             sep_zones, passthrough = _extract_zones(audio_full, input_fmt)
             stereo_mode = False
+            source_zones = {
+                name: audio for name, audio in sep_zones.items()
+                if isinstance(audio, np.ndarray)
+            }
             _log.info("  Mode: multichannel — zones: %s", sorted(sep_zones.keys()))
             if passthrough:
                 _log.info("  Passthrough: %s", sorted(passthrough.keys()))
@@ -589,6 +597,8 @@ class StemUpmixPipeline:
             else:
                 passthrough_resampled = {k: v.astype(np.float64) for k, v in passthrough.items()}
 
+        source_zones = _resample_zones(source_zones, sr, sep_sr)
+
         if cfg.stem_rebalance:
             from upmixer.separation.stem_rebalance import StemRebalancer
             _log.info("  Applying stem rebalance: %s", cfg.stem_rebalance)
@@ -645,6 +655,10 @@ class StemUpmixPipeline:
             if ch_name in channels:
                 n = min(len(ch_audio), n_samples)
                 channels[ch_name][:n] += ch_audio[:n]
+
+        channels = apply_source_anchor(
+            channels, source_zones, output_fmt, cfg.stem_source_anchor_strength,
+        )
 
         if cfg.normalize_output:
             if sr != sep_sr:
@@ -744,3 +758,27 @@ def _extract_zones(
             passthrough[label.value] = ch_map[label]
 
     return zones, passthrough
+
+
+def _as_stereo_pair(audio: np.ndarray) -> np.ndarray:
+    """Return a stereo representation of mono or stereo source audio."""
+    if audio.ndim == 1 or audio.shape[1] == 1:
+        mono = audio if audio.ndim == 1 else audio[:, 0]
+        return np.column_stack([mono, mono])
+    return audio[:, :2]
+
+
+def _resample_zones(
+    zones: dict[str, np.ndarray],
+    source_sr: int,
+    target_sr: int,
+) -> dict[str, np.ndarray]:
+    """Return source zones at routing sample rate."""
+    if source_sr == target_sr:
+        return {name: audio.astype(np.float64, copy=False) for name, audio in zones.items()}
+    divisor = math.gcd(source_sr, target_sr)
+    up, down = target_sr // divisor, source_sr // divisor
+    return {
+        name: resample_poly(audio, up, down, axis=0).astype(np.float64)
+        for name, audio in zones.items()
+    }

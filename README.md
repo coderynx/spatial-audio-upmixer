@@ -110,6 +110,7 @@ engine:
 
 mixing:
   channel_layout: 7.1.4
+  stem_source_anchor_strength: 1.0  # stem mode: blend stem content with original audio
   spatial:
     profile: auto       # auto, intimate, rhythmic, spacious, live, detailed
     intensity: 1.0      # 0 = neutral profile gains, 1 = full adaptation
