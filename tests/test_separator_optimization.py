@@ -9,6 +9,7 @@ from upmixer.separation.separator import (
     StemSeparator,
     _SUCCESSFUL_BATCHES,
     _automatic_batch_size,
+    _automatic_cpu_tuning,
     _is_oom_error,
 )
 
@@ -20,6 +21,14 @@ def test_cpu_batch_is_one():
 def test_apple_accelerator_batch_is_two():
     assert _automatic_batch_size("mps") == 2
     assert _automatic_batch_size("coreml") == 2
+
+
+def test_low_memory_cpu_uses_small_segments_and_file_chunks():
+    assert _automatic_cpu_tuning("cpu", 3.5) == (64, 120.0)
+    assert _automatic_cpu_tuning("cpu", 7.5) == (128, 300.0)
+    assert _automatic_cpu_tuning("cpu", 10.0) == (128, 600.0)
+    assert _automatic_cpu_tuning("cpu", 16.0) == (None, None)
+    assert _automatic_cpu_tuning("cuda", 4.0) == (None, None)
 
 
 def test_only_actual_oom_is_retryable():
@@ -51,8 +60,35 @@ def test_accelerator_oom_retries_with_smaller_batch():
     assert separator._batch_size == 2
 
 
-def test_cpu_oom_is_not_retried():
-    separator = StemSeparator(model="model.ckpt", batch_size=4)
+def test_cpu_oom_retries_with_smaller_segment():
+    separator = StemSeparator(
+        model="model.ckpt", batch_size=1,
+        segment_size=128, chunk_duration_s=120.0,
+    )
+    separator._backend = "cpu"
+
+    class FakeSeparator:
+        calls = 0
+
+        def separate(self, _):
+            self.calls += 1
+            if self.calls == 1:
+                raise MemoryError("out of memory")
+            return []
+
+    fake = FakeSeparator()
+    with patch.object(separator, "_get_separator", return_value=fake):
+        assert separator._separate_paths("input.wav") == []
+
+    assert fake.calls == 2
+    assert separator._segment_size == 64
+
+
+def test_cpu_oom_propagates_after_minimum_settings():
+    separator = StemSeparator(
+        model="model.ckpt", batch_size=1,
+        segment_size=64, chunk_duration_s=60.0,
+    )
     separator._backend = "cpu"
 
     class FakeSeparator:
@@ -65,7 +101,7 @@ def test_cpu_oom_is_not_retried():
         except MemoryError:
             pass
         else:
-            raise AssertionError("CPU OOM must propagate")
+            raise AssertionError("minimum-memory CPU OOM must propagate")
 
 
 def test_explicit_batch_does_not_replace_learned_auto_value():
@@ -89,11 +125,12 @@ def test_separator_receives_full_precision_batch_options(tmp_path):
         def __init__(
             self, model_file_dir, output_dir, output_format, sample_rate,
             normalization_threshold, log_level, use_soundfile=False,
-            use_autocast=True, mdxc_params=None,
+            use_autocast=True, chunk_duration=None, mdxc_params=None,
         ):
             captured.update(
                 use_soundfile=use_soundfile,
                 use_autocast=use_autocast,
+                chunk_duration=chunk_duration,
                 mdxc_params=mdxc_params,
                 sample_rate=sample_rate,
             )
@@ -113,6 +150,7 @@ def test_separator_receives_full_precision_batch_options(tmp_path):
         separator = StemSeparator(
             model="model.ckpt", model_dir=str(tmp_path),
             sample_rate=96000, batch_size=4,
+            segment_size=128, chunk_duration_s=300.0,
         )
         separator._get_separator()
         separator.close()
@@ -120,7 +158,12 @@ def test_separator_receives_full_precision_batch_options(tmp_path):
     assert captured == {
         "use_soundfile": True,
         "use_autocast": False,
-        "mdxc_params": {"batch_size": 4},
+        "chunk_duration": 300.0,
+        "mdxc_params": {
+            "batch_size": 4,
+            "segment_size": 128,
+            "override_model_segment_size": True,
+        },
         "sample_rate": 96000,
         "model": "model.ckpt",
     }

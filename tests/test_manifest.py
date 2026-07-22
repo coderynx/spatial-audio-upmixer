@@ -407,6 +407,18 @@ class TestSingleAssetParse:
         _, jobs = parse_manifest(data)
         assert jobs[0].config.get("stem_batch_size") == 4
 
+    def test_stem_cpu_tuning_from_engine(self):
+        data = _minimal(engine={
+            "mode": "stem",
+            "stem_segment_size": 128,
+            "stem_chunk_duration_s": 300.0,
+            "stem_model_cache_size": 1,
+        })
+        _, jobs = parse_manifest(data)
+        assert jobs[0].config.get("stem_segment_size") == 128
+        assert jobs[0].config.get("stem_chunk_duration_s") == 300.0
+        assert jobs[0].config.get("stem_model_cache_size") == 1
+
     def test_metadata_extracted(self):
         data = _minimal(metadata={
             "name": "My Project",

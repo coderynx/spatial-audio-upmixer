@@ -8,9 +8,12 @@ from upmixer.__main__ import _apply_resource_limits
 
 
 def _run(policy: str, mode: str):
-    calls: dict[str, list[int]] = {"torch": [], "blas": [], "nice": []}
+    calls: dict[str, list[int]] = {
+        "torch": [], "interop": [], "blas": [], "nice": [],
+    }
     torch = types.SimpleNamespace(
-        set_num_threads=lambda n: calls["torch"].append(n)
+        set_num_threads=lambda n: calls["torch"].append(n),
+        set_num_interop_threads=lambda n: calls["interop"].append(n),
     )
     threadpoolctl = types.SimpleNamespace(
         threadpool_limits=lambda limits: calls["blas"].append(limits)
@@ -26,14 +29,20 @@ def _run(policy: str, mode: str):
 
 def test_auto_stem_uses_full_resources():
     calls = _run("auto", "stem")
-    assert calls == {"torch": [12], "blas": [12], "nice": []}
+    assert calls == {
+        "torch": [12], "interop": [1], "blas": [12], "nice": [],
+    }
 
 
 def test_auto_realtime_preserves_polite_resources():
     calls = _run("auto", "realtime")
-    assert calls == {"torch": [6], "blas": [6], "nice": [10]}
+    assert calls == {
+        "torch": [6], "interop": [1], "blas": [6], "nice": [10],
+    }
 
 
 def test_explicit_low_overrides_stem_default():
     calls = _run("low", "stem")
-    assert calls == {"torch": [6], "blas": [6], "nice": [10]}
+    assert calls == {
+        "torch": [6], "interop": [1], "blas": [6], "nice": [10],
+    }

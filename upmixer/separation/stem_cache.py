@@ -34,8 +34,7 @@ Cache invalidation: any change to source metadata, inference plan, separator
 version, sample rate, preview window, or silence-skip parameters produces a
 cold miss.
 
-Stems are stored as float32 PCM_24 WAV (soundfile).  On load, arrays are
-returned as float64 to match the rest of the pipeline.
+Stems are stored as PCM_24 WAV and loaded as float32 to bound pipeline RAM.
 """
 from __future__ import annotations
 
@@ -198,7 +197,7 @@ class StemCache:
 
         Returns:
             ``(stems_dict, sample_rate)`` on cache hit, or ``None`` on miss.
-            Stems are returned as float64 arrays shaped ``(n_samples, 2)``.
+            Stems are returned as float32 arrays shaped ``(n_samples, 2)``.
         """
         key = _cache_key(
             input_path, stems_hash, sep_sr,
@@ -256,7 +255,7 @@ class StemCache:
                     "  StemCache: missing file %s for key %s", wav_path.name, key
                 )
                 return None
-            data, _ = sf.read(str(wav_path), dtype="float64", always_2d=True)
+            data, _ = sf.read(str(wav_path), dtype="float32", always_2d=True)
             stems[stem_key] = data
 
         if not stems:
@@ -338,7 +337,7 @@ class StemCache:
             temp_handle.close()
             try:
                 sf.write(
-                    str(temp_path), arr.astype(np.float32), sample_rate,
+                    str(temp_path), arr.astype(np.float32, copy=False), sample_rate,
                     subtype="PCM_24",
                 )
                 os.replace(temp_path, wav_path)

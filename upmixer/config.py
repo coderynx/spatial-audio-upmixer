@@ -119,6 +119,9 @@ class UpmixConfig:
 
     # None selects conservative backend-aware inference batching.
     stem_batch_size: int | None = None
+    stem_segment_size: int | None = None
+    stem_chunk_duration_s: float | None = None
+    stem_model_cache_size: int | None = None
 
     stems: list[str] | None = None
 

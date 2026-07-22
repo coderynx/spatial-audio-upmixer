@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -287,6 +288,88 @@ class TestSeparatorReuse:
             pipeline.close()
 
         assert init_call_count == 2
+
+    def test_cpu_keeps_only_one_model_by_default(self):
+        from upmixer.separation.stem_pipeline import StemUpmixPipeline
+
+        with patch(
+            "upmixer.separation.separator._detect_backend", return_value="cpu",
+        ):
+            pipeline = StemUpmixPipeline(UpmixConfig())
+            pipeline._get_or_create_separator("first.ckpt", 48000)
+            pipeline._get_or_create_separator("second.ckpt", 48000)
+
+        assert list(pipeline._separators) == ["second.ckpt"]
+        pipeline.close()
+
+    def test_explicit_model_cache_size_retains_multiple_cpu_models(self):
+        from upmixer.separation.stem_pipeline import StemUpmixPipeline
+
+        config = UpmixConfig(stem_model_cache_size=2)
+        with patch(
+            "upmixer.separation.separator._detect_backend", return_value="cpu",
+        ):
+            pipeline = StemUpmixPipeline(config)
+            pipeline._get_or_create_separator("first.ckpt", 48000)
+            pipeline._get_or_create_separator("second.ckpt", 48000)
+
+        assert list(pipeline._separators) == ["first.ckpt", "second.ckpt"]
+        pipeline.close()
+
+    def test_cpu_model_eviction_preserves_stage_intermediate(self, tmp_path):
+        import shutil
+
+        from upmixer.separation.stem_pipeline import StemUpmixPipeline
+        from upmixer.separation.stem_plan import SeparationPlan, SeparationTask
+
+        class FakeSeparator:
+            backend = "cpu"
+
+            def __init__(self, model, **_):
+                self.model = model
+                self.directory = tmp_path / model
+                self.directory.mkdir()
+
+            def separate_to_file(self, audio_path, keep_on_disk):
+                if self.model == "first.ckpt":
+                    path = self.directory / "Drums.wav"
+                    sf.write(
+                        path, np.zeros((32, 2), dtype=np.float32), 48000,
+                    )
+                    return {}, {"Drums": str(path)}
+                assert Path(audio_path).exists()
+                return {
+                    "Kick": np.zeros((32, 2), dtype=np.float32),
+                }, {}
+
+            def close(self):
+                shutil.rmtree(self.directory, ignore_errors=True)
+
+        plan = SeparationPlan(
+            tasks=[
+                SeparationTask(
+                    "first.ckpt", "original",
+                    frozenset({"Drums"}), frozenset(),
+                ),
+                SeparationTask(
+                    "second.ckpt", "Drums",
+                    frozenset({"Kick"}), frozenset({"Kick"}),
+                ),
+            ],
+            requested_stems=frozenset({"Kick"}),
+            stems_hash="test",
+        )
+        source = tmp_path / "source.wav"
+        sf.write(source, np.zeros((32, 2), dtype=np.float32), 48000)
+
+        with patch(
+            "upmixer.separation.stem_pipeline.StemSeparator", FakeSeparator,
+        ):
+            pipeline = StemUpmixPipeline(UpmixConfig())
+            result = pipeline._execute_plan(plan, str(source), 48000)
+
+        assert "Kick" in result
+        pipeline.close()
 
     def test_pipeline_context_manager_closes(self, tmp_path):
         """__exit__ must call close() and clear all separators."""
