@@ -523,9 +523,9 @@ def main() -> None:
         help=(
             "Comma-separated list of stems to extract in stem mode. "
             "Valid: vocals, bass, drums, guitar, piano, other, kick, snare, "
-            "hi-hat, ride, crash, crowd. "
+            "toms, hi-hat, ride, crash, crowd, lead-vocals, backing-vocals. "
             "Default: vocals,bass,drums,guitar,piano,other. "
-            "Example: --stems vocals,kick,snare,crowd"
+            "Example: --stems lead-vocals,backing-vocals,kick,snare,crowd"
         ),
     )
     parser.add_argument(

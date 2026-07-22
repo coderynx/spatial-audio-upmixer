@@ -228,6 +228,17 @@ class TestValidateManifestAssets:
                 "assets": [{"output_dir": "/out/"}],
             })
 
+    def test_accepts_lead_vocals_in_global_and_asset_stems(self):
+        validate_manifest({
+            "version": "1.0",
+            "engine": {"stems": ["lead-vocals"]},
+            "assets": [{
+                "input": "in.flac",
+                "output": "out.wav",
+                "mixing": {"stems": ["Lead Vocals", "backing-vocals"]},
+            }],
+        })
+
 
 # ---------------------------------------------------------------------------
 # parse_manifest — dir asset expansion

@@ -760,7 +760,7 @@ class StemUpmixPipeline:
             del source_audio
 
         del all_stems, audio_full, source_zones, sep_zones, passthrough
-        del passthrough_resampled, mix_l, mix_r, stem_features, spatial_plan
+        del passthrough_resampled, mix_l, mix_r, stem_features
 
         _progress("  Mastering...", 0.90)
         mastering = MasteringChain(cfg)
