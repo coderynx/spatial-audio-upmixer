@@ -4,21 +4,25 @@
 # Requires: pip install "upmixer[separation-cpu]"
 #
 # Usage:
-#   upmixer --manifest stem_714.yaml
+#   upmixer --manifest examples/stem_714.yaml
 
 version: "1.0"
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 engine:
   mode: stem
-  # stem_model: htdemucs_6s.yaml               # 6-stem model
-  # stem_model: BS-Roformer-Viperx-1297.ckpt   # high-quality RoFormer
-  # stem_cache_dir: /tmp/upmixer_stems         # skip re-separation on repeated test runs
+  # Model selection is automatic from this requested output set.
+  stems: [vocals, bass, drums, guitar, piano, other]
+  stem_silence_skip: true
+  # stem_cache_dir: /tmp/upmixer_stems
 
 # ── Mixing (stem mode only) ───────────────────────────────────────────────────
 mixing:
   channel_layout: 7.1.4
-  stem_source_anchor_strength: 1.0  # blend stem content with original native source pairs
+  stem_source_anchor_strength: 0.75
+  spatial:
+    profile: detailed
+    intensity: 0.8
   # Stem rebalance: bring vocals forward, tighten bass
   # stem_rebalance:
   #   Vocals: +1.0
@@ -29,6 +33,11 @@ mixing:
   #   Vocals: vocal-presence
   #   Bass:   bass-warmth
   #   Drums:  drums-punch
+
+# ── Output ────────────────────────────────────────────────────────────────────
+format:
+  type: wav
+  subtype: PCM_24
 
 # ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:

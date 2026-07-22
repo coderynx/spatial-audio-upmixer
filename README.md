@@ -1,506 +1,411 @@
-# upmixer
+# Spatial Audio Upmixer
 
-A command-line tool and Python library for upmixing audio from stereo or surround formats to Dolby Atmos and other
-multichannel layouts.
+Spatial Audio Upmixer is a Python library and command-line tool for converting mono, stereo, and existing surround
+audio into higher-channel-count spatial beds. It combines content-aware spatial processing, optional neural source
+separation, and a shared mastering chain to produce standard multichannel WAV or ADM-BWF files.
 
-Two processing modes are available: a real-time STFT-based pipeline that works on any input, and a stem separation
-pipeline that splits the audio into instruments first and then places each stem spatially. The stem mode produces
-noticeably better spatial separation at the cost of significantly longer processing time.
+The installable package, Python namespace, and command remain `upmixer`.
 
-Supported output formats: 5.1, 7.1, 5.1.2, 5.1.4, 7.1.2, 7.1.4.
+## Features
 
----
+- Upmix mono, stereo, 5.0, 5.1, 7.1, 5.1.2, 5.1.4, and 7.1.2 sources.
+- Produce 5.1, 7.1, 5.1.2, 5.1.4, 7.1.2, or 7.1.4 channel beds.
+- Choose a fast coherence-based STFT pipeline or an instrument-aware stem pipeline.
+- Adapt width, ambience, transients, and height routing with automatic or explicit spatial profiles.
+- Preserve the intent of multichannel sources through zone-aware routing and optional source anchoring.
+- Apply reference matching, spectral EQ, bus compression, bass control, BS.1770 loudness normalization, and true-peak
+  control through one mastering chain.
+- Write standard WAV, ADM-BWF metadata, and an optional ITU-R BS.775 stereo downmix.
+- Run reproducible YAML/JSON manifests and safe batch jobs with preflight checks, atomic writes, resume state, and JSON
+  reports.
+
+## Requirements
+
+- Python 3.11 or later
+- WAV or FLAC input readable by [libsndfile](https://libsndfile.github.io/)
+- Additional CPU or GPU dependencies for stem separation
 
 ## Installation
 
+Install the core package for realtime processing:
+
 ```bash
-pip install upmixer
+python3 -m pip install upmixer
 ```
 
-Stem separation mode requires an additional dependency. Install the CPU variant (works everywhere) or the GPU variant if
-you have CUDA:
+Install stem separation support for CPU or GPU inference:
 
 ```bash
-# CPU (slower, works everywhere)
-pip install "upmixer[separation-cpu]"
-
-# GPU (CUDA)
-pip install "upmixer[separation-gpu]"
+python3 -m pip install "upmixer[separation-cpu]"
+python3 -m pip install "upmixer[separation-gpu]"
 ```
 
-YAML manifest support requires PyYAML:
+YAML manifests require PyYAML. JSON manifests work with the core installation.
 
 ```bash
-pip install "upmixer[manifest]"
-# or: pip install pyyaml
+python3 -m pip install "upmixer[manifest]"
 ```
 
-Python 3.11 or later is required.
-
----
-
-## CLI usage
-
-### Classic mode
+For local development:
 
 ```bash
-# Stereo → 5.1 (realtime mode, fast)
+git clone https://github.com/coderynx/audio-upmixer.git
+cd audio-upmixer
+python3 -m pip install -e ".[dev]"
+```
+
+## Quick Start
+
+Create a 5.1 WAV from a stereo source:
+
+```bash
 upmixer input.wav output.wav --format 5.1
-
-# Stereo → 7.1.4 Atmos using stem separation
-upmixer input.wav output.wav --format 7.1.4 --mode stem
-
-# Reveal buried, already-present musical detail through spatial contrast
-upmixer input.wav output.wav --format 7.1.4 --spatial-profile detailed
-
-# Write ADM-BWF for import into Logic Pro / DaVinci Resolve / Pro Tools
-upmixer input.wav output.wav --format 7.1.4 --output-type adm-bwf
-
-# Dolby Atmos Music streaming delivery (explicit loudness + container)
-upmixer input.flac output.wav --format 7.1.4 --output-type adm-bwf \
-        --output-sample-rate 48000 --loudness-target -18.0
-
-# Override auto-detected input format (8ch is ambiguous: 7.1 or 5.1.2)
-upmixer surround.wav output.wav --input-format 5.1.2 --format 7.1.4
-
-# Get a JSON summary when done (useful in scripts)
-upmixer input.wav output.wav --mode stem --format 7.1.4 --json
-
-# Suppress all output
-upmixer input.wav output.wav -q
-
-# Show full debug output including audio-separator internals
-upmixer input.wav output.wav --mode stem -v
 ```
 
-### Manifest-driven mode
-
-All parameters can be defined in a YAML or JSON manifest file. This is the recommended approach for complex or
-reproducible jobs:
+Create a 7.1.4 bed with stem separation:
 
 ```bash
-# Run a job from a manifest
-upmixer --manifest examples/atmos_music.yaml
-
-# Manifest provides defaults; CLI flags override them
-upmixer --manifest examples/atmos_music.yaml --preview
-
-# List all valid manifest keys and their types
-upmixer --manifest-keys
+upmixer input.flac output.wav --mode stem --format 7.1.4
 ```
 
-See the [`examples/`](examples/) directory for ready-to-use manifests.
+Preview a short section before processing the complete file:
 
-#### Manifest format (YAML)
+```bash
+upmixer input.wav preview.wav --format 7.1.4 --preview --preview-duration 30
+```
 
-Version format: `MAJOR.MINOR[.PATCH]` — e.g., `"1.0"` or `"1.0.0"`. ADM-BWF always uses `.wav` extension (WAV
-container).
+Run a reproducible manifest:
+
+```bash
+upmixer --manifest examples/atmos_music.yaml
+```
+
+Existing outputs are protected by default. Use `--overwrite` only when replacement is intentional, or `--resume` with
+saved run state to skip outputs whose input and settings still match.
+
+## Processing Modes
+
+| Mode | Best for | How it works | Additional dependency |
+|---|---|---|---|
+| `realtime` | Fast previews, general files, and parallel batches | Coherence analysis separates correlated direct sound from diffuse ambience, then derives center, surround, back, height, and LFE content | None |
+| `stem` | Music, complex mixes, and deliberate instrument placement | Separates requested sources, analyzes each stem, routes it spatially, blends native source zones when requested, and masters the result | `audio-separator` extra |
+
+Realtime mode treats mono as a centered stereo pair. For multichannel input it preserves existing channels and derives
+only the channels needed by the target layout.
+
+Stem mode separates every available stereo zone—front, surround, back, and height—rather than collapsing a
+multichannel source to stereo. Center and LFE material are retained as passthrough channels where applicable.
+
+### Spatial profiles
+
+Use `--spatial-profile auto` to select a profile from the source, or choose one explicitly:
+
+`balanced`, `intimate`, `rhythmic`, `spacious`, `live`, or `detailed`.
+
+`--spatial-intensity` controls how strongly the selected profile changes the base routing. Set
+`--no-spatial-preanalysis` when offline content analysis is not wanted.
+
+### Stem planning
+
+Stem mode selects and orders separation models automatically from the requested outputs. The default set is `vocals`,
+`bass`, `drums`, `guitar`, `piano`, and `other`.
+
+Additional requested stems activate specialized stages:
+
+- `crowd` isolates audience content before primary instrument separation.
+- `kick`, `snare`, `toms`, `hi-hat`, `ride`, and `crash` subdivide the isolated drums stem.
+- `backing-vocals` refines the lead vocal stem and extracts backing vocals.
+
+For example:
+
+```bash
+upmixer live.wav live_714.wav --mode stem --format 7.1.4 \
+  --stems vocals,backing-vocals,bass,kick,snare,toms,crowd
+```
+
+Model files are cached under `~/.cache/upmixer-models` by default. `--stem-cache-dir` separately caches generated stems
+for repeat runs. Stem silence skipping is enabled by default, and inference batch size is selected from the available
+CPU, CUDA, MPS, or CoreML resources unless `--stem-batch-size` is supplied.
+
+Stem separation is provided through
+[python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) by nomadkaraoke, using supported Demucs,
+MDX, and RoFormer-family models.
+
+## Supported Layouts
+
+Spatial Audio Upmixer only adds channels: the selected output must be a strict superset of the detected input layout.
+
+### Inputs
+
+| Layout | Channels |
+|---|---:|
+| Mono | 1 |
+| Stereo | 2 |
+| 5.0 | 5 |
+| 5.1 | 6 |
+| 7.1 | 8 |
+| 5.1.2 | 8 |
+| 5.1.4 | 10 |
+| 7.1.2 | 10 |
+
+Eight- and ten-channel files are ambiguous from channel count alone. Use `--input-format` to distinguish `7.1` from
+`5.1.2`, or `5.1.4` from `7.1.2`.
+
+```bash
+upmixer surround.wav output.wav --input-format 5.1.2 --format 7.1.4
+```
+
+### Outputs
+
+| Layout | Channels | Height channels |
+|---|---:|---:|
+| 5.1 | 6 | 0 |
+| 7.1 | 8 | 0 |
+| 5.1.2 | 8 | 2 |
+| 5.1.4 | 10 | 4 |
+| 7.1.2 | 10 | 2 |
+| 7.1.4 | 12 | 4 |
+
+## CLI Workflows
+
+Write a standard multichannel WAV and a stereo compatibility downmix:
+
+```bash
+upmixer input.wav output_714.wav --format 7.1.4 \
+  --downmix-output output_stereo.wav
+```
+
+Write a 24-bit, 48 kHz ADM-BWF bed for downstream authoring:
+
+```bash
+upmixer input.flac authoring_bed.wav --mode stem --format 7.1.4 \
+  --output-type adm-bwf --output-subtype PCM_24 --output-sample-rate 48000
+```
+
+Inspect a job without writing audio:
+
+```bash
+upmixer input.wav output.wav --format 7.1.4 --dry-run
+```
+
+Emit a machine-readable result or run report:
+
+```bash
+upmixer input.wav output.wav --format 7.1.4 --json
+upmixer input.wav output.wav --format 7.1.4 --report run-report.json
+```
+
+Use `upmixer --help` for every CLI option and `upmixer --manifest-keys` for manifest-configurable fields.
+
+## Manifests
+
+YAML and JSON manifests describe one or more assets with shared settings and optional per-asset overrides. A manifest
+version must use `MAJOR.MINOR` or `MAJOR.MINOR.PATCH` syntax.
 
 ```yaml
 version: "1.0"
 
-metadata: # optional — informational only, not inherited by assets
-  name: "My Project"
-  author: "Jane Doe"
+metadata:
+  name: "Album spatial masters"
+  author: "Example Engineer"
 
 engine:
-  mode: stem          # or realtime
-  stem_cache_dir: /tmp/upmixer_stems
-  stem_batch_size: 4  # optional; omit for backend-aware automatic selection
+  mode: stem
+  stems: [vocals, bass, drums, guitar, piano, other]
+  stem_cache_dir: /tmp/upmixer-stems
+  stem_silence_skip: true
 
 mixing:
   channel_layout: 7.1.4
-  stem_source_anchor_strength: 1.0  # stem mode: blend stem content with original audio
+  stem_source_anchor_strength: 0.5
   spatial:
-    profile: auto       # auto, intimate, rhythmic, spacious, live, detailed
-    intensity: 1.0      # 0 = neutral profile gains, 1 = full adaptation
+    profile: auto
+    intensity: 1.0
+    preanalyze: true
 
-format: # output file format (separate from output path)
-  type: adm-bwf       # ITU-R BS.2076-2 ADM-BWF container (WAV)
+format:
+  type: adm-bwf
   subtype: PCM_24
   sample_rate: 48000
 
 mastering:
+  eq:
+    profile: spatial-present
+    strength: 0.7
+  compressor:
+    profile: transparent
   loudness:
     normalize: true
     target: -18.0
     max_tp: -1.0
 
 assets:
-  - input: stereo.flac
-    output: atmos_music.wav
-```
-
-Global blocks (`engine`, `mixing`, `mastering`, `routing`, `format`, `processing`) apply to all assets. Per-asset blocks
-deep-merge with globals — only specified keys are overridden.
-
-```yaml
-# Per-asset override example
-assets:
   - input: tracks/01_intro.flac
-    output: dist/01_intro.wav
+    output: masters/01_intro.wav
 
-  - input: tracks/02_main.flac
-    output: dist/02_main.wav
+  - input: tracks/02_single.flac
+    output: masters/02_single.wav
     mixing:
       stem_rebalance:
-        Vocals: +0.0   # override only vocals for this track
+        Vocals: 1.0
 ```
 
-#### Manifest format (JSON)
+Global `engine`, `mixing`, `routing`, `format`, `mastering`, and `processing` blocks apply to every asset. Per-asset
+configuration blocks are deep-merged, so an override changes only the specified keys. Keep `engine.mode` consistent
+across a manifest batch because one pipeline type is reused for the complete run.
 
-```json
-{
-  "version": "1.0",
-  "engine": {
-    "mode": "stem"
-  },
-  "mixing": {
-    "channel_layout": "7.1.4"
-  },
-  "format": {
-    "type": "adm-bwf",
-    "subtype": "PCM_24",
-    "sample_rate": 48000
-  },
-  "mastering": {
-    "loudness": {
-      "normalize": true,
-      "target": -18.0,
-      "max_tp": -1.0
-    }
-  },
-  "assets": [
-    {
-      "input": "stereo.flac",
-      "output": "atmos_music.wav"
-    }
-  ]
-}
+Configuration precedence is:
+
+```text
+CLI flags > per-asset manifest values > global manifest values > UpmixConfig defaults
 ```
 
-#### Parameter priority order
+### Included examples
 
-```
-CLI flags  >  manifest values  >  UpmixConfig defaults
-```
+| Manifest | Demonstrates |
+|---|---|
+| [`stereo_to_51.yaml`](examples/stereo_to_51.yaml) | Fast stereo-to-5.1 realtime processing |
+| [`stem_714.yaml`](examples/stem_714.yaml) | Full 7.1.4 stem workflow, source anchoring, and optional stem shaping |
+| [`stem_hierarchical.yaml`](examples/stem_hierarchical.yaml) | Automatic crowd, primary, drum, and backing-vocal stages |
+| [`atmos_music.yaml`](examples/atmos_music.yaml) | YAML ADM-BWF music-authoring bed |
+| [`atmos_music.json`](examples/atmos_music.json) | Equivalent JSON ADM-BWF example |
+| [`batch_album_stem.yaml`](examples/batch_album_stem.yaml) | Explicit album jobs with shared stem settings |
+| [`batch_dir_stem.yaml`](examples/batch_dir_stem.yaml) | Directory expansion and per-directory overrides |
+| [`batch_explicit_jobs.yaml`](examples/batch_explicit_jobs.yaml) | Per-track deep-merged overrides |
+| [`batch_files_realtime.yaml`](examples/batch_files_realtime.yaml) | Realtime batch from unrelated source paths |
 
-CLI flags always win. Manifest values override the built-in UpmixConfig defaults.
+## Batch Processing
 
-### Batch processing
-
-Process entire albums or arbitrary file lists in a single invocation. In stem mode the neural network model is **loaded
-once** and reused across all files — significantly faster than running upmixer per track.
+Process a directory recursively after reviewing its resolved jobs:
 
 ```bash
-# All WAV/FLAC files in a directory → output dir (stem mode)
-upmixer --batch-dir /albums/ok-computer/ --output-dir /out/ --mode stem --format 7.1.4
-
-# Cherry-picked files from different directories (realtime, 4 parallel workers)
-upmixer --inputs /dir1/track1.wav /dir2/track2.flac /dir3/bonus.wav \
-        --output-dir /out/ --mode realtime --batch-workers 4
-
-# Manifest-driven batch (see examples/batch_album_stem.yaml)
-upmixer --manifest examples/batch_album_stem.yaml
-
-# Get a JSON summary of all results
-upmixer --batch-dir /albums/ --output-dir /out/ --json
-
-# Safely inspect a recursive batch before starting it
-upmixer --batch-dir /albums/ --output-dir /out/ --recursive \
-        --output-template '{relative_stem}.wav' --dry-run
-
-# Resume only outputs recorded with matching input and settings
-upmixer --batch-dir /albums/ --output-dir /out/ --resume --report run-report.json
+upmixer --batch-dir /albums/project --output-dir /masters/project \
+  --recursive --output-template '{relative_stem}.wav' --format 7.1.4 --dry-run
 ```
 
-**Resource usage**: `--cpu-priority auto` uses all CPU threads for AI stem separation and reduced priority/threading for
-realtime DSP jobs. Pass `--cpu-priority low` to keep a stem job in the background, or `normal` to force full resources.
+Run it and write resumable state plus a portable report:
 
-#### Batch manifest format
-
-Manifest batch uses the unified `assets` array — a single-file job is a one-item array:
-
-```yaml
-version: "1.0"
-
-engine:
-  mode: stem
-  stem_cache_dir: /tmp/upmixer_stems
-
-mixing:
-  channel_layout: 7.1.4
-
-mastering:
-  loudness:
-    normalize: true
-    target: -18.0
-
-assets:
-  - input: /albums/01_intro.flac
-    output: /output/01_intro.wav
-
-  - input: /albums/02_main.flac
-    output: /output/02_main.wav
-    mixing:
-      stem_rebalance:
-        Vocals: +0.0   # per-asset override
+```bash
+upmixer --batch-dir /albums/project --output-dir /masters/project \
+  --recursive --output-template '{relative_stem}.wav' --format 7.1.4 \
+  --resume --report project-report.json
 ```
 
-For directory scanning use the CLI: `upmixer --batch-dir /albums/ --output-dir /out/ --mode stem`.
+Use `--inputs` for files from unrelated directories. Realtime batches may use `--batch-workers`; stem batches remain
+sequential so loaded separator models can be reused. CLI stem batches created with `--inputs` or `--batch-dir`
+automatically use a shared cache unless a cache directory is configured explicitly; manifest examples set their cache
+directory in `engine`.
 
-See [`examples/batch_album_stem.yaml`](examples/batch_album_stem.yaml), [
-`examples/batch_files_realtime.yaml`](examples/batch_files_realtime.yaml), and [
-`examples/batch_explicit_jobs.yaml`](examples/batch_explicit_jobs.yaml) for complete examples.
+## Output and Mastering
 
-#### Batch Python API
+Both pipelines feed the same mastering chain:
 
-```python
-from upmixer.batch import BatchProcessor, resolve_batch_jobs
-from upmixer.config import UpmixConfig
+1. Optional spectral and RMS reference matching.
+2. Optional preset spectral EQ.
+3. Optional multichannel bus compression.
+4. Optional bass control and LFE trim.
+5. Soft peak limiting.
+6. ITU-R BS.1770 integrated loudness normalization and true-peak ceiling enforcement.
 
-jobs = resolve_batch_jobs(
-    input_paths=["/dir1/a.wav", "/dir2/b.flac"],
-    output_dir="/out/",
-)
-result = BatchProcessor(UpmixConfig(), mode="stem").process(jobs)
-print(f"{len(result.jobs)}/{len(jobs)} succeeded in {result.wall_time_s:.1f}s")
-for fail in result.failed:
-    print(f"FAILED: {fail['input']} — {fail['error']}")
-```
+Loudness results, applied gain, selected spatial profile, stem names, and processing time are returned in
+`UpmixResult` and are available from `--json`.
 
-`StemUpmixPipeline` now supports context manager syntax to ensure the model is released when done:
+### Standard WAV
 
-```python
-from upmixer.separation.stem_pipeline import StemUpmixPipeline
-from upmixer.config import UpmixConfig
+Standard WAV output supports `PCM_16`, `PCM_24`, and `PCM_32`. The source sample rate is retained unless
+`--output-sample-rate` is set.
 
-with StemUpmixPipeline(UpmixConfig(), model="BS-Roformer-SW.ckpt") as pipeline:
-    for track, out in pairs:
-        result = pipeline.process_file(track, out)  # model reused each call
-# model released here
-```
+### ADM-BWF
 
----
+ADM-BWF output contains the PCM bed plus BWF, ADM XML, CHNA, and DBMD chunks for downstream DAW or encoding workflows.
+It requires:
 
-### Key CLI options
+- A `.wav` output path.
+- `PCM_24` audio.
+- A 48 kHz or 96 kHz output sample rate; 48 kHz is selected when no rate is specified.
+- One of the supported 5.1 through 7.1.4 output layouts.
 
-| Flag                      | Default                   | Description                                                |
-|---------------------------|---------------------------|------------------------------------------------------------|
-| `--manifest` / `-m`       | —                         | YAML or JSON manifest file                                 |
-| `--manifest-keys`         | —                         | Print all valid manifest keys and exit                     |
-| `--format`                | `5.1`                     | Output channel layout                                      |
-| `--mode`                  | `realtime`                | `realtime` or `stem`                                       |
-| `--input-format`          | auto                      | Force input layout (required for ambiguous channel counts) |
-| `--output-type`           | `wav`                     | `wav` or `adm-bwf`                                         |
-| `--output-sample-rate`    | same as input             | Resample output (e.g. `48000`)                             |
-| `--output-subtype`        | `PCM_24`                  | Bit depth: `PCM_16`, `PCM_24`, `PCM_32`                    |
-| `--no-loudness-normalize` | —                         | Disable BS.1770-4 loudness normalization                   |
-| `--loudness-target`       | `-18.0`                   | Target integrated loudness in LKFS                         |
-| `--stem-model-dir`        | `~/.cache/upmixer-models` | Model cache directory                                      |
-| `--stem-batch-size`       | auto                      | Full-precision inference batch size                        |
-| `--inputs`                | —                         | One or more input files for batch (any directories)        |
-| `--batch-dir`             | —                         | Directory to scan for WAV/FLAC (batch mode)                |
-| `--output-dir`            | —                         | Output directory for batch mode                            |
-| `--batch-workers`         | `1`                       | Parallel workers (realtime batch only)                     |
-| `--cpu-priority`          | `auto`                    | Full resources for stem; reduced resources for realtime   |
-| `--center-gain`           | `0.85`                    | Center channel gain                                        |
-| `--surround-gain`         | `0.60`                    | Side surround gain                                         |
-| `--height-gain`           | `0.55`                    | Height channel gain                                        |
-| `--lfe-gain`              | `0.3162`                  | LFE gain                                                   |
-| `--lfe-cutoff`            | `120`                     | LFE low-pass cutoff in Hz                                  |
-| `--content-mix-strength`  | `1.0`                     | Analyzer influence on static stem routing                  |
-| `--content-hf-analysis-hz`| `4000`                    | High-frequency threshold for stem analysis                 |
-| `--preview`               | —                         | Process a 30 s excerpt instead of the full file            |
-| `--preview-duration`      | `30.0`                    | Preview window length in seconds                           |
-| `--preview-start`         | auto-center               | Preview start time in seconds                              |
-| `-q` / `--quiet`          | —                         | Suppress all output except errors                          |
-| `-v` / `--verbose`        | —                         | Debug logging                                              |
-| `--json`                  | —                         | Print `UpmixResult` / `BatchResult` as JSON to stdout      |
-| `--dry-run`               | —                         | Validate and list resolved jobs without writing audio       |
-| `--overwrite`             | —                         | Explicitly replace existing outputs                         |
-| `--resume`                | —                         | Skip outputs verified by the saved run state                |
-| `--report`                | —                         | Write a portable JSON run report                            |
-| `--recursive`             | —                         | Scan nested directories in `--batch-dir`                   |
-| `--include`               | WAV/FLAC                  | Repeatable glob filter for batch directory scanning         |
-| `--output-template`       | `{stem}{ext}`              | Output name fields: `stem`, `name`, `ext`, `relative_stem` |
-
-### Delivery targets
-
-Set loudness, container, and sample rate directly in your manifest or via CLI flags. Common target configurations:
-
-| Target                        | `output.type` | `output.sample_rate` | `loudness.target` | `loudness.max_tp` | Use case                         |
-|-------------------------------|---------------|----------------------|-------------------|-------------------|----------------------------------|
-| Dolby Atmos Music (streaming) | `adm-bwf`     | `48000`              | `-18.0`           | `-1.0`            | Apple Music, Amazon Music, Tidal |
-| Dolby Atmos Blu-ray (TrueHD)  | `wav`         | `48000`              | `-27.0`           | `-2.0`            | Blu-ray via TrueHD/MLP encoder   |
-
-See [`examples/atmos_music.yaml`](examples/atmos_music.yaml) and [
-`examples/batch_files_realtime.yaml`](examples/batch_files_realtime.yaml) for complete manifest examples.
-
----
+The generated file is a channel-based authoring bed, not a Dolby codec bitstream. Delivery requirements vary by
+platform and workflow; validate metadata, loudness, channel order, and downstream encoding in the target toolchain.
 
 ## Python API
+
+Realtime/file pipeline:
 
 ```python
 from upmixer import UpmixConfig, UpmixPipeline
 
-config = UpmixConfig(output_format="7.1.4", loudness_target_lkfs=-18.0)
-pipeline = UpmixPipeline(config)
-result = pipeline.process_file("stereo.wav", "atmos.wav")
-
-print(f"Processed {result.duration_seconds:.1f}s in {result.processing_time_seconds:.1f}s")
+config = UpmixConfig(
+    output_format="7.1.4",
+    spatial_profile="auto",
+    loudness_target_lkfs=-18.0,
+)
+result = UpmixPipeline(config).process_file("stereo.wav", "spatial.wav")
+print(result.to_json())
 ```
 
-Stem mode:
+Stem pipeline with automatic model planning and deterministic cleanup:
 
 ```python
 from upmixer import UpmixConfig
 from upmixer.separation.stem_pipeline import StemUpmixPipeline
 
-config = UpmixConfig(output_format="7.1.4")
-pipeline = StemUpmixPipeline(config, model="htdemucs_ft.yaml")
-result = pipeline.process_file("stereo.wav", "atmos.wav")
+config = UpmixConfig(
+    output_format="7.1.4",
+    stems=["vocals", "bass", "drums", "guitar", "piano", "other"],
+    stem_cache_dir="/tmp/upmixer-stems",
+)
 
-print(result.to_json())
+with StemUpmixPipeline(config) as pipeline:
+    result = pipeline.process_file("stereo.wav", "spatial.wav")
+
+print(result.stems)
 ```
 
-Progress callback (useful for GUIs or integrations):
+Both `process_file` methods accept `input_format_override` and a `progress_callback(message, fraction)` callable.
+
+The primary public imports are:
 
 ```python
-def on_progress(message: str, fraction: float) -> None:
-    print(f"[{fraction:.0%}] {message}")
-
-
-result = pipeline.process_file("input.wav", "output.wav", progress_callback=on_progress)
+from upmixer import (
+    FORMAT_MAP,
+    INPUT_FORMAT_MAP,
+    StreamingProcessor,
+    UpmixConfig,
+    UpmixPipeline,
+    UpmixResult,
+)
 ```
 
-Manifest-driven API:
+## Development
 
-```python
-from upmixer.config import UpmixConfig
-from upmixer.manifest import load_manifest, validate_manifest, parse_manifest, apply_asset_job
-from upmixer.pipeline import UpmixPipeline
+Install development dependencies and run the complete suite:
 
-raw = load_manifest("job.yaml")
-validate_manifest(raw)  # raises ManifestError on bad version/assets
-meta, asset_jobs = parse_manifest(raw)  # meta: ManifestMeta | None
-
-for job in asset_jobs:
-    config = UpmixConfig()
-    apply_asset_job(config, job)  # applies job.config + format params
-    pipeline = UpmixPipeline(config)
-    result = pipeline.process_file(job.input, job.output)
+```bash
+python3 -m pip install -e ".[dev]"
+python3 -m pytest -q
 ```
 
-`UpmixResult` fields:
+Performance and real-model checks are opt-in:
 
-```python
-result.input_format  # e.g. "Stereo"
-result.output_format  # e.g. "7.1.4 Atmos"
-result.duration_seconds  # audio duration
-result.stems  # list of stem names used (stem mode only)
-result.measured_lkfs  # integrated loudness before normalization
-result.measured_tp_dbtp  # True Peak after loudness gain
-result.applied_gain_db  # total gain applied for loudness compliance
-result.tp_limited  # True if TP ceiling reduced the gain
-result.processing_time_seconds
-result.to_json()  # serialize to JSON string
+```bash
+python3 -m pytest -m perf -s
 ```
 
-`MasteringResult` (returned by `MasteringChain.process()`):
+Build distributions when the `build` package is installed:
 
-```python
-from upmixer.mastering import MasteringChain, MasteringResult
-from upmixer.config import UpmixConfig
-from upmixer.formats import FORMAT_MAP
-
-chain = MasteringChain(UpmixConfig(loudness_normalize=True))
-channels, mastering_result = chain.process(channels_dict, sample_rate=48000, output_fmt=FORMAT_MAP["7.1.4"])
-
-mastering_result.measured_lkfs  # float | None
-mastering_result.measured_tp_dbtp  # float | None
-mastering_result.applied_gain_db  # float | None
-mastering_result.tp_limited  # bool
+```bash
+python3 -m build
 ```
 
-Logging follows the standard Python `logging` module under the `upmixer` logger name. Nothing is printed to stdout or
-stderr unless you configure a handler.
+## References
 
----
-
-## How it works
-
-### Realtime mode
-
-The input is processed frame-by-frame using a short-time Fourier transform. Per-frequency-bin inter-channel coherence is
-estimated and used to separate direct (correlated) from ambient (diffuse) content. Direct content stays in the front
-bed; ambient content is spread to surrounds and heights. A harmonic mask prevents tonal content from leaking to
-surrounds where diffuse reverb belongs.
-
-This mode works on any input channel count and has predictable latency (one STFT window).
-
-### Stem mode
-
-The input is separated into instrument stems
-using [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) (Demucs or RoFormer models). Each
-stem is then analyzed for stereo width, frequency balance, and transient density, and routed to its appropriate spatial
-position based on routing tables derived from Dolby Atmos Music mixing practice:
-
-- Lead vocals → center-anchored (C dominant, FL/FR phantom support)
-- Backing vocals → widened front + height for chorus expansion
-- Drums → center anchor for kick/snare, front bed primary, LFE as weight send
-- Bass → front L/R primary, center for mono low-end, LFE as effect send
-- Guitar → front-dominant, room depth in surrounds
-- Other / pads / atmospherics → diffuse in surrounds, strong height presence (reverb tails belong overhead)
-
-For multichannel inputs (5.1, 7.1, etc.), each stereo zone (front, surround, back, height) is separated independently.
-Stems are tagged with their zone and routed to preserve spatial intent of the original mix.
-
-The set of stems to extract is driven by the `stems` key (manifest) or `--stems` (CLI); the engine
-resolves which models to run automatically. The default set is `vocals, bass, drums, guitar, piano,
-other`. Additional opt-in stems: `crowd` (isolated before instruments), the drum sub-stems
-`kick, snare, toms, hi-hat, ride, crash` (extracted from `drums`), and `backing-vocals`. Requesting
-`backing-vocals` runs a second-stage karaoke model on the isolated Vocals stem: its instrumental
-track becomes the backing vocals, and the lead Vocals stem is refined as a side effect.
-
-Stem inference keeps model precision, overlap, segment size, and output sample rate unchanged. Batch size is selected
-from the active CUDA, MPS/CoreML, or CPU backend; accelerator out-of-memory failures retry with a smaller batch. Set
-`--stem-batch-size` for an explicit value. Model-plan cache entries retain every stem already emitted by inference, so
-later requests for a subset can skip separation.
-
-### Processing pipeline
-
-The pipeline is split into two stages:
-
-**Mixing phase** — spatial routing and energy normalization. Handled by `UpmixPipeline` (realtime) or
-`StemUpmixPipeline` (stem). Produces a multichannel bed.
-
-**Mastering phase** — loudness compliance and peak control. Handled by `MasteringChain` and shared by both pipelines:
-
-1. **BS.1770-4 integrated loudness normalization** — scalar linear gain to hit the target LKFS. No dynamic processing,
-   no clipping.
-2. **True Peak ceiling** — if the post-normalization True Peak exceeds `loudness_max_tp` dBTP, a second linear gain
-   reduction is applied.
-3. **Tanh soft-limiter** — always applied last to catch any transient peaks that survived the True Peak check.
-
----
-
-## Output formats
-
-| Format  | Channels                                | Notes                    |
-|---------|-----------------------------------------|--------------------------|
-| `5.1`   | FL FR C LFE SL SR                       | Standard cinema surround |
-| `7.1`   | FL FR C LFE SL SR BL BR                 | Extended rear channels   |
-| `5.1.2` | FL FR C LFE SL SR TFL TFR               | Atmos overhead pair      |
-| `5.1.4` | FL FR C LFE SL SR TFL TFR TBL TBR       | Full Atmos overhead      |
-| `7.1.2` | FL FR C LFE SL SR BL BR TFL TFR         | 7.1 + front overhead     |
-| `7.1.4` | FL FR C LFE SL SR BL BR TFL TFR TBL TBR | Full Atmos bed           |
-
-ADM-BWF output (`--output-type adm-bwf`) embeds ITU-R BS.2076-2 metadata for DAW import, including BWF bext chunk
-loudness fields populated with BS.1770-4 measurement results (compliant with Dolby Atmos Music Master Delivery
-Specification v2022.07).
-
----
+- [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) by nomadkaraoke — external source
+  separation library used by stem mode.
+- [ITU-R BS.1770](https://www.itu.int/rec/R-REC-BS.1770/) — audio programme loudness and true-peak measurement.
+- [ITU-R BS.2076](https://www.itu.int/rec/R-REC-BS.2076/) — Audio Definition Model.
+- [ITU-R BS.775](https://www.itu.int/rec/R-REC-BS.775/) and
+  [ITU-R BS.2051](https://www.itu.int/rec/R-REC-BS.2051/) — multichannel and advanced sound-system layouts.
 
 ## Legal Disclaimer
 
@@ -510,15 +415,6 @@ by, or otherwise endorsed by Dolby Laboratories. All references to Dolby Atmos a
 solely in a descriptive, nominative sense to indicate technical compatibility with publicly available industry
 standards.
 
----
-
-## References
-
-- [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) by nomadkaraoke — stem separation via
-  Demucs and RoFormer models
-
----
-
 ## License
 
-MIT
+[MIT](LICENSE)

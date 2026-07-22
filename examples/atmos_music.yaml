@@ -1,25 +1,31 @@
-# Dolby Atmos Music Master Delivery — streaming platforms
+# ADM-BWF music-authoring bed — 7.1.4
 #
-# Spec: Dolby Atmos Music Master Delivery Specification v2022.07
-# Target: Apple Music, Amazon Music, Tidal
+# Produces a 24-bit, 48 kHz channel bed with ADM metadata for downstream
+# authoring, QC, and encoding. It is not a distribution codec bitstream.
 #
 # Usage:
-#   upmixer --manifest atmos_music.yaml
+#   upmixer --manifest examples/atmos_music.yaml
 
 version: "1.0"
 
 metadata:
-  name: "Atmos Music Master"
-  description: "Dolby Atmos Music Master Delivery — streaming platforms"
+  name: "7.1.4 ADM-BWF Music Bed"
+  description: "Spatial Audio Upmixer bed for downstream immersive authoring"
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 engine:
-  mode: stem              # stem separation: better spatial quality, slower
-  # stem_model: BS-Roformer-SW.ckpt   # override default htdemucs_ft
+  mode: stem
+  stems: [vocals, bass, drums, guitar, piano, other]
+  stem_silence_skip: true
+  # stem_cache_dir: /tmp/upmixer_stems
 
 # ── Mixing (stem mode only) ───────────────────────────────────────────────────
 mixing:
-  channel_layout: 7.1.4  # full Dolby Atmos bed (12 channels)
+  channel_layout: 7.1.4
+  stem_source_anchor_strength: 0.5
+  spatial:
+    profile: spacious
+    intensity: 0.8
   # Stem rebalance — per-stem gain adjustments in dB
   # stem_rebalance:
   #   Vocals: +1.5        # bring vocals forward
@@ -31,17 +37,17 @@ mixing:
   #   Bass:   bass-warmth
   #   Other:  other-air
 
-# ── Output format — Dolby Atmos Music Master Delivery Specification v2022.07 ──
+# ── Output format — ADM-BWF authoring bed ─────────────────────────────────────
 format:
-  type: adm-bwf           # ITU-R BS.2076-2 ADM-BWF container (WAV)
-  subtype: PCM_24         # 24-bit LPCM (spec requirement)
-  sample_rate: 48000      # 48 kHz (spec requirement)
+  type: adm-bwf
+  subtype: PCM_24
+  sample_rate: 48000
 
 # ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:
   eq:
-    profile: atmos-streaming  # subtle bass warmth + presence + air shelf
-    strength: 1.0             # 0.0 = bypass → 1.0 = full effect
+    profile: atmos-streaming  # tonal preset name; not a delivery certification
+    strength: 0.8
   # Reference matching — spectral + RMS matching to a reference track (independent of eq)
   # match_reference:
   #   path: reference_atmos.wav
@@ -50,8 +56,8 @@ mastering:
     profile: glue
   loudness:
     normalize: true
-    target: -18.0             # Atmos Music spec: -18 LKFS
-    max_tp: -1.0              # -1 dBTP true peak ceiling
+    target: -18.0
+    max_tp: -1.0
 
 # ── Processing ────────────────────────────────────────────────────────────────
 # processing:
@@ -62,5 +68,4 @@ mastering:
 # ── Assets ────────────────────────────────────────────────────────────────────
 assets:
   - input:  stereo.flac
-    output: atmos_music.wav   # ADM-BWF uses WAV container
-    # stem_cache_dir: /tmp/upmixer_stems   # cache stems for faster re-runs
+    output: atmos_music.wav

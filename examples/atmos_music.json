@@ -1,19 +1,26 @@
 {
-  "_comment": "Dolby Atmos Music Master Delivery — JSON manifest example",
+  "_comment": "7.1.4 ADM-BWF music-authoring bed for downstream authoring, QC, and encoding",
 
   "version": "1.0",
 
   "metadata": {
-    "name": "Atmos Music Master",
-    "description": "Dolby Atmos Music Master Delivery — streaming platforms"
+    "name": "7.1.4 ADM-BWF Music Bed",
+    "description": "Spatial Audio Upmixer bed for downstream immersive authoring"
   },
 
   "engine": {
-    "mode": "stem"
+    "mode": "stem",
+    "stems": ["vocals", "bass", "drums", "guitar", "piano", "other"],
+    "stem_silence_skip": true
   },
 
   "mixing": {
-    "channel_layout": "7.1.4"
+    "channel_layout": "7.1.4",
+    "stem_source_anchor_strength": 0.5,
+    "spatial": {
+      "profile": "spacious",
+      "intensity": 0.8
+    }
   },
 
   "format": {
@@ -25,7 +32,7 @@
   "mastering": {
     "eq": {
       "profile": "atmos-streaming",
-      "strength": 1.0
+      "strength": 0.8
     },
     "compressor": {
       "profile": "glue"

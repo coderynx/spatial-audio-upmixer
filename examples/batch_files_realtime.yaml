@@ -4,13 +4,13 @@
 # Realtime mode is fast; no stem separation dependency required.
 #
 # Usage:
-#   upmixer --manifest batch_files_realtime.yaml
+#   upmixer --manifest examples/batch_files_realtime.yaml
 
 version: "1.0"
 
 metadata:
   name: "Realtime Batch — 5.1"
-  description: "Multi-source batch upmix to 5.1, Blu-ray loudness convention"
+  description: "Adaptive multi-source batch upmix to standard 5.1 WAV"
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 engine:
@@ -19,10 +19,11 @@ engine:
 # ── Mixing ────────────────────────────────────────────────────────────────────
 mixing:
   channel_layout: 5.1
+  spatial:
+    profile: balanced
+    intensity: 0.7
 
-# ── Output format — multichannel WAV for TrueHD encoding ─────────────────────
-# Feed output to a Dolby Media Encoder (DME) for TrueHD encoding.
-# Loudness convention: -27 LKFS dialog-gated (BS.1770-1), ±2 LU tolerance.
+# ── Output format — standard multichannel WAV ─────────────────────────────────
 format:
   type: wav
   subtype: PCM_24
@@ -32,8 +33,8 @@ format:
 mastering:
   loudness:
     normalize: true
-    target: -27.0         # Blu-ray: -27 LKFS dialog-gated (BS.1770-1)
-    max_tp: -2.0
+    target: -18.0
+    max_tp: -1.0
 
 # ── Assets ────────────────────────────────────────────────────────────────────
 assets:

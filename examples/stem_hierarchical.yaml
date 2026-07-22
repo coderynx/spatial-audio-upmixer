@@ -1,6 +1,6 @@
-# Hierarchical multi-stage stem extraction → 7.1.4 Atmos
+# Hierarchical multi-stage stem extraction → 7.1.4 spatial WAV
 #
-# Demonstrates the three-tier model pipeline. The engine automatically selects
+# Demonstrates the multi-stage model pipeline. The engine automatically selects
 # models and execution order based on the requested stems — no model names
 # appear in this manifest.
 #
@@ -34,7 +34,7 @@ version: "1.0"
 
 metadata:
   name: "Hierarchical Stem Extraction"
-  description: "Three-stage crowd+instrument+drumsep pipeline for concert recordings"
+  description: "Automatic crowd, instrument, drum, and backing-vocal separation stages"
 
 # ── Engine ────────────────────────────────────────────────────────────────────
 engine:
@@ -53,6 +53,10 @@ engine:
 # ── Mixing ────────────────────────────────────────────────────────────────────
 mixing:
   channel_layout: 7.1.4
+  stem_source_anchor_strength: 0.5
+  spatial:
+    profile: live
+    intensity: 0.9
 
   stem_rebalance:
     Vocals: +1.5    # vocals forward
@@ -63,6 +67,11 @@ mixing:
   # stem_eq:
   #   Vocals: vocal-presence
   #   Kick:   drums-punch
+
+# ── Output ────────────────────────────────────────────────────────────────────
+format:
+  type: wav
+  subtype: PCM_24
 
 # ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:
