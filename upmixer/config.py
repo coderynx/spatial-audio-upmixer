@@ -67,6 +67,13 @@ class UpmixConfig:
     content_mix_strength: float = 1.0
     content_hf_analysis_hz: float = 4000.0
 
+    # Creative spatial adaptation. ``auto`` selects a content-led profile per
+    # file; live StreamingProcessor callers without a pre-analysis plan stay
+    # deliberately conservative.
+    spatial_profile: str = "auto"
+    spatial_intensity: float = 1.0
+    spatial_preanalysis: bool = True
+
     surround_downmix_coeff: float = 0.7071
 
     loudness_normalize: bool = True

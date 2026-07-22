@@ -19,6 +19,7 @@ upmixer --manifest job.yaml input.flac output_override.wav --format 7.1.4
 import argparse
 import logging
 import sys
+from pathlib import Path
 
 _log = logging.getLogger("upmixer")
 
@@ -87,6 +88,12 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.content_mix_strength = max(0.0, min(1.0, args.content_mix_strength))
     if args.content_hf_analysis_hz is not None:
         config.content_hf_analysis_hz = args.content_hf_analysis_hz
+    if args.spatial_profile is not None:
+        config.spatial_profile = args.spatial_profile
+    if args.spatial_intensity is not None:
+        config.spatial_intensity = max(0.0, min(1.0, args.spatial_intensity))
+    if args.no_spatial_preanalysis:
+        config.spatial_preanalysis = False
     if args.no_loudness_normalize:
         config.loudness_normalize = False
     if args.loudness_target is not None:
@@ -271,38 +278,94 @@ def _run_manifest_assets(asset_jobs, meta, args, parser) -> None:
             raw = [s.strip() for s in args.stems.split(",") if s.strip()]
             cfg.stems = _normalize(raw)
 
+    from upmixer.execution import PreflightError, RunState, preflight_job, write_report
+
+    state = RunState.load(args.state_file or f"{args.manifest}.upmixer-state.json")
+    prepared = []
+    skipped: list[dict] = []
+    seen_outputs: set[str] = set()
+    for job in asset_jobs:
+        cfg = _build_cfg(job)
+        _apply_per_asset_stems(cfg, job)
+        input_fmt = args.input_format or job.engine.get("input_format")
+        try:
+            plan = preflight_job(job.input, job.output, cfg, input_fmt)
+        except PreflightError as exc:
+            parser.error(str(exc))
+        output_key = str(Path(job.output).resolve())
+        if output_key in seen_outputs:
+            parser.error(f"Multiple manifest assets resolve to output: {job.output}")
+        seen_outputs.add(output_key)
+        if Path(job.output).exists() and args.resume and state.matches(plan):
+            skipped.append({"input": job.input, "output": job.output, "reason": "resume"})
+        elif Path(job.output).exists() and not args.overwrite:
+            parser.error(f"Output already exists: {job.output}. Use --overwrite or --resume.")
+        else:
+            prepared.append((job, cfg, input_fmt, plan))
+
+    if args.dry_run:
+        dry_report = {"jobs": [item[3] for item in prepared], "skipped": skipped, "failed": []}
+        if args.json:
+            import json
+            print(json.dumps(dry_report, indent=2))
+        else:
+            for plan in dry_report["jobs"]:
+                print(f"READY: {plan['input']} -> {plan['output']}")
+            for skipped_job in skipped:
+                print(f"SKIP:  {skipped_job['input']} -> {skipped_job['output']} (resume)")
+        if args.report:
+            write_report(args.report, dry_report)
+        return
+
+    report: dict = {
+        "planned": [{"input": item[0].input, "output": item[0].output} for item in prepared],
+        "jobs": [],
+        "skipped": skipped,
+        "failed": [],
+    }
+    if not prepared:
+        if args.report:
+            write_report(args.report, report)
+        return
+
+    n = len(prepared)
     if mode == "stem":
         from upmixer.separation.stem_pipeline import StemUpmixPipeline
-        first_cfg = _build_cfg(asset_jobs[0])
-        _apply_per_asset_stems(first_cfg, asset_jobs[0])
+        first_cfg = prepared[0][1]
         with StemUpmixPipeline(
             config=first_cfg,
             model_dir=stem_model_dir,
         ) as pipeline:
-            for i, job in enumerate(asset_jobs):
-                cfg = _build_cfg(job)
-                _apply_per_asset_stems(cfg, job)
-                input_fmt = args.input_format or job.engine.get("input_format")
+            for i, (job, cfg, input_fmt, plan) in enumerate(prepared):
                 _log.info("[%d/%d] %s", i + 1, n, job.input)
                 pipeline.config = cfg
-                result = pipeline.process_file(
-                    job.input, job.output,
-                    input_format_override=input_fmt,
-                )
-                if args.json:
-                    print(result.to_json())
+                try:
+                    result = pipeline.process_file(job.input, job.output, input_format_override=input_fmt)
+                    state.record(plan, result)
+                    report["jobs"].append(result.to_dict())
+                    if args.json:
+                        print(result.to_json())
+                except Exception as exc:
+                    _log.error("FAILED: %s — %s", job.input, exc)
+                    report["failed"].append({"input": job.input, "output": job.output, "error": str(exc)})
     else:
-        for i, job in enumerate(asset_jobs):
-            cfg = _build_cfg(job)
-            input_fmt = args.input_format or job.engine.get("input_format")
+        for i, (job, cfg, input_fmt, plan) in enumerate(prepared):
             _log.info("[%d/%d] %s", i + 1, n, job.input)
             pipeline_rt = UpmixPipeline(cfg)
-            result = pipeline_rt.process_file(
-                job.input, job.output,
-                input_format_override=input_fmt,
-            )
-            if args.json:
-                print(result.to_json())
+            try:
+                result = pipeline_rt.process_file(job.input, job.output, input_format_override=input_fmt)
+                state.record(plan, result)
+                report["jobs"].append(result.to_dict())
+                if args.json:
+                    print(result.to_json())
+            except Exception as exc:
+                _log.error("FAILED: %s — %s", job.input, exc)
+                report["failed"].append({"input": job.input, "output": job.output, "error": str(exc)})
+
+    if args.report:
+        write_report(args.report, report)
+    if report["failed"]:
+        raise SystemExit(1)
 
 
 def main() -> None:
@@ -392,6 +455,18 @@ def main() -> None:
             "Stem mode is always sequential (model reuse requires single process)."
         ),
     )
+    parser.add_argument(
+        "--recursive", action="store_true",
+        help="Recursively scan --batch-dir instead of its top level only.",
+    )
+    parser.add_argument(
+        "--include", action="append", default=None, metavar="GLOB",
+        help="Include pattern for --batch-dir (repeatable; default: *.wav and *.flac).",
+    )
+    parser.add_argument(
+        "--output-template", default="{stem}{ext}", metavar="TEMPLATE",
+        help="Batch output name template. Fields: {stem}, {name}, {ext}, {relative_stem}.",
+    )
 
     parser.add_argument(
         "--format",
@@ -470,6 +545,14 @@ def main() -> None:
 
     parser.add_argument("--no-normalize", action="store_true", help="Disable output energy normalization (mixing phase)")
     parser.add_argument("--content-mix-strength", type=float, default=None, metavar="S", help="Content-aware mixing strength 0.0–1.0 (default: 1.0)")
+    parser.add_argument(
+        "--spatial-profile",
+        choices=["auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"],
+        default=None,
+        help="Creative spatial profile (default: auto).",
+    )
+    parser.add_argument("--spatial-intensity", type=float, default=None, metavar="S", help="Spatial adaptation strength 0.0–1.0 (default: 1.0)")
+    parser.add_argument("--no-spatial-preanalysis", action="store_true", help="Disable offline spatial analysis.")
     parser.add_argument(
         "--content-hf-analysis-hz",
         type=lambda value: _positive_float(value, "--content-hf-analysis-hz"),
@@ -745,6 +828,27 @@ def main() -> None:
     verbosity.add_argument("--quiet",   "-q", action="store_true", help="Suppress all output except warnings and errors.")
     verbosity.add_argument("--verbose", "-v", action="store_true", help="Enable debug-level logging.")
     parser.add_argument("--json", action="store_true", help="Print a JSON summary of the result to stdout when done.")
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Validate and print resolved jobs without processing audio.",
+    )
+    output_policy = parser.add_mutually_exclusive_group()
+    output_policy.add_argument(
+        "--overwrite", action="store_true",
+        help="Replace existing output files after preflight validation.",
+    )
+    output_policy.add_argument(
+        "--resume", action="store_true",
+        help="Skip outputs verified against the saved run state; never overwrites untracked files.",
+    )
+    parser.add_argument(
+        "--state-file", metavar="FILE", default=None,
+        help="JSON state file used to record completed jobs and support --resume.",
+    )
+    parser.add_argument(
+        "--report", metavar="FILE", default=None,
+        help="Write a JSON summary report after processing.",
+    )
 
     if "--manifest-keys" in sys.argv:
         from upmixer.manifest import list_manifest_keys
@@ -801,14 +905,20 @@ def main() -> None:
             parser.error("Batch mode requires --output-dir.")
 
         output_ext = ".wav"  # ADM-BWF uses WAV container; always .wav
-        jobs = resolve_batch_jobs(
-            input_paths=None,
-            batch_dir=batch_dir,
-            output_dir=output_dir,
-            output_ext=output_ext,
-            explicit_jobs=None,
-            batch_inputs=batch_inputs,
-        )
+        try:
+            jobs = resolve_batch_jobs(
+                input_paths=None,
+                batch_dir=batch_dir,
+                output_dir=output_dir,
+                output_ext=output_ext,
+                explicit_jobs=None,
+                batch_inputs=batch_inputs,
+                recursive=args.recursive,
+                include_patterns=args.include,
+                output_template=args.output_template,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
         if not jobs:
             if batch_dir:
                 parser.error(
@@ -827,8 +937,24 @@ def main() -> None:
             progress_callback=lambda done, total, path: (
                 _log.info("[%d/%d] %s", done + 1, total, path) if path else None
             ),
+            overwrite=args.overwrite,
+            resume=args.resume,
+            state_file=args.state_file or str(Path(output_dir) / ".upmixer-state.json"),
         )
-        batch_result = processor.process(jobs)
+        try:
+            if args.dry_run:
+                from upmixer.execution import preflight_job
+                plans = [preflight_job(j.input_path, j.output_path, config, j.input_format_override) for j in jobs]
+                if args.json:
+                    import json
+                    print(json.dumps({"jobs": plans}, indent=2))
+                else:
+                    for plan in plans:
+                        print(f"READY: {plan['input']} -> {plan['output']}")
+                return
+            batch_result = processor.process(jobs)
+        except ValueError as exc:
+            parser.error(str(exc))
 
         for fail in batch_result.failed:
             _log.error("FAILED: %s — %s", fail["input"], fail["error"])
@@ -840,6 +966,17 @@ def main() -> None:
                 "Batch complete: %d/%d succeeded in %.1fs",
                 len(batch_result.jobs), len(jobs), batch_result.wall_time_s,
             )
+        if args.report:
+            from upmixer.execution import write_report
+            write_report(args.report, {
+                "planned": [
+                    {"input": job.input_path, "output": job.output_path}
+                    for job in jobs
+                ],
+                **batch_result.to_dict(),
+            })
+        if batch_result.failed:
+            raise SystemExit(1)
 
     else:
         input_path  = args.input
@@ -856,6 +993,31 @@ def main() -> None:
                 "output file is required. "
                 "Pass it as a positional argument or set 'output' in the manifest."
             )
+
+        from upmixer.execution import PreflightError, RunState, preflight_job, write_report
+        try:
+            plan = preflight_job(input_path, output_path, config, input_format)
+        except PreflightError as exc:
+            parser.error(str(exc))
+        state = RunState.load(args.state_file or f"{output_path}.upmixer-state.json")
+        output_exists = Path(output_path).exists()
+        if output_exists and args.resume and state and state.matches(plan):
+            summary = {"skipped": [{"input": input_path, "output": output_path, "reason": "resume"}]}
+            if args.json:
+                import json
+                print(json.dumps(summary, indent=2))
+            if args.report:
+                write_report(args.report, summary)
+            return
+        if output_exists and not args.overwrite:
+            parser.error(f"Output already exists: {output_path}. Use --overwrite or --resume.")
+        if args.dry_run:
+            if args.json:
+                import json
+                print(json.dumps({"jobs": [plan]}, indent=2))
+            else:
+                print(f"READY: {input_path} -> {output_path}")
+            return
 
         if mode == "stem":
             from upmixer.separation.stem_pipeline import StemUpmixPipeline
@@ -876,6 +1038,15 @@ def main() -> None:
 
         if args.json:
             print(result.to_json())
+        if state is not None:
+            state.record(plan, result)
+        if args.report:
+            write_report(args.report, {
+                "planned": [{"input": input_path, "output": output_path}],
+                "jobs": [result.to_dict()],
+                "failed": [],
+                "skipped": [],
+            })
 
 
 if __name__ == "__main__":

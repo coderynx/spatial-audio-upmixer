@@ -43,6 +43,7 @@ import soundfile as sf
 from scipy.signal import resample_poly
 
 from upmixer.config import UpmixConfig
+from upmixer.analysis.spatial import analyze_spatial_plan
 from upmixer.formats import ChannelLabel, FORMAT_MAP, INPUT_FORMAT_MAP, detect_input_format
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
@@ -603,6 +604,18 @@ class StemUpmixPipeline:
 
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
 
+        # Analyze the separated stereo reconstruction at routing sample rate.
+        # This keeps creative timing aligned with cached/resampled stems.
+        mix_l = np.zeros(n_samples, dtype=np.float64)
+        mix_r = np.zeros(n_samples, dtype=np.float64)
+        for stem in all_stems.values():
+            n = min(len(stem), n_samples)
+            mix_l[:n] += stem[:n, 0]
+            mix_r[:n] += stem[:n, 1] if stem.shape[1] > 1 else stem[:n, 0]
+        spatial_plan = analyze_spatial_plan(mix_l, mix_r, sep_sr, cfg) if cfg.spatial_preanalysis else None
+        if spatial_plan is not None:
+            _log.info("  Spatial: %s (confidence %.2f)", spatial_plan.profile, spatial_plan.confidence)
+
         _progress("  Analyzing stem content...", 0.75)
         stem_features = analyze_stems(
             all_stems,
@@ -625,6 +638,7 @@ class StemUpmixPipeline:
             n_samples,
             passthrough_channels=set(passthrough_resampled.keys()),
             stem_features=stem_features,
+            spatial_plan=spatial_plan,
         )
 
         for ch_name, ch_audio in passthrough_resampled.items():
@@ -696,6 +710,8 @@ class StemUpmixPipeline:
             measured_tp_dbtp=mastering_result.measured_tp_dbtp,
             applied_gain_db=mastering_result.applied_gain_db,
             stems=stem_summary,
+            spatial_profile=spatial_plan.profile if spatial_plan else None,
+            spatial_profile_confidence=spatial_plan.confidence if spatial_plan else None,
             processing_time_seconds=time.monotonic() - t0,
         )
 

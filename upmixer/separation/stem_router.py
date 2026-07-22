@@ -39,6 +39,7 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 
 from upmixer.config import UpmixConfig
+from upmixer.analysis.spatial import SpatialPlan
 from upmixer.formats import ChannelLabel, OutputFormat
 from upmixer.separation.stem_analyzer import StemFeatures
 from upmixer.utils import diffuse_send
@@ -439,6 +440,7 @@ class StemRouter:
         n_samples: int,
         passthrough_channels: set[str] | None = None,
         stem_features: dict[str, StemFeatures] | None = None,
+        spatial_plan: SpatialPlan | None = None,
     ) -> dict[str, np.ndarray]:
         """Mix stems into output channels.
 
@@ -542,6 +544,31 @@ class StemRouter:
 
         if "LFE" in channels:
             channels["LFE"] += self._lfe_gain * sosfilt(self._lfe_sos, lfe_bus)
+
+        if spatial_plan is not None:
+            # Profile motion is auxiliary routing control, never an LFE boost.
+            sample_points = np.arange(n_samples)
+            control_points = np.arange(len(spatial_plan.front)) * spatial_plan.hop_size
+            def _envelope(values: np.ndarray, default: float = 1.0) -> np.ndarray:
+                if len(values) == 0:
+                    return np.full(n_samples, default)
+                return np.interp(sample_points, control_points, values)
+            front = _envelope(spatial_plan.front)
+            surround = _envelope(spatial_plan.surround)
+            back = _envelope(spatial_plan.back)
+            height = _envelope(spatial_plan.height)
+            detail = 1.0 + 0.4125 * _envelope(spatial_plan.detail, 0.0)
+            for label in self._fmt.channels:
+                if label.value in skip or label == ChannelLabel.LFE:
+                    continue
+                if label in _FRONT_CHANNELS or label == ChannelLabel.C:
+                    channels[label.value] *= front
+                elif label in {ChannelLabel.BL, ChannelLabel.BR}:
+                    channels[label.value] *= back * detail
+                elif label in _SURROUND_CHANNELS:
+                    channels[label.value] *= surround * detail
+                elif label in _HEIGHT_CHANNELS:
+                    channels[label.value] *= height * detail
 
         return channels
 

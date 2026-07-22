@@ -125,6 +125,22 @@ class TestResolveBatchJobs:
         jobs = resolve_batch_jobs(batch_dir=empty_dir, output_dir=out_dir)
         assert jobs == []
 
+    def test_recursive_include_and_relative_template(self, tmp_path):
+        nested = tmp_path / "disc2"
+        nested.mkdir()
+        _make_wav(str(nested / "song.wav"))
+        _make_wav(str(tmp_path / "root.flac"))
+        out_dir = tmp_path / "out"
+        jobs = resolve_batch_jobs(
+            batch_dir=str(tmp_path),
+            output_dir=str(out_dir),
+            recursive=True,
+            include_patterns=["*.wav"],
+            output_template="{relative_stem}.wav",
+        )
+        assert len(jobs) == 1
+        assert jobs[0].output_path == str(out_dir / "disc2" / "song.wav")
+
     def test_batch_dir_with_brackets_in_path(self, tmp_path):
         """Directory names with [ ] (common in music filenames) must not break glob."""
         bracketed = tmp_path / "Album [FLAC] [16B-44.1kHz]"

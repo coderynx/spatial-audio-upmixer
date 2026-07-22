@@ -23,10 +23,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 from scipy.signal import butter, sosfilt
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, FORMAT_MAP, OutputFormat
+from upmixer.io.atomic import atomic_output_path
 
 _DOLBY_ENGINE_ALLOWED_FORMATS = frozenset({"5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"})
 
@@ -633,20 +635,24 @@ class AdmBwfWriter:
         if riff_size > 0xFFFFFFFF:
             raise ValueError("ADM-BWF exceeds RIFF 4 GiB limit; BW64 output is required")
 
-        with Path(self._path).open("wb") as handle:
-            handle.write(b"RIFF" + struct.pack("<I", riff_size) + b"WAVE")
-            _write_chunk(handle, b"fmt ", fmt_bytes)
-            _write_chunk(handle, b"bext", bext_bytes)
-            handle.write(b"data" + struct.pack("<I", data_size))
-            block_size = 262_144
-            for start in range(0, n_samples, block_size):
-                block = np.column_stack([channel[start:start + block_size] for channel in ordered])
-                handle.write(_audio_to_pcm(block, bit_depth))
-            if data_size & 1:
-                handle.write(b"\x00")
-            _write_chunk(handle, b"axml", axml_bytes)
-            _write_chunk(handle, b"chna", chna_bytes)
-            _write_chunk(handle, b"dbmd", dbmd_bytes)
+        with atomic_output_path(self._path) as temporary:
+            with temporary.open("wb") as handle:
+                handle.write(b"RIFF" + struct.pack("<I", riff_size) + b"WAVE")
+                _write_chunk(handle, b"fmt ", fmt_bytes)
+                _write_chunk(handle, b"bext", bext_bytes)
+                handle.write(b"data" + struct.pack("<I", data_size))
+                block_size = 262_144
+                for start in range(0, n_samples, block_size):
+                    block = np.column_stack([channel[start:start + block_size] for channel in ordered])
+                    handle.write(_audio_to_pcm(block, bit_depth))
+                if data_size & 1:
+                    handle.write(b"\x00")
+                _write_chunk(handle, b"axml", axml_bytes)
+                _write_chunk(handle, b"chna", chna_bytes)
+                _write_chunk(handle, b"dbmd", dbmd_bytes)
+            info = sf.info(str(temporary))
+            if info.samplerate != sr or info.channels != fmt.n_channels or info.frames != n_samples:
+                raise RuntimeError("Written ADM-BWF metadata does not match requested output")
 
 
 class AdmBwfStemWriter:

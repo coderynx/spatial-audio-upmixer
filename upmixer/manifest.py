@@ -146,6 +146,11 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "channel_layout": ("config", "format"),
         "stem_rebalance": ("config", "stem_rebalance"),
         "stem_eq":        ("config", "stem_eq_profiles"),
+        "spatial": {
+            "profile": ("config", "spatial_profile"),
+            "intensity": ("config", "spatial_intensity"),
+            "preanalyze": ("config", "spatial_preanalysis"),
+        },
         "stems":          ("engine", "stems"),
     },
 
@@ -221,6 +226,9 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "center_attenuation":         ("center_attenuation",       float),
     "content_mix_strength":       ("content_mix_strength",     float),
     "content_hf_analysis_hz":     ("content_hf_analysis_hz",   float),
+    "spatial_profile":            ("spatial_profile",          str),
+    "spatial_intensity":          ("spatial_intensity",        float),
+    "spatial_preanalysis":        ("spatial_preanalysis",      bool),
     "height_low_rolloff_gain":    ("height_low_rolloff_gain",  float),
     "height_high_shelf_gain":     ("height_high_shelf_gain",   float),
     "fft_size":                   ("fft_size",                 int),
