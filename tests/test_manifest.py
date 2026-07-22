@@ -639,6 +639,13 @@ class TestParseAndApplyIntegration:
         apply_asset_job(cfg, jobs[0])
         assert cfg.stem_rebalance == {"Vocals": 2.0, "Drums": -1.0}
 
+    def test_mixing_stem_source_anchor_strength(self):
+        data = _minimal(mixing={"stem_source_anchor_strength": 0.35})
+        _, jobs = parse_manifest(data)
+        cfg = UpmixConfig()
+        apply_asset_job(cfg, jobs[0])
+        assert cfg.stem_source_anchor_strength == pytest.approx(0.35)
+
     def test_format_block_output_type(self):
         data = _minimal(format={"type": "adm-bwf", "subtype": "PCM_24"})
         _, jobs = parse_manifest(data)

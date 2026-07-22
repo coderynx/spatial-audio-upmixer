@@ -103,10 +103,20 @@ class ChannelRouter:
         self._format = FORMAT_MAP[config.output_format]
         self._lfe = LFEExtractor(config, sample_rate, n_freq_bins)
         self._transient_gate_min = config.transient_gate_min
+        self._content_mix_strength = float(np.clip(config.content_mix_strength, 0.0, 1.0))
 
         freqs = np.arange(n_freq_bins) * sample_rate / ((n_freq_bins - 1) * 2)
         cutoff = config.surround_bass_cutoff_hz
+        if cutoff <= 0.0:
+            raise ValueError("surround_bass_cutoff_hz must be positive")
         self._surround_freq_mask = 1.0 / (1.0 + np.exp(-(freqs - cutoff) / (cutoff / 4.0)))
+
+        detail_cutoff = config.content_hf_analysis_hz
+        if detail_cutoff <= 0.0:
+            raise ValueError("content_hf_analysis_hz must be positive")
+        self._detail_freq_mask = 1.0 / (
+            1.0 + np.exp(-(freqs - detail_cutoff) / (detail_cutoff / 4.0))
+        )
 
         self._height_filter: HeightFilter | None = None
         if self._format.has_height:
@@ -132,9 +142,15 @@ class ChannelRouter:
         surround_gain = controls.get("surround", 1.0)
         back_gain = controls.get("back", 1.0)
         height_gain = controls.get("height", 1.0)
-        # Existing transient/harmonic analysis now determines whether side
-        # material is a stable diffuse send rather than dry wide content.
-        diffuse_mask = d.width * (1.0 - d.harmonic_mask) * (1.0 - d.transient_score)
+        gate = self._transient_gate_min + (1.0 - self._transient_gate_min) * (
+            1.0 - d.transient_score
+        )
+        conservative_mask = d.width
+        content_mask = d.width * (1.0 - d.harmonic_mask) * gate
+        diffuse_mask = (
+            (1.0 - self._content_mix_strength) * conservative_mask
+            + self._content_mix_strength * content_mask
+        )
         side_L = d.ambient_L * self._surround_freq_mask * diffuse_mask
         side_R = d.ambient_R * self._surround_freq_mask * diffuse_mask
         detail_gain = 1.0 + 0.4125 * controls.get("detail", 0.0)
@@ -154,8 +170,8 @@ class ChannelRouter:
             channels["BR"] = cfg.back_gain * back_gain * detail_gain * side_R
 
         if self._height_filter is not None:
-            height_source_L = d.signal_L * (0.35 + 0.65 * (1.0 - d.transient_score))
-            height_source_R = d.signal_R * (0.35 + 0.65 * (1.0 - d.transient_score))
+            height_source_L = side_L * self._detail_freq_mask
+            height_source_R = side_R * self._detail_freq_mask
             channels["TFL"] = height_gain * detail_gain * self._height_filter.apply_frame(height_source_L)
             channels["TFR"] = height_gain * detail_gain * self._height_filter.apply_frame(height_source_R)
 

@@ -181,6 +181,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.stem_silence_crossfade_ms = args.stem_silence_crossfade_ms
     if args.stem_silence_pad_ms is not None:
         config.stem_silence_pad_ms = args.stem_silence_pad_ms
+    if args.stem_source_anchor_strength is not None:
+        config.stem_source_anchor_strength = args.stem_source_anchor_strength
     if args.stems is not None:
         from upmixer.separation.stem_plan import normalize_stems as _normalize
         raw = [s.strip() for s in args.stems.split(",") if s.strip()]
@@ -810,6 +812,16 @@ def main() -> None:
             "Padding in milliseconds added to both ends of each active span so "
             "the separator has musical context near transient boundaries. "
             "Default: 200.0 ms."
+        ),
+    )
+    parser.add_argument(
+        "--stem-source-anchor-strength",
+        type=float,
+        default=None,
+        metavar="FLOAT",
+        help=(
+            "Blend stem content with original native source pairs in stem-mode output "
+            "(0.0 to 1.0). Default: 1.0."
         ),
     )
 

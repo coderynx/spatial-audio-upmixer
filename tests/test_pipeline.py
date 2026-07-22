@@ -5,7 +5,7 @@ import numpy as np
 import soundfile as sf
 
 from upmixer.config import UpmixConfig
-from upmixer.pipeline import UpmixPipeline
+from upmixer.pipeline import StreamingProcessor, UpmixPipeline
 
 
 def _create_test_wav(path: str, left: np.ndarray, right: np.ndarray, sr: int):
@@ -149,3 +149,20 @@ def test_energy_conservation(stereo_mix, sample_rate):
 
         ratio = output_energy / (input_energy + 1e-10)
         assert 0.3 < ratio < 3.0, f"Energy ratio out of range: {ratio}"
+
+
+def test_streaming_processor_flushes_delayed_tail(sample_rate):
+    config = UpmixConfig(auto_fft_size=False, spatial_preanalysis=False)
+    processor = StreamingProcessor(config, sample_rate)
+    _, hop = config.resolve_fft_params(sample_rate)
+    signal = np.sin(2 * np.pi * 440 * np.arange(hop * 2 + 17) / sample_rate)
+    outputs = []
+    for start in range(0, len(signal), 173):
+        outputs.append(processor.process_block(signal[start:start + 173], signal[start:start + 173])["FL"])
+    outputs.append(processor.flush()["FL"])
+
+    output = np.concatenate(outputs)
+    expected = ((len(signal) + hop - 1) // hop) * hop + processor.latency_samples
+    assert len(output) == expected
+    assert np.max(np.abs(output[processor.latency_samples:processor.latency_samples + len(signal)])) > 0.01
+    assert len(processor.flush()["FL"]) == 0

@@ -4,7 +4,7 @@
 # Deep-merge: only specified keys are overridden; rest inherits from global.
 #
 # Usage:
-#   upmixer --manifest batch_explicit_jobs.yaml
+#   upmixer --manifest examples/batch_explicit_jobs.yaml
 
 version: "1.0"
 
@@ -15,10 +15,16 @@ metadata:
 # ── Engine ────────────────────────────────────────────────────────────────────
 engine:
   mode: stem
+  stems: [vocals, bass, drums, guitar, piano, other]
+  stem_silence_skip: true
 
 # ── Mixing ────────────────────────────────────────────────────────────────────
 mixing:
   channel_layout: 7.1.4
+  stem_source_anchor_strength: 0.5
+  spatial:
+    profile: auto
+    intensity: 1.0
   stem_rebalance:
     Vocals: +1.5          # global: push vocals forward on all tracks
 
@@ -60,4 +66,4 @@ assets:
 
   - input:  /bonus/hidden_track.flac
     output: /masters/bonus_hidden_atmos.wav
-    stem_cache_dir: /tmp/stems/bonus   # per-asset shortcut → engine.stem_cache_dir
+    stem_cache_dir: /tmp/stems/bonus   # per-asset cache override

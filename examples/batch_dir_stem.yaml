@@ -18,14 +18,19 @@ metadata:
 # ── Engine ────────────────────────────────────────────────────────────────────
 engine:
   mode: stem
-  stem_model: BS-Roformer-SW.ckpt
+  stems: [vocals, bass, drums, guitar, piano, other]
   stem_cache_dir: /tmp/upmixer_stems
+  stem_silence_skip: true
 
 # ── Mixing ────────────────────────────────────────────────────────────────────
 mixing:
   channel_layout: 7.1.4
+  stem_source_anchor_strength: 0.5
+  spatial:
+    profile: auto
+    intensity: 1.0
 
-# ── Output format — Dolby Atmos Music Master Delivery ─────────────────────────
+# ── Output format — ADM-BWF authoring beds ────────────────────────────────────
 format:
   type: adm-bwf
   subtype: PCM_24

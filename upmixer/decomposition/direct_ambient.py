@@ -74,6 +74,7 @@ class SoftMatrixDecomposer:
         X_L_frame: np.ndarray,
         X_R_frame: np.ndarray,
         coherence_frame: np.ndarray,
+        directness_frame: np.ndarray | None = None,
     ) -> SoftMatrixResult:
         mid = (X_L_frame + X_R_frame) * 0.5
         side = (X_L_frame - X_R_frame) * 0.5
@@ -82,7 +83,8 @@ class SoftMatrixDecomposer:
         mag_R = np.abs(X_R_frame)
         pan = (mag_L - mag_R) / (mag_L + mag_R + self._eps)
 
-        center_weight = 1.0 - np.abs(pan)
+        directness = coherence_frame if directness_frame is None else directness_frame
+        center_weight = directness * (1.0 - np.abs(pan))
         center = self._center_extraction_gain * center_weight * mid
 
         reduction = self._center_attenuation * center_weight * 0.5

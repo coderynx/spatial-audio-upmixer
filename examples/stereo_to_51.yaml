@@ -1,10 +1,10 @@
-# Stereo → 5.1 quick upmix
+# Stereo → 5.1 adaptive realtime upmix
 #
 # Fast realtime mode (coherence-based STFT). Works on any stereo input.
 # No stem separation dependency required.
 #
 # Usage:
-#   upmixer --manifest stereo_to_51.yaml
+#   upmixer --manifest examples/stereo_to_51.yaml
 
 version: "1.0"
 
@@ -15,6 +15,9 @@ engine:
 # ── Mixing ────────────────────────────────────────────────────────────────────
 mixing:
   channel_layout: 5.1
+  spatial:
+    profile: balanced
+    intensity: 0.7
 
 # ── Routing ───────────────────────────────────────────────────────────────────
 routing:
@@ -22,6 +25,11 @@ routing:
   surround_gain: 0.60   # side surrounds
   lfe_gain:      0.50   # LFE sub channel
   lfe_cutoff:    120    # LFE low-pass cutoff in Hz
+
+# ── Output ────────────────────────────────────────────────────────────────────
+format:
+  type: wav
+  subtype: PCM_24
 
 # ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:

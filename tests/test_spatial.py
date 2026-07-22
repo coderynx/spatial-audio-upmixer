@@ -45,6 +45,44 @@ def test_realtime_transients_and_harmonics_hold_side_signal_front():
     assert np.sum(np.abs(open_send) ** 2) > 100 * np.sum(np.abs(held_send) ** 2) + 1e-20
 
 
+def test_realtime_transient_gate_min_remains_audible():
+    cfg = UpmixConfig(output_format="5.1", auto_fft_size=False, transient_gate_min=0.25)
+    router = ChannelRouter(cfg, 48_000, 32)
+    signal = np.ones(32, dtype=np.complex128)
+    transient = SoftMatrixResult(signal, signal, signal, signal, -signal, signal, signal,
+                                 np.ones(32), np.ones(32), np.zeros(32))
+
+    output = router.route_frame(transient, signal)["SL"]
+    assert np.sum(np.abs(output) ** 2) > 0.0
+
+
+def test_content_mix_strength_controls_realtime_diffuse_mask():
+    signal = np.ones(32, dtype=np.complex128)
+    decomp = SoftMatrixResult(signal, signal, signal, signal, -signal, signal, signal,
+                              np.ones(32), np.zeros(32), np.ones(32))
+    conservative = ChannelRouter(UpmixConfig(output_format="5.1", auto_fft_size=False,
+                                               content_mix_strength=0.0), 48_000, 32)
+    content_aware = ChannelRouter(UpmixConfig(output_format="5.1", auto_fft_size=False,
+                                                content_mix_strength=1.0), 48_000, 32)
+
+    assert np.sum(np.abs(conservative.route_frame(decomp, signal)["SL"]) ** 2) > 0.0
+    assert np.sum(np.abs(content_aware.route_frame(decomp, signal)["SL"]) ** 2) == 0.0
+
+
+def test_content_hf_analysis_controls_height_detail_send():
+    signal = np.ones(2049, dtype=np.complex128)
+    decomp = SoftMatrixResult(signal, signal, signal, signal, -signal, signal, signal,
+                              np.ones(2049), np.zeros(2049), np.zeros(2049))
+    low = ChannelRouter(UpmixConfig(output_format="5.1.2", auto_fft_size=False,
+                                    content_hf_analysis_hz=100.0), 48_000, 2049)
+    high = ChannelRouter(UpmixConfig(output_format="5.1.2", auto_fft_size=False,
+                                     content_hf_analysis_hz=10_000.0), 48_000, 2049)
+
+    low_energy = np.sum(np.abs(low.route_frame(decomp, signal)["TFL"]) ** 2)
+    high_energy = np.sum(np.abs(high.route_frame(decomp, signal)["TFL"]) ** 2)
+    assert low_energy > high_energy
+
+
 def test_multichannel_spatial_motion_does_not_change_input_channels():
     n = 800
     inputs = {

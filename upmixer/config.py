@@ -128,6 +128,8 @@ class UpmixConfig:
     stem_silence_crossfade_ms: float = 10.0
     stem_silence_pad_ms: float = 200.0
 
+    stem_source_anchor_strength: float = 0.5
+
     def resolve_fft_params(self, actual_sample_rate: int) -> tuple[int, int]:
         """Returns (fft_size, hop_size) after applying sample rate adaptation."""
         if self.auto_fft_size:

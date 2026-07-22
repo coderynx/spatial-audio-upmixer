@@ -18,10 +18,8 @@ class CoherenceState:
 class CoherenceEstimator:
     """Estimates inter-channel coherence per time-frequency bin.
 
-    Streaming path (estimate_frame): two-rate adaptive EMA.
-        - Coherence rising (new direct sound arrives): fast alpha (alpha_attack).
-        - Coherence falling (direct sound decays into reverb): slow alpha (alpha_release).
-    Batch path (estimate): single fixed alpha for reproducibility.
+    Frame path uses phase agreement to select cross-spectrum attack/release;
+    auto spectra use coherence_smoothing. Batch repeats the frame path.
     """
 
     def __init__(self, config: UpmixConfig):
@@ -49,7 +47,6 @@ class CoherenceEstimator:
 
         Returns gamma of shape (n_freq,), values in [0, 1].
         """
-        alpha = self._alpha
         eps = self._epsilon
 
         cross_LR = X_L_frame * np.conj(X_R_frame)
@@ -65,16 +62,33 @@ class CoherenceEstimator:
             prev_gamma = np.abs(state.Phi_LR) ** 2 / (
                 state.Phi_LL * state.Phi_RR + eps
             )
-            inst_gamma = np.abs(cross_LR) ** 2 / (power_L * power_R + eps)
+            # A single-bin instantaneous coherence is always one for non-zero
+            # spectra.  Compare its phase with the accumulated cross spectrum
+            # instead: stable direct sound aligns, diffuse content does not.
+            agreement = np.real(cross_LR * np.conj(state.Phi_LR)) / (
+                np.abs(cross_LR) * np.abs(state.Phi_LR) + eps
+            )
+            alpha_cross = np.where(
+                agreement >= np.sqrt(np.clip(prev_gamma, 0.0, 1.0)),
+                self._alpha_attack,
+                self._alpha_release,
+            )
 
-            alpha = np.where(inst_gamma >= prev_gamma, self._alpha_attack, self._alpha_release)
-
-            state.Phi_LR = alpha * state.Phi_LR + (1.0 - alpha) * cross_LR
-            state.Phi_LL = alpha * state.Phi_LL + (1.0 - alpha) * power_L
-            state.Phi_RR = alpha * state.Phi_RR + (1.0 - alpha) * power_R
+            state.Phi_LR = alpha_cross * state.Phi_LR + (1.0 - alpha_cross) * cross_LR
+            state.Phi_LL = self._alpha * state.Phi_LL + (1.0 - self._alpha) * power_L
+            state.Phi_RR = self._alpha * state.Phi_RR + (1.0 - self._alpha) * power_R
 
         gamma = np.abs(state.Phi_LR) ** 2 / (state.Phi_LL * state.Phi_RR + eps)
         return np.clip(gamma, 0.0, 1.0)
+
+    def directness_frame(self, state: CoherenceState) -> np.ndarray:
+        """Return in-phase directness for center extraction.
+
+        Magnitude coherence alone treats anti-phase and quadrature material as
+        centered.  Only positive real correlation is eligible for the centre.
+        """
+        denom = np.sqrt(state.Phi_LL * state.Phi_RR) + self._epsilon
+        return np.clip(np.real(state.Phi_LR) / denom, 0.0, 1.0)
 
     def estimate(self, X_L: np.ndarray, X_R: np.ndarray) -> np.ndarray:
         """Batch estimate (for backward compatibility and tests).
