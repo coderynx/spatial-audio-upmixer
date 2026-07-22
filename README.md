@@ -6,6 +6,32 @@ separation, and a shared mastering chain to produce standard multichannel WAV or
 
 The installable package, Python namespace, and command remain `upmixer`.
 
+An optional web application adds interactive track and album workflows without changing the CLI. It uses the same manifests and processing pipelines, so browser-configured jobs remain portable to automation.
+
+## Web application
+
+Install and start the API:
+
+```bash
+python3 -m pip install -e ".[dev,web,web-dev,separation-cpu]"
+python3 -m upmixer_web
+```
+
+Stem separation requires Python 3.11, 3.12, or 3.13. The `separation-cpu`
+extra is also the correct choice for Apple Silicon Macs;
+`audio-separator` selects MPS acceleration when available. Use
+`separation-gpu` only on NVIDIA CUDA hosts.
+
+Start the React client in another terminal:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. API documentation is available at `http://localhost:8000/api/docs`. See [Web architecture](docs/web_architecture.md) for persistence, storage interfaces, job states, endpoints, reverse-proxy setup, GPU containers, and extension boundaries.
+
 ## Features
 
 - Upmix mono, stereo, 5.0, 5.1, 7.1, 5.1.2, 5.1.4, and 7.1.2 sources.
@@ -21,7 +47,7 @@ The installable package, Python namespace, and command remain `upmixer`.
 
 ## Requirements
 
-- Python 3.11 or later
+- Python 3.11, 3.12, or 3.13
 - WAV or FLAC input readable by [libsndfile](https://libsndfile.github.io/)
 - Additional CPU or GPU dependencies for stem separation
 

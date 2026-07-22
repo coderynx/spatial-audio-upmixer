@@ -15,6 +15,14 @@ Key modules include `config.py` (`UpmixConfig`), `formats.py` (channel definitio
 
 Parameter precedence is: CLI flags > manifest values > profile defaults > `UpmixConfig` defaults.
 
+## Web Architecture Boundary
+
+`upmixer_web/` and `web/` are delivery layers over existing package and CLI. Keep web-specific state, APIs, UI behavior, capability checks, and error presentation there. Web workers call documented `upmixer` pipelines and manifest APIs; never import private `upmixer` symbols for web behavior.
+
+Do not change `upmixer/` for web feature unless small, independently justified public API change is necessary. Do not move web concerns into core package, alter core behavior for browser-only cases, or patch third-party internals from core code.
+
+Stem inference is provided by `audio-separator`. Web code must not directly import or control Torch, ONNX Runtime, CUDA, MPS, CoreML, model classes, or other inference-framework internals. Let `audio-separator` choose accelerator and use its Python API only for web capability reporting; actual jobs continue through `StemUpmixPipeline`.
+
 ## Commands
 
 - `python3 -m pip install -e ".[dev]"` installs the package, CLI, pytest, and development extras.

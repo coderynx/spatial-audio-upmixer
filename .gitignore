@@ -132,6 +132,15 @@ Temporary Items
 .apdisk
 
 ### upmixer-specific
+# Web frontend build and dependency artifacts
+web/node_modules/
+web/dist/
+web/.vite/
+
+# Web backend runtime state
+data/
+upmixer_web/data/
+
 # Separation model cache (auto-downloaded, can be large)
 upmixer-models/
 # Temporary stem files written during separation
@@ -306,4 +315,3 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
-

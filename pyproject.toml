@@ -4,13 +4,14 @@ version = "0.1.0"
 description = "Stereo to multichannel audio upmixer"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 keywords = ["audio", "upmix", "dolby-atmos", "surround-sound", "stem-separation"]
 classifiers = [
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Sound/Audio :: Conversion",
 ]
 dependencies = [
@@ -25,22 +26,44 @@ dev = [
     "matplotlib>=3.7",
     "pyyaml>=6.0",
 ]
+web = [
+    "alembic>=1.13",
+    "fastapi>=0.115",
+    "mutagen>=1.47",
+    "python-multipart>=0.0.12",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0",
+    "uvicorn[standard]>=0.30",
+]
+web-dev = [
+    "httpx>=0.27",
+]
+web-postgres = [
+    "psycopg[binary]>=3.2",
+]
 manifest = [
     "pyyaml>=6.0",
 ]
 separation-cpu = [
-    "audio-separator[cpu]>=0.44.5",
+    "audio-separator[cpu]>=0.44.5,<0.45",
 ]
 separation-gpu = [
-    "audio-separator[gpu]>=0.44.5",
+    "audio-separator[gpu]>=0.44.5,<0.45",
 ]
 
 [project.scripts]
 upmixer = "upmixer.__main__:main"
+upmixer-web = "upmixer_web.__main__:main"
 
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["upmixer*"]
+
+[tool.setuptools.package-data]
+upmixer_web = ["migrations/script.py.mako"]
 
 [tool.pytest.ini_options]
 markers = [
