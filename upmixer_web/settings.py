@@ -47,5 +47,5 @@ class Settings:
     def prepare(self) -> None:
         """Create local runtime directories."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        for name in ("objects", "work", "stem-cache"):
+        for name in ("objects", "work", "stem-cache", "project-stems"):
             (self.data_dir / name).mkdir(exist_ok=True)

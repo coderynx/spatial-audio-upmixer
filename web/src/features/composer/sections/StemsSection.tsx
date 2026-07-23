@@ -258,7 +258,6 @@ export function StemsSection({
 
   const renderStemRow = (stem: string, nested = false) => {
     const stemKey = getStemKey(stem);
-    const StemIcon = getStemIcon(stem);
     const children = childStemsByParent[stem];
     const expanded = expandedFamilies[stem] ?? false;
     const active = selectedStemSet.has(stem);

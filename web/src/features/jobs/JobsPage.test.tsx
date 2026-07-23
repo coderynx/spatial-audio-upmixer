@@ -33,6 +33,7 @@ describe("JobsPage", () => {
         onAction={onAction}
         onRemix={vi.fn()}
         onCreate={vi.fn()}
+        onRefresh={vi.fn()}
       />,
     );
     expect(screen.getAllByText("Album master").length).toBeGreaterThan(0);
@@ -51,9 +52,27 @@ describe("JobsPage", () => {
         onAction={vi.fn()}
         onRemix={vi.fn()}
         onCreate={onCreate}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Create job" }));
     expect(onCreate).toHaveBeenCalledOnce();
+  });
+
+  it("triggers a manual refresh", () => {
+    const onRefresh = vi.fn();
+    render(
+      <JobsPage
+        jobs={[job]}
+        loading={false}
+        error={null}
+        onAction={vi.fn()}
+        onRemix={vi.fn()}
+        onCreate={vi.fn()}
+        onRefresh={onRefresh}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
+    expect(onRefresh).toHaveBeenCalledOnce();
   });
 });

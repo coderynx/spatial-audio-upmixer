@@ -1,4 +1,4 @@
-import { Archive } from "lucide-react";
+import { Archive, RefreshCw } from "lucide-react";
 import type { Job } from "@/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ export function JobsPage({
   onAction,
   onRemix,
   onCreate,
+  onRefresh,
 }: {
   jobs: Job[];
   loading: boolean;
@@ -22,6 +23,7 @@ export function JobsPage({
   onAction: (action: JobAction, job: Job) => void;
   onRemix: (job: Job) => void;
   onCreate: () => void;
+  onRefresh: () => void;
 }) {
   return (
     <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-7">
@@ -33,7 +35,13 @@ export function JobsPage({
             Create, monitor, and retrieve multichannel rendering jobs.
           </p>
         </div>
-        <Button onClick={onCreate}>New job</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={onRefresh}>
+            <RefreshCw />
+            Refresh
+          </Button>
+          <Button onClick={onCreate}>New job</Button>
+        </div>
       </section>
       <QueueMetrics jobs={jobs} />
       <section>

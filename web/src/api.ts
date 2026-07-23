@@ -59,6 +59,7 @@ export type Job = {
   id: string
   import_id: string
   source_job_id: string | null
+  project_id?: string | null
   name: string
   status: string
   progress: number
@@ -72,6 +73,54 @@ export type Job = {
   tracks: JobTrack[]
   artifacts: Artifact[]
   mastering_reference: MasteringReference | null
+}
+
+export type ProjectStem = {
+  id: string
+  stem_key: string
+  sample_rate: number
+  channels: number
+  size_bytes: number
+  audio_url: string | null
+  preview_url: string | null
+}
+
+export type ProjectTrack = {
+  id: string
+  position: number
+  status: string
+  progress: number
+  manifest_overrides: Record<string, unknown>
+  scene_overrides: Record<string, unknown>
+  error: string | null
+  asset: Asset
+  stems: ProjectStem[]
+}
+
+export type StemScene = Record<string, {
+  enabled?: boolean
+  azimuth_deg?: number
+  elevation_deg?: number
+}>
+
+export type Project = {
+  id: string
+  import_id: string
+  name: string
+  status: string
+  progress: number
+  status_message: string
+  manifest: Record<string, unknown>
+  scene: { stems?: StemScene }
+  requested_stems: string[]
+  prepared_stems: string[]
+  stem_generation: number
+  revision: number
+  error: string | null
+  created_at: string
+  updated_at: string
+  tracks: ProjectTrack[]
+  exports: Job[]
 }
 
 export type Configuration = {
@@ -119,6 +168,8 @@ export const api = {
   getConfiguration: () => request<Configuration>("/api/v1/configuration"),
   getImport: (id: string) => request<ImportPreview>(`/api/v1/imports/${id}`),
   listJobs: () => request<Job[]>("/api/v1/jobs"),
+  listProjects: () => request<Project[]>("/api/v1/projects"),
+  getProject: (id: string) => request<Project>(`/api/v1/projects/${id}`),
   upload: async (items: { file: File; path: string }[]) => {
     const data = new FormData()
     for (const item of items) {
@@ -139,4 +190,15 @@ export const api = {
   pauseJob: (id: string) => request(`/api/v1/jobs/${id}/pause`, { method: "POST" }),
   resumeJob: (id: string) => request(`/api/v1/jobs/${id}/resume`, { method: "POST" }),
   deleteJob: (id: string) => request(`/api/v1/jobs/${id}`, { method: "DELETE" }),
+  createProject: (payload: { import_id: string; name: string; manifest: Record<string, unknown>; scene: Record<string, unknown> }) =>
+    request<Project>("/api/v1/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+  saveProject: (id: string, payload: { name?: string; manifest: Record<string, unknown>; scene: Record<string, unknown> }) =>
+    request<Project>(`/api/v1/projects/${id}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+  saveProjectTrack: (projectId: string, trackId: string, payload: { manifest_overrides: Record<string, unknown>; scene_overrides: Record<string, unknown> }) =>
+    request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+  expandProjectStems: (id: string, stems: string[]) =>
+    request<Project>(`/api/v1/projects/${id}/stems`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stems }) }),
+  retryProject: (id: string) => request<Project>(`/api/v1/projects/${id}/retry`, { method: "POST" }),
+  exportProject: (id: string) => request<Job>(`/api/v1/projects/${id}/exports`, { method: "POST" }),
+  deleteProject: (id: string) => request(`/api/v1/projects/${id}`, { method: "DELETE" }),
 }

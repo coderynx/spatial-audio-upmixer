@@ -73,6 +73,7 @@ class JobView(ApiModel):
     id: str
     import_id: str
     source_job_id: str | None
+    project_id: str | None = None
     name: str
     status: str
     progress: float
@@ -111,3 +112,67 @@ class JobActionResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     workers: int
+
+
+class StemView(ApiModel):
+    id: str
+    stem_key: str
+    sample_rate: int
+    channels: int
+    size_bytes: int
+    audio_url: str | None = None
+    preview_url: str | None = None
+
+
+class ProjectTrackView(ApiModel):
+    id: str
+    position: int
+    status: str
+    progress: float
+    manifest_overrides: dict[str, Any] = Field(default_factory=dict)
+    scene_overrides: dict[str, Any] = Field(default_factory=dict)
+    error: str | None
+    asset: AssetView
+    stems: list[StemView] = Field(default_factory=list)
+
+
+class ProjectView(ApiModel):
+    id: str
+    import_id: str
+    name: str
+    status: str
+    progress: float
+    status_message: str
+    manifest: dict[str, Any]
+    scene: dict[str, Any]
+    requested_stems: list[str]
+    prepared_stems: list[str]
+    stem_generation: int
+    revision: int
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+    tracks: list[ProjectTrackView] = Field(default_factory=list)
+    exports: list[JobView] = Field(default_factory=list)
+
+
+class CreateProjectRequest(BaseModel):
+    import_id: str
+    name: str = Field(min_length=1, max_length=512)
+    manifest: dict[str, Any]
+    scene: dict[str, Any] = Field(default_factory=dict)
+
+
+class UpdateProjectSettingsRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=512)
+    manifest: dict[str, Any]
+    scene: dict[str, Any] = Field(default_factory=dict)
+
+
+class UpdateProjectTrackSettingsRequest(BaseModel):
+    manifest_overrides: dict[str, Any] = Field(default_factory=dict)
+    scene_overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExpandProjectStemsRequest(BaseModel):
+    stems: list[str] = Field(min_length=1)

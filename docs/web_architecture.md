@@ -8,13 +8,15 @@ The web application is an additional delivery surface around the existing `upmix
 - `web/` is a React and shadcn/ui client. It does not contain processing logic.
 - SQLAlchemy persists imports, jobs, per-track progress, and artifacts. SQLite is the default; install the `web-postgres` extra and supply a PostgreSQL URL without changing repositories or models.
 - `ObjectStorage`, `AudioSource`, and `AudioSink` isolate blob access. The first implementation uses local disk. An S3 implementation can materialize sources into worker scratch space and upload sink outputs without changing job orchestration.
-- `WorkerManager` recovers interrupted jobs, bounds processing concurrency, and cooperatively pauses running pipelines through their progress callbacks.
+- `WorkerManager` recovers interrupted jobs and bounds processing concurrency. Each job's actual pipeline work (`StemUpmixPipeline`/`UpmixPipeline.process_file`, including stem separation and mastering) runs in an isolated child process via `upmixer_web/job_subprocess.py`, so a native crash (OS OOM-kill, CUDA/MPS driver crash, segfault) in that code fails only the one job, not the server. Progress and completion are relayed back over a queue; pause/delete requests terminate the child process.
 
 ## Durable state
 
 Job states are `queued`, `running`, `pause_requested`, `paused`, `completed`, `failed`, and `deleting`. Completed track records are retained during resume, so album jobs continue at the first incomplete track after a pause or service restart.
 
-Source files live under `imports/{import_id}` and outputs under `jobs/{job_id}`. Stem separation uses one shared cache root. Existing `StemCache` keys include source identity, separation plan, sample rate, preview settings, and silence-skip settings. A remix job points at the same imported assets and cache root, so compatible stems are reused while routing and mastering parameters can change freely.
+Source files live under `imports/{import_id}` and outputs under `jobs/{job_id}`. Ordinary jobs use one shared stem cache root. Projects instead own isolated stem storage under `project-stems/{project_id}/{track_id}`; the web worker catalogues the cache files after processing so the browser can audition only that project’s stems. Projects use defaults plus optional per-track overrides, can prepare additional stems in the background, and create normal linked jobs for exports.
+
+The project editor uses the Web Audio API HRTF panner for an immediate stereo headphone preview and a live 3D source view. This is an approximate binaural audition, not a Dolby renderer or a substitute for the final pipeline export. Browser preview code is delivery-layer behavior; separation and exports continue through `StemUpmixPipeline`.
 
 Deleting a job removes its outputs and database records. Shared source imports and stem cache entries remain because other jobs may reference them. Future storage management can add reference-counted import and cache eviction without changing job deletion semantics.
 
@@ -33,6 +35,10 @@ Interactive docs are served at `/api/docs`; the OpenAPI document is `/api/v1/ope
 - `POST /api/v1/jobs/{id}/clone` creates a stem-cache-backed remix.
 - `DELETE /api/v1/jobs/{id}` removes a job and its outputs.
 - `GET /api/v1/artifacts/{id}/download` downloads a track output or album ZIP.
+- `POST /api/v1/projects` creates a stem-backed editable project from an import.
+- `GET /api/v1/projects` and `/api/v1/projects/{id}` expose project state, tracks, stems, and export history.
+- `PUT /api/v1/projects/{id}/settings`, track settings, and `POST /stems` persist edits and queue stem expansion.
+- `POST /api/v1/projects/{id}/exports` creates a linked standard job from an immutable project snapshot.
 
 ## Extension boundaries
 

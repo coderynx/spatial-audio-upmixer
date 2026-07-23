@@ -8,6 +8,7 @@ import {
   Server,
   Settings2,
 } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
 import type { Configuration } from "@/api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -61,14 +62,18 @@ export function AppShell({
   configuration,
   onRefresh,
   onCreate,
+  createLabel = "New job",
 }: {
   children: ReactNode;
   configuration: Configuration | null;
   onRefresh: () => void;
   onCreate: () => void;
+  createLabel?: string;
 }) {
+  const location = useLocation();
   const nav = [
-    { label: "Jobs", icon: Gauge, active: true },
+    { label: "Projects", icon: Layers3, href: "/projects", active: location.pathname.startsWith("/projects") },
+    { label: "Jobs", icon: Gauge, href: "/jobs", active: location.pathname.startsWith("/jobs") },
     { label: "Stem cache", icon: Layers3 },
     { label: "Storage", icon: HardDrive },
     { label: "Settings", icon: Settings2 },
@@ -89,7 +94,13 @@ export function AppShell({
         </div>
         <nav className="space-y-1 p-3">
           {nav.map((item) => (
-            <button
+            item.href ? <Link key={item.label} to={item.href}
+              aria-current={item.active ? "page" : undefined}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm",
+                item.active ? "bg-accent font-medium text-accent-foreground" : "text-muted-foreground hover:bg-muted",
+              )}
+            ><item.icon className="h-4 w-4" /><span>{item.label}</span></Link> : <button
               key={item.label}
               type="button"
               disabled={!item.active}
@@ -130,14 +141,14 @@ export function AppShell({
             <Button
               variant="ghost"
               size="icon"
-              aria-label="Refresh jobs"
+              aria-label="Refresh"
               onClick={onRefresh}
             >
               <RefreshCw />
             </Button>
             <ThemeToggle />
             <Button className="ml-2" onClick={onCreate}>
-              New job
+              {createLabel}
             </Button>
           </div>
         </header>
