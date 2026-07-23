@@ -153,6 +153,7 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "stem_eq":        ("config", "stem_eq_profiles"),
         "stem_routing":   ("config", "stem_routing"),
         "stem_enabled":   ("config", "stem_enabled"),
+        "stem_solo":      ("config", "stem_solo"),
         "stem_source_anchor_strength": ("config", "stem_source_anchor_strength"),
         "spatial": {
             "profile": ("config", "spatial_profile"),
@@ -269,6 +270,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "stem_eq_profiles":            ("stem_eq_profiles", dict),
     "stem_routing":                ("stem_routing",     dict),
     "stem_enabled":                ("stem_enabled",     dict),
+    "stem_solo":                   ("stem_solo",        list),
     "stem_cache_dir":              ("stem_cache_dir",   str),
     "stem_batch_size":             ("stem_batch_size",  int),
     "stem_segment_size":           ("stem_segment_size", int),
@@ -432,6 +434,13 @@ def validate_manifest(data: dict) -> None:
                     raise ManifestError(
                         f"{location}.mixing.stem_enabled.{stem_key} must be true or false."
                     )
+        solo = mixing.get("stem_solo")
+        if solo is not None:
+            if not isinstance(solo, list):
+                raise ManifestError(f"{location}.mixing.stem_solo must be a list.")
+            for stem_key in solo:
+                if not _valid_route_stem(stem_key):
+                    raise ManifestError(f"Unknown solo stem '{stem_key}'.")
         routing = mixing.get("stem_routing")
         if routing is None:
             return

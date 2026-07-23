@@ -14,6 +14,7 @@ type MixPreview = {
   stem_routing?: Record<string, Record<string, number>>;
   stem_rebalance?: Record<string, number>;
   stem_enabled?: Record<string, boolean>;
+  stem_solo?: string[];
 };
 
 const speakerCoordinates: Record<string, { x: number; y: number; z: number }> = {
@@ -179,7 +180,9 @@ export function useStemPreview(stems: ProjectStem[], scene: { stems?: StemScene 
         if (total > 0) position = { x: x / total, y: y / total, z: z / total };
       }
       const gainDb = mix?.stem_rebalance?.[base] || 0;
-      node.gain.gain.value = mix?.stem_enabled?.[base] === false || value.enabled === false
+      node.gain.gain.value = mix?.stem_solo?.length && !mix.stem_solo.includes(stem.stem_key) && !mix.stem_solo.includes(base)
+        ? 0
+        : mix?.stem_enabled?.[base] === false || value.enabled === false
         ? 0
         : 10 ** (gainDb / 20);
       if (node.panner.positionX) {

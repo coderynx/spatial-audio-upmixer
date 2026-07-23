@@ -14,11 +14,6 @@ const colors: Record<string, string> = {
   Kick: "#ef4444", Snare: "#ec4899", Toms: "#84cc16", "Hi-Hat": "#eab308", Ride: "#06b6d4", Crash: "#0ea5e9", Crowd: "#3b82f6", "Lead Vocals": "#f43f5e", "Backing Vocals": "#d946ef",
 };
 
-const groups: Record<string, string[]> = {
-  Front: ["FL", "FR"], Center: ["C"], Side: ["SL", "SR"], Back: ["BL", "BR"],
-  "Front height": ["TFL", "TFR"], "Rear height": ["TBL", "TBR"], LFE: ["LFE"],
-};
-
 function timeLabel(seconds: number) {
   const value = Math.max(0, Math.floor(seconds || 0));
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`;
@@ -105,7 +100,12 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const toggleEnabled = (stem: string) => {
     if (!effectiveManifest) return;
     const current = effectiveManifest.mixing.stem_enabled[stem] !== false;
-    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_enabled: { ...effectiveManifest.mixing.stem_enabled, [stem]: !current } } });
+    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_enabled: { ...effectiveManifest.mixing.stem_enabled, [stem]: !current }, stem_solo: effectiveManifest.mixing.stem_solo.filter((solo) => solo !== stem) } });
+  };
+  const toggleSolo = (stem: string) => {
+    if (!effectiveManifest) return;
+    const solo = effectiveManifest.mixing.stem_solo;
+    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_solo: solo.includes(stem) ? solo.filter((item) => item !== stem) : [...solo, stem] } });
   };
   const exportProject = async () => {
     if (!projectId) return;
@@ -119,7 +119,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     <div className="mb-5 flex items-center justify-between gap-3"><div><Link to="/projects" className="text-xs text-muted-foreground"><ChevronLeft className="inline h-3.5 w-3.5" />Projects</Link><h1 className="mt-1 text-2xl font-semibold">{project.name}</h1><p className="mt-1 text-sm text-muted-foreground">Explicit speaker routing. Export uses this manifest.</p></div><Button disabled={exporting} onClick={() => void exportProject()}><Download />{exporting ? "Queueing" : "Export project"}</Button></div>
     {error && <p className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
     <div className="grid gap-4 xl:grid-cols-[230px_minmax(0,1fr)_330px]">
-      <aside className="rounded-lg border p-3"><p className="mb-3 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tracks</p>{project.tracks.map((track) => <button key={track.id} onClick={() => setSelectedTrack(track.id)} className={`mb-1 w-full rounded-md px-3 py-2 text-left text-sm ${selectedTrack === track.id ? "bg-accent font-medium" : "hover:bg-muted"}`}>{track.asset.title || track.asset.filename}</button>)}<p className="mt-5 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Stems</p>{stemNames.map((stem) => <div key={stem} className={`mt-1 flex items-center gap-2 rounded-md px-2 py-2 ${selectedStem === stem ? "bg-accent" : ""}`}><button aria-label={`${effectiveManifest?.mixing.stem_enabled[stem] === false ? "Enable" : "Mute"} ${stem}`} onClick={() => toggleEnabled(stem)} className={`h-2.5 w-2.5 rounded-full ${effectiveManifest?.mixing.stem_enabled[stem] === false ? "bg-muted-foreground" : ""}`} style={effectiveManifest?.mixing.stem_enabled[stem] === false ? undefined : { backgroundColor: colors[stem] || "#94a3b8" }} /><button className="min-w-0 flex-1 truncate text-left text-sm" onClick={() => setSelectedStem(stem)}>{stem}</button></div>)}</aside>
+      <aside className="rounded-lg border p-3"><p className="mb-3 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tracks</p>{project.tracks.map((track) => <button key={track.id} onClick={() => setSelectedTrack(track.id)} className={`mb-1 w-full rounded-md px-3 py-2 text-left text-sm ${selectedTrack === track.id ? "bg-accent font-medium" : "hover:bg-muted"}`}>{track.asset.title || track.asset.filename}</button>)}<p className="mt-5 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Stems</p>{stemNames.map((stem) => { const muted = effectiveManifest?.mixing.stem_enabled[stem] === false; const soloed = effectiveManifest?.mixing.stem_solo.includes(stem); return <div key={stem} className={`mt-1 flex items-center gap-1 rounded-md px-2 py-2 ${selectedStem === stem ? "bg-accent" : ""}`}><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${muted ? "opacity-30" : ""}`} style={{ backgroundColor: colors[stem] || "#94a3b8" }} /><button className={`min-w-0 flex-1 truncate text-left text-sm ${muted ? "text-muted-foreground line-through" : ""}`} onClick={() => setSelectedStem(stem)}>{stem}</button><Button variant="ghost" size="sm" className={`h-7 px-2 ${muted ? "bg-destructive text-destructive-foreground hover:bg-destructive/90 hover:text-destructive-foreground" : ""}`} aria-pressed={muted} aria-label={`${muted ? "Enable" : "Mute"} ${stem}`} onClick={() => toggleEnabled(stem)}>M</Button><Button variant={soloed ? "default" : "ghost"} size="sm" className="h-7 px-2" aria-pressed={soloed} aria-label={`${soloed ? "Clear solo" : "Solo"} ${stem}`} onClick={() => toggleSolo(stem)}>S</Button></div>; })}</aside>
       <section className="min-w-0"><SpatialScene channels={channels} routing={routing} selectedStem={selectedStem} colors={colors} onSelectStem={setSelectedStem} /><div className="mt-3 rounded-md border bg-muted/20 p-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-sm font-medium">Spatial headphone preview</p><p className="text-xs text-muted-foreground">Live speaker-bed approximation. Export runs same manifest through core.</p></div><div className="flex gap-2"><Button disabled={!preview.supported || !preview.ready || !previewStems.length} onClick={() => void preview.playPause()}><Play />{preview.playing ? "Pause" : "Play"}</Button><Button variant="outline" aria-label="Stop preview" onClick={preview.stop}><Square /></Button></div></div>{preview.error && <p className="mt-2 text-xs text-destructive">{preview.error}</p>}<div className="mt-3 grid gap-3 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto]"><span className="font-mono text-xs">{timeLabel(preview.currentTime)}</span><input aria-label="Preview position" className="w-full accent-primary" type="range" min={0} max={Math.max(preview.duration, 0)} step={0.01} value={Math.min(preview.currentTime, preview.duration || 0)} onPointerDown={preview.beginScrub} onPointerUp={(event) => void preview.commitScrub(Number(event.currentTarget.value))} onChange={(event) => preview.scrubTo(Number(event.target.value))} /><span className="font-mono text-xs">{timeLabel(preview.duration)}</span><label className="flex items-center gap-2"><Volume2 className="h-4 w-4" /><input aria-label="Preview volume" className="w-20 accent-primary" type="range" min={0} max={1} step={0.01} value={preview.volume} onChange={(event) => preview.setVolume(Number(event.target.value))} /></label></div></div></section>
       <aside className="rounded-lg border p-4">{effectiveManifest && <><div className="flex items-center justify-between"><p className="text-sm font-semibold">Routing preset</p><select aria-label="Edit scope" className="h-8 rounded border bg-background px-1 text-xs" value={editScope} onChange={(event) => setEditScope(event.target.value as "project" | "track")}><option value="project">Project</option><option value="track" disabled={!selected}>Track</option></select></div><p className="mt-1 text-xs text-muted-foreground">{editScope === "project" ? "Default for every track" : `Override: ${selected?.asset.title || selected?.asset.filename}`}</p><select className="mt-2 flex h-9 w-full rounded-md border bg-background px-2 text-sm" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets || ["balanced", "intimate", "rhythmic", "spacious", "live", "detailed"]).map((name) => <option key={name}>{name}</option>)}</select><label className="mt-3 block text-xs text-muted-foreground">Intensity <span className="float-right">{presetIntensity.toFixed(2)}</span><Slider className="mt-2" min={0} max={1} step={0.01} value={[presetIntensity]} onValueChange={([value]) => setPresetIntensity(value)} /></label><Button className="mt-3 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}>Apply preset</Button><div className="mt-5 border-t pt-4">{selectedStem ? <StemControls stem={selectedStem} route={routing[selectedStem] || {}} channels={channels} enabled={effectiveManifest.mixing.stem_enabled[selectedStem] !== false} gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onGain={(gain) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [selectedStem]: gain } } })} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: { ...effectiveManifest.mixing.stem_eq, [selectedStem]: eq } } })} /> : <p className="text-sm text-muted-foreground">Select stem to edit sends.</p>}</div></>}</aside>
     </div>
@@ -127,5 +127,42 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
 }
 
 function StemControls({ stem, route, channels, enabled, gain, eq, onRoute, onGain, onEq }: { stem: string; route: Record<string, number>; channels: string[]; enabled: boolean; gain: number; eq: string; onRoute: (patch: Record<string, number>) => void; onGain: (gain: number) => void; onEq: (eq: string) => void }) {
-  return <div className="space-y-4"><p className="text-sm font-semibold">{stem} <span className="float-right text-xs font-normal text-muted-foreground">{enabled ? "enabled" : "muted"}</span></p><label className="block text-xs text-muted-foreground">Gain <span className="float-right">{gain.toFixed(1)} dB</span><Slider className="mt-2" min={-12} max={6} step={0.1} value={[gain]} onValueChange={([value]) => onGain(value)} /></label><label className="block text-xs text-muted-foreground">EQ<select className="mt-2 flex h-8 w-full rounded border bg-background px-2" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option><option value="vocal-presence">Vocal presence</option><option value="vocal-warmth">Vocal warmth</option><option value="bass-warmth">Bass warmth</option><option value="bass-cut">Bass cut</option><option value="drums-punch">Drums punch</option><option value="other-air">Other air</option></select></label><p className="text-xs font-medium text-muted-foreground">Bus sends</p>{Object.entries(groups).filter(([, group]) => group.some((channel) => channels.includes(channel))).map(([name, group]) => { const present = group.filter((channel) => channels.includes(channel)); const value = Math.sqrt(present.reduce((sum, channel) => sum + (route[channel] || 0) ** 2, 0) / present.length); return <label key={name} className="block text-xs text-muted-foreground">{name}<span className="float-right">{value.toFixed(2)}</span><Slider className="mt-1" min={0} max={1.5} step={0.01} value={[value]} onValueChange={([next]) => { const scale = value > 0 ? next / value : 1; onRoute(Object.fromEntries(present.map((channel) => [channel, value > 0 ? (route[channel] || 0) * scale : next]))); }} /></label>; })}<details><summary className="cursor-pointer text-xs text-muted-foreground">Exact speaker matrix</summary><div className="mt-2 grid grid-cols-2 gap-2">{channels.map((channel) => <label key={channel} className="text-xs">{channel}<input className="ml-2 w-14 rounded border bg-background px-1" type="number" min="0" step="0.01" value={route[channel] || 0} onChange={(event) => onRoute({ [channel]: Math.max(0, Number(event.target.value)) })} /></label>)}</div></details></div>;
+  const position = routePosition(route, channels);
+  const setPosition = (patch: Partial<typeof position>) => onRoute(routeForPosition(channels, { ...position, ...patch }, route.LFE || 0));
+  return <div className="space-y-4"><p className="text-sm font-semibold">{stem} <span className="float-right text-xs font-normal text-muted-foreground">{enabled ? "enabled" : "muted"}</span></p><p className="text-xs text-muted-foreground">Position writes the same explicit speaker matrix used by export.</p><label className="block text-xs text-muted-foreground">Front <span className="float-right">Back</span><Slider aria-label="Front to back" className="mt-2" min={0} max={1} step={0.01} value={[position.depth]} onValueChange={([depth]) => setPosition({ depth })} /></label><label className="block text-xs text-muted-foreground">Floor <span className="float-right">Height</span><Slider aria-label="Floor to height" className="mt-2" min={0} max={1} step={0.01} value={[position.height]} onValueChange={([height]) => setPosition({ height })} /></label><label className="block text-xs text-muted-foreground">Gain <span className="float-right">{gain.toFixed(1)} dB</span><Slider className="mt-2" min={-12} max={6} step={0.1} value={[gain]} onValueChange={([value]) => onGain(value)} /></label><label className="block text-xs text-muted-foreground">EQ<select className="mt-2 flex h-8 w-full rounded border bg-background px-2" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option><option value="vocal-presence">Vocal presence</option><option value="vocal-warmth">Vocal warmth</option><option value="bass-warmth">Bass warmth</option><option value="bass-cut">Bass cut</option><option value="drums-punch">Drums punch</option><option value="other-air">Other air</option></select></label></div>;
+}
+
+function routePosition(route: Record<string, number>, channels: string[]) {
+  const weight = (names: string[]) => names.reduce((total, name) => total + (route[name] || 0), 0);
+  const top = weight(["TFL", "TFR", "TBL", "TBR"]);
+  const floor = weight(["FL", "FR", "C", "SL", "SR", "BL", "BR"]);
+  const front = weight(["FL", "FR", "C", "TFL", "TFR"]);
+  const hasBack = channels.includes("BL") || channels.includes("BR");
+  const side = weight(["SL", "SR"]);
+  const back = weight(["BL", "BR", "TBL", "TBR"]);
+  const middle = hasBack ? side : 0;
+  const rear = hasBack ? back : side;
+  const total = front + middle + rear || 1;
+  return { depth: Math.min(1, Math.max(0, (middle * 0.5 + rear) / total)), height: Math.min(1, Math.max(0, top / (top + floor || 1))) };
+}
+
+function routeForPosition(channels: string[], position: { depth: number; height: number }, lfe: number) {
+  const present = new Set(channels);
+  const hasBack = present.has("BL") || present.has("BR");
+  const front = hasBack ? Math.max(0, 1 - position.depth * 2) : 1 - position.depth;
+  const middle = hasBack ? 1 - Math.abs(position.depth * 2 - 1) : 0;
+  const back = hasBack ? Math.max(0, position.depth * 2 - 1) : position.depth;
+  const floor = 1 - position.height;
+  const route: Record<string, number> = Object.fromEntries(channels.map((channel) => [channel, 0]));
+  const send = (names: string[], total: number) => {
+    const available = names.filter((channel) => present.has(channel));
+    for (const channel of available) route[channel] = total / available.length;
+  };
+  send(["FL", "FR", "C"], floor * front);
+  send(["SL", "SR"], floor * (middle + (hasBack ? 0 : back)));
+  send(["BL", "BR"], floor * back);
+  send(["TFL", "TFR"], position.height * (1 - position.depth));
+  send(["TBL", "TBR"], position.height * position.depth);
+  if (present.has("LFE")) route.LFE = lfe;
+  return route;
 }

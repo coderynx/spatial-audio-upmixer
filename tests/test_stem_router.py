@@ -95,6 +95,14 @@ def test_stem_enabled_mutes_stem():
     assert all(np.max(np.abs(channel)) == 0.0 for channel in channels.values())
 
 
+def test_stem_solo_routes_selected_stems_only():
+    stems = {"Vocals": _audio(), "Bass": _audio(frequency=80.0)}
+    channels = _router(stem_solo=["Vocals", "Bass"]).route(stems, len(stems["Vocals"]))
+
+    assert np.max(np.abs(channels["C"])) > 0.0
+    assert np.max(np.abs(channels["LFE"])) > 0.0
+
+
 def test_default_lfe_gain_is_applied_once():
     stems = {"Bass": _audio(frequency=80.0)}
     config = UpmixConfig(output_format="7.1.4")

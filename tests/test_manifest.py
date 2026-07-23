@@ -673,6 +673,7 @@ class TestParseAndApplyIntegration:
         data = _minimal(mixing={
             "stem_routing": {"Vocals": {"C": 0.8, "TFL": 0.1}},
             "stem_enabled": {"Vocals": False},
+            "stem_solo": ["Bass"],
         })
         _, jobs = parse_manifest(data)
         cfg = UpmixConfig()
@@ -680,6 +681,7 @@ class TestParseAndApplyIntegration:
 
         assert cfg.stem_routing == {"Vocals": {"C": 0.8, "TFL": 0.1}}
         assert cfg.stem_enabled == {"Vocals": False}
+        assert cfg.stem_solo == ["Bass"]
 
     def test_mixing_stem_routing_rejects_invalid_channel(self):
         data = _minimal(mixing={"stem_routing": {"Vocals": {"nope": 1.0}}})

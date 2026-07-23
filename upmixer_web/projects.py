@@ -59,6 +59,8 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
     stems = _normalize_project_stems(engine.get("stems") or [])
     engine["stems"] = stems
     mixing = normalized.setdefault("mixing", {})
+    if isinstance(mixing.get("stem_solo"), str):
+        mixing["stem_solo"] = [mixing["stem_solo"]]
     mixing.setdefault("channel_layout", "7.1.4")
     if mixing["channel_layout"] not in FORMAT_MAP:
         raise ValueError("Unknown channel layout")

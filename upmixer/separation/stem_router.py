@@ -388,6 +388,7 @@ class StemRouter:
         self._manifest_routing = config.stem_routing or {}
         self._custom_routing = routing or {}
         self._stem_enabled = config.stem_enabled or {}
+        self._stem_solo = set(config.stem_solo or [])
         self._sr = sample_rate
         self._lfe_sos = butter(
             config.lfe_filter_order,
@@ -443,6 +444,8 @@ class StemRouter:
 
     def _is_enabled(self, stem_key: str) -> bool:
         stem_name = stem_key.rsplit("@", 1)[0]
+        if self._stem_solo and not {stem_key, stem_name}.intersection(self._stem_solo):
+            return False
         return bool(
             self._stem_enabled[stem_key]
             if stem_key in self._stem_enabled

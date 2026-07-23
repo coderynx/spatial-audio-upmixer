@@ -122,6 +122,9 @@ class UpmixConfig:
     # Explicit per-stem on/off state.  Missing stems remain enabled.
     stem_enabled: dict | None = None
 
+    # Optional solo stems.  When set, only these stems are routed.
+    stem_solo: list[str] | None = None
+
     stem_cache_dir: str | None = None
 
     # None selects conservative backend-aware inference batching.
