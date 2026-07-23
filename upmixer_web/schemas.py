@@ -40,6 +40,15 @@ class ImportView(ApiModel):
     assets: list[AssetView]
 
 
+class MasteringReferenceView(ApiModel):
+    id: str
+    filename: str
+    size_bytes: int
+    duration_seconds: float | None
+    sample_rate: int | None
+    channels: int | None
+
+
 class ArtifactView(ApiModel):
     id: str
     kind: str
@@ -76,18 +85,21 @@ class JobView(ApiModel):
     updated_at: datetime
     tracks: list[TrackView] = Field(default_factory=list)
     artifacts: list[ArtifactView] = Field(default_factory=list)
+    mastering_reference: MasteringReferenceView | None = None
 
 
 class CreateJobRequest(BaseModel):
     import_id: str
     name: str = Field(min_length=1, max_length=512)
     manifest: dict[str, Any]
+    mastering_reference_id: str | None = None
     start: bool = True
 
 
 class CloneJobRequest(BaseModel):
     name: str | None = Field(default=None, max_length=512)
     manifest: dict[str, Any] | None = None
+    mastering_reference_id: str | None = None
     start: bool = True
 
 

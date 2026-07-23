@@ -38,6 +38,10 @@ class ImportBatch(Base):
         cascade="all, delete-orphan",
         order_by="MediaAsset.position",
     )
+    mastering_references: Mapped[list[MasteringReference]] = relationship(
+        back_populates="import_batch",
+        cascade="all, delete-orphan",
+    )
 
 
 class MediaAsset(Base):
@@ -66,6 +70,28 @@ class MediaAsset(Base):
     job_tracks: Mapped[list[JobTrack]] = relationship(back_populates="asset")
 
 
+class MasteringReference(Base):
+    """One trusted reference track available to jobs from an import."""
+
+    __tablename__ = "mastering_references"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    import_id: Mapped[str] = mapped_column(
+        ForeignKey("import_batches.id", ondelete="CASCADE"), index=True
+    )
+    filename: Mapped[str] = mapped_column(String(512))
+    storage_key: Mapped[str] = mapped_column(String(1024), unique=True)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    duration_seconds: Mapped[float | None] = mapped_column(Float)
+    sample_rate: Mapped[int | None] = mapped_column(Integer)
+    channels: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    import_batch: Mapped[ImportBatch] = relationship(back_populates="mastering_references")
+    jobs: Mapped[list[Job]] = relationship(back_populates="mastering_reference")
+
+
 class Job(Base):
     """Durable upmix request encompassing one track or an album."""
 
@@ -73,6 +99,9 @@ class Job(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     import_id: Mapped[str] = mapped_column(ForeignKey("import_batches.id"), index=True)
+    mastering_reference_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mastering_references.id", ondelete="SET NULL"), index=True
+    )
     source_job_id: Mapped[str | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"))
     name: Mapped[str] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
@@ -95,6 +124,9 @@ class Job(Base):
         cascade="all, delete-orphan",
     )
     import_batch: Mapped[ImportBatch] = relationship()
+    mastering_reference: Mapped[MasteringReference | None] = relationship(
+        back_populates="jobs"
+    )
 
 
 class JobTrack(Base):

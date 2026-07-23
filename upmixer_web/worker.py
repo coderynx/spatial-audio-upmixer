@@ -149,18 +149,29 @@ class WorkerManager:
                 session.commit()
                 track_ids = [track.id for track in job.tracks]
                 source_keys = [asset.storage_key for asset in job.import_batch.assets]
+                reference_key = (
+                    job.mastering_reference.storage_key
+                    if job.mastering_reference is not None
+                    else None
+                )
 
             with ExitStack() as sources:
                 input_paths = [
                     sources.enter_context(self.source.materialize(key))
                     for key in source_keys
                 ]
+                reference_path = (
+                    sources.enter_context(self.source.materialize(reference_key))
+                    if reference_key is not None
+                    else None
+                )
                 with self.sessions() as session:
                     job = get_job(session, job_id)
                     if not job:
                         raise JobDeleting()
                     manifest = materialize_manifest(
-                        job, job.import_batch, input_paths, work_dir, self.stem_cache_dir
+                        job, job.import_batch, input_paths, work_dir, self.stem_cache_dir,
+                        reference_path,
                     )
                 _, asset_jobs = parse_manifest(manifest)
                 mode = asset_jobs[0].engine.get("mode", "realtime") if asset_jobs else "realtime"

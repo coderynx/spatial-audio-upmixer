@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from upmixer_web.manifests import normalize_job_manifest
-from upmixer_web.models import ImportBatch, Job, JobTrack
+from upmixer_web.models import ImportBatch, Job, MasteringReference, JobTrack
 
 
 JOB_LOAD_OPTIONS = (
@@ -14,6 +14,7 @@ JOB_LOAD_OPTIONS = (
     selectinload(Job.tracks).selectinload(JobTrack.asset),
     selectinload(Job.tracks).selectinload(JobTrack.artifacts),
     selectinload(Job.artifacts),
+    selectinload(Job.mastering_reference),
 )
 
 
@@ -31,11 +32,13 @@ def create_job(
     manifest: dict,
     start: bool,
     source_job_id: str | None = None,
+    mastering_reference: MasteringReference | None = None,
 ) -> Job:
     """Create durable job and per-track state."""
     normalized = normalize_job_manifest(manifest)
     job = Job(
         import_id=import_batch.id,
+        mastering_reference=mastering_reference,
         source_job_id=source_job_id,
         name=name,
         manifest=normalized,
@@ -61,6 +64,7 @@ def clone_job(
     name: str | None,
     manifest: dict | None,
     start: bool,
+    mastering_reference: MasteringReference | None,
 ) -> Job:
     """Create a remix job sharing source files and global stem cache."""
     return create_job(
@@ -70,6 +74,7 @@ def clone_job(
         manifest=manifest or source.manifest,
         start=start,
         source_job_id=source.id,
+        mastering_reference=mastering_reference,
     )
 
 

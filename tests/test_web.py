@@ -105,7 +105,7 @@ def test_configuration_lists_every_stem_and_runtime_capability(web_client):
     assert configuration["choices"]["stems"] == [
         "Vocals", "Bass", "Drums", "Guitar", "Piano", "Other",
         "Kick", "Snare", "Toms", "Hi-Hat", "Ride", "Crash", "Crowd",
-        "Backing Vocals",
+        "Lead Vocals", "Backing Vocals",
     ]
     assert "vocal-presence" in configuration["choices"]["stem_eq_profiles"]
     capability = configuration["capabilities"]["stem_separation"]
@@ -242,3 +242,68 @@ def test_realtime_job_completes_and_downloads(web_client):
     assert download.status_code == 200
     assert download.headers["content-type"].startswith("audio/wav")
     assert len(download.content) > 44
+
+
+def test_mastering_reference_upload_runs_and_rejects_client_path(web_client):
+    imported = web_client.post(
+        "/api/v1/imports",
+        files=[("files", ("tone.wav", _wav_bytes(), "audio/wav"))],
+        data={"relative_paths": "tone.wav"},
+    ).json()
+    reference = web_client.post(
+        f"/api/v1/imports/{imported['id']}/mastering-references",
+        files={"file": ("reference.wav", _wav_bytes(660.0), "audio/wav")},
+    )
+    assert reference.status_code == 201
+    reference_data = reference.json()
+    assert reference_data["filename"] == "reference.wav"
+    assert reference_data["channels"] == 2
+
+    manifest = {
+        "version": "1.0.0",
+        "engine": {"mode": "realtime"},
+        "mixing": {"channel_layout": "5.1"},
+        "mastering": {
+            "loudness": {"normalize": False},
+            "match_reference": {
+                "strength": 0.5,
+                "spectrum": True,
+                "rms": True,
+                "max_db": 8.0,
+            },
+        },
+        "format": {"type": "wav", "subtype": "PCM_24", "sample_rate": 48000},
+    }
+    response = web_client.post("/api/v1/jobs", json={
+        "import_id": imported["id"],
+        "name": "Reference master",
+        "manifest": manifest,
+        "mastering_reference_id": reference_data["id"],
+        "start": True,
+    })
+    assert response.status_code == 201
+    job_id = response.json()["id"]
+    assert response.json()["mastering_reference"]["id"] == reference_data["id"]
+    assert "path" not in response.json()["manifest"]["mastering"]["match_reference"]
+
+    deadline = time.monotonic() + 10
+    job = None
+    while time.monotonic() < deadline:
+        job = web_client.get(f"/api/v1/jobs/{job_id}").json()
+        if job["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.05)
+    assert job is not None
+    assert job["status"] == "completed", job.get("error")
+
+    manifest["mastering"]["match_reference"]["path"] = "/unsafe/reference.wav"
+    rejected = web_client.post("/api/v1/jobs", json={
+        "import_id": imported["id"],
+        "name": "Unsafe reference",
+        "manifest": manifest,
+        "start": False,
+    })
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"] == (
+        "mastering.match_reference.path is managed by reference upload"
+    )

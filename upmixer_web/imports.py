@@ -12,7 +12,7 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from upmixer_web.metadata import AUDIO_SUFFIXES, COVER_NAMES, find_directory_cover, read_audio_metadata
-from upmixer_web.models import ImportBatch, MediaAsset
+from upmixer_web.models import ImportBatch, MasteringReference, MediaAsset
 from upmixer_web.storage import ObjectStorage
 
 
@@ -160,6 +160,55 @@ def ingest_uploads(
     except Exception:
         session.rollback()
         storage.delete_prefix(f"imports/{import_id}")
+        raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def ingest_mastering_reference(
+    session: Session,
+    storage: ObjectStorage,
+    work_root: Path,
+    import_batch: ImportBatch,
+    upload: UploadFile,
+) -> MasteringReference:
+    """Store one validated mastering reference for an existing source import."""
+    filename = upload.filename or "reference.wav"
+    relative = _safe_relative_path(filename)
+    if relative.suffix.lower() not in AUDIO_SUFFIXES:
+        raise ValueError("Reference audio must be WAV or FLAC")
+
+    reference_id = str(uuid.uuid4())
+    staging = work_root / f"reference-{reference_id}"
+    staging.mkdir(parents=True)
+    source = staging / relative.name
+    try:
+        with source.open("wb") as handle:
+            shutil.copyfileobj(upload.file, handle)
+        metadata = read_audio_metadata(source)
+        if metadata.sample_rate is None or metadata.channels is None:
+            raise ValueError("Reference audio could not be read")
+        storage_key = f"imports/{import_batch.id}/references/{reference_id}-{source.name}"
+        with source.open("rb") as stream:
+            size, digest = storage.put_stream(storage_key, stream)
+        reference = MasteringReference(
+            id=reference_id,
+            import_id=import_batch.id,
+            filename=source.name,
+            storage_key=storage_key,
+            sha256=digest,
+            size_bytes=size,
+            duration_seconds=metadata.duration_seconds,
+            sample_rate=metadata.sample_rate,
+            channels=metadata.channels,
+        )
+        session.add(reference)
+        session.commit()
+        session.refresh(reference)
+        return reference
+    except Exception:
+        session.rollback()
+        storage.delete_prefix(f"imports/{import_batch.id}/references/{reference_id}")
         raise
     finally:
         shutil.rmtree(staging, ignore_errors=True)

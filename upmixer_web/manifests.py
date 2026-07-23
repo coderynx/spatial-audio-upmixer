@@ -28,6 +28,12 @@ def normalize_job_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     normalized = copy.deepcopy(manifest)
     normalized.setdefault("version", "1.0.0")
     normalized.pop("assets", None)
+    mastering = normalized.get("mastering")
+    match_reference = (
+        mastering.get("match_reference") if isinstance(mastering, dict) else None
+    )
+    if isinstance(match_reference, dict) and "path" in match_reference:
+        raise ValueError("mastering.match_reference.path is managed by reference upload")
     validate_manifest({**normalized, "assets": [{"input": "input.wav", "output": "output.wav"}]})
     return normalized
 
@@ -38,6 +44,7 @@ def materialize_manifest(
     input_paths: list[Path],
     work_dir: Path,
     stem_cache_dir: Path,
+    mastering_reference_path: Path | None = None,
 ) -> dict[str, Any]:
     """Inject server-owned paths into a stored manifest."""
     data = copy.deepcopy(job.manifest)
@@ -52,6 +59,10 @@ def materialize_manifest(
             "stem_cache_dir": str(stem_cache_dir),
         })
     data["assets"] = assets
+    if mastering_reference_path is not None:
+        mastering = data.setdefault("mastering", {})
+        match_reference = mastering.setdefault("match_reference", {})
+        match_reference["path"] = str(mastering_reference_path)
     parse_manifest(data)
     return data
 

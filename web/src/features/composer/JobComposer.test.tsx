@@ -21,6 +21,7 @@ describe("JobComposer", () => {
       updated_at: "2026-01-01T12:01:00Z",
       tracks: [],
       artifacts: [],
+      mastering_reference: null,
     };
     render(
       <JobComposer

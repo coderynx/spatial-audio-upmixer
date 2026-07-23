@@ -16,13 +16,13 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-from upmixer_web.imports import ingest_uploads
+from upmixer_web.imports import ingest_mastering_reference, ingest_uploads
 from upmixer_web.jobs import clone_job, create_job, get_job, list_jobs
 from upmixer_web.manifests import (
     configuration_schema,
     ensure_stem_separation_available,
 )
-from upmixer_web.models import Artifact, ImportBatch, Job, MediaAsset
+from upmixer_web.models import Artifact, ImportBatch, Job, MasteringReference, MediaAsset
 from upmixer_web.separation import separation_capability
 from upmixer_web.schemas import (
     CloneJobRequest,
@@ -31,6 +31,7 @@ from upmixer_web.schemas import (
     ImportView,
     JobActionResponse,
     JobView,
+    MasteringReferenceView,
 )
 from upmixer_web.settings import Settings
 from upmixer_web.storage import LocalObjectStorage, StorageAudioSink, StorageAudioSource
@@ -154,6 +155,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Import not found")
         return _import_view(batch, settings.root_path)
 
+    @app.post(
+        "/api/v1/imports/{import_id}/mastering-references",
+        response_model=MasteringReferenceView,
+        status_code=status.HTTP_201_CREATED,
+        tags=["imports"],
+    )
+    def create_mastering_reference(
+        import_id: str,
+        file: UploadFile = File(...),
+        session: Session = Depends(database_session),
+    ) -> MasteringReferenceView:
+        batch = session.get(ImportBatch, import_id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="Import not found")
+        try:
+            reference = ingest_mastering_reference(
+                session, storage, settings.data_dir / "work", batch, file
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return MasteringReferenceView.model_validate(reference)
+
+    def job_mastering_reference(
+        session: Session,
+        import_batch: ImportBatch,
+        reference_id: str | None,
+    ) -> MasteringReference | None:
+        if reference_id is None:
+            return None
+        reference = session.get(MasteringReference, reference_id)
+        if not reference or reference.import_id != import_batch.id:
+            raise ValueError("Mastering reference does not belong to this import")
+        return reference
+
     @app.get("/api/v1/imports/{import_id}/cover", tags=["imports"])
     def read_cover(import_id: str, session: Session = Depends(database_session)) -> FileResponse:
         batch = session.get(ImportBatch, import_id)
@@ -187,7 +222,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             if request.start:
                 ensure_stem_separation_available(request.manifest, stem_capability)
-            job = create_job(session, batch, request.name, request.manifest, request.start)
+            reference = job_mastering_reference(
+                session, batch, request.mastering_reference_id
+            )
+            job = create_job(
+                session,
+                batch,
+                request.name,
+                request.manifest,
+                request.start,
+                mastering_reference=reference,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if request.start:
@@ -260,7 +305,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     request.manifest or source.manifest,
                     stem_capability,
                 )
-            job = clone_job(session, source, request.name, request.manifest, request.start)
+            reference_id = (
+                request.mastering_reference_id
+                if "mastering_reference_id" in request.model_fields_set
+                else source.mastering_reference_id
+            )
+            reference = job_mastering_reference(
+                session, source.import_batch, reference_id
+            )
+            job = clone_job(
+                session,
+                source,
+                request.name,
+                request.manifest,
+                request.start,
+                reference,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if request.start:

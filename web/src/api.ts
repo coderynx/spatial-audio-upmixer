@@ -26,6 +26,15 @@ export type ImportPreview = {
   assets: Asset[]
 }
 
+export type MasteringReference = {
+  id: string
+  filename: string
+  size_bytes: number
+  duration_seconds: number | null
+  sample_rate: number | null
+  channels: number | null
+}
+
 export type Artifact = {
   id: string
   kind: string
@@ -62,6 +71,7 @@ export type Job = {
   updated_at: string
   tracks: JobTrack[]
   artifacts: Artifact[]
+  mastering_reference: MasteringReference | null
 }
 
 export type Configuration = {
@@ -117,9 +127,14 @@ export const api = {
     }
     return request<ImportPreview>("/api/v1/imports", { method: "POST", body: data })
   },
-  createJob: (payload: { import_id: string; name: string; manifest: Record<string, unknown>; start: boolean }) =>
+  uploadMasteringReference: async (importId: string, file: File) => {
+    const data = new FormData()
+    data.append("file", file, file.name)
+    return request<MasteringReference>(`/api/v1/imports/${importId}/mastering-references`, { method: "POST", body: data })
+  },
+  createJob: (payload: { import_id: string; name: string; manifest: Record<string, unknown>; start: boolean; mastering_reference_id: string | null }) =>
     request<Job>("/api/v1/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
-  cloneJob: (id: string, payload: { name: string; manifest: Record<string, unknown>; start: boolean }) =>
+  cloneJob: (id: string, payload: { name: string; manifest: Record<string, unknown>; start: boolean; mastering_reference_id: string | null }) =>
     request<Job>(`/api/v1/jobs/${id}/clone`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   pauseJob: (id: string) => request(`/api/v1/jobs/${id}/pause`, { method: "POST" }),
   resumeJob: (id: string) => request(`/api/v1/jobs/${id}/resume`, { method: "POST" }),

@@ -7,7 +7,13 @@ import {
   RefreshCw,
   UploadCloud,
 } from "lucide-react";
-import { api, type Configuration, type ImportPreview, type Job } from "@/api";
+import {
+  api,
+  type Configuration,
+  type ImportPreview,
+  type Job,
+  type MasteringReference,
+} from "@/api";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -52,6 +58,12 @@ export function JobComposer({
   const [rawError, setRawError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [masteringReference, setMasteringReference] =
+    React.useState<MasteringReference | null>(null);
+  const [referenceUploading, setReferenceUploading] = React.useState(false);
+  const [referenceError, setReferenceError] = React.useState<string | null>(
+    null,
+  );
   const fileInput = React.useRef<HTMLInputElement>(null);
   const folderInput = React.useRef<HTMLInputElement>(null);
   const separation = configuration?.capabilities.stem_separation;
@@ -66,6 +78,9 @@ export function JobComposer({
       setManifest(next);
       setRawManifest(JSON.stringify(next, null, 2));
       setName(`${remix.name} remix`);
+      setMasteringReference(remix.mastering_reference);
+      setReferenceError(null);
+      setReferenceUploading(false);
       setStep("configure");
       setPreview(null);
       let active = true;
@@ -90,6 +105,9 @@ export function JobComposer({
     setStep("upload");
     setPreview(null);
     setItems([]);
+    setMasteringReference(null);
+    setReferenceError(null);
+    setReferenceUploading(false);
   }, [open, remix]);
   React.useEffect(() => {
     if (!open || remix || separation?.available !== false) return;
@@ -127,6 +145,7 @@ export function JobComposer({
       const payload = {
         name,
         manifest: manifest as unknown as Record<string, unknown>,
+        mastering_reference_id: masteringReference?.id || null,
         start,
       };
       if (remix) await api.cloneJob(remix.id, payload);
@@ -139,6 +158,22 @@ export function JobComposer({
       setError((nextError as Error).message);
     } finally {
       setBusy(false);
+    }
+  };
+  const uploadMasteringReference = async (file: File) => {
+    const importId = preview?.id || remix?.import_id;
+    if (!importId) {
+      setReferenceError("Upload source audio before choosing a reference.");
+      return;
+    }
+    setReferenceUploading(true);
+    setReferenceError(null);
+    try {
+      setMasteringReference(await api.uploadMasteringReference(importId, file));
+    } catch (nextError) {
+      setReferenceError((nextError as Error).message);
+    } finally {
+      setReferenceUploading(false);
     }
   };
   const updateRaw = (value: string) => {
@@ -323,6 +358,14 @@ export function JobComposer({
               rawManifest={rawManifest}
               rawError={rawError}
               onRawChange={updateRaw}
+              masteringReference={masteringReference}
+              referenceUploading={referenceUploading}
+              referenceError={referenceError}
+              onReferenceUpload={(file) => void uploadMasteringReference(file)}
+              onReferenceClear={() => {
+                setMasteringReference(null);
+                setReferenceError(null);
+              }}
             />
             {stemUnavailable && (
               <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
@@ -334,16 +377,21 @@ export function JobComposer({
                 {error}
               </p>
             )}
-            <div className="sticky bottom-0 flex flex-wrap justify-end gap-2 border-t bg-background pt-4">
+            <div className="sticky -bottom-6 -mb-6 z-20 isolate flex flex-wrap justify-end gap-2 border-t bg-background pb-6 pt-4">
               <Button
                 variant="outline"
-                disabled={busy || Boolean(rawError)}
+                disabled={busy || referenceUploading || Boolean(rawError)}
                 onClick={() => void submit(false)}
               >
                 Save paused
               </Button>
               <Button
-                disabled={busy || Boolean(rawError) || stemUnavailable}
+                disabled={
+                  busy ||
+                  referenceUploading ||
+                  Boolean(rawError) ||
+                  stemUnavailable
+                }
                 onClick={() => void submit(true)}
               >
                 {busy ? <RefreshCw className="animate-spin" /> : <Play />}Start

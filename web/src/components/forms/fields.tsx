@@ -12,18 +12,21 @@ export function SelectField({
   onChange,
   options,
   hint,
+  disabled = false,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: Option[];
   hint?: string;
+  disabled?: boolean;
 }) {
   return (
     <div className="space-y-2">
       <Label>{label}</Label>
       <select
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
       >
@@ -50,6 +53,7 @@ export function SliderField({
   step,
   onChange,
   suffix = "",
+  disabled = false,
 }: {
   label: string;
   value: number;
@@ -58,6 +62,7 @@ export function SliderField({
   step: number;
   onChange: (value: number) => void;
   suffix?: string;
+  disabled?: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -73,6 +78,7 @@ export function SliderField({
         min={min}
         max={max}
         step={step}
+        disabled={disabled}
         onValueChange={([next]) => onChange(next)}
       />
     </div>
@@ -87,6 +93,7 @@ export function NumberField({
   min,
   suffix,
   hint,
+  disabled = false,
 }: {
   label: string;
   value: number | null;
@@ -95,6 +102,7 @@ export function NumberField({
   min?: number;
   suffix?: string;
   hint?: string;
+  disabled?: boolean;
 }) {
   const [draft, setDraft] = React.useState(value == null ? "" : String(value));
   React.useEffect(() => setDraft(value == null ? "" : String(value)), [value]);
@@ -107,6 +115,7 @@ export function NumberField({
           value={draft}
           min={min}
           step={step}
+          disabled={disabled}
           onChange={(event) => {
             setDraft(event.target.value);
             onChange(
@@ -131,11 +140,13 @@ export function ToggleField({
   description,
   checked,
   onChange,
+  disabled = false,
 }: {
   label: string;
   description: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex items-start justify-between gap-4 rounded-md border bg-muted/30 p-3">
@@ -145,7 +156,7 @@ export function ToggleField({
           {description}
         </p>
       </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
+      <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
     </div>
   );
 }

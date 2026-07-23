@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { Configuration } from "@/api";
+import type { Configuration, MasteringReference } from "@/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Manifest } from "@/lib/manifest";
 import { AdvancedSection } from "./sections/AdvancedSection";
@@ -16,6 +16,11 @@ export function ManifestEditor({
   rawManifest,
   rawError,
   onRawChange,
+  masteringReference,
+  referenceUploading,
+  referenceError,
+  onReferenceUpload,
+  onReferenceClear,
 }: {
   manifest: Manifest;
   setManifest: React.Dispatch<React.SetStateAction<Manifest>>;
@@ -23,6 +28,11 @@ export function ManifestEditor({
   rawManifest: string;
   rawError: string | null;
   onRawChange: (value: string) => void;
+  masteringReference: MasteringReference | null;
+  referenceUploading: boolean;
+  referenceError: string | null;
+  onReferenceUpload: (file: File) => void;
+  onReferenceClear: () => void;
 }) {
   return (
     <Tabs
@@ -66,6 +76,11 @@ export function ManifestEditor({
           manifest={manifest}
           setManifest={setManifest}
           configuration={configuration}
+          masteringReference={masteringReference}
+          referenceUploading={referenceUploading}
+          referenceError={referenceError}
+          onReferenceUpload={onReferenceUpload}
+          onReferenceClear={onReferenceClear}
         />
       </TabsContent>
       <TabsContent value="processing">
