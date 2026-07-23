@@ -1,4 +1,4 @@
-"""Regression tests for stem spatial routing and content analysis."""
+"""Regression tests for static stem spatial routing."""
 from __future__ import annotations
 
 import numpy as np
@@ -6,8 +6,8 @@ from scipy.signal import sosfilt
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
-from upmixer.separation.stem_analyzer import StemFeatures, analyze_stem
-from upmixer.separation.stem_router import StemRouter, _content_scale
+from upmixer.separation.stem_analyzer import analyze_stem
+from upmixer.separation.stem_router import StemRouter, build_stem_routing
 
 
 def _audio(n: int = 48000, frequency: float = 440.0) -> np.ndarray:
@@ -21,54 +21,34 @@ def _router(**kwargs: object) -> StemRouter:
     return StemRouter(config, FORMAT_MAP["7.1.4"], 48000)
 
 
-def _features() -> StemFeatures:
-    return StemFeatures(0.4, 0.3, 0.2, 0.3)
-
-
 def test_channel_class_controls_change_stem_output():
     stems = {"Other": _audio()}
-    features = {"Other": _features()}
-    quiet = _router(surround_gain=0.1, height_gain=0.1).route(
-        stems, len(stems["Other"]), stem_features=features
-    )
-    loud = _router(surround_gain=1.0, height_gain=1.0).route(
-        stems, len(stems["Other"]), stem_features=features
-    )
+    quiet = _router(surround_gain=0.1, height_gain=0.1).route(stems, len(stems["Other"]))
+    loud = _router(surround_gain=1.0, height_gain=1.0).route(stems, len(stems["Other"]))
 
     assert np.sum(loud["SL"] ** 2) > np.sum(quiet["SL"] ** 2)
     assert np.sum(loud["TFL"] ** 2) > np.sum(quiet["TFL"] ** 2)
 
 
-def test_content_mix_strength_disables_content_scaling():
+def test_manifest_routing_overrides_builtin_table():
     stems = {"Vocals": _audio()}
-    features = {"Vocals": StemFeatures(0.0, 0.9, 0.8, 0.9)}
-    flat = _router(content_mix_strength=0.0).route(
-        stems, len(stems["Vocals"]), stem_features=features
-    )
-    static = _router(content_mix_strength=0.0).route(stems, len(stems["Vocals"]))
-    dynamic = _router(content_mix_strength=1.0).route(
-        stems, len(stems["Vocals"]), stem_features=features
-    )
+    router = _router(stem_routing={"Vocals": {"C": 0.0, "SL": 1.0}})
+    channels = router.route(stems, len(stems["Vocals"]))
 
-    for channel in flat:
-        np.testing.assert_allclose(flat[channel], static[channel])
-    assert not np.allclose(flat["C"], dynamic["C"])
+    assert np.max(np.abs(channels["C"])) == 0.0
+    assert np.max(np.abs(channels["SL"])) > 0.0
 
 
 def test_surround_send_removes_low_frequency_direct_copy():
     stems = {"Other": _audio(frequency=80.0)}
-    channels = _router().route(
-        stems, len(stems["Other"]), stem_features={"Other": _features()}
-    )
+    channels = _router().route(stems, len(stems["Other"]))
 
     assert np.sqrt(np.mean(channels["SL"] ** 2)) < np.sqrt(np.mean(channels["FL"] ** 2))
 
 
 def test_main_bed_routing_is_constant_power():
     stems = {"Vocals": _audio()}
-    channels = _router().route(
-        stems, len(stems["Vocals"]), stem_features={"Vocals": _features()}
-    )
+    channels = _router().route(stems, len(stems["Vocals"]))
     input_energy = float(np.vdot(stems["Vocals"], stems["Vocals"]).real)
     bed_energy = sum(float(np.vdot(channels[name], channels[name]).real) for name in ("FL", "FR", "C", "TFL", "TFR"))
 
@@ -96,11 +76,23 @@ def test_explicit_empty_zone_routing_does_not_fall_back_to_default():
     assert router.get_routing("Kick@height_back") == {}
 
 
-def test_neutral_features_preserve_static_routing_weights():
-    features = StemFeatures(0.5, 0.3, 0.2, 0.3)
+def test_routing_preset_is_explicit_and_layout_aware():
+    fmt = FORMAT_MAP["7.1.4"]
+    balanced = build_stem_routing(["Other"], fmt)
+    spacious = build_stem_routing(["Other"], fmt, "spacious")
+    neutral = build_stem_routing(["Other"], fmt, "spacious", intensity=0.0)
 
-    for label in FORMAT_MAP["7.1.4"].channels:
-        assert _content_scale(features, label) == 1.0
+    assert spacious["Other"]["SL"] > balanced["Other"]["SL"]
+    assert spacious["Other"]["TFL"] > balanced["Other"]["TFL"]
+    assert neutral == balanced
+    assert "TFL" not in build_stem_routing(["Other"], FORMAT_MAP["5.1"])["Other"]
+
+
+def test_stem_enabled_mutes_stem():
+    stems = {"Vocals": _audio()}
+    channels = _router(stem_enabled={"Vocals": False}).route(stems, len(stems["Vocals"]))
+
+    assert all(np.max(np.abs(channel)) == 0.0 for channel in channels.values())
 
 
 def test_default_lfe_gain_is_applied_once():

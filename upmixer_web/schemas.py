@@ -176,3 +176,10 @@ class UpdateProjectTrackSettingsRequest(BaseModel):
 
 class ExpandProjectStemsRequest(BaseModel):
     stems: list[str] = Field(min_length=1)
+
+
+class ResolveStemRoutingRequest(BaseModel):
+    stems: list[str] = Field(min_length=1)
+    channel_layout: str
+    preset: str = "balanced"
+    intensity: float = Field(default=1.0, ge=0.0, le=1.0)

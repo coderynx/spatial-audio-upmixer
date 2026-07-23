@@ -1,4 +1,4 @@
-"""Spatial routing: maps separated stems to multichannel output positions.
+"""Static spatial routing: maps separated stems to output speakers.
 
 Routing philosophy (Dolby Atmos Music best practices):
   Front bed (FL/FR/C) = song foundation — vocals, kick, snare, bass, melody.
@@ -39,9 +39,7 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 
 from upmixer.config import UpmixConfig
-from upmixer.analysis.spatial import SpatialPlan
 from upmixer.formats import ChannelLabel, OutputFormat
-from upmixer.separation.stem_analyzer import StemFeatures
 from upmixer.utils import diffuse_send
 
 _LEFT_CHANNELS  = {ChannelLabel.FL, ChannelLabel.SL, ChannelLabel.BL, ChannelLabel.TFL, ChannelLabel.TBL}
@@ -54,47 +52,6 @@ _HEIGHT_CHANNELS   = {ChannelLabel.TFL, ChannelLabel.TFR, ChannelLabel.TBL, Chan
 _VOCAL_STEM_NAMES: frozenset[str] = frozenset({
     "Vocals", "Lead Vocals", "Backing Vocals",
 })
-
-def _content_scale(features: StemFeatures, label: ChannelLabel) -> float:
-    """Per-channel multiplicative scale driven by stem content analysis.
-
-    Applied on top of the static routing table gain so spatial placement
-    adapts to the actual audio rather than using fixed gains.
-
-    Each scale is calibrated to 1.0 at the analyzer's neutral feature vector
-    (width=.5, highs=.3, lows=.2, transients=.3).  The static routing table
-    therefore remains the baseline position; analysis applies bounded shifts.
-
-    LFE     : boosted by low-frequency energy (bass/kick).
-    Center  : boosted when content is mono (vocals, bass, kick) — less for wide stereo.
-    Height  : two paths — cymbal/air (HF+transient) OR reverb tail (wide+sustained).
-              Takes the stronger path so both use-cases score well.
-    Surround: wide + sustained (reverb, room ambience, diffuse guitars).
-    Front   : stable anchor; slightly boosted for direct/percussive sounds.
-    """
-    w = features.stereo_width
-    h = features.high_freq_ratio
-    b = features.low_freq_ratio
-    t = features.transient_ratio
-
-    if label == ChannelLabel.LFE:
-        return 1.0 + 0.50 * (b - 0.20)
-
-    if label == ChannelLabel.C:
-        return 1.0 + 0.35 * (0.50 - w)
-
-    if label in _HEIGHT_CHANNELS:
-        cymbal_score  = 0.6 * h + 0.4 * t
-        ambient_score = 0.5 * w + 0.5 * (1.0 - t)
-        return 1.0 + 0.50 * (max(cymbal_score, ambient_score) - 0.60)
-
-    if label in _SURROUND_CHANNELS:
-        sustain = 1.0 - t
-        return 1.0 + 0.55 * (0.60 * w + 0.40 * sustain - 0.58)
-
-    return 1.0 + 0.30 * (0.55 * t + 0.45 * (1.0 - w) - 0.39)
-
-
 
 ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
     "front": {
@@ -351,12 +308,69 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
 }
 
 
+STEM_ROUTING_PRESETS: dict[str, tuple[float, float, float, float]] = {
+    "balanced": (1.00, 1.00, 1.00, 1.00),
+    "intimate": (1.06, 0.68, 0.55, 0.68),
+    "rhythmic": (1.03, 0.88, 0.72, 1.05),
+    "spacious": (0.96, 1.20, 1.12, 1.18),
+    "live": (0.98, 1.16, 1.22, 0.96),
+    "detailed": (1.02, 1.05, 0.92, 1.12),
+}
+"""Static front, side, back, and height scales for stem-routing presets."""
+
+STEM_ROUTING_PRESET_NAMES: tuple[str, ...] = tuple(STEM_ROUTING_PRESETS)
+
+
+def build_stem_routing(
+    stems: list[str],
+    output_format: OutputFormat,
+    preset: str = "balanced",
+    intensity: float = 1.0,
+) -> dict[str, dict[str, float]]:
+    """Return explicit speaker maps for a stem-routing preset.
+
+    Presets scale the built-in static routes before the router's existing
+    constant-power normalization.  ``intensity`` interpolates from balanced
+    routing to the requested preset.  LFE is deliberately unchanged.
+    """
+    if preset not in STEM_ROUTING_PRESETS:
+        raise ValueError(
+            f"Unknown stem routing preset '{preset}'. Valid: {STEM_ROUTING_PRESET_NAMES}"
+        )
+    amount = float(np.clip(intensity, 0.0, 1.0))
+    scales = STEM_ROUTING_PRESETS[preset]
+    channel_labels = {label.value: label for label in output_format.channels}
+    output: dict[str, dict[str, float]] = {}
+    for stem in stems:
+        base = DEFAULT_ROUTING.get(stem)
+        if base is None:
+            continue
+        route: dict[str, float] = {}
+        for channel, gain in base.items():
+            label = channel_labels.get(channel)
+            if label is None:
+                continue
+            if label in _FRONT_CHANNELS or label == ChannelLabel.C:
+                scale = scales[0]
+            elif label in {ChannelLabel.SL, ChannelLabel.SR}:
+                scale = scales[1]
+            elif label in {ChannelLabel.BL, ChannelLabel.BR}:
+                scale = scales[2]
+            elif label in _HEIGHT_CHANNELS:
+                scale = scales[3]
+            else:
+                scale = 1.0
+            route[channel] = gain * (1.0 + amount * (scale - 1.0))
+        output[stem] = route
+    return output
+
+
 class StemRouter:
     """Mix separated stems into output channels using spatial routing tables.
 
     Stems keyed as "StemName@zone" are routed via ZONE_ROUTING[zone][StemName].
-    Custom routing entries merge over built-in routes.  Zone-specific custom
-    keys (``"Stem@zone"``) take precedence over stem-name entries.
+    Manifest routing entries merge over built-in routes. Zone-specific keys
+    (``"Stem@zone"``) take precedence over stem-name entries.
 
     Channels listed in passthrough_channels are skipped during routing; the
     pipeline injects those channels directly from the source material.
@@ -371,7 +385,9 @@ class StemRouter:
     ) -> None:
         self._config = config
         self._fmt = output_fmt
+        self._manifest_routing = config.stem_routing or {}
         self._custom_routing = routing or {}
+        self._stem_enabled = config.stem_enabled or {}
         self._sr = sample_rate
         self._lfe_sos = butter(
             config.lfe_filter_order,
@@ -412,10 +428,26 @@ class StemRouter:
             stem_name = stem_key
             base = DEFAULT_ROUTING.get(stem_name)
 
-        custom = self._custom_routing.get(stem_key) or self._custom_routing.get(stem_name)
-        if base is None:
-            return dict(custom) if custom else None
-        return {**base, **custom} if custom else base
+        result = dict(base) if base is not None else {}
+        found_override = base is not None
+        for overrides in (self._manifest_routing, self._custom_routing):
+            custom = (
+                overrides[stem_key]
+                if stem_key in overrides
+                else overrides.get(stem_name)
+            )
+            if custom is not None:
+                result.update(custom)
+                found_override = True
+        return result if found_override else None
+
+    def _is_enabled(self, stem_key: str) -> bool:
+        stem_name = stem_key.rsplit("@", 1)[0]
+        return bool(
+            self._stem_enabled[stem_key]
+            if stem_key in self._stem_enabled
+            else self._stem_enabled.get(stem_name, True)
+        )
 
     def _channel_gain(self, label: ChannelLabel) -> float:
         if label == ChannelLabel.C:
@@ -439,8 +471,6 @@ class StemRouter:
         stems: dict[str, np.ndarray],
         n_samples: int,
         passthrough_channels: set[str] | None = None,
-        stem_features: dict[str, StemFeatures] | None = None,
-        spatial_plan: SpatialPlan | None = None,
     ) -> dict[str, np.ndarray]:
         """Mix stems into output channels.
 
@@ -448,11 +478,6 @@ class StemRouter:
             stems: Dict "StemName[@zone]" → ndarray (n_samples, 2) stereo float.
             n_samples: Expected output length.
             passthrough_channels: Channel names to skip (injected directly by caller).
-            stem_features: Optional per-stem content analysis (from stem_analyzer).
-                When provided, static routing table gains are scaled per channel type
-                based on the stem's stereo width, frequency content, and transient
-                density — making spatial placement adapt to the actual audio.
-
         Returns:
             Dict channel_name → 1D float64 array of length n_samples.
         """
@@ -464,13 +489,13 @@ class StemRouter:
         lfe_bus = np.zeros(n_samples, dtype=np.float64)
 
         for stem_key, audio in stems.items():
+            if not self._is_enabled(stem_key):
+                continue
             stem_name = stem_key.rsplit("@", 1)[0]
             stem_routing = self._routing_for(stem_key)
 
             if not stem_routing:
                 continue
-
-            features = stem_features.get(stem_key) if stem_features else None
 
             n = min(len(audio), n_samples)
             stem_L = audio[:n, 0].astype(np.float64, copy=False)
@@ -514,9 +539,6 @@ class StemRouter:
                 gain = stem_routing[ch] * self._channel_gain(label)
                 if c_redirect > 0.0 and label in (ChannelLabel.FL, ChannelLabel.FR):
                     gain += c_redirect
-                if features is not None:
-                    content_scale = _content_scale(features, label)
-                    gain *= 1.0 + self._config.content_mix_strength * (content_scale - 1.0)
 
                 if label == ChannelLabel.LFE:
                     lfe_bus[:n] += gain * stem_mono
@@ -544,31 +566,6 @@ class StemRouter:
 
         if "LFE" in channels:
             channels["LFE"] += self._lfe_gain * sosfilt(self._lfe_sos, lfe_bus)
-
-        if spatial_plan is not None:
-            # Profile motion is auxiliary routing control, never an LFE boost.
-            sample_points = np.arange(n_samples)
-            control_points = np.arange(len(spatial_plan.front)) * spatial_plan.hop_size
-            def _envelope(values: np.ndarray, default: float = 1.0) -> np.ndarray:
-                if len(values) == 0:
-                    return np.full(n_samples, default)
-                return np.interp(sample_points, control_points, values)
-            front = _envelope(spatial_plan.front)
-            surround = _envelope(spatial_plan.surround)
-            back = _envelope(spatial_plan.back)
-            height = _envelope(spatial_plan.height)
-            detail = 1.0 + 0.4125 * _envelope(spatial_plan.detail, 0.0)
-            for label in self._fmt.channels:
-                if label.value in skip or label == ChannelLabel.LFE:
-                    continue
-                if label in _FRONT_CHANNELS or label == ChannelLabel.C:
-                    channels[label.value] *= front
-                elif label in {ChannelLabel.BL, ChannelLabel.BR}:
-                    channels[label.value] *= back * detail
-                elif label in _SURROUND_CHANNELS:
-                    channels[label.value] *= surround * detail
-                elif label in _HEIGHT_CHANNELS:
-                    channels[label.value] *= height * detail
 
         return channels
 

@@ -44,7 +44,6 @@ import soundfile as sf
 from scipy.signal import resample_poly
 
 from upmixer.config import UpmixConfig
-from upmixer.analysis.spatial import analyze_spatial_plan
 from upmixer.formats import ChannelLabel, FORMAT_MAP, INPUT_FORMAT_MAP, detect_input_format
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
@@ -53,14 +52,13 @@ from upmixer.mastering import MasteringChain
 from upmixer.result import UpmixResult
 from upmixer.separation.separator import StemSeparator
 from upmixer.separation.source_anchor import apply_source_anchor
-from upmixer.separation.stem_analyzer import analyze_stems
 from upmixer.separation.stem_plan import (
     DEFAULT_STEMS,
     SeparationPlan,
     normalize_stems,
     resolve_separation_plan,
 )
-from upmixer.separation.stem_router import StemRouter
+from upmixer.separation.stem_router import StemRouter, build_stem_routing
 from upmixer.utils import preview_slice, itu_downmix_stereo
 
 _log = logging.getLogger("upmixer")
@@ -696,44 +694,23 @@ class StemUpmixPipeline:
             stem_eq = StemEQ(cfg.stem_eq_profiles, sep_sr)
             all_stems = stem_eq.process(all_stems)
 
-        router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
-
-        # Analyze the separated stereo reconstruction at routing sample rate.
-        # This keeps creative timing aligned with cached/resampled stems.
-        mix_l = np.zeros(n_samples, dtype=np.float32)
-        mix_r = np.zeros(n_samples, dtype=np.float32)
-        for stem in all_stems.values():
-            n = min(len(stem), n_samples)
-            mix_l[:n] += stem[:n, 0]
-            mix_r[:n] += stem[:n, 1] if stem.shape[1] > 1 else stem[:n, 0]
-        stem = None
-        spatial_plan = analyze_spatial_plan(mix_l, mix_r, sep_sr, cfg) if cfg.spatial_preanalysis else None
-        if spatial_plan is not None:
-            _log.info("  Spatial: %s (confidence %.2f)", spatial_plan.profile, spatial_plan.confidence)
-
-        _progress("  Analyzing stem content...", 0.75)
-        stem_features = analyze_stems(
-            all_stems,
-            sep_sr,
-            high_frequency_hz=cfg.content_hf_analysis_hz,
-        )
-        for stem_key, feat in sorted(stem_features.items()):
-            name = stem_key.split("@")[0]
-            zone = f"@{stem_key.split('@')[1]}" if "@" in stem_key else ""
-            _log.info(
-                "    %s%s: width=%.2f  highs=%.2f  lows=%.2f  transients=%.2f",
-                name, zone,
-                feat.stereo_width, feat.high_freq_ratio,
-                feat.low_freq_ratio, feat.transient_ratio,
+        if cfg.stem_routing is None and cfg.spatial_profile not in {"auto", "balanced"}:
+            _log.warning(
+                "Stem mode no longer applies dynamic spatial profiles. "
+                "Converting legacy profile '%s' to static stem routing.",
+                cfg.spatial_profile,
             )
+            cfg.stem_routing = build_stem_routing(
+                list(plan.requested_stems), output_fmt, cfg.spatial_profile,
+                cfg.spatial_intensity,
+            )
+        router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
 
         _progress("  Routing stems to channels...", 0.80)
         channels = router.route(
             all_stems,
             n_samples,
             passthrough_channels=set(passthrough_resampled.keys()),
-            stem_features=stem_features,
-            spatial_plan=spatial_plan,
         )
 
         for ch_name, ch_audio in passthrough_resampled.items():
@@ -760,7 +737,7 @@ class StemUpmixPipeline:
             del source_audio
 
         del all_stems, audio_full, source_zones, sep_zones, passthrough
-        del passthrough_resampled, mix_l, mix_r, stem_features
+        del passthrough_resampled
 
         _progress("  Mastering...", 0.90)
         mastering = MasteringChain(cfg)
@@ -814,8 +791,6 @@ class StemUpmixPipeline:
             measured_tp_dbtp=mastering_result.measured_tp_dbtp,
             applied_gain_db=mastering_result.applied_gain_db,
             stems=stem_summary,
-            spatial_profile=spatial_plan.profile if spatial_plan else None,
-            spatial_profile_confidence=spatial_plan.confidence if spatial_plan else None,
             processing_time_seconds=time.monotonic() - t0,
         )
 

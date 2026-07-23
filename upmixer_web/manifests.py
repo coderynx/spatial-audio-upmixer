@@ -76,6 +76,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     from upmixer.mastering.eq import EQ_PROFILES
     from upmixer.separation.stem_eq import STEM_EQ_PROFILES
     from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
+    from upmixer.separation.stem_router import STEM_ROUTING_PRESET_NAMES
 
     stems = list(dict.fromkeys(MANIFEST_TO_CANONICAL.values()))
 
@@ -93,6 +94,11 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
             "compressor_profiles": sorted(COMP_PROFILES),
             "bass_profiles": sorted(BASS_PROFILES),
             "stem_eq_profiles": sorted(STEM_EQ_PROFILES),
+            "stem_routing_presets": list(STEM_ROUTING_PRESET_NAMES),
+            "layout_channels": {
+                name: [label.value for label in fmt.channels]
+                for name, fmt in FORMAT_MAP.items()
+            },
             "stems": stems,
         },
         "capabilities": {"stem_separation": capability},

@@ -10,6 +10,18 @@ type AudioNodeSet = {
 
 type Timeline = { offset: number; contextTime: number };
 
+type MixPreview = {
+  stem_routing?: Record<string, Record<string, number>>;
+  stem_rebalance?: Record<string, number>;
+  stem_enabled?: Record<string, boolean>;
+};
+
+const speakerCoordinates: Record<string, { x: number; y: number; z: number }> = {
+  FL: { x: -0.5, y: 0, z: -0.87 }, FR: { x: 0.5, y: 0, z: -0.87 }, C: { x: 0, y: 0, z: -1 },
+  SL: { x: -0.94, y: 0, z: 0.34 }, SR: { x: 0.94, y: 0, z: 0.34 }, BL: { x: -0.7, y: 0, z: 0.7 }, BR: { x: 0.7, y: 0, z: 0.7 },
+  TFL: { x: -0.5, y: 0.6, z: -0.7 }, TFR: { x: 0.5, y: 0.6, z: -0.7 }, TBL: { x: -0.6, y: 0.6, z: 0.6 }, TBR: { x: 0.6, y: 0.6, z: 0.6 },
+};
+
 function coordinates(azimuth: number, elevation: number) {
   const az = azimuth * Math.PI / 180;
   const el = elevation * Math.PI / 180;
@@ -33,7 +45,7 @@ function waitForEvent(element: HTMLMediaElement) {
   });
 }
 
-export function useStemPreview(stems: ProjectStem[], scene: { stems?: StemScene }) {
+export function useStemPreview(stems: ProjectStem[], scene: { stems?: StemScene }, mix?: MixPreview) {
   const context = React.useRef<AudioContext | null>(null);
   const master = React.useRef<GainNode | null>(null);
   const compensation = React.useRef<BiquadFilterNode | null>(null);
@@ -147,18 +159,38 @@ export function useStemPreview(stems: ProjectStem[], scene: { stems?: StemScene 
     for (const stem of stemsRef.current) {
       const node = nodes.current.get(stem.id);
       if (!node) continue;
-      const value = scene.stems?.[stem.stem_key] || scene.stems?.[stem.stem_key.split("@", 1)[0]] || {};
-      const { x, y, z } = coordinates(value.azimuth_deg || 0, value.elevation_deg || 0);
-      node.gain.gain.value = value.enabled === false ? 0 : 1;
+      const base = stem.stem_key.split("@", 1)[0];
+      const value = scene.stems?.[stem.stem_key] || scene.stems?.[base] || {};
+      const route = mix?.stem_routing?.[stem.stem_key] || mix?.stem_routing?.[base];
+      let position = coordinates(value.azimuth_deg || 0, value.elevation_deg || 0);
+      if (route) {
+        let total = 0;
+        let x = 0;
+        let y = 0;
+        let z = 0;
+        for (const [channel, weight] of Object.entries(route)) {
+          const speaker = speakerCoordinates[channel];
+          if (!speaker || weight <= 0) continue;
+          total += weight;
+          x += speaker.x * weight;
+          y += speaker.y * weight;
+          z += speaker.z * weight;
+        }
+        if (total > 0) position = { x: x / total, y: y / total, z: z / total };
+      }
+      const gainDb = mix?.stem_rebalance?.[base] || 0;
+      node.gain.gain.value = mix?.stem_enabled?.[base] === false || value.enabled === false
+        ? 0
+        : 10 ** (gainDb / 20);
       if (node.panner.positionX) {
-        node.panner.positionX.value = x;
-        node.panner.positionY.value = y;
-        node.panner.positionZ.value = z;
+        node.panner.positionX.value = position.x;
+        node.panner.positionY.value = position.y;
+        node.panner.positionZ.value = position.z;
       } else {
-        node.panner.setPosition(x, y, z);
+        node.panner.setPosition(position.x, position.y, position.z);
       }
     }
-  }, [scene.stems, volume]);
+  }, [mix, scene.stems, volume]);
 
   React.useEffect(() => {
     apply();

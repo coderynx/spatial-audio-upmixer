@@ -5,12 +5,7 @@ import { api, type Configuration, type ImportPreview } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { defaultManifest, fallbackStems, normalizeManifest, type Manifest } from "@/lib/manifest";
-
-const defaultScene = { stems: {
-  Vocals: { azimuth_deg: 0, elevation_deg: 0 }, Bass: { azimuth_deg: 0, elevation_deg: 0 }, Drums: { azimuth_deg: 0, elevation_deg: 10 }, Guitar: { azimuth_deg: 30, elevation_deg: 0 }, Piano: { azimuth_deg: -30, elevation_deg: 0 }, Other: { azimuth_deg: -60, elevation_deg: 20 },
-  Crowd: { azimuth_deg: 180, elevation_deg: 20 }, "Lead Vocals": { azimuth_deg: 0, elevation_deg: 0 }, "Backing Vocals": { azimuth_deg: 0, elevation_deg: 30 }, Kick: { azimuth_deg: 0, elevation_deg: 0 }, Snare: { azimuth_deg: 0, elevation_deg: 0 }, Toms: { azimuth_deg: 0, elevation_deg: 10 }, "Hi-Hat": { azimuth_deg: 30, elevation_deg: 35 }, Ride: { azimuth_deg: -30, elevation_deg: 35 }, Crash: { azimuth_deg: 0, elevation_deg: 40 },
-} };
+import { defaultProjectManifest, fallbackStems, normalizeManifest, type Manifest } from "@/lib/manifest";
 
 const childStemsByParent: Record<string, string[]> = {
   Vocals: ["Lead Vocals", "Backing Vocals"],
@@ -29,7 +24,7 @@ export function ProjectNewPage({ configuration }: { configuration: Configuration
   const navigate = useNavigate();
   const [imported, setImported] = React.useState<ImportPreview | null>(null);
   const [name, setName] = React.useState("New spatial project");
-  const [manifest, setManifest] = React.useState<Manifest>(normalizeManifest(defaultManifest as unknown as Record<string, unknown>));
+  const [manifest, setManifest] = React.useState<Manifest>(normalizeManifest(defaultProjectManifest as unknown as Record<string, unknown>));
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const files = React.useRef<HTMLInputElement>(null);
@@ -64,15 +59,7 @@ export function ProjectNewPage({ configuration }: { configuration: Configuration
     if (!imported) return;
     setBusy(true); setError(null);
     try {
-      const scene = {
-        stems: Object.fromEntries(
-          manifest.engine.stems.map((stem) => [
-            stem,
-            defaultScene.stems[stem as keyof typeof defaultScene.stems] || { azimuth_deg: 0, elevation_deg: 0 },
-          ]),
-        ),
-      };
-      const project = await api.createProject({ import_id: imported.id, name, manifest: { ...manifest, engine: { ...manifest.engine, mode: "stem" } } as unknown as Record<string, unknown>, scene });
+      const project = await api.createProject({ import_id: imported.id, name, manifest: { ...manifest, engine: { ...manifest.engine, mode: "stem" } } as unknown as Record<string, unknown>, scene: {} });
       navigate(`/projects/${project.id}`);
     } catch (nextError) { setError((nextError as Error).message); } finally { setBusy(false); }
   };

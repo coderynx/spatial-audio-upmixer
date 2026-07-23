@@ -103,6 +103,8 @@ export type StemScene = Record<string, {
   elevation_deg?: number
 }>
 
+export type StemRouting = Record<string, Record<string, number>>
+
 export type Project = {
   id: string
   import_id: string
@@ -137,6 +139,8 @@ export type Configuration = {
     compressor_profiles: string[]
     bass_profiles: string[]
     stem_eq_profiles: string[]
+    stem_routing_presets?: string[]
+    layout_channels?: Record<string, string[]>
     stems: string[]
   }
   capabilities: {
@@ -166,6 +170,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getConfiguration: () => request<Configuration>("/api/v1/configuration"),
+  resolveStemRouting: (payload: { stems: string[]; channel_layout: string; preset: string; intensity: number }) =>
+    request<StemRouting>("/api/v1/stem-routing/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   getImport: (id: string) => request<ImportPreview>(`/api/v1/imports/${id}`),
   listJobs: () => request<Job[]>("/api/v1/jobs"),
   listProjects: () => request<Project[]>("/api/v1/projects"),

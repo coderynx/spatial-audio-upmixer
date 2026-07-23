@@ -72,6 +72,7 @@ from __future__ import annotations
 import glob as _glob
 import json
 import logging
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -79,6 +80,7 @@ from pathlib import Path
 from typing import Any
 
 from upmixer.config import UpmixConfig
+from upmixer.formats import ChannelLabel
 from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
 
 _log = logging.getLogger("upmixer")
@@ -149,6 +151,8 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "channel_layout": ("config", "format"),
         "stem_rebalance": ("config", "stem_rebalance"),
         "stem_eq":        ("config", "stem_eq_profiles"),
+        "stem_routing":   ("config", "stem_routing"),
+        "stem_enabled":   ("config", "stem_enabled"),
         "stem_source_anchor_strength": ("config", "stem_source_anchor_strength"),
         "spatial": {
             "profile": ("config", "spatial_profile"),
@@ -263,6 +267,8 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "mastering_match_ref_max_db":   ("mastering_match_ref_max_db",    float),
     "stem_rebalance":              ("stem_rebalance",   dict),
     "stem_eq_profiles":            ("stem_eq_profiles", dict),
+    "stem_routing":                ("stem_routing",     dict),
+    "stem_enabled":                ("stem_enabled",     dict),
     "stem_cache_dir":              ("stem_cache_dir",   str),
     "stem_batch_size":             ("stem_batch_size",  int),
     "stem_segment_size":           ("stem_segment_size", int),
@@ -400,6 +406,59 @@ def validate_manifest(data: dict) -> None:
                     f"Unknown stem name '{s}'. "
                     f"Valid names: {', '.join(sorted(_valid_manifest))}."
                 )
+
+    valid_channels = {label.value for label in ChannelLabel}
+
+    def _valid_route_stem(stem_key: object) -> bool:
+        if not isinstance(stem_key, str):
+            return False
+        stem_name, _, zone = stem_key.partition("@")
+        return stem_name in _VALID_STEM_NAMES and (
+            not zone or zone in {"front", "surround", "back", "height_front", "height_back"}
+        )
+
+    def _validate_stem_mix(blocks: dict, location: str) -> None:
+        mixing = blocks.get("mixing")
+        if not isinstance(mixing, dict):
+            return
+        enabled = mixing.get("stem_enabled")
+        if enabled is not None:
+            if not isinstance(enabled, dict):
+                raise ManifestError(f"{location}.mixing.stem_enabled must be a mapping.")
+            for stem_key, value in enabled.items():
+                if not _valid_route_stem(stem_key):
+                    raise ManifestError(f"Unknown stem routing key '{stem_key}'.")
+                if not isinstance(value, bool):
+                    raise ManifestError(
+                        f"{location}.mixing.stem_enabled.{stem_key} must be true or false."
+                    )
+        routing = mixing.get("stem_routing")
+        if routing is None:
+            return
+        if not isinstance(routing, dict):
+            raise ManifestError(f"{location}.mixing.stem_routing must be a mapping.")
+        for stem_key, channel_map in routing.items():
+            if not _valid_route_stem(stem_key):
+                raise ManifestError(f"Unknown stem routing key '{stem_key}'.")
+            if not isinstance(channel_map, dict):
+                raise ManifestError(
+                    f"{location}.mixing.stem_routing.{stem_key} must be a channel mapping."
+                )
+            for channel, weight in channel_map.items():
+                if channel not in valid_channels:
+                    raise ManifestError(f"Unknown output channel '{channel}' for stem '{stem_key}'.")
+                if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+                    raise ManifestError(
+                        f"Route weight for '{stem_key}.{channel}' must be a non-negative number."
+                    )
+                if not math.isfinite(float(weight)) or float(weight) < 0.0:
+                    raise ManifestError(
+                        f"Route weight for '{stem_key}.{channel}' must be finite and non-negative."
+                    )
+
+    _validate_stem_mix(data, "manifest")
+    for index, asset in enumerate(assets):
+        _validate_stem_mix(asset, f"assets[{index}]")
 
 
 _ASSET_NON_BLOCK_KEYS: frozenset[str] = frozenset({

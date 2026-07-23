@@ -10,6 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from upmixer.separation.stem_plan import normalize_stems
+from upmixer.formats import FORMAT_MAP
+from upmixer.separation.stem_router import build_stem_routing
 from upmixer_web.jobs import create_job
 from upmixer_web.manifests import normalize_job_manifest
 from upmixer_web.models import ImportBatch, Job, Project, ProjectStem, ProjectTrack
@@ -56,6 +58,18 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
     engine["mode"] = "stem"
     stems = _normalize_project_stems(engine.get("stems") or [])
     engine["stems"] = stems
+    mixing = normalized.setdefault("mixing", {})
+    mixing.setdefault("channel_layout", "7.1.4")
+    if mixing["channel_layout"] not in FORMAT_MAP:
+        raise ValueError("Unknown channel layout")
+    mixing["spatial"] = {"profile": "balanced", "intensity": 0.0, "preanalyze": False}
+    mixing["stem_source_anchor_strength"] = mixing.get("stem_source_anchor_strength", 0.0)
+    if "stem_routing" not in mixing:
+        mixing["stem_routing"] = build_stem_routing(
+            stems, FORMAT_MAP[mixing["channel_layout"]]
+        )
+    routing = normalized.setdefault("routing", {})
+    routing["content_mix_strength"] = 0.0
     normalized.setdefault("processing", {})["preview"] = False
     return normalized, stems
 

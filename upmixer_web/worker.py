@@ -248,7 +248,12 @@ class WorkerManager:
                         config.stems = stems
 
                     custom_routing = None
-                    if mode == "stem" and job.project_id and job.project_snapshot:
+                    if (
+                        mode == "stem"
+                        and config.stem_routing is None
+                        and job.project_id
+                        and job.project_snapshot
+                    ):
                         with self.sessions() as project_session:
                             project = get_project(project_session, job.project_id)
                             project_track = next(

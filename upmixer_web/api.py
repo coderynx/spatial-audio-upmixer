@@ -45,6 +45,7 @@ from upmixer_web.schemas import (
     CreateProjectRequest,
     ExpandProjectStemsRequest,
     ProjectView,
+    ResolveStemRoutingRequest,
     UpdateProjectSettingsRequest,
     UpdateProjectTrackSettingsRequest,
 )
@@ -164,6 +165,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/configuration", tags=["system"])
     def get_configuration() -> dict:
         return configuration_schema(stem_capability)
+
+    @app.post("/api/v1/stem-routing/resolve", tags=["system"])
+    def resolve_stem_routing(request: ResolveStemRoutingRequest) -> dict[str, dict[str, float]]:
+        from upmixer.formats import FORMAT_MAP
+        from upmixer.separation.stem_plan import normalize_stems
+        from upmixer.separation.stem_router import build_stem_routing
+
+        if request.channel_layout not in FORMAT_MAP:
+            raise HTTPException(status_code=422, detail="Unknown channel layout")
+        try:
+            stems = normalize_stems(request.stems)
+            return build_stem_routing(
+                stems, FORMAT_MAP[request.channel_layout], request.preset,
+                request.intensity,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/api/v1/imports", response_model=ImportView, status_code=status.HTTP_201_CREATED, tags=["imports"])
     def create_import(

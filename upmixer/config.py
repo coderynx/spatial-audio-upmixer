@@ -115,6 +115,13 @@ class UpmixConfig:
 
     stem_eq_profiles: dict | None = None
 
+    # Explicit per-stem speaker-bed routing.  Each value maps a canonical stem
+    # name (or ``Stem@zone`` key) to output channel weights.
+    stem_routing: dict | None = None
+
+    # Explicit per-stem on/off state.  Missing stems remain enabled.
+    stem_enabled: dict | None = None
+
     stem_cache_dir: str | None = None
 
     # None selects conservative backend-aware inference batching.

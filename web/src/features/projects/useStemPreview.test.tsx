@@ -65,8 +65,8 @@ class FakeAudio extends EventTarget {
 }
 
 const stems: ProjectStem[] = [
-  { id: "vocals", stem_key: "Vocals", sample_rate: 48000, channels: 2, size_bytes: 1, audio_url: "/vocals.wav" },
-  { id: "drums", stem_key: "Drums", sample_rate: 48000, channels: 2, size_bytes: 1, audio_url: "/drums.wav" },
+  { id: "vocals", stem_key: "Vocals", sample_rate: 48000, channels: 2, size_bytes: 1, audio_url: "/vocals.wav", preview_url: null },
+  { id: "drums", stem_key: "Drums", sample_rate: 48000, channels: 2, size_bytes: 1, audio_url: "/drums.wav", preview_url: null },
 ];
 
 let preview: ReturnType<typeof useStemPreview>;

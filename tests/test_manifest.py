@@ -669,6 +669,24 @@ class TestParseAndApplyIntegration:
         apply_asset_job(cfg, jobs[0])
         assert cfg.stem_source_anchor_strength == pytest.approx(0.35)
 
+    def test_mixing_stem_routing_and_enabled(self):
+        data = _minimal(mixing={
+            "stem_routing": {"Vocals": {"C": 0.8, "TFL": 0.1}},
+            "stem_enabled": {"Vocals": False},
+        })
+        _, jobs = parse_manifest(data)
+        cfg = UpmixConfig()
+        apply_asset_job(cfg, jobs[0])
+
+        assert cfg.stem_routing == {"Vocals": {"C": 0.8, "TFL": 0.1}}
+        assert cfg.stem_enabled == {"Vocals": False}
+
+    def test_mixing_stem_routing_rejects_invalid_channel(self):
+        data = _minimal(mixing={"stem_routing": {"Vocals": {"nope": 1.0}}})
+
+        with pytest.raises(ManifestError, match="channel"):
+            validate_manifest(data)
+
     def test_format_block_output_type(self):
         data = _minimal(format={"type": "adm-bwf", "subtype": "PCM_24"})
         _, jobs = parse_manifest(data)
