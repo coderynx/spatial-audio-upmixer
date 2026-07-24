@@ -61,9 +61,13 @@ class FakeChannelSplitter extends FakeNode {}
 
 class FakeAnalyser extends FakeNode {
   fftSize = 2048;
+  frequencyBinCount = 1024;
   smoothingTimeConstant = 0;
   getByteTimeDomainData(array: Uint8Array) {
     array.fill(128);
+  }
+  getByteFrequencyData(array: Uint8Array) {
+    array.fill(0);
   }
 }
 

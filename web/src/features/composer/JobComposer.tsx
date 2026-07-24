@@ -223,7 +223,7 @@ export function JobComposer({
                   setError((nextError as Error).message);
                 }
               }}
-              className="flex min-h-64 flex-col items-center justify-center rounded-md border border-dashed p-8 text-center"
+              className="flex min-h-56 flex-col items-center justify-center rounded-md border border-dashed p-6 text-center"
             >
               <div className="mb-4 rounded-md bg-muted p-3">
                 {busy ? (
@@ -310,7 +310,7 @@ export function JobComposer({
             )}
           </div>
         ) : (
-          <div className="space-y-5">
+          <div className="space-y-4">
             <section className="space-y-3">
               <div>
                 <h3 className="text-base font-semibold">Source</h3>
@@ -377,7 +377,7 @@ export function JobComposer({
                 {error}
               </p>
             )}
-            <div className="sticky -bottom-6 -mb-6 z-20 isolate flex flex-wrap justify-end gap-2 border-t bg-background pb-6 pt-4">
+            <div className="sticky -bottom-5 -mb-5 z-20 isolate flex flex-wrap justify-end gap-2 border-t bg-background pb-4 pt-3">
               <Button
                 variant="outline"
                 disabled={busy || referenceUploading || Boolean(rawError)}

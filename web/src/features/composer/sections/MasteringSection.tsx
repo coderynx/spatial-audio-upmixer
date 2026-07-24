@@ -39,7 +39,7 @@ export function MasteringSection({
   const match = manifest.mastering.match_reference;
   const hasReference = masteringReference !== null;
   return (
-    <div className="grid gap-5 rounded-md border p-4 sm:grid-cols-2">
+    <div className="grid gap-4 rounded-md border p-4 sm:grid-cols-2">
       {!hideReferenceMatch && (
       <section className="space-y-3 rounded-md border bg-muted/20 p-3 sm:col-span-2">
         <div>

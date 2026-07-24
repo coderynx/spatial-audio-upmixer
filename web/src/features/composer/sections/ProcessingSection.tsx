@@ -10,7 +10,7 @@ export function ProcessingSection({
   setManifest,
 }: ManifestSectionProps) {
   return (
-    <div className="grid gap-5 rounded-md border p-4 sm:grid-cols-2">
+    <div className="grid gap-4 rounded-md border p-4 sm:grid-cols-2">
       <ToggleField
         label="Short test render"
         description="Process only a short section. Source playback remains available in Overview."

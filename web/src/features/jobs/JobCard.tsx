@@ -26,7 +26,7 @@ export function JobCard({
   const { layout, mode } = jobDetails(job);
   return (
     <Card>
-      <CardHeader className="pb-4">
+      <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 gap-3">
             <div className="mt-0.5 rounded-md bg-muted p-2.5 text-muted-foreground">
@@ -48,7 +48,7 @@ export function JobCard({
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-3">
         <div>
           <div className="mb-2 flex items-center justify-between text-xs">
             <span className="truncate text-muted-foreground">

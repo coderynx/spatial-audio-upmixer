@@ -24,30 +24,15 @@ import { MasteringSection } from "@/features/composer/sections/MasteringSection"
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
 import { getStemColor, getStemIcon, stemColors } from "@/lib/stems";
 import { cn } from "@/lib/utils";
+import HazeView from "./HazeView";
+import ElevationView from "./ElevationView";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
-import { SpatialScene } from "./SpatialScene";
 import { Transport } from "./Transport";
 import { useStemPreview } from "./useStemPreview";
-
-// Code-split: three.js + @react-three/fiber/drei are a large chunk only
-// needed once WebGL is confirmed available, so this stays out of the
-// initial bundle.
-const SpatialScene3D = React.lazy(() => import("./SpatialScene3D"));
-
-function detectWebgl() {
-  if (typeof document === "undefined") return false;
-  try {
-    const canvas = document.createElement("canvas");
-    return Boolean(canvas.getContext("webgl2") || canvas.getContext("webgl"));
-  } catch {
-    return false;
-  }
-}
 
 export function ProjectDetailPage({ configuration }: { configuration: Configuration | null }) {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const [webglAvailable] = React.useState(detectWebgl);
   const [project, setProject] = React.useState<Project | null>(null);
   const [manifest, setManifest] = React.useState<Manifest | null>(null);
   const [selectedTrack, setSelectedTrack] = React.useState<string | null>(null);
@@ -202,9 +187,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // state, which re-renders this component, forever.
   const headerTitle = React.useMemo(() => project ? <div className="flex min-w-0 items-center gap-2"><Link to="/projects" className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ChevronLeft className="h-3.5 w-3.5" />Projects</Link><span className="text-muted-foreground">/</span><span className="truncate text-sm font-semibold">{project.name}</span></div> : null, [project?.name]);
   useHeaderTitle(headerTitle);
-  if (!project) return <main className="p-7">{error || "Loading project…"}</main>;
-  if (!ready) return <main className="mx-auto max-w-3xl p-7"><h1 className="text-2xl font-semibold">{project.name}</h1><p className="mt-2 text-sm text-muted-foreground">{project.status_message}</p><Progress className="mt-5" value={project.progress * 100} />{["failed", "expansion_failed"].includes(project.status) && <Button className="mt-5" onClick={() => void retry()}><RotateCcw />Retry preparation</Button>}</main>;
-  return <main className="mx-auto flex h-[calc(100vh-4rem)] w-full max-w-[1800px] flex-col overflow-hidden p-4 sm:p-6">
+  if (!project) return <main className="p-5">{error || "Loading project…"}</main>;
+  if (!ready) return <main className="mx-auto max-w-3xl p-5"><h1 className="text-2xl font-semibold">{project.name}</h1><p className="mt-2 text-sm text-muted-foreground">{project.status_message}</p><Progress className="mt-5" value={project.progress * 100} />{["failed", "expansion_failed"].includes(project.status) && <Button className="mt-5" onClick={() => void retry()}><RotateCcw />Retry preparation</Button>}</main>;
+  return <main className="flex h-[calc(100vh-3.5rem)] w-full flex-col overflow-hidden p-3 sm:px-6 sm:py-4">
     {error && <p className="mb-3 flex-none rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
     <div className="flex flex-none items-center justify-between gap-3">
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)}>
@@ -278,13 +263,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             onCommitScrub={(value) => void preview.commitScrub(value)}
           />
           {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}
-          {webglAvailable ? (
-            <React.Suspense fallback={<div className="min-h-0 flex-1 rounded-lg border bg-slate-950" />}>
-              <SpatialScene3D channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemLevels={preview.stemLevels} playing={preview.playing} className="min-h-0 flex-1" />
-            </React.Suspense>
-          ) : (
-            <SpatialScene channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} onSelectStem={setSelectedStem} className="min-h-0 flex-1" />
-          )}
+          <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} className="min-h-0 flex-[3]" />
+          <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} className="h-40 shrink-0" />
         </section>
         <aside className="min-h-0 overflow-y-auto rounded-lg border p-4">{effectiveManifest && <><div className="flex items-center justify-between"><p className="text-sm font-semibold">Routing preset</p><select aria-label="Edit scope" className="h-8 rounded border bg-background px-1 text-xs" value={editScope} onChange={(event) => setEditScope(event.target.value as "project" | "track")}><option value="project">Project</option><option value="track" disabled={!selected}>Track</option></select></div><p className="mt-1 text-xs text-muted-foreground">{editScope === "project" ? "Default for every track" : `Override: ${selected?.asset.title || selected?.asset.filename}`}</p><select className="mt-2 flex h-9 w-full rounded-md border bg-background px-2 text-sm" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets || ["balanced", "intimate", "rhythmic", "spacious", "live", "detailed"]).map((name) => <option key={name}>{name}</option>)}</select><label className="mt-3 block text-xs text-muted-foreground">Intensity <span className="float-right">{presetIntensity.toFixed(2)}</span><Slider className="mt-2" min={0} max={1} step={0.01} value={[presetIntensity]} onValueChange={([value]) => setPresetIntensity(value)} /></label><Button className="mt-3 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 className="h-4 w-4" />Apply preset</Button><div className="mt-5 border-t pt-4">{selectedStem ? <StemControls stem={selectedStem} route={routing[selectedStem] || {}} channels={channels} enabled={effectiveManifest.mixing.stem_enabled[selectedStem] !== false} gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onGain={(gain) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [selectedStem]: gain } } })} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: { ...effectiveManifest.mixing.stem_eq, [selectedStem]: eq } } })} /> : <p className="text-sm text-muted-foreground">Select stem to edit sends.</p>}</div><div className="mt-5 border-t pt-4"><div className="flex items-center justify-between text-sm"><span className="font-medium">Source anchor</span><span className="text-muted-foreground">{Math.round(effectiveManifest.mixing.stem_source_anchor_strength * 100)}%</span></div><Slider aria-label="Source anchor" className="mt-3" min={0} max={1} step={0.01} value={[effectiveManifest.mixing.stem_source_anchor_strength]} onValueChange={([stem_source_anchor_strength]) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } })} /><p className="mt-2 text-xs text-muted-foreground">Blends original channel pairs back into the mix.</p></div></>}</aside>
       </div>}

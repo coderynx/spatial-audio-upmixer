@@ -184,14 +184,18 @@ export function useStemPreview(
   const resolvedBass = React.useRef<{ active: boolean; lfeGainDb: number }>({ active: false, lfeGainDb: 0 });
   const measuredLkfs = React.useRef(-70);
   const nodes = React.useRef<Map<string, AudioNodeSet>>(new Map());
-  // Live per-stem audio levels (base stem name -> smoothed 0..1 RMS, already
-  // scaled by that stem's currently-applied gain so mute/solo/rebalance are
-  // reflected) for the 3D scene's audio-reactive halos. A ref, not state —
-  // updated every animation frame from `tick()`, consumers should read it in
-  // their own render loop (e.g. R3F's `useFrame`) rather than subscribing.
-  const stemLevels = React.useRef<Map<string, number>>(new Map());
+  // Live per-stem spectrum (base stem name -> level/centroid) for the Haze
+  // view's glowing per-stem clouds. A ref, not state — updated every
+  // animation frame from `tick()`; consumers should read it in their own
+  // render loop (e.g. a canvas rAF loop) rather than subscribing.
+  // `level`: smoothed 0..1 RMS, already scaled by the stem's
+  // currently-applied gain so mute/solo/rebalance are reflected.
+  // `centroid`: 0 (bass-weighted spectrum) .. 1 (treble-weighted spectrum),
+  // the Haze view's radial "inner = bass, outer = treble" axis.
+  const stemSpectrum = React.useRef<Map<string, { level: number; centroid: number }>>(new Map());
   const appliedGain = React.useRef<Map<string, number>>(new Map());
-  const analysisBuffer = React.useRef<Uint8Array | null>(null);
+  const timeDomainBuffer = React.useRef<Uint8Array | null>(null);
+  const frequencyBuffer = React.useRef<Uint8Array | null>(null);
   const stemsRef = React.useRef(stems);
   const timeline = React.useRef<Timeline | null>(null);
   const currentTimeRef = React.useRef(0);
@@ -246,7 +250,7 @@ export function useStemPreview(
       node.source.disconnect();
       node.source = null;
     });
-    stemLevels.current.clear();
+    stemSpectrum.current.clear();
   }, []);
 
   const measureLevels = React.useCallback(() => {
@@ -254,19 +258,38 @@ export function useStemPreview(
       const node = nodes.current.get(stem.id);
       if (!node?.analyser) continue;
       const size = node.analyser.fftSize;
-      if (!analysisBuffer.current || analysisBuffer.current.length !== size) {
-        analysisBuffer.current = new Uint8Array(size);
+      if (!timeDomainBuffer.current || timeDomainBuffer.current.length !== size) {
+        timeDomainBuffer.current = new Uint8Array(size);
       }
-      node.analyser.getByteTimeDomainData(analysisBuffer.current);
+      node.analyser.getByteTimeDomainData(timeDomainBuffer.current);
       let sumSquares = 0;
       for (let i = 0; i < size; i++) {
-        const deviation = (analysisBuffer.current[i] - 128) / 128;
+        const deviation = (timeDomainBuffer.current[i] - 128) / 128;
         sumSquares += deviation * deviation;
       }
       const rms = Math.sqrt(sumSquares / size);
       const base = stem.stem_key.split("@", 1)[0];
       const gain = appliedGain.current.get(base) ?? 1;
-      stemLevels.current.set(base, Math.min(1, rms * gain * 2.5));
+      const level = Math.min(1, rms * gain * 2.5);
+
+      const binCount = node.analyser.frequencyBinCount;
+      if (!frequencyBuffer.current || frequencyBuffer.current.length !== binCount) {
+        frequencyBuffer.current = new Uint8Array(binCount);
+      }
+      node.analyser.getByteFrequencyData(frequencyBuffer.current);
+      let weightedBin = 0;
+      let totalAmplitude = 0;
+      for (let i = 0; i < binCount; i++) {
+        const amplitude = frequencyBuffer.current[i];
+        weightedBin += amplitude * i;
+        totalAmplitude += amplitude;
+      }
+      // Linear bin index is frequency-linear, which crams almost all musical
+      // energy into the first few bins; sqrt spreads the centroid out across
+      // the radar's radius instead of pinning everything near the center.
+      const centroidBin = totalAmplitude > 0 ? weightedBin / totalAmplitude : 0;
+      const centroid = binCount > 1 ? Math.sqrt(centroidBin / (binCount - 1)) : 0;
+      stemSpectrum.current.set(base, { level, centroid });
     }
   }, []);
 
@@ -320,7 +343,7 @@ export function useStemPreview(
       node.analyser?.disconnect();
     });
     nodes.current.clear();
-    stemLevels.current.clear();
+    stemSpectrum.current.clear();
     appliedGain.current.clear();
     masteringNodes.current.forEach((node) => node.disconnect());
     masteringNodes.current = [];
@@ -796,6 +819,6 @@ export function useStemPreview(
     scrubTo,
     commitScrub,
     toggleLoop,
-    stemLevels,
+    stemSpectrum,
   };
 }

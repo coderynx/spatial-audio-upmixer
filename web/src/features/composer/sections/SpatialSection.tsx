@@ -21,7 +21,7 @@ export function SpatialSection({
     "detailed",
   ];
   return (
-    <div className="grid gap-5 rounded-md border p-4 sm:grid-cols-2">
+    <div className="grid gap-4 rounded-md border p-4 sm:grid-cols-2">
       <SelectField
         label="Spatial profile"
         value={manifest.mixing.spatial.profile}

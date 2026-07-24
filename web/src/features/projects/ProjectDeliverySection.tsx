@@ -18,7 +18,7 @@ export function ProjectDeliverySection({
 }) {
   const choices = configuration?.choices;
   return (
-    <div className="grid gap-5 rounded-md border p-4 sm:grid-cols-2">
+    <div className="grid gap-4 rounded-md border p-4 sm:grid-cols-2">
       <SelectField
         label="Speaker layout"
         value={manifest.mixing.channel_layout}

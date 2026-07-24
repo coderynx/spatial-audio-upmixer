@@ -65,7 +65,7 @@ export function SliderField({
   disabled?: boolean;
 }) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       <div className="flex items-center justify-between">
         <Label>{label}</Label>
         <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs tabular-nums">

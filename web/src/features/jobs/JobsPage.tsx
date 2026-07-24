@@ -26,8 +26,8 @@ export function JobsPage({
   onRefresh: () => void;
 }) {
   return (
-    <main className="mx-auto max-w-7xl space-y-6 p-4 sm:p-7">
-      <section className="flex flex-col justify-between gap-4 border-b pb-6 sm:flex-row sm:items-end">
+    <main className="w-full space-y-5 p-3 sm:px-6 sm:py-5">
+      <section className="flex flex-col justify-between gap-4 border-b pb-4 sm:flex-row sm:items-end">
         <div>
           <p className="text-sm font-medium text-muted-foreground">Upmixer</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">Jobs</h1>
@@ -84,7 +84,7 @@ export function JobsPage({
           </>
         ) : (
           <Card className="border-dashed">
-            <CardContent className="flex min-h-64 flex-col items-center justify-center text-center">
+            <CardContent className="flex min-h-56 flex-col items-center justify-center text-center">
               <div className="rounded-md bg-muted p-3 text-muted-foreground">
                 <Archive className="h-7 w-7" />
               </div>
