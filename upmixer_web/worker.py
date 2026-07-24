@@ -319,6 +319,20 @@ class WorkerManager:
                                         storage_key=output_key,
                                         size_bytes=size,
                                     ))
+                                    downmix_path = item.config.downmix_output_path
+                                    if item.config.downmix_enabled and downmix_path and Path(downmix_path).is_file():
+                                        downmix_output = Path(downmix_path)
+                                        downmix_key = f"jobs/{job_id}/outputs/{downmix_output.name}"
+                                        _, downmix_size = self.sink.store(downmix_key, downmix_output)
+                                        session.add(Artifact(
+                                            job_id=job_id,
+                                            track_id=track_id,
+                                            kind="downmix",
+                                            filename=downmix_output.name,
+                                            content_type="audio/wav",
+                                            storage_key=downmix_key,
+                                            size_bytes=downmix_size,
+                                        ))
                                     session.commit()
                             elif kind in ("track_error", "crashed"):
                                 message = event[-1]
@@ -508,9 +522,10 @@ class WorkerManager:
             job = get_job(session, job_id)
             if not job or len(job.tracks) < 2:
                 return
-            artifacts = [item for item in job.artifacts if item.kind == "upmix"]
-            if len(artifacts) != len(job.tracks):
+            upmixes = [item for item in job.artifacts if item.kind == "upmix"]
+            if len(upmixes) != len(job.tracks):
                 return
+            artifacts = [item for item in job.artifacts if item.kind in {"upmix", "downmix"}]
             safe_name = "".join(character if character.isalnum() or character in " -_." else "_" for character in job.name).strip() or "upmix"
             bundle_path = self.work_root / job_id / f"{safe_name}.zip"
             with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_STORED) as archive:

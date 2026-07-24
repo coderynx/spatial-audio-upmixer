@@ -75,7 +75,7 @@ import logging
 import math
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -145,6 +145,11 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "type":        ("config", "output_type"),
         "subtype":     ("config", "output_subtype"),
         "sample_rate": ("config", "output_sample_rate"),
+        "downmix": {
+            "enabled":        ("config", "downmix_enabled"),
+            "output":         ("config", "downmix_output"),
+            "surround_coeff": ("config", "downmix_surround_coeff"),
+        },
     },
 
     "mixing": {
@@ -285,6 +290,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "stem_source_anchor_strength": ("stem_source_anchor_strength", float),
     "downmix_output":              ("downmix_output_path",    str),
     "downmix_surround_coeff":      ("surround_downmix_coeff", float),
+    "downmix_enabled":             ("downmix_enabled",        bool),
     "preview":          ("preview",           bool),
     "preview_duration": ("preview_duration_s", float),
     "preview_start":    ("preview_start_s",    float),
@@ -340,6 +346,135 @@ def _expand_blocks(blocks: dict) -> tuple[dict, dict]:
     return config_out, engine_out
 
 
+def _with_downmix_path(config: dict, output: str) -> dict:
+    """Derive a sibling stereo filename when downmix output is enabled."""
+    resolved = dict(config)
+    if resolved.get("downmix_enabled") and not resolved.get("downmix_output"):
+        destination = Path(output)
+        resolved["downmix_output"] = str(
+            destination.with_name(f"{destination.stem}_stereo{destination.suffix or '.wav'}")
+        )
+    return resolved
+
+
+_ENGINE_TYPES: dict[str, type] = {
+    "mode": str,
+    "stem_model_dir": str,
+    "input_format": str,
+    "stems": list,
+}
+
+
+def _leaf_type(entry: tuple[str, str]) -> type:
+    bucket, key = entry
+    if bucket == "engine":
+        return _ENGINE_TYPES[key]
+    return _FIELD_MAP[key][1]
+
+
+def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
+    if value is None:
+        return
+    expected = _leaf_type(entry)
+    if expected is float:
+        valid = isinstance(value, (int, float)) and not isinstance(value, bool)
+    elif expected is int:
+        valid = isinstance(value, int) and not isinstance(value, bool)
+    elif path == "mixing.channel_layout":
+        # YAML parses unquoted layouts such as 7.1 as floats; existing
+        # manifests conventionally use that concise spelling.
+        valid = isinstance(value, (str, int, float)) and not isinstance(value, bool)
+    else:
+        valid = isinstance(value, expected)
+    if not valid:
+        raise ManifestError(f"{path} must be a {expected.__name__}.")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ManifestError(f"{path} must be finite.")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if not math.isfinite(float(value)):
+            raise ManifestError(f"{path} must be finite.")
+        minimums = {
+            "mixing.spatial.intensity": 0.0,
+            "mixing.stem_source_anchor_strength": 0.0,
+            "engine.stem_batch_size": 1.0,
+            "engine.stem_segment_size": 1.0,
+            "engine.stem_chunk_duration_s": 0.0,
+            "engine.stem_model_cache_size": 1.0,
+            "engine.stem_silence_min_duration_s": 0.0,
+            "engine.stem_silence_crossfade_ms": 0.0,
+            "engine.stem_silence_pad_ms": 0.0,
+            "processing.preview_duration": 0.0,
+            "processing.preview_start": 0.0,
+            "routing.lfe_cutoff": 0.0,
+            "routing.content_hf_analysis_hz": 0.0,
+            "mastering.eq.strength": 0.0,
+            "mastering.match_reference.strength": 0.0,
+            "mastering.match_reference.max_db": 0.0,
+            "mastering.compressor.ratio": 1.0,
+            "mastering.compressor.attack_ms": 0.0,
+            "mastering.compressor.release_ms": 0.0,
+            "mastering.compressor.knee_db": 0.0,
+        }
+        maximums = {
+            "mixing.spatial.intensity": 1.0,
+            "mixing.stem_source_anchor_strength": 1.0,
+            "mastering.eq.strength": 1.0,
+            "mastering.match_reference.strength": 1.0,
+        }
+        if path in minimums and float(value) < minimums[path]:
+            raise ManifestError(f"{path} must be at least {minimums[path]}.")
+        if path in maximums and float(value) > maximums[path]:
+            raise ManifestError(f"{path} must be at most {maximums[path]}.")
+    choices = {
+        "engine.mode": {"realtime", "stem"},
+        "format.type": {"wav", "adm-bwf"},
+        "format.subtype": {"PCM_16", "PCM_24", "PCM_32", "FLOAT"},
+        "format.downmix.surround_coeff": {0.7071, 0.5, 0.0},
+        "mixing.spatial.profile": {"auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"},
+    }
+    if path in choices and value not in choices[path]:
+        raise ManifestError(f"{path} has an unsupported value: {value!r}.")
+
+
+def _validate_block_fields(block: dict, mapping: BlockMapping, prefix: str) -> None:
+    for key, value in block.items():
+        path = f"{prefix}.{key}"
+        if key not in mapping:
+            raise ManifestError(f"Unknown manifest field '{path}'.")
+        entry = mapping[key]
+        if isinstance(entry, dict):
+            if not isinstance(value, dict):
+                raise ManifestError(f"{path} must be a mapping.")
+            _validate_block_fields(value, entry, path)
+        else:
+            _validate_leaf(value, entry, path)
+
+
+def manifest_parameter_schema() -> list[dict[str, object]]:
+    """Return canonical manifest fields for UIs, docs, and API clients."""
+    defaults = asdict(UpmixConfig())
+    result: list[dict[str, object]] = []
+
+    def visit(mapping: BlockMapping, prefix: str) -> None:
+        for key, entry in mapping.items():
+            path = f"{prefix}.{key}"
+            if isinstance(entry, dict):
+                visit(entry, path)
+                continue
+            bucket, flat_key = entry
+            expected = _leaf_type(entry)
+            result.append({
+                "path": path,
+                "type": expected.__name__,
+                "default": defaults.get(_FIELD_MAP[flat_key][0]) if bucket == "config" else None,
+                "asset_override": True,
+            })
+
+    for block_name, mapping in _BLOCK_REGISTRY.items():
+        visit(mapping, block_name)
+    return sorted(result, key=lambda item: str(item["path"]))
+
+
 def validate_manifest(data: dict) -> None:
     """Validate the top-level manifest structure.
 
@@ -353,6 +488,17 @@ def validate_manifest(data: dict) -> None:
             f"Invalid or missing 'version': {version!r}. "
             'Must be MAJOR.MINOR or MAJOR.MINOR.PATCH (e.g. "1.0" or "1.0.0").'
         )
+
+    allowed_root = {"version", "metadata", "assets", *_BLOCK_REGISTRY}
+    for key in data:
+        if key not in allowed_root and not key.startswith("_"):
+            raise ManifestError(f"Unknown manifest block '{key}'.")
+    for block_name, mapping in _BLOCK_REGISTRY.items():
+        block = data.get(block_name)
+        if block is not None:
+            if not isinstance(block, dict):
+                raise ManifestError(f"{block_name} must be a mapping.")
+            _validate_block_fields(block, mapping, block_name)
 
     assets = data.get("assets")
     if not isinstance(assets, list) or len(assets) == 0:
@@ -372,6 +518,16 @@ def validate_manifest(data: dict) -> None:
             raise ManifestError(
                 f"assets[{i}] needs 'input'+'output' or 'input_dir'+'output_dir'."
             )
+        allowed_asset = _ASSET_NON_BLOCK_KEYS | set(_BLOCK_REGISTRY)
+        for key in asset:
+            if key not in allowed_asset and not key.startswith("_"):
+                raise ManifestError(f"Unknown manifest field 'assets[{i}].{key}'.")
+        for block_name, mapping in _BLOCK_REGISTRY.items():
+            block = asset.get(block_name)
+            if block is not None:
+                if not isinstance(block, dict):
+                    raise ManifestError(f"assets[{i}].{block_name} must be a mapping.")
+                _validate_block_fields(block, mapping, f"assets[{i}].{block_name}")
 
     if isinstance(data.get("engine"), dict) and "stem_model" in data["engine"]:
         import warnings
@@ -540,14 +696,14 @@ def parse_manifest(data: dict) -> tuple[ManifestMeta | None, list[AssetJob]]:
                 jobs.append(AssetJob(
                     input=f,
                     output=out,
-                    config=dict(config_flat),
+                    config=_with_downmix_path(config_flat, out),
                     engine=dict(engine_params),
                 ))
         else:
             jobs.append(AssetJob(
                 input=asset["input"],
                 output=asset["output"],
-                config=config_flat,
+                config=_with_downmix_path(config_flat, asset["output"]),
                 engine=engine_params,
             ))
 
@@ -625,13 +781,11 @@ def load_manifest(path: str | Path) -> dict[str, Any]:
 
 
 def list_manifest_keys() -> dict[str, str]:
-    """Return a human-readable mapping of manifest keys to config attributes.
+    """Return canonical dotted manifest paths and types.
 
     Used by ``--manifest-keys`` CLI flag.
     """
-    out: dict[str, str] = {}
-    for mk, (ca, t) in sorted(_FIELD_MAP.items()):
-        out[mk] = f"{ca}  ({t.__name__})"
-    for key in ("mode", "stem_model_dir", "input_format", "stems"):
-        out[key] = "engine parameter"
-    return out
+    return {
+        str(item["path"]): f"{item['type']}"
+        for item in manifest_parameter_schema()
+    }

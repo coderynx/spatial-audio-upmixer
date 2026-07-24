@@ -30,6 +30,9 @@ routing:
 format:
   type: wav
   subtype: PCM_24
+  downmix:
+    enabled: true
+    surround_coeff: 0.7071
 
 # ── Mastering ─────────────────────────────────────────────────────────────────
 mastering:

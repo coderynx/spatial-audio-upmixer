@@ -78,7 +78,7 @@ export function JobComposer({
       setManifest(next);
       setRawManifest(JSON.stringify(next, null, 2));
       setName(`${remix.name} remix`);
-      setMasteringReference(remix.mastering_reference);
+      setMasteringReference(remix.mastering_reference || null);
       setReferenceError(null);
       setReferenceUploading(false);
       setStep("configure");

@@ -18,6 +18,7 @@ _rb("routing", {
     "height_low_rolloff_gain":("config", "height_low_rolloff_gain"),
     "height_high_shelf_gain": ("config", "height_high_shelf_gain"),
     "content_mix_strength":   ("config", "content_mix_strength"),
+    "content_hf_analysis_hz": ("config", "content_hf_analysis_hz"),
 })
 del _rb
 

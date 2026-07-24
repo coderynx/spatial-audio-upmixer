@@ -76,6 +76,7 @@ class UpmixConfig:
 
     surround_downmix_coeff: float = 0.7071
 
+    downmix_enabled: bool = False
     loudness_normalize: bool = True
     loudness_target_lkfs: float = -18.0
     loudness_max_tp: float = -1.0

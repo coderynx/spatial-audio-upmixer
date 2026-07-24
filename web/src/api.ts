@@ -72,7 +72,7 @@ export type Job = {
   updated_at: string
   tracks: JobTrack[]
   artifacts: Artifact[]
-  mastering_reference: MasteringReference | null
+  mastering_reference?: MasteringReference | null
 }
 
 export type ProjectStem = {
@@ -124,6 +124,7 @@ export type Project = {
   updated_at: string
   tracks: ProjectTrack[]
   exports: Job[]
+  mastering_reference?: MasteringReference | null
 }
 
 export type Configuration = {
@@ -197,9 +198,9 @@ export const api = {
   pauseJob: (id: string) => request(`/api/v1/jobs/${id}/pause`, { method: "POST" }),
   resumeJob: (id: string) => request(`/api/v1/jobs/${id}/resume`, { method: "POST" }),
   deleteJob: (id: string) => request(`/api/v1/jobs/${id}`, { method: "DELETE" }),
-  createProject: (payload: { import_id: string; name: string; manifest: Record<string, unknown>; scene: Record<string, unknown> }) =>
+  createProject: (payload: { import_id: string; name: string; manifest: Record<string, unknown>; scene: Record<string, unknown>; mastering_reference_id?: string | null }) =>
     request<Project>("/api/v1/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
-  saveProject: (id: string, payload: { name?: string; manifest: Record<string, unknown>; scene: Record<string, unknown> }) =>
+  saveProject: (id: string, payload: { name?: string; manifest: Record<string, unknown>; scene: Record<string, unknown>; mastering_reference_id?: string | null }) =>
     request<Project>(`/api/v1/projects/${id}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   saveProjectTrack: (projectId: string, trackId: string, payload: { manifest_overrides: Record<string, unknown>; scene_overrides: Record<string, unknown> }) =>
     request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),

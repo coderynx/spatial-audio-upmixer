@@ -259,6 +259,23 @@ def test_mastering_reference_upload_runs_and_rejects_client_path(web_client):
     assert reference_data["filename"] == "reference.wav"
     assert reference_data["channels"] == 2
 
+    accepted = {
+        "version": "1.0.0",
+        "format": {
+            "downmix": {
+                "enabled": False,
+                "output": None,
+                "surround_coeff": 0.7071,
+            },
+        },
+    }
+    response = web_client.post("/api/v1/jobs", json={
+        "import_id": imported["id"],
+        "name": "Null downmix output",
+        "manifest": accepted,
+    })
+    assert response.status_code == 201
+
     manifest = {
         "version": "1.0.0",
         "engine": {"mode": "realtime"},

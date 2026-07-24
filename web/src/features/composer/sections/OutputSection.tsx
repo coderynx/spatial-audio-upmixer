@@ -1,4 +1,4 @@
-import { SelectField } from "@/components/forms/fields";
+import { SelectField, ToggleField } from "@/components/forms/fields";
 import type { ManifestSectionProps } from "./types";
 
 export function OutputSection({
@@ -28,6 +28,30 @@ export function OutputSection({
             : separation?.install_message || undefined)
         }
       />
+      <ToggleField
+        label="Stereo downmix"
+        description="Write an ITU-R BS.775-compatible stereo companion file."
+        checked={manifest.format.downmix?.enabled ?? false}
+        onChange={(enabled) => setManifest({
+          ...manifest,
+          format: {
+            ...manifest.format,
+            downmix: { ...(manifest.format.downmix || { surround_coeff: 0.7071 }), enabled },
+          },
+        })}
+      />
+      {(manifest.format.downmix?.enabled ?? false) && <SelectField
+        label="Downmix surround coefficient"
+        value={String(manifest.format.downmix?.surround_coeff ?? 0.7071)}
+        onChange={(surround_coeff) => setManifest({
+          ...manifest,
+          format: {
+            ...manifest.format,
+            downmix: { ...(manifest.format.downmix || { enabled: true }), surround_coeff: Number(surround_coeff) },
+          },
+        })}
+        options={[0.7071, 0.5, 0].map((value) => ({ value: String(value), label: String(value) }))}
+      />}
       <SelectField
         label="Speaker layout"
         value={manifest.mixing.channel_layout}

@@ -291,6 +291,21 @@ Global `engine`, `mixing`, `routing`, `format`, `mastering`, and `processing` bl
 configuration blocks are deep-merged, so an override changes only the specified keys. Keep `engine.mode` consistent
 across a manifest batch because one pipeline type is reused for the complete run.
 
+Optional stereo companion output uses the ITU-R BS.775 matrix. Omit `output` to
+derive a sibling filename from each multichannel asset output:
+
+```yaml
+format:
+  downmix:
+    enabled: true
+    surround_coeff: 0.7071
+```
+
+The web server owns uploaded input/output/cache paths and downmix filenames.
+Projects expose the same delivery setting and publish the companion as an artifact.
+See [`docs/project_manifest_parity.md`](docs/project_manifest_parity.md) for the
+project-to-manifest mapping and intentionally unsupported fields.
+
 Configuration precedence is:
 
 ```text

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AdvancedSection } from "@/features/composer/sections/AdvancedSection";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
@@ -26,7 +27,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const [selectedTrack, setSelectedTrack] = React.useState<string | null>(null);
   const [selectedStem, setSelectedStem] = React.useState<string | null>(null);
   const [editScope, setEditScope] = React.useState<"project" | "track">("project");
-  const [activeTab, setActiveTab] = React.useState<"mixing" | "mastering" | "delivery">("mixing");
+  const [activeTab, setActiveTab] = React.useState<"mixing" | "mastering" | "delivery" | "advanced">("mixing");
+  const [rawManifest, setRawManifest] = React.useState("");
+  const [rawError, setRawError] = React.useState<string | null>(null);
   const [preset, setPreset] = React.useState("balanced");
   const [presetIntensity, setPresetIntensity] = React.useState(1);
   const [error, setError] = React.useState<string | null>(null);
@@ -64,9 +67,12 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     return normalizeManifest({
       ...manifest,
       ...overrides,
+      engine: { ...manifest.engine, ...overrides.engine },
       mixing: { ...manifest.mixing, ...overrides.mixing },
       routing: { ...manifest.routing, ...overrides.routing },
       mastering: { ...manifest.mastering, ...overrides.mastering },
+      processing: { ...manifest.processing, ...overrides.processing },
+      format: { ...manifest.format, ...overrides.format },
     });
   }, [editScope, manifest, selected]);
   const updateManifest = (next: Manifest) => {
@@ -77,7 +83,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     }
     if (!projectId || !selected) return;
     void api.saveProjectTrack(projectId, selected.id, {
-      manifest_overrides: { ...selected.manifest_overrides, mixing: next.mixing },
+      manifest_overrides: {
+        engine: next.engine, mixing: next.mixing, routing: next.routing,
+        mastering: next.mastering, processing: next.processing, format: next.format,
+      },
       scene_overrides: selected.scene_overrides,
     }).then(setProject).catch((reason) => setError((reason as Error).message));
   };
@@ -89,6 +98,16 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const updateProjectManifest = (next: Manifest) => {
     setManifest(next);
     queueSave(next);
+  };
+  const saveReference = async (mastering_reference_id: string | null) => {
+    if (!projectId || !project || !manifest) return;
+    try {
+      setProject(await api.saveProject(projectId, {
+        manifest: manifest as unknown as Record<string, unknown>,
+        scene: project.scene as Record<string, unknown>,
+        mastering_reference_id,
+      }));
+    } catch (reason) { setError((reason as Error).message); }
   };
   const previewStems = selected?.stems.filter((stem) => project?.prepared_stems.includes(stem.stem_key.split("@", 1)[0])) || [];
   const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering);
@@ -128,11 +147,15 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   return <main className="mx-auto max-w-[1500px] p-4 sm:p-7">
     <div className="mb-5 flex items-center justify-between gap-3"><div><Link to="/projects" className="text-xs text-muted-foreground"><ChevronLeft className="inline h-3.5 w-3.5" />Projects</Link><h1 className="mt-1 text-2xl font-semibold">{project.name}</h1><p className="mt-1 text-sm text-muted-foreground">Explicit speaker routing. Export uses this manifest.</p></div></div>
     {error && <p className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
-    <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)}>
+    <Tabs value={activeTab} onValueChange={(value) => {
+      if (value === "advanced" && effectiveManifest) setRawManifest(JSON.stringify(effectiveManifest, null, 2));
+      setActiveTab(value as typeof activeTab);
+    }}>
       <TabsList>
         <TabsTrigger value="mixing">Mixing</TabsTrigger>
         <TabsTrigger value="mastering">Mastering</TabsTrigger>
         <TabsTrigger value="delivery">Delivery</TabsTrigger>
+        <TabsTrigger value="advanced">Advanced</TabsTrigger>
       </TabsList>
     </Tabs>
     {/* Preview + speaker routing graph stay visible on every tab. Only the
@@ -169,17 +192,30 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         manifest={manifest}
         setManifest={(update) => updateProjectManifest(typeof update === "function" ? update(manifest) : update)}
         configuration={configuration}
-        hideReferenceMatch
-        masteringReference={null}
+        masteringReference={project.mastering_reference || null}
         referenceUploading={false}
         referenceError={null}
-        onReferenceUpload={() => {}}
-        onReferenceClear={() => {}}
+        onReferenceUpload={(file) => {
+          void api.uploadMasteringReference(project.import_id, file)
+            .then((reference) => saveReference(reference.id))
+            .catch((reason) => setError((reason as Error).message));
+        }}
+        onReferenceClear={() => { void saveReference(null); }}
       />
     </section>}
     {activeTab === "delivery" && manifest && <section className="mt-4 space-y-4">
       <ProjectDeliverySection manifest={manifest} configuration={configuration} onChange={updateProjectManifest} />
       <Button disabled={exporting} onClick={() => void exportProject()}><Download />{exporting ? "Queueing" : "Export project"}</Button>
+    </section>}
+    {activeTab === "advanced" && effectiveManifest && <section className="mt-4">
+      <AdvancedSection rawManifest={rawManifest} rawError={rawError} onChange={(value) => {
+        setRawManifest(value);
+        try {
+          const next = normalizeManifest(JSON.parse(value) as Record<string, unknown>);
+          setRawError(null);
+          updateManifest(next);
+        } catch (reason) { setRawError((reason as Error).message); }
+      }} />
     </section>}
   </main>;
 }

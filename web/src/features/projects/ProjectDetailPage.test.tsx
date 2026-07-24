@@ -70,8 +70,7 @@ describe("ProjectDetailPage tabs", () => {
 
     expect(screen.getByText("Spectral EQ")).toBeInTheDocument();
     expect(screen.getByText("Loudness normalization")).toBeInTheDocument();
-    // No reference-match block for projects (no backend association yet).
-    expect(screen.queryByText("Reference EQ match")).not.toBeInTheDocument();
+    expect(screen.getByText("Reference EQ match")).toBeInTheDocument();
     // Still visible.
     expect(screen.getByRole("button", { name: /^(Play|Pause)$/i })).toBeInTheDocument();
   });

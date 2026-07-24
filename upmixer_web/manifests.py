@@ -34,6 +34,10 @@ def normalize_job_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     )
     if isinstance(match_reference, dict) and "path" in match_reference:
         raise ValueError("mastering.match_reference.path is managed by reference upload")
+    format_block = normalized.get("format")
+    downmix = format_block.get("downmix") if isinstance(format_block, dict) else None
+    if isinstance(downmix, dict) and downmix.get("output") is not None:
+        raise ValueError("format.downmix.output is managed by the server")
     validate_manifest({**normalized, "assets": [{"input": "input.wav", "output": "output.wav"}]})
     return normalized
 
@@ -70,7 +74,7 @@ def materialize_manifest(
 def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     """Return defaults used by dynamic and advanced web controls."""
     from upmixer.formats import FORMAT_MAP
-    from upmixer.manifest import list_manifest_keys
+    from upmixer.manifest import list_manifest_keys, manifest_parameter_schema
     from upmixer.mastering.bass import BASS_PROFILES
     from upmixer.mastering.compressor import COMP_PROFILES
     from upmixer.mastering.eq import EQ_PROFILES
@@ -83,6 +87,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     return {
         "defaults": asdict(UpmixConfig()),
         "manifest_keys": list_manifest_keys(),
+        "manifest_parameters": manifest_parameter_schema(),
         "choices": {
             "channel_layouts": list(FORMAT_MAP),
             "output_types": ["wav", "adm-bwf"],

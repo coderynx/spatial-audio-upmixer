@@ -315,7 +315,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "mode": "stem",
             }
             ensure_stem_separation_available(project_manifest, stem_capability)
-            project = create_project(session, batch, request.name, request.manifest, request.scene)
+            reference = job_mastering_reference(
+                session, batch, request.mastering_reference_id
+            )
+            project = create_project(
+                session, batch, request.name, request.manifest, request.scene,
+                mastering_reference=reference,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         manager.notify()
@@ -342,9 +348,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            project = update_project_settings(session, project, request.manifest, request.scene, request.name)
+            reference = (
+                job_mastering_reference(session, project.import_batch, request.mastering_reference_id)
+                if "mastering_reference_id" in request.model_fields_set
+                else project.mastering_reference
+            )
+            project = update_project_settings(
+                session, project, request.manifest, request.scene, request.name,
+                mastering_reference=reference,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if project.status == "queued":
+            manager.notify()
         return _project_view(project, settings.root_path)
 
     @app.put("/api/v1/projects/{project_id}/tracks/{track_id}/settings", response_model=ProjectView, tags=["projects"])

@@ -23,6 +23,7 @@ from upmixer.manifest import (
     list_manifest_keys,
     load_manifest,
     parse_manifest,
+    manifest_parameter_schema,
     validate_manifest,
 )
 
@@ -697,6 +698,28 @@ class TestParseAndApplyIntegration:
         assert cfg.output_type == "adm-bwf"
         assert cfg.output_subtype == "PCM_24"
 
+    def test_downmix_derives_sibling_output(self):
+        data = _minimal(
+            [{"input": "a.flac", "output": "masters/a.wav"}],
+            format={"downmix": {"enabled": True, "surround_coeff": 0.5}},
+        )
+        _, jobs = parse_manifest(data)
+        assert jobs[0].config["downmix_output"] == "masters/a_stereo.wav"
+        cfg = UpmixConfig()
+        apply_asset_job(cfg, jobs[0])
+        assert cfg.downmix_enabled is True
+        assert cfg.surround_downmix_coeff == pytest.approx(0.5)
+
+    def test_rejects_unknown_known_block_field(self):
+        data = _minimal(mixing={"channel_layout": "5.1", "typo": True})
+        with pytest.raises(ManifestError, match="Unknown manifest field"):
+            validate_manifest(data)
+
+    def test_rejects_invalid_downmix_coefficient(self):
+        data = _minimal(format={"downmix": {"enabled": True, "surround_coeff": 0.25}})
+        with pytest.raises(ManifestError, match="unsupported value"):
+            validate_manifest(data)
+
 
 # ---------------------------------------------------------------------------
 # list_manifest_keys
@@ -707,26 +730,26 @@ class TestListManifestKeys:
         assert isinstance(list_manifest_keys(), dict)
 
     def test_format_present(self):
-        assert "format" in list_manifest_keys()
+        assert "format.type" in list_manifest_keys()
 
-    def test_all_field_map_keys_present(self):
+    def test_all_registered_paths_present(self):
         keys = list_manifest_keys()
-        for mk in _FIELD_MAP:
-            assert mk in keys, f"_FIELD_MAP key '{mk}' missing from list_manifest_keys()"
+        for parameter in manifest_parameter_schema():
+            assert parameter["path"] in keys
 
     def test_engine_params_present(self):
         keys = list_manifest_keys()
-        for k in ("mode", "stems", "stem_model_dir", "input_format"):
+        for k in ("engine.mode", "engine.stems", "engine.stem_model_dir", "engine.input_format"):
             assert k in keys
 
     def test_mastering_flat_keys_present(self):
         keys = list_manifest_keys()
         for k in [
-            "mastering_eq_profile",
-            "mastering_eq_strength",
-            "mastering_comp_profile",
-            "mastering_bass_profile",
-            "mastering_match_ref_path",
+            "mastering.eq.profile",
+            "mastering.eq.strength",
+            "mastering.compressor.profile",
+            "mastering.bass.profile",
+            "mastering.match_reference.path",
         ]:
             assert k in keys, f"Missing key '{k}'"
 

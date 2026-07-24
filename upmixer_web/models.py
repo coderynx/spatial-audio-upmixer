@@ -90,6 +90,7 @@ class MasteringReference(Base):
 
     import_batch: Mapped[ImportBatch] = relationship(back_populates="mastering_references")
     jobs: Mapped[list[Job]] = relationship(back_populates="mastering_reference")
+    projects: Mapped[list[Project]] = relationship(back_populates="mastering_reference")
 
 
 class Job(Base):
@@ -142,6 +143,9 @@ class Project(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     import_id: Mapped[str] = mapped_column(ForeignKey("import_batches.id"), index=True)
+    mastering_reference_id: Mapped[str | None] = mapped_column(
+        ForeignKey("mastering_references.id", ondelete="SET NULL"), index=True
+    )
     name: Mapped[str] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     progress: Mapped[float] = mapped_column(Float, default=0.0)
@@ -157,6 +161,9 @@ class Project(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     import_batch: Mapped[ImportBatch] = relationship()
+    mastering_reference: Mapped[MasteringReference | None] = relationship(
+        back_populates="projects"
+    )
     tracks: Mapped[list[ProjectTrack]] = relationship(
         back_populates="project", cascade="all, delete-orphan", order_by="ProjectTrack.position"
     )

@@ -82,6 +82,32 @@ export function ProjectDeliverySection({
           })
         }
       />
+      <ToggleField
+        label="Stereo downmix"
+        description="Write an ITU-R BS.775-compatible stereo companion file."
+        checked={manifest.format.downmix?.enabled ?? false}
+        onChange={(enabled) =>
+          onChange({
+            ...manifest,
+            format: {
+              ...manifest.format,
+              downmix: { ...(manifest.format.downmix || { surround_coeff: 0.7071 }), enabled },
+            },
+          })
+        }
+      />
+      {(manifest.format.downmix?.enabled ?? false) && <SelectField
+        label="Downmix surround coefficient"
+        value={String(manifest.format.downmix?.surround_coeff ?? 0.7071)}
+        onChange={(surround_coeff) => onChange({
+          ...manifest,
+          format: {
+            ...manifest.format,
+            downmix: { ...(manifest.format.downmix || { enabled: true }), surround_coeff: Number(surround_coeff) },
+          },
+        })}
+        options={[0.7071, 0.5, 0].map((value) => ({ value: String(value), label: String(value) }))}
+      />}
     </div>
   );
 }

@@ -156,6 +156,7 @@ class ProjectView(ApiModel):
     updated_at: datetime
     tracks: list[ProjectTrackView] = Field(default_factory=list)
     exports: list[JobView] = Field(default_factory=list)
+    mastering_reference: MasteringReferenceView | None = None
 
 
 class CreateProjectRequest(BaseModel):
@@ -163,12 +164,14 @@ class CreateProjectRequest(BaseModel):
     name: str = Field(min_length=1, max_length=512)
     manifest: dict[str, Any]
     scene: dict[str, Any] = Field(default_factory=dict)
+    mastering_reference_id: str | None = None
 
 
 class UpdateProjectSettingsRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=512)
     manifest: dict[str, Any]
     scene: dict[str, Any] = Field(default_factory=dict)
+    mastering_reference_id: str | None = None
 
 
 class UpdateProjectTrackSettingsRequest(BaseModel):

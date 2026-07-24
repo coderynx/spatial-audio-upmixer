@@ -49,6 +49,12 @@ Place coverage beside related tests as `test_<feature>.py` with `test_<behavior>
 
 Run `python3 -m pytest -q` before and after substantive changes. The full suite must pass with zero regressions. When a change affects audio output, also run the relevant CLI or focused tests and report generated-audio verification details.
 
+## Project reference
+
+Consult these documents when dealing with project and manifests:
+
+[Project manifest parity](docs/project_manifest_parity.md) for project and manifest parity.
+
 ## Standards References
 
 Consult the relevant neutral project reference before changing code governed by an audio delivery standard:
