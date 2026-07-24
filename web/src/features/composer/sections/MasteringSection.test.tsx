@@ -57,4 +57,28 @@ describe("MasteringSection", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(onReferenceClear).toHaveBeenCalledOnce();
   });
+
+  it("hides the reference-match block and its dependent fields when hideReferenceMatch is set", () => {
+    render(
+      <MasteringSection
+        manifest={defaultManifest}
+        setManifest={vi.fn()}
+        configuration={null}
+        masteringReference={null}
+        referenceUploading={false}
+        referenceError={null}
+        onReferenceUpload={vi.fn()}
+        onReferenceClear={vi.fn()}
+        hideReferenceMatch
+      />,
+    );
+
+    expect(screen.queryByText("Reference EQ match")).not.toBeInTheDocument();
+    expect(screen.queryByText("Match spectrum")).not.toBeInTheDocument();
+    expect(screen.queryByText("Match RMS level")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Reference audio track")).not.toBeInTheDocument();
+    // Unrelated mastering controls still render.
+    expect(screen.getByText("Loudness normalization")).toBeInTheDocument();
+    expect(screen.getByText("Spectral EQ")).toBeInTheDocument();
+  });
 });

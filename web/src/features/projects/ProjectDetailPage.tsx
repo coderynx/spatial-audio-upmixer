@@ -5,7 +5,10 @@ import { api, type Configuration, type Project, type StemRouting } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
+import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { SpatialScene } from "./SpatialScene";
 import { Transport } from "./Transport";
 import { useStemPreview } from "./useStemPreview";
@@ -23,6 +26,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const [selectedTrack, setSelectedTrack] = React.useState<string | null>(null);
   const [selectedStem, setSelectedStem] = React.useState<string | null>(null);
   const [editScope, setEditScope] = React.useState<"project" | "track">("project");
+  const [activeTab, setActiveTab] = React.useState<"mixing" | "mastering" | "delivery">("mixing");
   const [preset, setPreset] = React.useState("balanced");
   const [presetIntensity, setPresetIntensity] = React.useState(1);
   const [error, setError] = React.useState<string | null>(null);
@@ -77,6 +81,15 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       scene_overrides: selected.scene_overrides,
     }).then(setProject).catch((reason) => setError((reason as Error).message));
   };
+  // Mastering and delivery are whole-project concerns (one master, one
+  // deliverable) — always write straight to the project manifest regardless
+  // of the mixing tab's project/track edit scope. Track-scope saves
+  // (above) only persist `mixing` overrides today, so routing these through
+  // `updateManifest` while a track is selected would silently drop the edit.
+  const updateProjectManifest = (next: Manifest) => {
+    setManifest(next);
+    queueSave(next);
+  };
   const previewStems = selected?.stems.filter((stem) => project?.prepared_stems.includes(stem.stem_key.split("@", 1)[0])) || [];
   const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering);
   const ready = Boolean(project?.prepared_stems.length);
@@ -113,9 +126,21 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   if (!project) return <main className="p-7">{error || "Loading project…"}</main>;
   if (!ready) return <main className="mx-auto max-w-3xl p-7"><h1 className="text-2xl font-semibold">{project.name}</h1><p className="mt-2 text-sm text-muted-foreground">{project.status_message}</p><Progress className="mt-5" value={project.progress * 100} />{["failed", "expansion_failed"].includes(project.status) && <Button className="mt-5" onClick={() => void retry()}><RotateCcw />Retry preparation</Button>}</main>;
   return <main className="mx-auto max-w-[1500px] p-4 sm:p-7">
-    <div className="mb-5 flex items-center justify-between gap-3"><div><Link to="/projects" className="text-xs text-muted-foreground"><ChevronLeft className="inline h-3.5 w-3.5" />Projects</Link><h1 className="mt-1 text-2xl font-semibold">{project.name}</h1><p className="mt-1 text-sm text-muted-foreground">Explicit speaker routing. Export uses this manifest.</p></div><Button disabled={exporting} onClick={() => void exportProject()}><Download />{exporting ? "Queueing" : "Export project"}</Button></div>
+    <div className="mb-5 flex items-center justify-between gap-3"><div><Link to="/projects" className="text-xs text-muted-foreground"><ChevronLeft className="inline h-3.5 w-3.5" />Projects</Link><h1 className="mt-1 text-2xl font-semibold">{project.name}</h1><p className="mt-1 text-sm text-muted-foreground">Explicit speaker routing. Export uses this manifest.</p></div></div>
     {error && <p className="mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
-    <div className="grid gap-4 xl:grid-cols-[230px_minmax(0,1fr)_330px]">
+    <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)}>
+      <TabsList>
+        <TabsTrigger value="mixing">Mixing</TabsTrigger>
+        <TabsTrigger value="mastering">Mastering</TabsTrigger>
+        <TabsTrigger value="delivery">Delivery</TabsTrigger>
+      </TabsList>
+    </Tabs>
+    {/* Preview + speaker routing graph stay visible on every tab. Only the
+        Mixing tab needs a narrow side rail next to them (it was designed for
+        330px); Mastering/Delivery reuse wider composer-style panels that
+        would be cramped squeezed into that column, so they render full width
+        below this row instead. */}
+    <div className={`grid gap-4 ${activeTab === "mixing" ? "xl:grid-cols-[230px_minmax(0,1fr)_330px]" : "xl:grid-cols-[230px_minmax(0,1fr)]"}`}>
       <aside className="rounded-lg border p-3"><p className="mb-3 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tracks</p>{project.tracks.map((track) => <button key={track.id} onClick={() => setSelectedTrack(track.id)} className={`mb-1 w-full rounded-md px-3 py-2 text-left text-sm ${selectedTrack === track.id ? "bg-accent font-medium" : "hover:bg-muted"}`}>{track.asset.title || track.asset.filename}</button>)}<p className="mt-5 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Stems</p>{stemNames.map((stem) => { const muted = effectiveManifest?.mixing.stem_enabled[stem] === false; const soloed = effectiveManifest?.mixing.stem_solo.includes(stem); return <div key={stem} className={`mt-1 flex items-center gap-1 rounded-md px-2 py-2 ${selectedStem === stem ? "bg-accent" : ""}`}><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${muted ? "opacity-30" : ""}`} style={{ backgroundColor: colors[stem] || "#94a3b8" }} /><button className={`min-w-0 flex-1 truncate text-left text-sm ${muted ? "text-muted-foreground line-through" : ""}`} onClick={() => setSelectedStem(stem)}>{stem}</button><Button variant="ghost" size="sm" className={`h-7 px-2 ${muted ? "bg-destructive text-destructive-foreground hover:bg-destructive/90 hover:text-destructive-foreground" : ""}`} aria-pressed={muted} aria-label={`${muted ? "Enable" : "Mute"} ${stem}`} onClick={() => toggleEnabled(stem)}>M</Button><Button variant={soloed ? "default" : "ghost"} size="sm" className="h-7 px-2" aria-pressed={soloed} aria-label={`${soloed ? "Clear solo" : "Solo"} ${stem}`} onClick={() => toggleSolo(stem)}>S</Button></div>; })}</aside>
       <section className="min-w-0 space-y-3">
         <Transport
@@ -136,9 +161,26 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}
         <SpatialScene channels={channels} routing={routing} selectedStem={selectedStem} colors={colors} onSelectStem={setSelectedStem} />
       </section>
-      <aside className="rounded-lg border p-4">{effectiveManifest && <><div className="flex items-center justify-between"><p className="text-sm font-semibold">Routing preset</p><select aria-label="Edit scope" className="h-8 rounded border bg-background px-1 text-xs" value={editScope} onChange={(event) => setEditScope(event.target.value as "project" | "track")}><option value="project">Project</option><option value="track" disabled={!selected}>Track</option></select></div><p className="mt-1 text-xs text-muted-foreground">{editScope === "project" ? "Default for every track" : `Override: ${selected?.asset.title || selected?.asset.filename}`}</p><select className="mt-2 flex h-9 w-full rounded-md border bg-background px-2 text-sm" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets || ["balanced", "intimate", "rhythmic", "spacious", "live", "detailed"]).map((name) => <option key={name}>{name}</option>)}</select><label className="mt-3 block text-xs text-muted-foreground">Intensity <span className="float-right">{presetIntensity.toFixed(2)}</span><Slider className="mt-2" min={0} max={1} step={0.01} value={[presetIntensity]} onValueChange={([value]) => setPresetIntensity(value)} /></label><Button className="mt-3 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}>Apply preset</Button><div className="mt-5 border-t pt-4">{selectedStem ? <StemControls stem={selectedStem} route={routing[selectedStem] || {}} channels={channels} enabled={effectiveManifest.mixing.stem_enabled[selectedStem] !== false} gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onGain={(gain) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [selectedStem]: gain } } })} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: { ...effectiveManifest.mixing.stem_eq, [selectedStem]: eq } } })} /> : <p className="text-sm text-muted-foreground">Select stem to edit sends.</p>}</div></>}</aside>
+      {activeTab === "mixing" && <aside className="rounded-lg border p-4">{effectiveManifest && <><div className="flex items-center justify-between"><p className="text-sm font-semibold">Routing preset</p><select aria-label="Edit scope" className="h-8 rounded border bg-background px-1 text-xs" value={editScope} onChange={(event) => setEditScope(event.target.value as "project" | "track")}><option value="project">Project</option><option value="track" disabled={!selected}>Track</option></select></div><p className="mt-1 text-xs text-muted-foreground">{editScope === "project" ? "Default for every track" : `Override: ${selected?.asset.title || selected?.asset.filename}`}</p><select className="mt-2 flex h-9 w-full rounded-md border bg-background px-2 text-sm" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets || ["balanced", "intimate", "rhythmic", "spacious", "live", "detailed"]).map((name) => <option key={name}>{name}</option>)}</select><label className="mt-3 block text-xs text-muted-foreground">Intensity <span className="float-right">{presetIntensity.toFixed(2)}</span><Slider className="mt-2" min={0} max={1} step={0.01} value={[presetIntensity]} onValueChange={([value]) => setPresetIntensity(value)} /></label><Button className="mt-3 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}>Apply preset</Button><div className="mt-5 border-t pt-4">{selectedStem ? <StemControls stem={selectedStem} route={routing[selectedStem] || {}} channels={channels} enabled={effectiveManifest.mixing.stem_enabled[selectedStem] !== false} gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onGain={(gain) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [selectedStem]: gain } } })} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: { ...effectiveManifest.mixing.stem_eq, [selectedStem]: eq } } })} /> : <p className="text-sm text-muted-foreground">Select stem to edit sends.</p>}</div></>}</aside>}
     </div>
-    {effectiveManifest && <section className="mt-4 rounded-lg border p-4"><div className="flex items-center justify-between text-sm"><span className="font-medium">Source anchor</span><span className="text-muted-foreground">{Math.round(effectiveManifest.mixing.stem_source_anchor_strength * 100)}%</span></div><Slider aria-label="Source anchor" className="mt-3" min={0} max={1} step={0.01} value={[effectiveManifest.mixing.stem_source_anchor_strength]} onValueChange={([stem_source_anchor_strength]) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } })} /><p className="mt-2 text-xs text-muted-foreground">Blends original channel pairs back into the mix.</p></section>}
+    {activeTab === "mixing" && effectiveManifest && <section className="mt-4 rounded-lg border p-4"><div className="flex items-center justify-between text-sm"><span className="font-medium">Source anchor</span><span className="text-muted-foreground">{Math.round(effectiveManifest.mixing.stem_source_anchor_strength * 100)}%</span></div><Slider aria-label="Source anchor" className="mt-3" min={0} max={1} step={0.01} value={[effectiveManifest.mixing.stem_source_anchor_strength]} onValueChange={([stem_source_anchor_strength]) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } })} /><p className="mt-2 text-xs text-muted-foreground">Blends original channel pairs back into the mix.</p></section>}
+    {activeTab === "mastering" && manifest && <section className="mt-4">
+      <MasteringSection
+        manifest={manifest}
+        setManifest={(update) => updateProjectManifest(typeof update === "function" ? update(manifest) : update)}
+        configuration={configuration}
+        hideReferenceMatch
+        masteringReference={null}
+        referenceUploading={false}
+        referenceError={null}
+        onReferenceUpload={() => {}}
+        onReferenceClear={() => {}}
+      />
+    </section>}
+    {activeTab === "delivery" && manifest && <section className="mt-4 space-y-4">
+      <ProjectDeliverySection manifest={manifest} configuration={configuration} onChange={updateProjectManifest} />
+      <Button disabled={exporting} onClick={() => void exportProject()}><Download />{exporting ? "Queueing" : "Export project"}</Button>
+    </section>}
   </main>;
 }
 

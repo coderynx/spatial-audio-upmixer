@@ -17,6 +17,10 @@ type MasteringSectionProps = ManifestSectionProps & {
   referenceError: string | null;
   onReferenceUpload: (file: File) => void;
   onReferenceClear: () => void;
+  /** Hide the reference-EQ-match block. Used where there's no reference-file
+   * association to attach it to (e.g. projects, which don't support a
+   * mastering reference the way one-off jobs do). */
+  hideReferenceMatch?: boolean;
 };
 
 export function MasteringSection({
@@ -28,6 +32,7 @@ export function MasteringSection({
   referenceError,
   onReferenceUpload,
   onReferenceClear,
+  hideReferenceMatch = false,
 }: MasteringSectionProps) {
   const choices = configuration?.choices;
   const referenceInput = React.useRef<HTMLInputElement>(null);
@@ -35,6 +40,7 @@ export function MasteringSection({
   const hasReference = masteringReference !== null;
   return (
     <div className="grid gap-5 rounded-md border p-4 sm:grid-cols-2">
+      {!hideReferenceMatch && (
       <section className="space-y-3 rounded-md border bg-muted/20 p-3 sm:col-span-2">
         <div>
           <p className="text-sm font-medium">Reference EQ match</p>
@@ -104,6 +110,9 @@ export function MasteringSection({
           <p className="text-xs text-destructive">{referenceError}</p>
         )}
       </section>
+      )}
+      {!hideReferenceMatch && (
+      <>
       <SliderField
         label="Spectral match strength"
         value={match.strength}
@@ -170,6 +179,8 @@ export function MasteringSection({
           })
         }
       />
+      </>
+      )}
       <ToggleField
         label="Loudness normalization"
         description="BS.1770 integrated loudness normalization."
