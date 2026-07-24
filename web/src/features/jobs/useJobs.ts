@@ -27,6 +27,10 @@ export function useJobs() {
       .then(setConfiguration)
       .catch((nextError) => setError((nextError as Error).message));
   }, [refresh]);
+  React.useEffect(() => {
+    const timer = window.setInterval(() => void refresh(true), 2000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
   const action = React.useCallback(
     async (name: JobAction, job: Job) => {
       try {

@@ -179,6 +179,8 @@ class ProjectTrack(Base):
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     manifest_overrides: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     scene_overrides: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    source_preview_relative_path: Mapped[str | None] = mapped_column(String(1024))
+    source_preview_size_bytes: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(Text)
 
     project: Mapped[Project] = relationship(back_populates="tracks")

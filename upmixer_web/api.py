@@ -22,7 +22,7 @@ from upmixer_web.manifests import (
     configuration_schema,
     ensure_stem_separation_available,
 )
-from upmixer_web.models import Artifact, ImportBatch, Job, MasteringReference, MediaAsset, Project, ProjectStem
+from upmixer_web.models import Artifact, ImportBatch, Job, MasteringReference, MediaAsset, Project, ProjectStem, ProjectTrack
 from upmixer_web.project_storage import ProjectStemStorage
 from upmixer_web.projects import (
     create_project,
@@ -89,6 +89,9 @@ def _project_view(project: Project, root_path: str = "") -> ProjectView:
     for track in view.tracks:
         track.asset.audio_url = (
             f"{root_path}/api/v1/imports/{project.import_id}/assets/{track.asset.id}/audio"
+        )
+        track.source_preview_url = (
+            f"{root_path}/api/v1/projects/{project.id}/tracks/{track.id}/source-preview"
         )
         for stem in track.stems:
             base_url = (
@@ -433,6 +436,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Project stem file not found") from exc
         return FileResponse(path, media_type=media_type)
+
+    @app.get("/api/v1/projects/{project_id}/tracks/{track_id}/source-preview", tags=["projects"])
+    def read_project_source_preview(
+        project_id: str,
+        track_id: str,
+        session: Session = Depends(database_session),
+    ) -> FileResponse:
+        track = session.get(ProjectTrack, track_id)
+        if not track or track.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Project source preview not found")
+        try:
+            path = app.state.project_stems.resolve(track.source_preview_relative_path or "")
+        except FileNotFoundError:
+            try:
+                app.state.project_stems.write_source_preview(
+                    track, storage.local_path(track.asset.storage_key),
+                )
+                session.commit()
+                path = app.state.project_stems.resolve(track.source_preview_relative_path or "")
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise HTTPException(status_code=503, detail="Project source preview is unavailable") from exc
+        return FileResponse(path, media_type="audio/ogg")
 
     @app.get("/api/v1/projects/{project_id}/events", tags=["projects"])
     async def project_events(project_id: str) -> StreamingResponse:

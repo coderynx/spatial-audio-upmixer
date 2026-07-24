@@ -115,3 +115,11 @@ class ProjectStemStorage:
         session.execute(delete(ProjectStem).where(ProjectStem.track_id == track.id))
         session.add_all(rows)
         return rows
+
+    def write_source_preview(self, track: ProjectTrack, source: Path) -> None:
+        """Create the compressed original-track proxy used by project preview."""
+        destination = self.track_root(track.project_id, track.id) / "source.preview.ogg"
+        if not destination.is_file():
+            _write_preview(source, destination)
+        track.source_preview_relative_path = str(destination.relative_to(self.root))
+        track.source_preview_size_bytes = destination.stat().st_size

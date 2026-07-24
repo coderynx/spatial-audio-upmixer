@@ -131,6 +131,8 @@ class ProjectTrackView(ApiModel):
     progress: float
     manifest_overrides: dict[str, Any] = Field(default_factory=dict)
     scene_overrides: dict[str, Any] = Field(default_factory=dict)
+    source_preview_relative_path: str | None = None
+    source_preview_url: str | None = None
     error: str | None
     asset: AssetView
     stems: list[StemView] = Field(default_factory=list)

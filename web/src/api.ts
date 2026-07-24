@@ -92,6 +92,7 @@ export type ProjectTrack = {
   progress: number
   manifest_overrides: Record<string, unknown>
   scene_overrides: Record<string, unknown>
+  source_preview_url: string | null
   error: string | null
   asset: Asset
   stems: ProjectStem[]

@@ -463,6 +463,13 @@ class WorkerManager:
                         elif kind == "job_done":
                             break
 
+                with self.sessions() as session:
+                    for track_id, input_path in zip(track_ids, input_paths, strict=True):
+                        track = session.get(ProjectTrack, track_id)
+                        if track:
+                            self.project_stems.write_source_preview(track, input_path)
+                    session.commit()
+
             with self.sessions() as session:
                 project = get_project(session, project_id)
                 if not project:
