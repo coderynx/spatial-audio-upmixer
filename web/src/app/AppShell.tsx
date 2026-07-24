@@ -5,13 +5,13 @@ import {
   HardDrive,
   Layers3,
   RefreshCw,
-  Server,
   Settings2,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import type { Configuration } from "@/api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { HeaderSlotProvider, useHeaderSlot } from "./HeaderSlot";
 import { ThemeToggle } from "./ThemeToggle";
 
 function CapabilityStatus({
@@ -70,7 +70,35 @@ export function AppShell({
   onCreate: () => void;
   createLabel?: string;
 }) {
+  return (
+    <HeaderSlotProvider>
+      <AppShellLayout
+        configuration={configuration}
+        onRefresh={onRefresh}
+        onCreate={onCreate}
+        createLabel={createLabel}
+      >
+        {children}
+      </AppShellLayout>
+    </HeaderSlotProvider>
+  );
+}
+
+function AppShellLayout({
+  children,
+  configuration,
+  onRefresh,
+  onCreate,
+  createLabel,
+}: {
+  children: ReactNode;
+  configuration: Configuration | null;
+  onRefresh: () => void;
+  onCreate: () => void;
+  createLabel: string;
+}) {
   const location = useLocation();
+  const { node: headerNode } = useHeaderSlot();
   const nav = [
     { label: "Projects", icon: Layers3, href: "/projects", active: location.pathname.startsWith("/projects") },
     { label: "Jobs", icon: Gauge, href: "/jobs", active: location.pathname.startsWith("/jobs") },
@@ -128,14 +156,11 @@ export function AppShell({
       </aside>
       <div className="lg:pl-60">
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-background px-4 sm:px-7">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="lg:hidden">
               <AudioLines className="h-5 w-5" />
             </div>
-            <div className="hidden items-center gap-2 text-sm text-muted-foreground lg:flex">
-              <Server className="h-4 w-4" />
-              Local processing node
-            </div>
+            <div className="min-w-0">{headerNode}</div>
           </div>
           <div className="flex items-center gap-1">
             <Button

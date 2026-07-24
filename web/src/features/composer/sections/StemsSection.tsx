@@ -1,22 +1,10 @@
 import * as React from "react";
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Drum,
-  Guitar,
-  MicVocal,
-  Music2,
-  Piano,
-  UsersRound,
-  Waves,
-  Speech,
-  type LucideIcon,
-} from "lucide-react";
+import { Check, ChevronDown, ChevronRight } from "lucide-react";
 import { NumberField, ToggleField } from "@/components/forms/fields";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { fallbackStems } from "@/lib/manifest";
+import { getStemIcon } from "@/lib/stems";
 import type { ManifestSectionProps } from "./types";
 
 const primaryStems = ["Vocals", "Bass", "Drums", "Guitar", "Piano", "Other"];
@@ -24,24 +12,6 @@ const primaryStems = ["Vocals", "Bass", "Drums", "Guitar", "Piano", "Other"];
 const childStemsByParent: Record<string, string[]> = {
   Vocals: ["Lead Vocals", "Backing Vocals"],
   Drums: ["Kick", "Snare", "Toms", "Hi-Hat", "Ride", "Crash"],
-};
-
-const stemIcons: Record<string, LucideIcon> = {
-  vocals: MicVocal,
-  bass: Waves,
-  drums: Drum,
-  kick: Drum,
-  snare: Drum,
-  toms: Drum,
-  guitar: Guitar,
-  piano: Piano,
-  "hi-hat": Drum,
-  ride: Drum,
-  crash: Drum,
-  crowd: UsersRound,
-  "lead vocals": MicVocal,
-  "backing vocals": Speech,
-  other: Music2,
 };
 
 const stemBorderClasses: Record<string, string> = {
@@ -88,10 +58,6 @@ const stemActiveClasses: Record<string, string> = {
 
 function getStemKey(stem: string) {
   return stem.toLowerCase();
-}
-
-function getStemIcon(stem: string) {
-  return stemIcons[getStemKey(stem)] || Music2;
 }
 
 function sameStems(left: string[], right: string[]) {
