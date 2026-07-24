@@ -1,5 +1,6 @@
 import * as React from "react";
 import type { ProjectStem, StemScene } from "@/api";
+import { speakerCoordinates } from "@/lib/spatial";
 import {
   BASS_PROFILES,
   COMP_PROFILES,
@@ -45,6 +46,10 @@ type AudioNodeSet = {
   // (the backend never routes the anchor's dry blend through LFE).
   lfeGain: GainNode | null;
   lfeFilters: [BiquadFilterNode, BiquadFilterNode] | null;
+  // Passive level tap for the 3D scene's audio-reactive halos — has no
+  // output, so it cannot affect the audible signal. Absent for the dry
+  // source anchor (it has no single "stem" to visualize).
+  analyser: AnalyserNode | null;
 };
 
 type Timeline = { offset: number; contextTime: number };
@@ -77,12 +82,6 @@ type MasterPreview = {
     excite?: boolean;
     lfe_gain_db?: number | null;
   };
-};
-
-const speakerCoordinates: Record<string, { x: number; y: number; z: number }> = {
-  FL: { x: -0.5, y: 0, z: -0.87 }, FR: { x: 0.5, y: 0, z: -0.87 }, C: { x: 0, y: 0, z: -1 },
-  SL: { x: -0.94, y: 0, z: 0.34 }, SR: { x: 0.94, y: 0, z: 0.34 }, BL: { x: -0.7, y: 0, z: 0.7 }, BR: { x: 0.7, y: 0, z: 0.7 },
-  TFL: { x: -0.5, y: 0.6, z: -0.7 }, TFR: { x: 0.5, y: 0.6, z: -0.7 }, TBL: { x: -0.6, y: 0.6, z: 0.6 }, TBR: { x: 0.6, y: 0.6, z: 0.6 },
 };
 
 // Sources share one AudioContext-clock start time so every stem begins on
@@ -185,6 +184,14 @@ export function useStemPreview(
   const resolvedBass = React.useRef<{ active: boolean; lfeGainDb: number }>({ active: false, lfeGainDb: 0 });
   const measuredLkfs = React.useRef(-70);
   const nodes = React.useRef<Map<string, AudioNodeSet>>(new Map());
+  // Live per-stem audio levels (base stem name -> smoothed 0..1 RMS, already
+  // scaled by that stem's currently-applied gain so mute/solo/rebalance are
+  // reflected) for the 3D scene's audio-reactive halos. A ref, not state —
+  // updated every animation frame from `tick()`, consumers should read it in
+  // their own render loop (e.g. R3F's `useFrame`) rather than subscribing.
+  const stemLevels = React.useRef<Map<string, number>>(new Map());
+  const appliedGain = React.useRef<Map<string, number>>(new Map());
+  const analysisBuffer = React.useRef<Uint8Array | null>(null);
   const stemsRef = React.useRef(stems);
   const timeline = React.useRef<Timeline | null>(null);
   const currentTimeRef = React.useRef(0);
@@ -239,6 +246,28 @@ export function useStemPreview(
       node.source.disconnect();
       node.source = null;
     });
+    stemLevels.current.clear();
+  }, []);
+
+  const measureLevels = React.useCallback(() => {
+    for (const stem of stemsRef.current) {
+      const node = nodes.current.get(stem.id);
+      if (!node?.analyser) continue;
+      const size = node.analyser.fftSize;
+      if (!analysisBuffer.current || analysisBuffer.current.length !== size) {
+        analysisBuffer.current = new Uint8Array(size);
+      }
+      node.analyser.getByteTimeDomainData(analysisBuffer.current);
+      let sumSquares = 0;
+      for (let i = 0; i < size; i++) {
+        const deviation = (analysisBuffer.current[i] - 128) / 128;
+        sumSquares += deviation * deviation;
+      }
+      const rms = Math.sqrt(sumSquares / size);
+      const base = stem.stem_key.split("@", 1)[0];
+      const gain = appliedGain.current.get(base) ?? 1;
+      stemLevels.current.set(base, Math.min(1, rms * gain * 2.5));
+    }
   }, []);
 
   const tick = React.useCallback(() => {
@@ -246,6 +275,7 @@ export function useStemPreview(
     const nextTime = expectedTime();
     currentTimeRef.current = nextTime;
     setCurrentTime((current) => Math.abs(current - nextTime) >= 0.01 ? nextTime : current);
+    measureLevels();
     if (!loopRef.current && durationRef.current > 0 && nextTime >= durationRef.current) {
       stopSources();
       timeline.current = null;
@@ -256,7 +286,7 @@ export function useStemPreview(
       return;
     }
     animationFrame.current = window.requestAnimationFrame(tick);
-  }, [expectedTime, stopSources]);
+  }, [expectedTime, measureLevels, stopSources]);
 
   const startTicker = React.useCallback(() => {
     stopTicker();
@@ -287,8 +317,11 @@ export function useStemPreview(
       node.splitter?.disconnect();
       node.lfeGain?.disconnect();
       node.lfeFilters?.forEach((filter) => filter.disconnect());
+      node.analyser?.disconnect();
     });
     nodes.current.clear();
+    stemLevels.current.clear();
+    appliedGain.current.clear();
     masteringNodes.current.forEach((node) => node.disconnect());
     masteringNodes.current = [];
     resolvedBass.current = { active: false, lfeGainDb: 0 };
@@ -484,6 +517,7 @@ export function useStemPreview(
         || mix?.stem_enabled?.[base] === false || value.enabled === false;
       const gainDb = mix?.stem_rebalance?.[base] || 0;
       const stemGain = muted ? 0 : (1.0 - anchor * frontFraction) * 10 ** (gainDb / 20);
+      appliedGain.current.set(base, stemGain);
       if (node.lfeGain) {
         node.lfeGain.gain.value = muted
           ? 0
@@ -571,7 +605,7 @@ export function useStemPreview(
             splitter.connect(legR.drySend, 1);
             nodes.current.set(entry.id, {
               buffer, source: null, legs: [legL, legR], splitter,
-              lfeGain: null, lfeFilters: null,
+              lfeGain: null, lfeFilters: null, analyser: null,
             });
           } else {
             const leg = createLeg(ctx, hrtfBusNode, dryBusNode);
@@ -583,9 +617,14 @@ export function useStemPreview(
             lfeFilter2.type = "lowpass";
             lfeFilter2.frequency.value = LFE_LOWPASS_HZ;
             lfeGain.connect(lfeFilter1).connect(lfeFilter2).connect(lfeBusNode);
+            // No output connection — a pure tap for the 3D scene's halos,
+            // cannot affect the audible signal.
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.7;
             nodes.current.set(entry.id, {
               buffer, source: null, legs: [leg], splitter: null,
-              lfeGain, lfeFilters: [lfeFilter1, lfeFilter2],
+              lfeGain, lfeFilters: [lfeFilter1, lfeFilter2], analyser,
             });
           }
         }));
@@ -659,6 +698,7 @@ export function useStemPreview(
             source.connect(leg.drySend);
           }
           if (node.lfeGain) source.connect(node.lfeGain);
+          if (node.analyser) source.connect(node.analyser);
         }
         source.start(startAt, target);
         node.source = source;
@@ -756,5 +796,6 @@ export function useStemPreview(
     scrubTo,
     commitScrub,
     toggleLoop,
+    stemLevels,
   };
 }

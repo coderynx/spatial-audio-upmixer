@@ -59,6 +59,14 @@ class FakeStereoPanner extends FakeNode {
 
 class FakeChannelSplitter extends FakeNode {}
 
+class FakeAnalyser extends FakeNode {
+  fftSize = 2048;
+  smoothingTimeConstant = 0;
+  getByteTimeDomainData(array: Uint8Array) {
+    array.fill(128);
+  }
+}
+
 class FakeBufferSource extends FakeNode {
   buffer: FakeAudioBuffer | null = null;
   loop = false;
@@ -103,6 +111,7 @@ class FakeAudioContext {
     return panner;
   }
   createChannelSplitter() { return new FakeChannelSplitter(); }
+  createAnalyser() { return new FakeAnalyser(); }
   createBiquadFilter() {
     const filter = new FakeBiquadFilter();
     this.eqFilters.push(filter);

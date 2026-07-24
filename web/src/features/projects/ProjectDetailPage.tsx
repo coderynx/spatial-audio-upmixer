@@ -29,9 +29,25 @@ import { SpatialScene } from "./SpatialScene";
 import { Transport } from "./Transport";
 import { useStemPreview } from "./useStemPreview";
 
+// Code-split: three.js + @react-three/fiber/drei are a large chunk only
+// needed once WebGL is confirmed available, so this stays out of the
+// initial bundle.
+const SpatialScene3D = React.lazy(() => import("./SpatialScene3D"));
+
+function detectWebgl() {
+  if (typeof document === "undefined") return false;
+  try {
+    const canvas = document.createElement("canvas");
+    return Boolean(canvas.getContext("webgl2") || canvas.getContext("webgl"));
+  } catch {
+    return false;
+  }
+}
+
 export function ProjectDetailPage({ configuration }: { configuration: Configuration | null }) {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const [webglAvailable] = React.useState(detectWebgl);
   const [project, setProject] = React.useState<Project | null>(null);
   const [manifest, setManifest] = React.useState<Manifest | null>(null);
   const [selectedTrack, setSelectedTrack] = React.useState<string | null>(null);
@@ -123,6 +139,14 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     } catch (reason) { setError((reason as Error).message); }
   };
   const previewStems = selected?.stems.filter((stem) => project?.prepared_stems.includes(stem.stem_key.split("@", 1)[0])) || [];
+  // Stereo stems get two halos (L/R) in the 3D scene instead of one collapsed
+  // to a single point — keyed by base stem name, same convention as routing.
+  const stemChannelCounts = React.useMemo(() => {
+    const source = selected?.stems || project?.tracks[0]?.stems || [];
+    const counts: Record<string, number> = {};
+    for (const stem of source) counts[stem.stem_key.split("@", 1)[0]] = stem.channels;
+    return counts;
+  }, [selected, project]);
   const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering);
   const ready = Boolean(project?.prepared_stems.length);
   const channels = configuration?.choices.layout_channels?.[effectiveManifest?.mixing.channel_layout || "7.1.4"] || ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"];
@@ -254,7 +278,13 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             onCommitScrub={(value) => void preview.commitScrub(value)}
           />
           {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}
-          <SpatialScene channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} onSelectStem={setSelectedStem} className="min-h-0 flex-1" />
+          {webglAvailable ? (
+            <React.Suspense fallback={<div className="min-h-0 flex-1 rounded-lg border bg-slate-950" />}>
+              <SpatialScene3D channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemLevels={preview.stemLevels} playing={preview.playing} className="min-h-0 flex-1" />
+            </React.Suspense>
+          ) : (
+            <SpatialScene channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} onSelectStem={setSelectedStem} className="min-h-0 flex-1" />
+          )}
         </section>
         <aside className="min-h-0 overflow-y-auto rounded-lg border p-4">{effectiveManifest && <><div className="flex items-center justify-between"><p className="text-sm font-semibold">Routing preset</p><select aria-label="Edit scope" className="h-8 rounded border bg-background px-1 text-xs" value={editScope} onChange={(event) => setEditScope(event.target.value as "project" | "track")}><option value="project">Project</option><option value="track" disabled={!selected}>Track</option></select></div><p className="mt-1 text-xs text-muted-foreground">{editScope === "project" ? "Default for every track" : `Override: ${selected?.asset.title || selected?.asset.filename}`}</p><select className="mt-2 flex h-9 w-full rounded-md border bg-background px-2 text-sm" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets || ["balanced", "intimate", "rhythmic", "spacious", "live", "detailed"]).map((name) => <option key={name}>{name}</option>)}</select><label className="mt-3 block text-xs text-muted-foreground">Intensity <span className="float-right">{presetIntensity.toFixed(2)}</span><Slider className="mt-2" min={0} max={1} step={0.01} value={[presetIntensity]} onValueChange={([value]) => setPresetIntensity(value)} /></label><Button className="mt-3 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 className="h-4 w-4" />Apply preset</Button><div className="mt-5 border-t pt-4">{selectedStem ? <StemControls stem={selectedStem} route={routing[selectedStem] || {}} channels={channels} enabled={effectiveManifest.mixing.stem_enabled[selectedStem] !== false} gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onGain={(gain) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [selectedStem]: gain } } })} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: { ...effectiveManifest.mixing.stem_eq, [selectedStem]: eq } } })} /> : <p className="text-sm text-muted-foreground">Select stem to edit sends.</p>}</div><div className="mt-5 border-t pt-4"><div className="flex items-center justify-between text-sm"><span className="font-medium">Source anchor</span><span className="text-muted-foreground">{Math.round(effectiveManifest.mixing.stem_source_anchor_strength * 100)}%</span></div><Slider aria-label="Source anchor" className="mt-3" min={0} max={1} step={0.01} value={[effectiveManifest.mixing.stem_source_anchor_strength]} onValueChange={([stem_source_anchor_strength]) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } })} /><p className="mt-2 text-xs text-muted-foreground">Blends original channel pairs back into the mix.</p></div></>}</aside>
       </div>}

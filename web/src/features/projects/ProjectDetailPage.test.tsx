@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { api, type Asset, type Project } from "@/api";
+import { HeaderSlotProvider, useHeaderSlot } from "@/app/HeaderSlot";
 import { ProjectDetailPage } from "./ProjectDetailPage";
 
 const asset: Asset = {
@@ -40,13 +41,24 @@ vi.mock("@/api", async (importOriginal) => {
   };
 });
 
+// Mirrors AppShell's header rendering — ProjectDetailPage pushes its title
+// into the shared header slot instead of rendering its own <h1>, so the
+// test needs a consumer for that title to show up in the DOM.
+function HeaderOutlet() {
+  const { node } = useHeaderSlot();
+  return <>{node}</>;
+}
+
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={["/projects/project-1"]}>
-      <Routes>
-        <Route path="/projects/:projectId" element={<ProjectDetailPage configuration={null} />} />
-      </Routes>
-    </MemoryRouter>,
+    <HeaderSlotProvider>
+      <MemoryRouter initialEntries={["/projects/project-1"]}>
+        <HeaderOutlet />
+        <Routes>
+          <Route path="/projects/:projectId" element={<ProjectDetailPage configuration={null} />} />
+        </Routes>
+      </MemoryRouter>
+    </HeaderSlotProvider>,
   );
 }
 
@@ -61,7 +73,7 @@ describe("ProjectDetailPage tabs", () => {
     expect(screen.getByRole("button", { name: /^(Play|Pause)$/i })).toBeInTheDocument();
   });
 
-  it("switches to the Mastering tab and keeps preview/graph mounted", async () => {
+  it("switches to the Mastering tab", async () => {
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
@@ -71,8 +83,9 @@ describe("ProjectDetailPage tabs", () => {
     expect(screen.getByText("Spectral EQ")).toBeInTheDocument();
     expect(screen.getByText("Loudness normalization")).toBeInTheDocument();
     expect(screen.getByText("Reference EQ match")).toBeInTheDocument();
-    // Still visible.
-    expect(screen.getByRole("button", { name: /^(Play|Pause)$/i })).toBeInTheDocument();
+    // Preview transport and speaker graph are Mixing-tab-only (Mastering
+    // reuses the wider composer-style panels instead).
+    expect(screen.queryByRole("button", { name: /^(Play|Pause)$/i })).not.toBeInTheDocument();
   });
 
   it("switches to the Delivery tab and exports from there", async () => {
