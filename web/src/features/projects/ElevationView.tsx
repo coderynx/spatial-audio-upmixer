@@ -41,6 +41,7 @@ export default function ElevationView({
 }: ElevationViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const blobCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const smoothed = React.useRef<Map<string, SmoothedVoice>>(new Map());
   const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
@@ -53,6 +54,10 @@ export default function ElevationView({
     if (!canvas || !container) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    if (!blobCanvasRef.current) blobCanvasRef.current = document.createElement("canvas");
+    const blobCanvas = blobCanvasRef.current;
+    const blobCtx = blobCanvas.getContext("2d");
+    if (!blobCtx) return;
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -60,7 +65,10 @@ export default function ElevationView({
       const height = container.clientHeight;
       canvas.width = Math.max(1, Math.round(width * dpr));
       canvas.height = Math.max(1, Math.round(height * dpr));
+      blobCanvas.width = canvas.width;
+      blobCanvas.height = canvas.height;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      blobCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       initializedSize.current = false;
     };
     resize();
@@ -155,7 +163,13 @@ export default function ElevationView({
         }
       }
 
-      ctx.globalCompositeOperation = "screen";
+      // Same melt treatment as the Haze view: resolve smoothed voices, paint
+      // tendrils + oversized additive blobs into an offscreen buffer, then
+      // blur + screen-composite that buffer onto the main canvas so
+      // overlapping stems merge into one continuous field instead of
+      // separate circular halos.
+      type Resolved = { voice: Voice; point: { x: number; y: number }; blobRadius: number; emphasis: number; level: number; r: number; g: number; b: number };
+      const resolved: Resolved[] = [];
       for (const voice of voices) {
         const spectrum = stemSpectrum.current.get(voice.base);
         const level = spectrum?.level ?? 0;
@@ -182,16 +196,64 @@ export default function ElevationView({
         const point = { x: toX(next.x), y: toY(next.y) };
         const blobRadius = (20 + next.level * 40) * voice.sizeScale * (currentSelected === voice.stem ? 1.15 : 1);
 
-        const gradient = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, blobRadius);
-        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.32 + next.level * 0.25) * emphasis})`);
-        gradient.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, ${0.12 * emphasis})`);
-        gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, blobRadius, 0, Math.PI * 2);
-        ctx.fill();
+        resolved.push({ voice, point, blobRadius, emphasis, level: next.level, r, g, b });
       }
-      ctx.globalCompositeOperation = "source-over";
+
+      blobCtx.clearRect(0, 0, width, height);
+      blobCtx.globalCompositeOperation = "lighter";
+
+      const tendrilReach = Math.min(plotWidth, plotHeight) * 0.45;
+      for (let i = 0; i < resolved.length; i++) {
+        for (let j = i + 1; j < resolved.length; j++) {
+          const a = resolved[i];
+          const c = resolved[j];
+          if (a.voice.stem === c.voice.stem) continue;
+          const dist = Math.hypot(a.point.x - c.point.x, a.point.y - c.point.y);
+          if (dist >= tendrilReach) continue;
+          const strength = (1 - dist / tendrilReach) * Math.min(a.emphasis, c.emphasis) * Math.min(a.level, c.level) * 6;
+          if (strength <= 0.01) continue;
+          const tendril = blobCtx.createLinearGradient(a.point.x, a.point.y, c.point.x, c.point.y);
+          tendril.addColorStop(0, `rgba(${a.r}, ${a.g}, ${a.b}, ${Math.min(0.5, strength)})`);
+          tendril.addColorStop(1, `rgba(${c.r}, ${c.g}, ${c.b}, ${Math.min(0.5, strength)})`);
+          blobCtx.strokeStyle = tendril;
+          blobCtx.lineWidth = Math.max(2, Math.min(a.blobRadius, c.blobRadius) * 0.35);
+          blobCtx.beginPath();
+          blobCtx.moveTo(a.point.x, a.point.y);
+          blobCtx.lineTo(c.point.x, c.point.y);
+          blobCtx.stroke();
+        }
+      }
+
+      for (const { point, blobRadius, emphasis, level, r, g, b } of resolved) {
+        const meltRadius = blobRadius * 1.55;
+        const gradient = blobCtx.createRadialGradient(point.x, point.y, 0, point.x, point.y, meltRadius);
+        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.4 + level * 0.3) * emphasis})`);
+        gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${0.16 * emphasis})`);
+        gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+        blobCtx.fillStyle = gradient;
+        blobCtx.beginPath();
+        blobCtx.arc(point.x, point.y, meltRadius, 0, Math.PI * 2);
+        blobCtx.fill();
+      }
+      blobCtx.globalCompositeOperation = "source-over";
+
+      const blurPx = Math.max(6, Math.min(22, Math.min(plotWidth, plotHeight) * 0.07));
+      ctx.save();
+      ctx.filter = `blur(${blurPx}px)`;
+      ctx.globalCompositeOperation = "screen";
+      ctx.drawImage(blobCanvas, 0, 0, width, height);
+      ctx.restore();
+
+      // Selection cue: a faint unblurred ring, not a hard dot, on top of
+      // the melt.
+      for (const entry of resolved) {
+        if (entry.voice.stem !== currentSelected) continue;
+        ctx.strokeStyle = `rgba(${entry.r}, ${entry.g}, ${entry.b}, 0.55)`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(entry.point.x, entry.point.y, entry.blobRadius * 0.7, 0, Math.PI * 2);
+        ctx.stroke();
+      }
 
       frame.current = window.requestAnimationFrame(draw);
     };

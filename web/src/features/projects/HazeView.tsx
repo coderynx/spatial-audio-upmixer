@@ -59,6 +59,7 @@ export default function HazeView({
 }: HazeViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const blobCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const smoothed = React.useRef<Map<string, SmoothedVoice>>(new Map());
   const hitTargets = React.useRef<HitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
@@ -73,6 +74,10 @@ export default function HazeView({
     if (!canvas || !container) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    if (!blobCanvasRef.current) blobCanvasRef.current = document.createElement("canvas");
+    const blobCanvas = blobCanvasRef.current;
+    const blobCtx = blobCanvas.getContext("2d");
+    if (!blobCtx) return;
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -80,7 +85,10 @@ export default function HazeView({
       const height = container.clientHeight;
       canvas.width = Math.max(1, Math.round(width * dpr));
       canvas.height = Math.max(1, Math.round(height * dpr));
+      blobCanvas.width = canvas.width;
+      blobCanvas.height = canvas.height;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      blobCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       initializedSize.current = false;
     };
     resize();
@@ -187,11 +195,16 @@ export default function HazeView({
         }
       }
 
-      // Draw haze blobs with "screen" blending so overlapping stems glow
-      // together without blowing straight to white the way additive
-      // ("lighter") blending does once a few blobs stack near the center.
-      ctx.globalCompositeOperation = "screen";
+      // Two-pass render: resolve smoothed voice state + hit targets first,
+      // then paint tendrils and oversized soft blobs into an offscreen
+      // buffer that gets blurred and screen-composited back onto the main
+      // canvas. That blur is what turns separate circular halos into one
+      // continuous, melted field — additive blending in the buffer makes
+      // overlapping stems brighten into shared "hot" cores instead of just
+      // stacking flat discs.
       const nextHits: HitTarget[] = [];
+      type Resolved = { voice: Voice; point: { x: number; y: number }; blobRadius: number; emphasis: number; level: number; r: number; g: number; b: number };
+      const resolved: Resolved[] = [];
       for (const voice of voices) {
         const spectrum = stemSpectrum.current.get(voice.base);
         const level = spectrum?.level ?? 0;
@@ -224,16 +237,7 @@ export default function HazeView({
         const point = polar(center, next.radius, next.angle);
         const blobRadius = (radius * 0.32 + next.level * radius * 0.28) * voice.sizeScale * (currentSelected === voice.stem ? 1.1 : 1);
 
-        if (emphasis > 0.005) {
-          const gradient = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, blobRadius);
-          gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.32 + next.level * 0.25) * emphasis})`);
-          gradient.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, ${0.12 * emphasis})`);
-          gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
-          ctx.fillStyle = gradient;
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, blobRadius, 0, TAU);
-          ctx.fill();
-        }
+        if (emphasis > 0.005) resolved.push({ voice, point, blobRadius, emphasis, level: next.level, r, g, b });
 
         // Height indicator on the dashed outer ring, brightness = level.
         if (voice.heightAngle !== null && emphasis > 0.005) {
@@ -250,8 +254,67 @@ export default function HazeView({
 
         nextHits.push({ stem: voice.stem, x: point.x, y: point.y, radius: Math.max(blobRadius, 16) });
       }
-      ctx.globalCompositeOperation = "source-over";
       hitTargets.current = nextHits;
+
+      blobCtx.clearRect(0, 0, width, height);
+      blobCtx.globalCompositeOperation = "lighter";
+
+      // Faint tendrils between nearby, simultaneously active stems — a
+      // visual cue that they're melting into each other, not just glowing
+      // in place.
+      const tendrilReach = radius * 0.85;
+      for (let i = 0; i < resolved.length; i++) {
+        for (let j = i + 1; j < resolved.length; j++) {
+          const a = resolved[i];
+          const c = resolved[j];
+          if (a.voice.stem === c.voice.stem) continue;
+          const dist = Math.hypot(a.point.x - c.point.x, a.point.y - c.point.y);
+          if (dist >= tendrilReach) continue;
+          const strength = (1 - dist / tendrilReach) * Math.min(a.emphasis, c.emphasis) * Math.min(a.level, c.level) * 6;
+          if (strength <= 0.01) continue;
+          const tendril = blobCtx.createLinearGradient(a.point.x, a.point.y, c.point.x, c.point.y);
+          tendril.addColorStop(0, `rgba(${a.r}, ${a.g}, ${a.b}, ${Math.min(0.5, strength)})`);
+          tendril.addColorStop(1, `rgba(${c.r}, ${c.g}, ${c.b}, ${Math.min(0.5, strength)})`);
+          blobCtx.strokeStyle = tendril;
+          blobCtx.lineWidth = Math.max(2, Math.min(a.blobRadius, c.blobRadius) * 0.35);
+          blobCtx.beginPath();
+          blobCtx.moveTo(a.point.x, a.point.y);
+          blobCtx.lineTo(c.point.x, c.point.y);
+          blobCtx.stroke();
+        }
+      }
+
+      for (const { point, blobRadius, emphasis, level, r, g, b } of resolved) {
+        const meltRadius = blobRadius * 1.55;
+        const gradient = blobCtx.createRadialGradient(point.x, point.y, 0, point.x, point.y, meltRadius);
+        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.4 + level * 0.3) * emphasis})`);
+        gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${0.16 * emphasis})`);
+        gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+        blobCtx.fillStyle = gradient;
+        blobCtx.beginPath();
+        blobCtx.arc(point.x, point.y, meltRadius, 0, TAU);
+        blobCtx.fill();
+      }
+      blobCtx.globalCompositeOperation = "source-over";
+
+      const blurPx = Math.max(6, Math.min(26, radius * 0.14));
+      ctx.save();
+      ctx.filter = `blur(${blurPx}px)`;
+      ctx.globalCompositeOperation = "screen";
+      ctx.drawImage(blobCanvas, 0, 0, width, height);
+      ctx.restore();
+
+      // Selection cue: a faint unblurred ring around the selected stem's
+      // voice positions, subtle enough not to read as a hard dot on top of
+      // the melt.
+      for (const entry of resolved) {
+        if (entry.voice.stem !== currentSelected) continue;
+        ctx.strokeStyle = `rgba(${entry.r}, ${entry.g}, ${entry.b}, 0.55)`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(entry.point.x, entry.point.y, entry.blobRadius * 0.7, 0, TAU);
+        ctx.stroke();
+      }
 
       frame.current = window.requestAnimationFrame(draw);
     };
