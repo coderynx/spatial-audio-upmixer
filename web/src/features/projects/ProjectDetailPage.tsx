@@ -78,7 +78,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     }).then(setProject).catch((reason) => setError((reason as Error).message));
   };
   const previewStems = selected?.stems.filter((stem) => project?.prepared_stems.includes(stem.stem_key.split("@", 1)[0])) || [];
-  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null);
+  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering);
   const ready = Boolean(project?.prepared_stems.length);
   const channels = configuration?.choices.layout_channels?.[effectiveManifest?.mixing.channel_layout || "7.1.4"] || ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"];
   const stemNames = project?.prepared_stems || [];
