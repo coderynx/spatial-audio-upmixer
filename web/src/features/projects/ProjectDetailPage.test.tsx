@@ -83,9 +83,8 @@ describe("ProjectDetailPage tabs", () => {
     expect(screen.getByText("Spectral EQ")).toBeInTheDocument();
     expect(screen.getByText("Loudness normalization")).toBeInTheDocument();
     expect(screen.getByText("Reference EQ match")).toBeInTheDocument();
-    // Preview transport and speaker graph are Mixing-tab-only (Mastering
-    // reuses the wider composer-style panels instead).
-    expect(screen.queryByRole("button", { name: /^(Play|Pause)$/i })).not.toBeInTheDocument();
+    // Preview transport and speaker graph stay mounted on the Mastering tab.
+    expect(screen.getByRole("button", { name: /^(Play|Pause)$/i })).toBeInTheDocument();
   });
 
   it("switches to the Delivery tab and exports from there", async () => {

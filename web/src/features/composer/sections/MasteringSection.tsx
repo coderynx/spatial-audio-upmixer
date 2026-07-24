@@ -1,7 +1,7 @@
 import * as React from "react";
 import { FileAudio, Upload, X } from "lucide-react";
 import {
-  NumberField,
+  NullableSliderField,
   SelectField,
   SliderField,
   ToggleField,
@@ -39,11 +39,11 @@ export function MasteringSection({
   const match = manifest.mastering.match_reference;
   const hasReference = masteringReference !== null;
   return (
-    <div className="grid gap-4 rounded-md border p-4 sm:grid-cols-2">
+    <div className="space-y-4">
       {!hideReferenceMatch && (
-      <section className="space-y-3 rounded-md border bg-muted/20 p-3 sm:col-span-2">
+      <section className="space-y-3 rounded-md border bg-muted/20 p-4">
         <div>
-          <p className="text-sm font-medium">Reference EQ match</p>
+          <p className="text-sm font-semibold">Reference EQ match</p>
           <p className="mt-1 text-xs text-muted-foreground">
             Match this job to one WAV or FLAC reference before preset EQ. One
             reference applies to every album track.
@@ -109,275 +109,304 @@ export function MasteringSection({
         {referenceError && (
           <p className="text-xs text-destructive">{referenceError}</p>
         )}
+        <div className="grid gap-4 pt-1 sm:grid-cols-2">
+          <SliderField
+            label="Spectral match strength"
+            value={match.strength}
+            min={0}
+            max={1}
+            step={0.01}
+            disabled={!hasReference || !match.spectrum}
+            onChange={(strength) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  match_reference: { ...match, strength },
+                },
+              })
+            }
+          />
+          <SliderField
+            label="Maximum spectral correction"
+            value={match.max_db}
+            min={0}
+            max={24}
+            step={0.5}
+            suffix=" dB"
+            disabled={!hasReference || !match.spectrum}
+            onChange={(max_db) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  match_reference: { ...match, max_db },
+                },
+              })
+            }
+          />
+          <ToggleField
+            label="Match spectrum"
+            description="Apply per-channel spectral envelope correction."
+            checked={match.spectrum}
+            disabled={!hasReference}
+            onChange={(spectrum) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  match_reference: { ...match, spectrum },
+                },
+              })
+            }
+          />
+          <ToggleField
+            label="Match RMS level"
+            description="Match overall reference loudness before final mastering."
+            checked={match.rms}
+            disabled={!hasReference}
+            onChange={(rms) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  match_reference: { ...match, rms },
+                },
+              })
+            }
+          />
+        </div>
       </section>
       )}
-      {!hideReferenceMatch && (
-      <>
-      <SliderField
-        label="Spectral match strength"
-        value={match.strength}
-        min={0}
-        max={1}
-        step={0.01}
-        disabled={!hasReference || !match.spectrum}
-        onChange={(strength) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              match_reference: { ...match, strength },
-            },
-          })
-        }
-      />
-      <NumberField
-        label="Maximum spectral correction"
-        value={match.max_db}
-        min={0}
-        step={0.5}
-        suffix="dB"
-        hint="Limit per-band correction magnitude."
-        disabled={!hasReference || !match.spectrum}
-        onChange={(max_db) => {
-          if (max_db != null)
+
+      <section className="space-y-3 rounded-md border p-4">
+        <p className="text-sm font-semibold">Loudness</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <ToggleField
+            label="Loudness normalization"
+            description="BS.1770 integrated loudness normalization."
+            checked={manifest.mastering.loudness.normalize}
+            onChange={(normalize) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  loudness: { ...manifest.mastering.loudness, normalize },
+                },
+              })
+            }
+          />
+          <SliderField
+            label="Loudness target"
+            value={manifest.mastering.loudness.target}
+            min={-30}
+            max={-10}
+            step={0.5}
+            suffix=" LKFS"
+            disabled={!manifest.mastering.loudness.normalize}
+            onChange={(target) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  loudness: { ...manifest.mastering.loudness, target },
+                },
+              })
+            }
+          />
+          <SliderField
+            label="True-peak ceiling"
+            value={manifest.mastering.loudness.max_tp}
+            min={-6}
+            max={0}
+            step={0.1}
+            suffix=" dBTP"
+            onChange={(max_tp) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  loudness: { ...manifest.mastering.loudness, max_tp },
+                },
+              })
+            }
+          />
+        </div>
+      </section>
+
+      <section className="space-y-3 rounded-md border p-4">
+        <p className="text-sm font-semibold">Spectral EQ</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <SelectField
+            label="Profile"
+            value={manifest.mastering.eq.profile || "none"}
+            onChange={(profile) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  eq: {
+                    ...manifest.mastering.eq,
+                    profile: profile === "none" ? null : profile,
+                  },
+                },
+              })
+            }
+            options={["none", ...(choices?.eq_profiles || [])].map((value) => ({
+              value,
+              label: value
+                .split("-")
+                .map((part) => part[0].toUpperCase() + part.slice(1))
+                .join(" "),
+            }))}
+          />
+          <SliderField
+            label="EQ strength"
+            value={manifest.mastering.eq.strength}
+            min={0}
+            max={1}
+            step={0.01}
+            disabled={!manifest.mastering.eq.profile}
+            onChange={(strength) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  eq: { ...manifest.mastering.eq, strength },
+                },
+              })
+            }
+          />
+        </div>
+      </section>
+
+      <section className="space-y-3 rounded-md border p-4">
+        <p className="text-sm font-semibold">Bus compressor</p>
+        <SelectField
+          label="Profile"
+          value={manifest.mastering.compressor.profile || "none"}
+          onChange={(profile) =>
             setManifest({
               ...manifest,
               mastering: {
                 ...manifest.mastering,
-                match_reference: { ...match, max_db },
-              },
-            });
-        }}
-      />
-      <ToggleField
-        label="Match spectrum"
-        description="Apply per-channel spectral envelope correction."
-        checked={match.spectrum}
-        disabled={!hasReference}
-        onChange={(spectrum) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              match_reference: { ...match, spectrum },
-            },
-          })
-        }
-      />
-      <ToggleField
-        label="Match RMS level"
-        description="Match overall reference loudness before final mastering."
-        checked={match.rms}
-        disabled={!hasReference}
-        onChange={(rms) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              match_reference: { ...match, rms },
-            },
-          })
-        }
-      />
-      </>
-      )}
-      <ToggleField
-        label="Loudness normalization"
-        description="BS.1770 integrated loudness normalization."
-        checked={manifest.mastering.loudness.normalize}
-        onChange={(normalize) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              loudness: { ...manifest.mastering.loudness, normalize },
-            },
-          })
-        }
-      />
-      <SliderField
-        label="Loudness target"
-        value={manifest.mastering.loudness.target}
-        min={-30}
-        max={-10}
-        step={0.5}
-        suffix=" LKFS"
-        onChange={(target) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              loudness: { ...manifest.mastering.loudness, target },
-            },
-          })
-        }
-      />
-      <SliderField
-        label="True-peak ceiling"
-        value={manifest.mastering.loudness.max_tp}
-        min={-6}
-        max={0}
-        step={0.1}
-        suffix=" dBTP"
-        onChange={(max_tp) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              loudness: { ...manifest.mastering.loudness, max_tp },
-            },
-          })
-        }
-      />
-      <SelectField
-        label="Spectral EQ"
-        value={manifest.mastering.eq.profile || "none"}
-        onChange={(profile) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              eq: {
-                ...manifest.mastering.eq,
-                profile: profile === "none" ? null : profile,
-              },
-            },
-          })
-        }
-        options={["none", ...(choices?.eq_profiles || [])].map((value) => ({
-          value,
-          label: value
-            .split("-")
-            .map((part) => part[0].toUpperCase() + part.slice(1))
-            .join(" "),
-        }))}
-      />
-      <SliderField
-        label="EQ strength"
-        value={manifest.mastering.eq.strength}
-        min={0}
-        max={1}
-        step={0.01}
-        onChange={(strength) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              eq: { ...manifest.mastering.eq, strength },
-            },
-          })
-        }
-      />
-      <SelectField
-        label="Bus compressor"
-        value={manifest.mastering.compressor.profile || "none"}
-        onChange={(profile) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              compressor: {
-                ...manifest.mastering.compressor,
-                profile: profile === "none" ? null : profile,
-              },
-            },
-          })
-        }
-        options={["none", ...(choices?.compressor_profiles || [])].map(
-          (value) => ({
-            value,
-            label: value[0].toUpperCase() + value.slice(1),
-          }),
-        )}
-      />
-      {(
-        [
-          ["threshold_db", "Compressor threshold", "dB", 0.1],
-          ["ratio", "Compressor ratio", "", 0.1],
-          ["attack_ms", "Compressor attack", "ms", 1],
-          ["release_ms", "Compressor release", "ms", 1],
-          ["knee_db", "Compressor knee", "dB", 0.1],
-          ["makeup_db", "Compressor makeup", "dB", 0.1],
-        ] as const
-      ).map(([key, label, suffix, step]) => (
-        <NumberField
-          key={key}
-          label={label}
-          value={manifest.mastering.compressor[key]}
-          step={step}
-          suffix={suffix || undefined}
-          hint="Blank uses profile value."
-          onChange={(value) =>
-            setManifest({
-              ...manifest,
-              mastering: {
-                ...manifest.mastering,
-                compressor: { ...manifest.mastering.compressor, [key]: value },
+                compressor: {
+                  ...manifest.mastering.compressor,
+                  profile: profile === "none" ? null : profile,
+                },
               },
             })
           }
+          options={["none", ...(choices?.compressor_profiles || [])].map(
+            (value) => ({
+              value,
+              label: value[0].toUpperCase() + value.slice(1),
+            }),
+          )}
         />
-      ))}
-      <SelectField
-        label="Bass control"
-        value={manifest.mastering.bass.profile || "none"}
-        onChange={(profile) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              bass: {
-                ...manifest.mastering.bass,
-                profile: profile === "none" ? null : profile,
-              },
-            },
-          })
-        }
-        options={["none", ...(choices?.bass_profiles || [])].map((value) => ({
-          value,
-          label: value[0].toUpperCase() + value.slice(1),
-        }))}
-      />
-      {(
-        [
-          ["sub_gain_db", "Sub gain", "dB", 0.1],
-          ["mid_gain_db", "Mid-bass gain", "dB", 0.1],
-          ["mono_cutoff_hz", "Mono cutoff", "Hz", 1],
-          ["lfe_gain_db", "Mastering LFE trim", "dB", 0.1],
-        ] as const
-      ).map(([key, label, suffix, step]) => (
-        <NumberField
-          key={key}
-          label={label}
-          value={manifest.mastering.bass[key]}
-          step={step}
-          suffix={suffix}
-          hint="Blank uses profile value."
-          onChange={(value) =>
-            setManifest({
-              ...manifest,
-              mastering: {
-                ...manifest.mastering,
-                bass: { ...manifest.mastering.bass, [key]: value },
-              },
-            })
-          }
-        />
-      ))}
-      <ToggleField
-        label="Bass exciter"
-        description="Add low-frequency harmonics before loudness normalization."
-        checked={manifest.mastering.bass.excite}
-        onChange={(excite) =>
-          setManifest({
-            ...manifest,
-            mastering: {
-              ...manifest.mastering,
-              bass: { ...manifest.mastering.bass, excite },
-            },
-          })
-        }
-      />
+        <div className="grid gap-4 sm:grid-cols-2">
+          {(
+            [
+              ["threshold_db", "Threshold", "dB", 0.5, -40, 0, -18],
+              ["ratio", "Ratio", "", 0.1, 1, 10, 2],
+              ["attack_ms", "Attack", "ms", 1, 1, 100, 20],
+              ["release_ms", "Release", "ms", 5, 20, 1000, 200],
+              ["knee_db", "Knee", "dB", 0.5, 0, 24, 6],
+              ["makeup_db", "Makeup gain", "dB", 0.5, 0, 12, 0],
+            ] as const
+          ).map(([key, label, suffix, step, min, max, defaultValue]) => (
+            <NullableSliderField
+              key={key}
+              label={label}
+              value={manifest.mastering.compressor[key]}
+              defaultValue={defaultValue}
+              min={min}
+              max={max}
+              step={step}
+              suffix={suffix ? ` ${suffix}` : undefined}
+              disabled={!manifest.mastering.compressor.profile}
+              onChange={(value) =>
+                setManifest({
+                  ...manifest,
+                  mastering: {
+                    ...manifest.mastering,
+                    compressor: { ...manifest.mastering.compressor, [key]: value },
+                  },
+                })
+              }
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-3 rounded-md border p-4">
+        <p className="text-sm font-semibold">Bass control</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <SelectField
+            label="Profile"
+            value={manifest.mastering.bass.profile || "none"}
+            onChange={(profile) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  bass: {
+                    ...manifest.mastering.bass,
+                    profile: profile === "none" ? null : profile,
+                  },
+                },
+              })
+            }
+            options={["none", ...(choices?.bass_profiles || [])].map((value) => ({
+              value,
+              label: value[0].toUpperCase() + value.slice(1),
+            }))}
+          />
+          <ToggleField
+            label="Bass exciter"
+            description="Add low-frequency harmonics before loudness normalization."
+            checked={manifest.mastering.bass.excite}
+            onChange={(excite) =>
+              setManifest({
+                ...manifest,
+                mastering: {
+                  ...manifest.mastering,
+                  bass: { ...manifest.mastering.bass, excite },
+                },
+              })
+            }
+          />
+          {(
+            [
+              ["sub_gain_db", "Sub gain", "dB", 0.1, -12, 12, 0],
+              ["mid_gain_db", "Mid-bass gain", "dB", 0.1, -12, 12, 0],
+              ["mono_cutoff_hz", "Mono cutoff", "Hz", 1, 40, 250, 100],
+              ["lfe_gain_db", "Mastering LFE trim", "dB", 0.1, -12, 12, 0],
+            ] as const
+          ).map(([key, label, suffix, step, min, max, defaultValue]) => (
+            <NullableSliderField
+              key={key}
+              label={label}
+              value={manifest.mastering.bass[key]}
+              defaultValue={defaultValue}
+              min={min}
+              max={max}
+              step={step}
+              suffix={suffix ? ` ${suffix}` : undefined}
+              disabled={!manifest.mastering.bass.profile}
+              onChange={(value) =>
+                setManifest({
+                  ...manifest,
+                  mastering: {
+                    ...manifest.mastering,
+                    bass: { ...manifest.mastering.bass, [key]: value },
+                  },
+                })
+              }
+            />
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

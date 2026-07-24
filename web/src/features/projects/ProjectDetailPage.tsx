@@ -222,11 +222,31 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           } catch (reason) { setRawError((reason as Error).message); }
         }} />
       </section>
-    ) : <>
-      {/* Preview + speaker routing graph stay visible on the Mixing tab. It
-          needs a narrow side rail next to them (it was designed for 330px);
-          Mastering/Delivery reuse wider composer-style panels instead. */}
-      {activeTab === "mixing" && <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[230px_minmax(0,1fr)_330px]">
+    ) : (() => {
+      const previewPanel = <section className="flex min-h-0 flex-col gap-3">
+        <Transport
+          playing={preview.playing}
+          currentTime={preview.currentTime}
+          duration={preview.duration}
+          volume={preview.volume}
+          loop={preview.loop}
+          disabled={!preview.supported || !preview.ready || !previewStems.length}
+          onPlayPause={() => void preview.playPause()}
+          onStop={preview.stop}
+          onToggleLoop={preview.toggleLoop}
+          onSetVolume={preview.setVolume}
+          onBeginScrub={preview.beginScrub}
+          onScrubTo={preview.scrubTo}
+          onCommitScrub={(value) => void preview.commitScrub(value)}
+        />
+        {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}
+        <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} className="min-h-0 flex-[3]" />
+        <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} className="h-40 shrink-0" />
+      </section>;
+      // Preview stays mounted across all three tabs (same center/left column
+      // position) so playback and the routing graphs never stop just because
+      // the user switched to Mastering or Delivery.
+      if (activeTab === "mixing") return <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[230px_minmax(0,1fr)_330px]">
         <aside className="min-h-0 overflow-y-auto rounded-lg border p-3">
           <p className="mb-3 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tracks</p>
           {project.tracks.map((track) => <button key={track.id} onClick={() => setSelectedTrack(track.id)} className={`mb-1 w-full rounded-md px-3 py-2 text-left text-sm ${selectedTrack === track.id ? "bg-accent font-medium" : "hover:bg-muted"}`}>{track.asset.title || track.asset.filename}</button>)}
@@ -246,49 +266,36 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             onDropOn={() => { if (draggedStem) reorderStems(draggedStem, stem); setDraggedStem(null); }}
           />)}
         </aside>
-        <section className="flex min-h-0 flex-col gap-3">
-          <Transport
-            playing={preview.playing}
-            currentTime={preview.currentTime}
-            duration={preview.duration}
-            volume={preview.volume}
-            loop={preview.loop}
-            disabled={!preview.supported || !preview.ready || !previewStems.length}
-            onPlayPause={() => void preview.playPause()}
-            onStop={preview.stop}
-            onToggleLoop={preview.toggleLoop}
-            onSetVolume={preview.setVolume}
-            onBeginScrub={preview.beginScrub}
-            onScrubTo={preview.scrubTo}
-            onCommitScrub={(value) => void preview.commitScrub(value)}
-          />
-          {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}
-          <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} className="min-h-0 flex-[3]" />
-          <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} className="h-40 shrink-0" />
-        </section>
+        {previewPanel}
         <aside className="min-h-0 overflow-y-auto rounded-lg border p-4">{effectiveManifest && <><div className="flex items-center justify-between"><p className="text-sm font-semibold">Routing preset</p><select aria-label="Edit scope" className="h-8 rounded border bg-background px-1 text-xs" value={editScope} onChange={(event) => setEditScope(event.target.value as "project" | "track")}><option value="project">Project</option><option value="track" disabled={!selected}>Track</option></select></div><p className="mt-1 text-xs text-muted-foreground">{editScope === "project" ? "Default for every track" : `Override: ${selected?.asset.title || selected?.asset.filename}`}</p><select className="mt-2 flex h-9 w-full rounded-md border bg-background px-2 text-sm" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets || ["balanced", "intimate", "rhythmic", "spacious", "live", "detailed"]).map((name) => <option key={name}>{name}</option>)}</select><label className="mt-3 block text-xs text-muted-foreground">Intensity <span className="float-right">{presetIntensity.toFixed(2)}</span><Slider className="mt-2" min={0} max={1} step={0.01} value={[presetIntensity]} onValueChange={([value]) => setPresetIntensity(value)} /></label><Button className="mt-3 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 className="h-4 w-4" />Apply preset</Button><div className="mt-5 border-t pt-4">{selectedStem ? <StemControls stem={selectedStem} route={routing[selectedStem] || {}} channels={channels} enabled={effectiveManifest.mixing.stem_enabled[selectedStem] !== false} gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onGain={(gain) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [selectedStem]: gain } } })} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: { ...effectiveManifest.mixing.stem_eq, [selectedStem]: eq } } })} /> : <p className="text-sm text-muted-foreground">Select stem to edit sends.</p>}</div><div className="mt-5 border-t pt-4"><div className="flex items-center justify-between text-sm"><span className="font-medium">Source anchor</span><span className="text-muted-foreground">{Math.round(effectiveManifest.mixing.stem_source_anchor_strength * 100)}%</span></div><Slider aria-label="Source anchor" className="mt-3" min={0} max={1} step={0.01} value={[effectiveManifest.mixing.stem_source_anchor_strength]} onValueChange={([stem_source_anchor_strength]) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } })} /><p className="mt-2 text-xs text-muted-foreground">Blends original channel pairs back into the mix.</p></div></>}</aside>
-      </div>}
-      {activeTab === "mastering" && manifest && <section className="mt-4 min-h-0 flex-1 overflow-auto">
-        <MasteringSection
-          manifest={manifest}
-          setManifest={(update) => updateProjectManifest(typeof update === "function" ? update(manifest) : update)}
-          configuration={configuration}
-          masteringReference={project.mastering_reference || null}
-          referenceUploading={false}
-          referenceError={null}
-          onReferenceUpload={(file) => {
-            void api.uploadMasteringReference(project.import_id, file)
-              .then((reference) => saveReference(reference.id))
-              .catch((reason) => setError((reason as Error).message));
-          }}
-          onReferenceClear={() => { void saveReference(null); }}
-        />
-      </section>}
-      {activeTab === "delivery" && manifest && <section className="mt-4 min-h-0 flex-1 space-y-4 overflow-auto">
-        <ProjectDeliverySection manifest={manifest} configuration={configuration} onChange={updateProjectManifest} />
-        <Button disabled={exporting} onClick={() => void exportProject()}><Download />{exporting ? "Queueing" : "Export project"}</Button>
-      </section>}
-    </>}
+      </div>;
+      if (activeTab === "mastering") return manifest && <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
+        {previewPanel}
+        <section className="min-h-0 overflow-auto">
+          <MasteringSection
+            manifest={manifest}
+            setManifest={(update) => updateProjectManifest(typeof update === "function" ? update(manifest) : update)}
+            configuration={configuration}
+            masteringReference={project.mastering_reference || null}
+            referenceUploading={false}
+            referenceError={null}
+            onReferenceUpload={(file) => {
+              void api.uploadMasteringReference(project.import_id, file)
+                .then((reference) => saveReference(reference.id))
+                .catch((reason) => setError((reason as Error).message));
+            }}
+            onReferenceClear={() => { void saveReference(null); }}
+          />
+        </section>
+      </div>;
+      return manifest && <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
+        {previewPanel}
+        <section className="min-h-0 space-y-4 overflow-auto">
+          <ProjectDeliverySection manifest={manifest} configuration={configuration} onChange={updateProjectManifest} />
+          <Button disabled={exporting} onClick={() => void exportProject()}><Download />{exporting ? "Queueing" : "Export project"}</Button>
+        </section>
+      </div>;
+    })()}
   </main>;
 }
 

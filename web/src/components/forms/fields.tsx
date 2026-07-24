@@ -85,6 +85,64 @@ export function SliderField({
   );
 }
 
+export function NullableSliderField({
+  label,
+  value,
+  defaultValue,
+  min,
+  max,
+  step,
+  suffix = "",
+  hint,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  value: number | null;
+  defaultValue: number;
+  min: number;
+  max: number;
+  step: number;
+  suffix?: string;
+  hint?: string;
+  disabled?: boolean;
+  onChange: (value: number | null) => void;
+}) {
+  const active = value != null;
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label>{label}</Label>
+        <div className="flex items-center gap-2">
+          {active && (
+            <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs tabular-nums">
+              {value.toFixed(step < 0.1 ? 2 : 1)}
+              {suffix}
+            </span>
+          )}
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(active ? null : defaultValue)}
+            className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          >
+            {active ? "Use profile" : "Override"}
+          </button>
+        </div>
+      </div>
+      <Slider
+        value={[value ?? defaultValue]}
+        min={min}
+        max={max}
+        step={step}
+        disabled={disabled || !active}
+        onValueChange={([next]) => onChange(next)}
+      />
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  );
+}
+
 export function NumberField({
   label,
   value,
