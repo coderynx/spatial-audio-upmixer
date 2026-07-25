@@ -20,19 +20,6 @@ export function ProjectDeliverySection({
   return (
     <div className="grid gap-4 rounded-md border p-4 sm:grid-cols-2">
       <SelectField
-        label="Speaker layout"
-        value={manifest.mixing.channel_layout}
-        onChange={(channel_layout) =>
-          onChange({
-            ...manifest,
-            mixing: { ...manifest.mixing, channel_layout },
-          })
-        }
-        options={(
-          choices?.channel_layouts || ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
-        ).map((value) => ({ value, label: value }))}
-      />
-      <SelectField
         label="Container"
         value={manifest.format.type}
         onChange={(type) =>

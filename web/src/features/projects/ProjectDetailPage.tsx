@@ -9,6 +9,7 @@ import {
   GripVertical,
   Package,
   RotateCcw,
+  Settings,
   SlidersHorizontal,
   Wand2,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import { cn } from "@/lib/utils";
 import HazeView from "./HazeView";
 import ElevationView from "./ElevationView";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
+import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import { Transport } from "./Transport";
 import { useStemPreview } from "./useStemPreview";
 
@@ -42,6 +44,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const [editScope, setEditScope] = React.useState<"project" | "track">("project");
   const [activeTab, setActiveTab] = React.useState<"mixing" | "mastering" | "delivery">("mixing");
   const [manifestView, setManifestView] = React.useState(false);
+  const [settingsView, setSettingsView] = React.useState(false);
   const [rawManifest, setRawManifest] = React.useState("");
   const [rawError, setRawError] = React.useState<string | null>(null);
   const [preset, setPreset] = React.useState("balanced");
@@ -123,6 +126,16 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       }));
     } catch (reason) { setError((reason as Error).message); }
   };
+  const renameProject = async (name: string) => {
+    if (!projectId || !project || !manifest) return;
+    try {
+      setProject(await api.saveProject(projectId, {
+        name,
+        manifest: manifest as unknown as Record<string, unknown>,
+        scene: project.scene as Record<string, unknown>,
+      }));
+    } catch (reason) { setError((reason as Error).message); }
+  };
   const previewStems = selected?.stems.filter((stem) => project?.prepared_stems.includes(stem.stem_key.split("@", 1)[0])) || [];
   // Stereo stems get two halos (L/R) in the 3D scene instead of one collapsed
   // to a single point — keyed by base stem name, same convention as routing.
@@ -132,9 +145,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     for (const stem of source) counts[stem.stem_key.split("@", 1)[0]] = stem.channels;
     return counts;
   }, [selected, project]);
-  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering);
-  const ready = Boolean(project?.prepared_stems.length);
   const channels = configuration?.choices.layout_channels?.[effectiveManifest?.mixing.channel_layout || "7.1.4"] || ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"];
+  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering, channels);
+  const ready = Boolean(project?.prepared_stems.length);
   const stemNames = project?.prepared_stems || [];
   // Reorder is a display-only preference (no backend field for it): kept in
   // client state and merged against the current stem list every render, so
@@ -199,19 +212,40 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           <TabsTrigger value="delivery" className="gap-2"><Package className="h-4 w-4" />Delivery</TabsTrigger>
         </TabsList>
       </Tabs>
-      <Button
-        variant={manifestView ? "default" : "outline"}
-        size="sm"
-        onClick={() => {
-          if (!manifestView && effectiveManifest) setRawManifest(JSON.stringify(effectiveManifest, null, 2));
-          setManifestView((value) => !value);
-        }}
-      >
-        <Code2 className="h-4 w-4" />
-        {manifestView ? "Close manifest" : "Manifest JSON"}
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button
+          variant={settingsView ? "default" : "outline"}
+          size="sm"
+          onClick={() => { setManifestView(false); setSettingsView((value) => !value); }}
+        >
+          <Settings className="h-4 w-4" />
+          {settingsView ? "Close settings" : "Project settings"}
+        </Button>
+        <Button
+          variant={manifestView ? "default" : "outline"}
+          size="sm"
+          onClick={() => {
+            if (!manifestView && effectiveManifest) setRawManifest(JSON.stringify(effectiveManifest, null, 2));
+            setSettingsView(false);
+            setManifestView((value) => !value);
+          }}
+        >
+          <Code2 className="h-4 w-4" />
+          {manifestView ? "Close manifest" : "Manifest JSON"}
+        </Button>
+      </div>
     </div>
-    {manifestView ? (
+    {settingsView ? (
+      <section className="mt-4 min-h-0 flex-1 overflow-auto rounded-lg border p-4">
+        <ProjectSettingsSection
+          project={project}
+          manifest={effectiveManifest || manifest}
+          configuration={configuration}
+          onRename={(name) => void renameProject(name)}
+          onChange={(next) => updateProjectManifest(next)}
+        />
+      </section>
+    ) : manifestView ? (
       <section className="mt-4 min-h-0 flex-1 overflow-auto rounded-lg border p-4">
         <AdvancedSection rawManifest={rawManifest} rawError={rawError} onChange={(value) => {
           setRawManifest(value);
@@ -253,9 +287,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       // the user switched to Mastering or Delivery.
       if (activeTab === "mixing") return <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[230px_minmax(0,1fr)_330px]">
         <aside className="min-h-0 overflow-y-auto rounded-lg border p-3">
-          <p className="mb-3 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tracks</p>
-          {project.tracks.map((track) => <button key={track.id} onClick={() => setSelectedTrack(track.id)} className={`mb-1 w-full rounded-md px-3 py-2 text-left text-sm ${selectedTrack === track.id ? "bg-accent font-medium" : "hover:bg-muted"}`}>{track.asset.title || track.asset.filename}</button>)}
-          <p className="mt-5 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Stems</p>
+          {project.tracks.length > 1 && <>
+            <p className="mb-3 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tracks</p>
+            {project.tracks.map((track) => <button key={track.id} onClick={() => setSelectedTrack(track.id)} className={`mb-1 w-full rounded-md px-3 py-2 text-left text-sm ${selectedTrack === track.id ? "bg-accent font-medium" : "hover:bg-muted"}`}>{track.asset.title || track.asset.filename}</button>)}
+          </>}
+          <p className={cn("px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground", project.tracks.length > 1 && "mt-5")}>Stems</p>
           {orderedStems.map((stem) => <StemRow
             key={stem}
             stem={stem}
@@ -380,7 +416,8 @@ function StemControls({ stem, route, channels, enabled, gain, eq, onRoute, onGai
   const position = routePosition(route, channels);
   const setPosition = (patch: Partial<typeof position>) => onRoute(routeForPosition(channels, { ...position, ...patch }, route.LFE || 0));
   const StemIcon = getStemIcon(stem);
-  return <div className="space-y-4"><p className="flex items-center gap-2 text-sm font-semibold"><StemIcon className="h-4 w-4 shrink-0" style={{ color: getStemColor(stem) }} /><span className="min-w-0 flex-1 truncate">{stem}</span><span className="text-xs font-normal text-muted-foreground">{enabled ? "enabled" : "muted"}</span></p><p className="text-xs text-muted-foreground">Position writes the same explicit speaker matrix used by export.</p><label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><ArrowLeftRight className="h-3.5 w-3.5" />Front <span className="ml-auto">Back</span></span><Slider aria-label="Front to back" className="mt-2" min={0} max={1} step={0.01} value={[position.depth]} onValueChange={([depth]) => setPosition({ depth })} /></label><label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><ArrowUpDown className="h-3.5 w-3.5" />Floor <span className="ml-auto">Height</span></span><Slider aria-label="Floor to height" className="mt-2" min={0} max={1} step={0.01} value={[position.height]} onValueChange={([height]) => setPosition({ height })} /></label><label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><SlidersHorizontal className="h-3.5 w-3.5" />Gain <span className="ml-auto">{gain.toFixed(1)} dB</span></span><Slider className="mt-2" min={-12} max={6} step={0.1} value={[gain]} onValueChange={([value]) => onGain(value)} /></label><label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><AudioWaveform className="h-3.5 w-3.5" />EQ</span><select className="mt-2 flex h-8 w-full rounded border bg-background px-2" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option>{(stemEqProfiles || ["vocal-presence", "vocal-warmth", "bass-warmth", "bass-cut", "drums-punch", "other-air"]).filter((name) => name !== "flat").map((name) => <option key={name} value={name}>{name}</option>)}</select></label></div>;
+  const hasHeight = channels.includes("TFL") || channels.includes("TFR") || channels.includes("TBL") || channels.includes("TBR");
+  return <div className="space-y-4"><p className="flex items-center gap-2 text-sm font-semibold"><StemIcon className="h-4 w-4 shrink-0" style={{ color: getStemColor(stem) }} /><span className="min-w-0 flex-1 truncate">{stem}</span><span className="text-xs font-normal text-muted-foreground">{enabled ? "enabled" : "muted"}</span></p><p className="text-xs text-muted-foreground">Position writes the same explicit speaker matrix used by export.</p><label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><ArrowLeftRight className="h-3.5 w-3.5" />Front <span className="ml-auto">Back</span></span><Slider aria-label="Front to back" className="mt-2" min={0} max={1} step={0.01} value={[position.depth]} onValueChange={([depth]) => setPosition({ depth })} /></label>{hasHeight && <label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><ArrowUpDown className="h-3.5 w-3.5" />Floor <span className="ml-auto">Height</span></span><Slider aria-label="Floor to height" className="mt-2" min={0} max={1} step={0.01} value={[position.height]} onValueChange={([height]) => setPosition({ height })} /></label>}<label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><SlidersHorizontal className="h-3.5 w-3.5" />Gain <span className="ml-auto">{gain.toFixed(1)} dB</span></span><Slider className="mt-2" min={-12} max={6} step={0.1} value={[gain]} onValueChange={([value]) => onGain(value)} /></label><label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><AudioWaveform className="h-3.5 w-3.5" />EQ</span><select className="mt-2 flex h-8 w-full rounded border bg-background px-2" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option>{(stemEqProfiles || ["vocal-presence", "vocal-warmth", "bass-warmth", "bass-cut", "drums-punch", "other-air"]).filter((name) => name !== "flat").map((name) => <option key={name} value={name}>{name}</option>)}</select></label></div>;
 }
 
 function routePosition(route: Record<string, number>, channels: string[]) {

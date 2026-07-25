@@ -104,7 +104,7 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
         raise ValueError("Unknown channel layout")
     mixing["spatial"] = {"profile": "balanced", "intensity": 0.0, "preanalyze": False}
     mixing["stem_source_anchor_strength"] = mixing.get("stem_source_anchor_strength", 0.0)
-    if "stem_routing" not in mixing:
+    if not mixing.get("stem_routing"):
         mixing["stem_routing"] = build_stem_routing(
             stems, FORMAT_MAP[mixing["channel_layout"]]
         )

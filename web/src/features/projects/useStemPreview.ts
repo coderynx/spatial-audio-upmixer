@@ -156,6 +156,7 @@ function createStemSends(
   ctx: AudioContext,
   input: AudioNode,
   speakerBuses: Map<string, SpeakerBus>,
+  channels: string[],
 ): { sends: Partial<Record<string, GainNode>>; ownNodes: AudioNode[] } {
   const splitter = ctx.createChannelSplitter(2);
   input.connect(splitter);
@@ -197,7 +198,7 @@ function createStemSends(
   ];
 
   const sends: Partial<Record<string, GainNode>> = {};
-  for (const channel of POSITIONAL_CHANNELS) {
+  for (const channel of channels) {
     const bus = speakerBuses.get(channel);
     if (!bus) continue;
     const send = ctx.createGain();
@@ -253,7 +254,23 @@ export function useStemPreview(
   mix?: MixPreview,
   sourcePreviewUrl: string | null = null,
   mastering?: MasterPreview,
+  // Full channel set (including LFE) of the project's selected speaker
+  // layout — defaults to every positional channel for callers (e.g. tests)
+  // that don't care about layout-scoping the preview's speaker bed.
+  layoutChannels: string[] = POSITIONAL_CHANNELS,
 ) {
+  const layoutChannelsKey = layoutChannels.join(",");
+  // Stable-identity, layout-scoped speaker list: this is what actually
+  // drives the ambisonic speaker-bus construction below, replacing the old
+  // hardcoded `POSITIONAL_CHANNELS` so switching e.g. 7.1.4 -> 5.1 tears
+  // down and rebuilds only the speakers the chosen layout actually has.
+  const positionalChannels = React.useMemo(
+    () => layoutChannels.filter((channel) => channel !== "LFE" && speakerCoordinates[channel]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on layoutChannelsKey, not `layoutChannels` (fresh array identity every render)
+    [layoutChannelsKey],
+  );
+  const positionalChannelsRef = React.useRef(positionalChannels);
+  positionalChannelsRef.current = positionalChannels;
   const context = React.useRef<AudioContext | null>(null);
   const master = React.useRef<GainNode | null>(null);
   const softLimit = React.useRef<WaveShaperNode | null>(null);
@@ -317,9 +334,18 @@ export function useStemPreview(
   // renderer input is the channel bed, not the stems (see `SpeakerBus`).
   // "LFE" is included even though it has no ambisonic bus (see `lfeMuteGain`).
   const [speakerEnabled, setSpeakerEnabled] = React.useState<Record<string, boolean>>(
-    () => Object.fromEntries([...POSITIONAL_CHANNELS, "LFE"].map((channel) => [channel, true])),
+    () => Object.fromEntries([...positionalChannels, "LFE"].map((channel) => [channel, true])),
   );
-  const key = `${stems.map((stem) => `${stem.id}:${stem.preview_url || stem.audio_url}`).join("|")}|${sourcePreviewUrl || ""}`;
+  // Layout changed (not just the initial mount): drop mute state for
+  // speakers the new layout no longer has and default any newly-added ones
+  // to enabled, rather than carrying stale entries across layouts.
+  const previousLayoutKey = React.useRef(layoutChannelsKey);
+  React.useEffect(() => {
+    if (previousLayoutKey.current === layoutChannelsKey) return;
+    previousLayoutKey.current = layoutChannelsKey;
+    setSpeakerEnabled(Object.fromEntries([...positionalChannels, "LFE"].map((channel) => [channel, true])));
+  }, [layoutChannelsKey, positionalChannels]);
+  const key = `${stems.map((stem) => `${stem.id}:${stem.preview_url || stem.audio_url}`).join("|")}|${sourcePreviewUrl || ""}|${layoutChannelsKey}`;
   // Value-stable key: `mastering` is a fresh object every render (the project
   // page rebuilds its manifest on every edit, including unrelated mixing
   // edits), but the mastering audio graph only needs rebuilding when the
@@ -694,7 +720,7 @@ export function useStemPreview(
       }
 
       const routeScale = estimateRouteScale(route);
-      for (const channel of POSITIONAL_CHANNELS) {
+      for (const channel of positionalChannelsRef.current) {
         const send = node.sends[channel];
         if (!send) continue;
         const weight = route[channel] || 0;
@@ -736,7 +762,7 @@ export function useStemPreview(
     binDecoderNode.out.connect(preMasterBusNode);
 
     const busesMap = new Map<string, SpeakerBus>();
-    for (const channel of POSITIONAL_CHANNELS) {
+    for (const channel of positionalChannelsRef.current) {
       const muteGain = ctx.createGain();
       muteGain.gain.value = speakerEnabled[channel] === false ? 0 : 1;
       const encoder = new AmbiMonoEncoder(ctx, AMBISONIC_ORDER);
@@ -794,14 +820,14 @@ export function useStemPreview(
 
           if (entry.anchor) {
             const stemInput = ctx.createGain();
-            const built = createStemSends(ctx, stemInput, busesMap);
+            const built = createStemSends(ctx, stemInput, busesMap, positionalChannelsRef.current);
             nodes.current.set(entry.id, {
               buffer, source: null, stemGain: null, sends: built.sends, ownNodes: [stemInput, ...built.ownNodes],
               lfeGain: null, lfeFilters: null, analyser: null,
             });
           } else {
             const stemGain = ctx.createGain();
-            const built = createStemSends(ctx, stemGain, busesMap);
+            const built = createStemSends(ctx, stemGain, busesMap, positionalChannelsRef.current);
             const lfeGain = ctx.createGain();
             const lfeFilter1 = ctx.createBiquadFilter();
             const lfeFilter2 = ctx.createBiquadFilter();

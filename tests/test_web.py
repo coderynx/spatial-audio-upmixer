@@ -371,6 +371,41 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
         assert expanded.json()["requested_stems"] == ["Vocals", "Kick", "Bass"]
 
 
+def test_project_seeds_stem_routing_when_client_sends_empty_dict(tmp_path, monkeypatch):
+    """The web client always sends `mixing.stem_routing` (default `{}`) rather than
+    omitting the key, so seeding must trigger on an empty dict, not just a missing
+    one — otherwise every stem is silent in preview/export until the user manually
+    applies a routing preset."""
+    settings = Settings(
+        data_dir=tmp_path,
+        database_url=f"sqlite:///{tmp_path / 'projects.db'}",
+        worker_count=1,
+    )
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.api.ensure_stem_separation_available", lambda *_args: None)
+    with TestClient(create_app(settings)) as client:
+        imported = client.post(
+            "/api/v1/imports",
+            files=[("files", ("tone.wav", _wav_bytes(), "audio/wav"))],
+            data={"relative_paths": "tone.wav"},
+        ).json()
+        response = client.post("/api/v1/projects", json={
+            "import_id": imported["id"],
+            "name": "Seeded routing",
+            "manifest": {
+                "version": "1.0.0",
+                "engine": {"mode": "stem", "stems": ["Vocals", "Bass"]},
+                "mixing": {"channel_layout": "7.1.4", "stem_routing": {}},
+            },
+            "scene": {},
+        })
+        assert response.status_code == 201
+        stem_routing = response.json()["manifest"]["mixing"]["stem_routing"]
+        assert stem_routing.get("Vocals")
+        assert stem_routing.get("Bass")
+
+
 def test_project_view_builds_stem_urls_from_catalogued_stems(tmp_path, monkeypatch):
     from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
     from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectStem, ProjectTrack
