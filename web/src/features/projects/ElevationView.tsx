@@ -244,17 +244,6 @@ export default function ElevationView({
       ctx.drawImage(blobCanvas, 0, 0, width, height);
       ctx.restore();
 
-      // Selection cue: a faint unblurred ring, not a hard dot, on top of
-      // the melt.
-      for (const entry of resolved) {
-        if (entry.voice.stem !== currentSelected) continue;
-        ctx.strokeStyle = `rgba(${entry.r}, ${entry.g}, ${entry.b}, 0.55)`;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(entry.point.x, entry.point.y, entry.blobRadius * 0.7, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-
       frame.current = window.requestAnimationFrame(draw);
     };
     frame.current = window.requestAnimationFrame(draw);

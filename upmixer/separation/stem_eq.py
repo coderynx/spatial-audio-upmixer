@@ -145,12 +145,12 @@ class StemEQ:
         n_taps: int = 511,
     ) -> None:
         for stem_name, profile in profiles.items():
-            if profile not in STEM_EQ_PROFILES:
+            if profile and profile not in STEM_EQ_PROFILES:
                 raise KeyError(
                     f"Unknown stem EQ profile '{profile}' for stem '{stem_name}'. "
                     f"Valid choices: {STEM_EQ_PROFILE_NAMES}"
                 )
-        self._profiles = profiles
+        self._profiles = {name: profile for name, profile in profiles.items() if profile}
         self._sr = sample_rate
         self._n_taps = n_taps
 

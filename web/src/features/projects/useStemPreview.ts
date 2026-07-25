@@ -274,6 +274,11 @@ export function useStemPreview(
   const speakerBuses = React.useRef<Map<string, SpeakerBus>>(new Map());
   const preMasterBus = React.useRef<GainNode | null>(null);
   const lfeBus = React.useRef<GainNode | null>(null);
+  // Gates the LFE bus independently of any stem — same per-speaker mute idea
+  // as `SpeakerBus.muteGain`, but LFE has no ambisonic encoder (it bypasses
+  // the binaural render entirely), so it needs its own gate on the way into
+  // `mergePoint`. Keyed into the same `speakerEnabled` map under "LFE".
+  const lfeMuteGain = React.useRef<GainNode | null>(null);
   const mergePoint = React.useRef<GainNode | null>(null);
   const masteringNodes = React.useRef<AudioNode[]>([]);
   const resolvedBass = React.useRef<{ active: boolean; lfeGainDb: number }>({ active: false, lfeGainDb: 0 });
@@ -310,8 +315,9 @@ export function useStemPreview(
   const [supported] = React.useState(() => Boolean(window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext));
   // Per-speaker mute state — independent of stem mute/solo, since the
   // renderer input is the channel bed, not the stems (see `SpeakerBus`).
+  // "LFE" is included even though it has no ambisonic bus (see `lfeMuteGain`).
   const [speakerEnabled, setSpeakerEnabled] = React.useState<Record<string, boolean>>(
-    () => Object.fromEntries(POSITIONAL_CHANNELS.map((channel) => [channel, true])),
+    () => Object.fromEntries([...POSITIONAL_CHANNELS, "LFE"].map((channel) => [channel, true])),
   );
   const key = `${stems.map((stem) => `${stem.id}:${stem.preview_url || stem.audio_url}`).join("|")}|${sourcePreviewUrl || ""}`;
   // Value-stable key: `mastering` is a fresh object every render (the project
@@ -462,6 +468,8 @@ export function useStemPreview(
     preMasterBus.current = null;
     lfeBus.current?.disconnect();
     lfeBus.current = null;
+    lfeMuteGain.current?.disconnect();
+    lfeMuteGain.current = null;
     mergePoint.current?.disconnect();
     mergePoint.current = null;
     softLimit.current?.disconnect();
@@ -600,6 +608,7 @@ export function useStemPreview(
     speakerBuses.current.forEach((bus, channel) => {
       bus.muteGain.gain.value = speakerEnabled[channel] === false ? 0 : 1;
     });
+    if (lfeMuteGain.current) lfeMuteGain.current.gain.value = speakerEnabled.LFE === false ? 0 : 1;
   }, [speakerEnabled]);
 
   React.useEffect(() => {
@@ -748,10 +757,13 @@ export function useStemPreview(
     softLimitNode.curve = buildSoftLimitCurve();
     softLimitNode.oversample = "4x";
     const output = ctx.createGain();
-    lfeBusNode.connect(mergePointNode);
+    const lfeMuteGainNode = ctx.createGain();
+    lfeMuteGainNode.gain.value = speakerEnabled.LFE === false ? 0 : 1;
+    lfeBusNode.connect(lfeMuteGainNode).connect(mergePointNode);
     mergePointNode.connect(softLimitNode).connect(output).connect(ctx.destination);
 
     hoaBus.current = hoaBusNode;
+    lfeMuteGain.current = lfeMuteGainNode;
     rotator.current = rotatorNode;
     binDecoder.current = binDecoderNode;
     speakerBuses.current = busesMap;

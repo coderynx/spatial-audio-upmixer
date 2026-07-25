@@ -292,7 +292,7 @@ export function StemsSection({
               className="flex h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             >
               <option value="none">None</option>
-              {(configuration?.choices.stem_eq_profiles || []).map(
+              {(configuration?.choices.stem_eq_profiles || []).filter((profile) => profile !== "flat").map(
                 (profile) => (
                   <option key={profile} value={profile}>
                     {profile}

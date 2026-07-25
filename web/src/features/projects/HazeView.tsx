@@ -13,6 +13,7 @@ type Voice = { key: string; stem: string; base: string; angle: number; heightAng
 type SmoothedVoice = { angle: number; radius: number; heightRadius: number; level: number; heightLevel: number };
 
 type HitTarget = { stem: string; x: number; y: number; radius: number };
+type SpeakerHitTarget = { channel: string; x: number; y: number; radius: number };
 
 const TAU = Math.PI * 2;
 
@@ -44,6 +45,11 @@ export type HazeViewProps = {
   channelCounts?: Record<string, number>;
   onSelectStem: (stem: string | null) => void;
   stemSpectrum: React.MutableRefObject<Map<string, { level: number; centroid: number }>>;
+  // Per-speaker mute — the preview renders the channel bed (see
+  // useStemPreview.ts), so a speaker can be silenced independently of any
+  // stem. Clicking a speaker's point on the graph toggles it directly.
+  speakerEnabled: Record<string, boolean>;
+  onToggleSpeaker: (channel: string) => void;
   className?: string;
 };
 
@@ -55,6 +61,8 @@ export default function HazeView({
   channelCounts,
   onSelectStem,
   stemSpectrum,
+  speakerEnabled,
+  onToggleSpeaker,
   className,
 }: HazeViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -62,11 +70,12 @@ export default function HazeView({
   const blobCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const smoothed = React.useRef<Map<string, SmoothedVoice>>(new Map());
   const hitTargets = React.useRef<HitTarget[]>([]);
+  const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
   // Latest props, read fresh by the draw loop without restarting it.
-  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts });
-  propsRef.current = { channels, routing, selectedStem, colors, channelCounts };
+  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled });
+  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled };
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
@@ -99,7 +108,7 @@ export default function HazeView({
     const draw = (time: number) => {
       const delta = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
-      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts } = propsRef.current;
+      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled } = propsRef.current;
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
       const center = { x: width / 2, y: height / 2 };
@@ -141,31 +150,52 @@ export default function HazeView({
       // the dashed outer ring so the two dimensions don't overlap visually.
       const floorChannels = currentChannels.filter((channel) => channel !== "LFE" && speakerCoordinates[channel] && speakerCoordinates[channel].y === 0);
       const topChannels = currentChannels.filter((channel) => channel !== "LFE" && speakerCoordinates[channel] && speakerCoordinates[channel].y > 0);
+      const nextSpeakerHits: SpeakerHitTarget[] = [];
       ctx.font = "600 11px system-ui, sans-serif";
       for (const channel of floorChannels) {
         const angle = vecAngle(speakerCoordinates[channel]);
         const point = polar(center, radius, angle);
-        ctx.fillStyle = "#334155";
+        const muted = currentSpeakerEnabled[channel] === false;
+        ctx.fillStyle = muted ? "#ef4444" : "#334155";
         ctx.beginPath();
-        ctx.arc(point.x, point.y, 3, 0, TAU);
+        ctx.arc(point.x, point.y, muted ? 4 : 5, 0, TAU);
         ctx.fill();
         const labelPoint = polar(center, radius + 14, angle);
-        ctx.fillStyle = "#cbd5e1";
+        ctx.fillStyle = muted ? "#f87171" : "#cbd5e1";
         ctx.textAlign = "center";
         ctx.fillText(speakerLabels[channel] || channel, labelPoint.x, labelPoint.y + 4);
+        nextSpeakerHits.push({ channel, x: point.x, y: point.y, radius: 12 });
       }
       ctx.font = "600 9px system-ui, sans-serif";
       for (const channel of topChannels) {
         const angle = vecAngle(speakerCoordinates[channel]);
         const point = polar(center, heightRingRadius, angle);
-        ctx.fillStyle = "#475569";
+        const muted = currentSpeakerEnabled[channel] === false;
+        ctx.fillStyle = muted ? "#ef4444" : "#475569";
         ctx.beginPath();
-        ctx.arc(point.x, point.y, 2.5, 0, TAU);
+        ctx.arc(point.x, point.y, muted ? 3.5 : 4, 0, TAU);
         ctx.fill();
         const labelPoint = polar(center, heightRingRadius + 12, angle);
-        ctx.fillStyle = "#94a3b8";
+        ctx.fillStyle = muted ? "#f87171" : "#94a3b8";
         ctx.fillText(speakerLabels[channel] || channel, labelPoint.x, labelPoint.y + 3);
+        nextSpeakerHits.push({ channel, x: point.x, y: point.y, radius: 11 });
       }
+      // LFE has no direction (it's a non-positional bass bus), so its mute
+      // point sits just below the listener marker instead of on the ring.
+      if (currentChannels.includes("LFE")) {
+        const lfePoint = { x: center.x, y: center.y + 16 };
+        const lfeMuted = currentSpeakerEnabled.LFE === false;
+        ctx.fillStyle = lfeMuted ? "#ef4444" : "#334155";
+        ctx.beginPath();
+        ctx.arc(lfePoint.x, lfePoint.y, lfeMuted ? 4 : 5, 0, TAU);
+        ctx.fill();
+        ctx.font = "600 9px system-ui, sans-serif";
+        ctx.fillStyle = lfeMuted ? "#f87171" : "#94a3b8";
+        ctx.textAlign = "center";
+        ctx.fillText("LFE", lfePoint.x, lfePoint.y + 15);
+        nextSpeakerHits.push({ channel: "LFE", x: lfePoint.x, y: lfePoint.y, radius: 12 });
+      }
+      speakerHitTargets.current = nextSpeakerHits;
 
       // Listener marker.
       ctx.fillStyle = "#e2e8f0";
@@ -304,18 +334,6 @@ export default function HazeView({
       ctx.drawImage(blobCanvas, 0, 0, width, height);
       ctx.restore();
 
-      // Selection cue: a faint unblurred ring around the selected stem's
-      // voice positions, subtle enough not to read as a hard dot on top of
-      // the melt.
-      for (const entry of resolved) {
-        if (entry.voice.stem !== currentSelected) continue;
-        ctx.strokeStyle = `rgba(${entry.r}, ${entry.g}, ${entry.b}, 0.55)`;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(entry.point.x, entry.point.y, entry.blobRadius * 0.7, 0, TAU);
-        ctx.stroke();
-      }
-
       frame.current = window.requestAnimationFrame(draw);
     };
     frame.current = window.requestAnimationFrame(draw);
@@ -330,6 +348,21 @@ export default function HazeView({
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+
+    // Speaker points take priority over stem selection — they're small,
+    // fixed targets, and a stem's much larger blob often overlaps them.
+    let closestSpeaker: { channel: string; distance: number } | null = null;
+    for (const hit of speakerHitTargets.current) {
+      const distance = Math.hypot(hit.x - x, hit.y - y);
+      if (distance <= hit.radius && (!closestSpeaker || distance < closestSpeaker.distance)) {
+        closestSpeaker = { channel: hit.channel, distance };
+      }
+    }
+    if (closestSpeaker) {
+      onToggleSpeaker(closestSpeaker.channel);
+      return;
+    }
+
     let closest: { stem: string; distance: number } | null = null;
     for (const hit of hitTargets.current) {
       const distance = Math.hypot(hit.x - x, hit.y - y);
@@ -337,8 +370,6 @@ export default function HazeView({
     }
     onSelectStem(closest ? (closest.stem === selectedStem ? null : closest.stem) : null);
   };
-
-  const lfeRoute = selectedStem ? routing[selectedStem]?.LFE || 0 : 0;
 
   return <div className={`relative flex flex-col overflow-hidden rounded-lg border bg-slate-950 text-slate-100 ${className || ""}`}>
     <div className="pointer-events-none relative z-10 flex items-center justify-between px-3 pt-3 text-xs text-slate-300">
@@ -348,6 +379,5 @@ export default function HazeView({
     <div ref={containerRef} className="min-h-0 flex-1">
       <canvas ref={canvasRef} className="h-full w-full cursor-pointer" onPointerDown={handlePointerDown} />
     </div>
-    {channels.includes("LFE") && <div className="pointer-events-none absolute bottom-2 left-2 z-10 rounded bg-slate-800/90 px-2 py-1 text-xs">LFE {selectedStem ? `${lfeRoute.toFixed(2)} send` : "bus"}</div>}
   </div>;
 }
