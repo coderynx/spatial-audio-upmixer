@@ -23,6 +23,7 @@ import { AdvancedSection } from "@/features/composer/sections/AdvancedSection";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
 import { getStemColor, getStemIcon, stemColors } from "@/lib/stems";
+import { speakerLabels } from "@/lib/spatial";
 import { cn } from "@/lib/utils";
 import HazeView from "./HazeView";
 import ElevationView from "./ElevationView";
@@ -242,6 +243,28 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}
         <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} className="min-h-0 flex-[3]" />
         <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} className="h-40 shrink-0" />
+        {/* Per-speaker mute: the preview renders the channel bed (see
+            useStemPreview.ts), so a speaker can be silenced independently of
+            any stem — same virtual-loudspeaker idea as Apple's Spatial Audio
+            renderer. Not tied to `selectedStem`, unlike StemControls. */}
+        <div className="flex flex-none flex-wrap gap-1">
+          {channels.filter((channel) => channel !== "LFE").map((channel) => {
+            const disabled = preview.speakerEnabled[channel] === false;
+            return <button
+              key={channel}
+              type="button"
+              aria-pressed={disabled}
+              aria-label={`${disabled ? "Unmute" : "Mute"} speaker ${channel}`}
+              onClick={() => preview.toggleSpeaker(channel)}
+              className={cn(
+                "flex h-6 shrink-0 items-center justify-center rounded px-1.5 text-[11px] font-bold",
+                disabled ? "bg-red-500 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              {speakerLabels[channel] || channel}
+            </button>;
+          })}
+        </div>
       </section>;
       // Preview stays mounted across all three tabs (same center/left column
       // position) so playback and the routing graphs never stop just because

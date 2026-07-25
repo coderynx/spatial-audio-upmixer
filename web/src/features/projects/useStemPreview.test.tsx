@@ -3,7 +3,6 @@ import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectStem } from "@/api";
 import { useStemPreview } from "./useStemPreview";
-import { HRTF_COMPENSATION_BANDS, isDryRouted } from "./masteringProfiles";
 
 class FakeAudioParam {
   value = 0;
@@ -42,22 +41,92 @@ class FakeDynamicsCompressor extends FakeNode {
   release = new FakeAudioParam();
 }
 
-class FakePanner extends FakeNode {
-  panningModel = "";
-  distanceModel = "";
-  refDistance = 0;
-  rolloffFactor = 0;
-  positionX = new FakeAudioParam();
-  positionY = new FakeAudioParam();
-  positionZ = new FakeAudioParam();
-  setPosition() {}
+class FakeChannelSplitter extends FakeNode {
+  connect(target: FakeNode) {
+    this.connections.push(target);
+    return target;
+  }
 }
 
-class FakeStereoPanner extends FakeNode {
-  pan = new FakeAudioParam();
+class FakeDelay extends FakeNode {
+  delayTime = new FakeAudioParam();
 }
 
-class FakeChannelSplitter extends FakeNode {}
+// Fakes for the `ambisonics` package's individual dist submodules (imported
+// directly rather than the barrel — see ambisonics.d.ts for why). The real
+// classes build WebAudio ChannelMerger/ChannelSplitter graphs with channel
+// counts jsdom's fake context doesn't model, so each is mocked. Defined
+// inline in each factory (no outer-scope references) since `vi.mock`
+// factories run before the rest of this module's top-level code.
+vi.mock("ambisonics/dist/ambi-monoEncoder", () => {
+  class MockNode {
+    connections: MockNode[] = [];
+    connect(target: MockNode) {
+      this.connections.push(target);
+      return target;
+    }
+    disconnect() {}
+  }
+  class MockGain extends MockNode {
+    gain = { value: 0 };
+  }
+  class monoEncoder extends MockNode {
+    static instanceCount = 0;
+    in = new MockGain();
+    out = new MockGain();
+    azim = 0;
+    elev = 0;
+    updateGains = vi.fn();
+    constructor() {
+      super();
+      monoEncoder.instanceCount++;
+    }
+  }
+  return { default: monoEncoder };
+});
+
+vi.mock("ambisonics/dist/ambi-sceneRotator", () => {
+  class MockNode {
+    connect(target: MockNode) { return target; }
+    disconnect() {}
+  }
+  class MockGain extends MockNode {
+    gain = { value: 0 };
+  }
+  class sceneRotator extends MockNode {
+    in = new MockGain();
+    out = new MockGain();
+    yaw = 0;
+    pitch = 0;
+    roll = 0;
+    updateRotMtx = vi.fn();
+  }
+  return { default: sceneRotator };
+});
+
+vi.mock("ambisonics/dist/ambi-binauralDecoder", () => {
+  class MockNode {
+    connect(target: MockNode) { return target; }
+    disconnect() {}
+  }
+  class MockGain extends MockNode {
+    gain = { value: 0 };
+  }
+  class binDecoder extends MockNode {
+    in = new MockGain();
+    out = new MockGain();
+    updateFilters = vi.fn();
+    resetFilters = vi.fn();
+  }
+  return { default: binDecoder };
+});
+
+vi.mock("ambisonics/dist/hoa-loader", () => {
+  class HOAloader {
+    load = vi.fn();
+  }
+  return { default: HOAloader };
+});
 
 class FakeAnalyser extends FakeNode {
   fftSize = 2048;
@@ -101,18 +170,18 @@ class FakeAudioContext {
   eqFilters: FakeBiquadFilter[] = [];
   compressors: FakeDynamicsCompressor[] = [];
   waveShapers: FakeWaveShaper[] = [];
-  panners: FakePanner[] = [];
-  stereoPanners: FakeStereoPanner[] = [];
-  createGain() { return new FakeGain(); }
-  createPanner() {
-    const panner = new FakePanner();
-    this.panners.push(panner);
-    return panner;
+  delays: FakeDelay[] = [];
+  gains: FakeGain[] = [];
+  bufferSources: FakeBufferSource[] = [];
+  createGain() {
+    const gain = new FakeGain();
+    this.gains.push(gain);
+    return gain;
   }
-  createStereoPanner() {
-    const panner = new FakeStereoPanner();
-    this.stereoPanners.push(panner);
-    return panner;
+  createDelay() {
+    const delay = new FakeDelay();
+    this.delays.push(delay);
+    return delay;
   }
   createChannelSplitter() { return new FakeChannelSplitter(); }
   createAnalyser() { return new FakeAnalyser(); }
@@ -131,7 +200,11 @@ class FakeAudioContext {
     this.waveShapers.push(shaper);
     return shaper;
   }
-  createBufferSource() { return new FakeBufferSource(); }
+  createBufferSource() {
+    const source = new FakeBufferSource();
+    this.bufferSources.push(source);
+    return source;
+  }
   decodeAudioData() { return Promise.resolve(new FakeAudioBuffer()); }
   resume = vi.fn(async () => {
     if (this.closed) throw new Error("Cannot resume a closed AudioContext.");
@@ -194,14 +267,12 @@ describe("useStemPreview mastering chain", () => {
     await act(async () => { await preview.playPause(); });
 
     expect(lastContext().compressors).toHaveLength(0);
-    // The fixed HRTF-compensation cascade (always present, preview-only —
-    // see masteringProfiles.ts) and per-stem LFE lowpass pairs are expected
-    // regardless of manifest settings; no manifest-driven EQ/bass filters
-    // should exist alongside them.
-    const hrtfCompFrequencies = new Set([250, 3500, 9000]);
+    // Per-stem LFE lowpass pairs and the surround/height send shaping
+    // filters (highpass/lowpass/highpass, see masteringProfiles.ts) are
+    // always present regardless of manifest settings; no manifest-driven
+    // EQ/bass filters (peaking/lowshelf) should exist alongside them.
+    const shapedFilters = lastContext().eqFilters.filter((f) => f.type === "peaking" || f.type === "lowshelf");
     const lfeLowpasses = lastContext().eqFilters.filter((f) => f.type === "lowpass" && f.frequency.value === 120);
-    const shapedFilters = lastContext().eqFilters.filter((f) =>
-      (f.type === "peaking" || f.type === "lowshelf") && !hrtfCompFrequencies.has(f.frequency.value));
     expect(shapedFilters).toHaveLength(0);
     expect(lfeLowpasses.length).toBeGreaterThan(0);
   });
@@ -243,40 +314,51 @@ describe("useStemPreview mastering chain", () => {
   });
 });
 
-describe("HRTF clarity restoration", () => {
-  it("applies the fixed diffuse-field compensation cascade to the HRTF bus", async () => {
+describe("virtual-loudspeaker ambisonic rendering", () => {
+  it("creates one fixed-position ambisonic encoder per positional speaker, not per stem", async () => {
+    const { default: monoEncoder } = await import("ambisonics/dist/ambi-monoEncoder");
+    (monoEncoder as unknown as { instanceCount: number }).instanceCount = 0;
     installAudio();
     render(<Harness />);
     await act(async () => { await preview.playPause(); });
 
-    for (const band of HRTF_COMPENSATION_BANDS) {
-      const filter = lastContext().eqFilters.find((f) => f.frequency.value === band.frequency && f.type === band.type);
-      expect(filter?.gain.value).toBe(band.gain);
-    }
+    // 11 positional speakers (FL/FR/C/SL/SR/BL/BR/TFL/TFR/TBL/TBR) — fixed
+    // regardless of how many stems are playing, since the renderer encodes
+    // the channel bed, not the stems (see useStemPreview.ts's top comment).
+    expect((monoEncoder as unknown as { instanceCount: number }).instanceCount).toBe(11);
   });
 
-  it("routes front, ear-level sources dry but leaves rear/height ones on HRTF", () => {
-    // A blended dry+HRTF sum would comb-filter (the HRTF panner's
-    // interaural time delay isn't compensable), so this must be a hard
-    // either/or choice, never both — see masteringProfiles.ts.
-    expect(isDryRouted({ x: 0, y: 0, z: -1 })).toBe(true);
-    expect(isDryRouted({ x: 0, y: 0, z: 1 })).toBe(false);
-    expect(isDryRouted({ x: 0, y: 0.6, z: -1 })).toBe(false);
-  });
-
-  it("gives every non-anchor stem a StereoPanner dry send alongside its HRTF panner", async () => {
+  it("mutes a speaker independently of any stem via toggleSpeaker", async () => {
     installAudio();
     render(<Harness />);
     await act(async () => { await preview.playPause(); });
 
-    // 2 stems x 1 leg each. No source-preview URL in this harness, so no
-    // anchor legs are created.
-    expect(lastContext().stereoPanners).toHaveLength(2);
-    expect(lastContext().panners).toHaveLength(2);
+    expect(preview.speakerEnabled.TFL).not.toBe(false);
+    act(() => { preview.toggleSpeaker("TFL"); });
+    expect(preview.speakerEnabled.TFL).toBe(false);
   });
 });
 
 describe("useStemPreview mixing alignment", () => {
+  it("routes each stem's source through its own mute/solo/rebalance gain node, not straight to the splitter", async () => {
+    // Regression: the source used to connect straight to the splitter,
+    // bypassing the stem gain node entirely, so mute/solo/rebalance had no
+    // audible effect even though `apply()` set the (unconnected) gain value.
+    installAudio();
+    render(<Harness mix={{ stem_enabled: { Vocals: false } }} />);
+    await act(async () => { await preview.playPause(); });
+
+    const ctx = lastContext();
+    expect(ctx.bufferSources).toHaveLength(2);
+    const [vocalsSource, bassSource] = ctx.bufferSources;
+    // First connection out of each source must be a gain node (the stem
+    // gain) whose value reflects that stem's mute state.
+    expect(vocalsSource.connections[0]).toBeInstanceOf(FakeGain);
+    expect((vocalsSource.connections[0] as FakeGain).gain.value).toBe(0);
+    expect(bassSource.connections[0]).toBeInstanceOf(FakeGain);
+    expect((bassSource.connections[0] as FakeGain).gain.value).toBe(1);
+  });
+
   it("scales stem gain by the front-routed fraction under the source anchor, not the full stem", async () => {
     installAudio();
     // Vocals routes entirely to front (FL/FR); Bass routes entirely to a

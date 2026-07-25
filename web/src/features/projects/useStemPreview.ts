@@ -1,6 +1,18 @@
 import * as React from "react";
+// `ambi-sceneRotator`'s dist build calls the `numeric` library as a bare
+// global (`numeric.identity(...)`) instead of importing it — its own bundler
+// normally injects that global via a separate <script> tag. Importing the
+// package ourselves and attaching it to `globalThis` before any
+// `AmbiSceneRotator` is constructed reproduces that environment under Vite.
+import numericLib from "numeric";
+import AmbiMonoEncoder from "ambisonics/dist/ambi-monoEncoder";
+import AmbiSceneRotator from "ambisonics/dist/ambi-sceneRotator";
+import AmbiBinDecoder from "ambisonics/dist/ambi-binauralDecoder";
+import AmbiHOAloader from "ambisonics/dist/hoa-loader";
 import type { ProjectStem, StemScene } from "@/api";
-import { speakerCoordinates } from "@/lib/spatial";
+
+(globalThis as typeof globalThis & { numeric?: unknown }).numeric = numericLib;
+import { positionToAzimuthElevation, routingFromAzimuthElevation, speakerCoordinates } from "@/lib/spatial";
 import {
   BASS_PROFILES,
   COMP_PROFILES,
@@ -11,37 +23,81 @@ import {
   LOUDNESS_MAX_GAIN_DB,
   MID_CUTOFF_HZ,
   SUB_CUTOFF_HZ,
+  SURROUND_HAAS_MS,
+  HEIGHT_HAAS_MS,
+  buildDiffuseSend,
   buildEqFilters,
   buildExciteCurve,
-  buildHrtfCompensation,
+  buildHeightSend,
   buildSoftLimitCurve,
+  buildSurroundSend,
+  channelGroupGain,
   connectSeries,
-  isDryRouted,
+  estimateRouteScale,
   type BassProfileName,
   type CompProfileName,
   type EqProfileName,
 } from "./masteringProfiles";
 
-// One spatialized "leg": the same source can feed either an HRTF PannerNode
-// (for localization) or a plain StereoPannerNode (for clarity — see
-// masteringProfiles.ts's HRTF-clarity section), never both at once.
-// `hrtfSend`/`drySend` hold that hard on/off choice, recomputed in
-// `apply()` from the leg's position.
-type Leg = {
-  hrtfSend: GainNode;
-  panner: PannerNode;
-  drySend: GainNode;
-  stereoPanner: StereoPannerNode;
+// Ambisonic order for the preview's virtual-loudspeaker renderer (see the
+// module comment below). Higher order = tighter localization, more encoder
+// channels ((order+1)^2 = 16 at order 3).
+const AMBISONIC_ORDER = 3;
+
+// Bundled default binaural decoding filters (BSD-licensed Aalto University
+// order-3 BRIRs shipped with JSAmbisonics' own examples — not a generic
+// diffuse-field HRTF, so no compensation EQ is needed). `AmbiHOAloader`
+// expects this base name and looks for `<base>_01-08ch.wav`/`_09-16ch.wav`.
+const DEFAULT_HRIR_URL = "/hrir/aalto2016_N3.wav";
+
+// Which of a stem's shaped signals (see `createStemSends`) feeds each
+// positional speaker — mirrors upmixer/separation/stem_router.py `route()`:
+// left/right channels get the raw stem_L/stem_R, C gets the mono downmix,
+// surround/back channels get the highpassed+Haas-decorrelated surround
+// send, height channels get the elevation-shaped+Haas-decorrelated send.
+const CHANNEL_SIGNAL: Record<string, keyof StemSignals> = {
+  FL: "left", FR: "right", C: "mono",
+  SL: "surroundLeft", SR: "surroundRight", BL: "surroundLeft", BR: "surroundRight",
+  TFL: "heightLeft", TFR: "heightRight", TBL: "heightLeft", TBR: "heightRight",
 };
 
+const POSITIONAL_CHANNELS = Object.keys(speakerCoordinates);
+
+type StemSignals = {
+  left: AudioNode;
+  right: AudioNode;
+  mono: AudioNode;
+  surroundLeft: AudioNode;
+  surroundRight: AudioNode;
+  heightLeft: AudioNode;
+  heightRight: AudioNode;
+};
+
+// One fixed virtual loudspeaker: an ambisonic mono encoder pointed at that
+// speaker's direction (set once, positions never move) feeding the shared
+// HOA bus, gated by a mute gain so a speaker can be silenced independently
+// of any stem — the same "render the channel bed, not the objects" model
+// Apple's Spatial Audio renderer uses, and it's what makes per-speaker mute
+// possible.
+type SpeakerBus = {
+  muteGain: GainNode;
+  encoder: AmbiMonoEncoder;
+};
+
+// One playable source (an ordinary stem, or the dry stereo source anchor).
+// `sends` holds one gain node per positional channel this source can reach
+// (absent entries send nothing); each feeds straight into that channel's
+// `SpeakerBus.muteGain`, so route weights and speaker mute compose for free.
 type AudioNodeSet = {
   buffer: AudioBuffer;
   source: AudioBufferSourceNode | null;
-  // One leg for ordinary stems. Two (L, R) for the stereo dry-source anchor,
-  // fed by `splitter` instead of `source` directly — matches the backend's
-  // stereo FL/FR crossfade instead of collapsing the anchor to one point.
-  legs: Leg[];
-  splitter: ChannelSplitterNode | null;
+  // Stem gain (mute/solo/rebalance/anchor-duck), sits upstream of the
+  // splitter so it scales every channel send at once. Anchor has none: its
+  // two sends are driven directly by the anchor strength instead.
+  stemGain: GainNode | null;
+  sends: Partial<Record<string, GainNode>>;
+  // Every node `createStemSends`/anchor setup created, for teardown.
+  ownNodes: AudioNode[];
   // LFE send: present for ordinary stems, absent for the dry source anchor
   // (the backend never routes the anchor's dry blend through LFE).
   lfeGain: GainNode | null;
@@ -89,37 +145,70 @@ type MasterPreview = {
 // AudioBufferSourceNode.start() calls before that instant arrives.
 const START_LOOKAHEAD_SECONDS = 0.08;
 
-function coordinates(azimuth: number, elevation: number) {
-  const az = azimuth * Math.PI / 180;
-  const el = elevation * Math.PI / 180;
-  return { x: -Math.sin(az) * Math.cos(el), y: Math.sin(el), z: -Math.cos(az) * Math.cos(el) };
-}
+// Builds the shaped-signal set (raw L/R, mono downmix, surround send,
+// height send) a stem needs to feed the channel bed, and one gain node per
+// positional channel wiring the appropriate shaped signal into that
+// channel's speaker bus. Mirrors upmixer/separation/stem_router.py
+// `route()`'s per-stem signal prep, done once here instead of per output
+// channel since several channels share the same shaped signal (e.g. SL and
+// BL both consume `surroundLeft`).
+function createStemSends(
+  ctx: AudioContext,
+  input: AudioNode,
+  speakerBuses: Map<string, SpeakerBus>,
+): { sends: Partial<Record<string, GainNode>>; ownNodes: AudioNode[] } {
+  const splitter = ctx.createChannelSplitter(2);
+  input.connect(splitter);
+  const leftTap = ctx.createGain();
+  const rightTap = ctx.createGain();
+  splitter.connect(leftTap, 0);
+  splitter.connect(rightTap, 1);
 
-function createLeg(ctx: AudioContext, hrtfBusNode: GainNode, dryBusNode: GainNode): Leg {
-  const hrtfSend = ctx.createGain();
-  const panner = ctx.createPanner();
-  panner.panningModel = "HRTF";
-  panner.distanceModel = "inverse";
-  panner.refDistance = 1;
-  panner.rolloffFactor = 0;
-  hrtfSend.connect(panner).connect(hrtfBusNode);
+  const monoSum = ctx.createGain();
+  const monoLeftHalf = ctx.createGain();
+  monoLeftHalf.gain.value = 0.5;
+  const monoRightHalf = ctx.createGain();
+  monoRightHalf.gain.value = 0.5;
+  leftTap.connect(monoLeftHalf).connect(monoSum);
+  rightTap.connect(monoRightHalf).connect(monoSum);
 
-  const drySend = ctx.createGain();
-  const stereoPanner = ctx.createStereoPanner();
-  drySend.connect(stereoPanner).connect(dryBusNode);
+  const surroundLeft = buildSurroundSend(ctx, leftTap, SURROUND_HAAS_MS.left);
+  const surroundRight = buildSurroundSend(ctx, rightTap, SURROUND_HAAS_MS.right);
+  const heightShapedLeft = buildHeightSend(ctx, leftTap);
+  const heightShapedRight = buildHeightSend(ctx, rightTap);
+  const heightLeft = buildDiffuseSend(ctx, heightShapedLeft.output, HEIGHT_HAAS_MS.left);
+  const heightRight = buildDiffuseSend(ctx, heightShapedRight.output, HEIGHT_HAAS_MS.right);
 
-  return { hrtfSend, panner, drySend, stereoPanner };
-}
+  const signals: StemSignals = {
+    left: leftTap,
+    right: rightTap,
+    mono: monoSum,
+    surroundLeft: surroundLeft.output,
+    surroundRight: surroundRight.output,
+    heightLeft: heightLeft.output,
+    heightRight: heightRight.output,
+  };
 
-function setLegPosition(leg: Leg, position: { x: number; y: number; z: number }) {
-  if (leg.panner.positionX) {
-    leg.panner.positionX.value = position.x;
-    leg.panner.positionY.value = position.y;
-    leg.panner.positionZ.value = position.z;
-  } else {
-    leg.panner.setPosition(position.x, position.y, position.z);
+  const ownNodes: AudioNode[] = [
+    splitter, leftTap, rightTap, monoSum, monoLeftHalf, monoRightHalf,
+    ...surroundLeft.nodes, ...surroundRight.nodes,
+    ...heightShapedLeft.nodes, ...heightShapedRight.nodes,
+    ...heightLeft.nodes, ...heightRight.nodes,
+  ];
+
+  const sends: Partial<Record<string, GainNode>> = {};
+  for (const channel of POSITIONAL_CHANNELS) {
+    const bus = speakerBuses.get(channel);
+    if (!bus) continue;
+    const send = ctx.createGain();
+    send.gain.value = 0;
+    signals[CHANNEL_SIGNAL[channel]].connect(send);
+    send.connect(bus.muteGain);
+    sends[channel] = send;
+    ownNodes.push(send);
   }
-  leg.stereoPanner.pan.value = Math.min(Math.max(position.x, -1), 1);
+
+  return { sends, ownNodes };
 }
 
 async function loadBuffer(ctx: AudioContext, url: string): Promise<AudioBuffer> {
@@ -168,15 +257,21 @@ export function useStemPreview(
   const context = React.useRef<AudioContext | null>(null);
   const master = React.useRef<GainNode | null>(null);
   const softLimit = React.useRef<WaveShaperNode | null>(null);
-  // Every leg's HRTF panner feeds `hrtfBus`, which passes through the fixed
-  // diffuse-field compensation cascade before joining `dryBus` (the parallel
-  // non-HRTF sends) at `preMasterBus`. Per-stem LFE sends skip both and feed
-  // `lfeBus` directly (EQ/compressor/bass and the HRTF path are all bypassed
-  // for LFE, matching the backend). `preMasterBus` and `lfeBus` sum at
-  // `mergePoint` ahead of the soft-limiter.
-  const hrtfBus = React.useRef<GainNode | null>(null);
-  const dryBus = React.useRef<GainNode | null>(null);
-  const hrtfCompNodes = React.useRef<BiquadFilterNode[]>([]);
+  // The ambisonic rendering core: every positional speaker's encoder feeds
+  // `hoaBus` (a plain summing gain, explicit/discrete at 16 channels so
+  // multiple encoders' 16-channel outputs add channel-for-channel), which
+  // passes through `rotator` (identity — yaw/pitch/roll 0, kept for future
+  // head-tracking) into `binDecoder`, which renders the whole channel bed to
+  // stereo using the loaded HRIR set. This is the "virtual loudspeaker"
+  // model: the renderer sees speaker feeds, not per-stem objects, matching
+  // what StemUpmixPipeline actually delivers and letting a speaker be muted
+  // independently of any stem. `preMasterBus`/`lfeBus`/`mergePoint` sum the
+  // binaural render with the LFE bypass ahead of the soft-limiter, same
+  // topology as before.
+  const hoaBus = React.useRef<GainNode | null>(null);
+  const rotator = React.useRef<AmbiSceneRotator | null>(null);
+  const binDecoder = React.useRef<AmbiBinDecoder | null>(null);
+  const speakerBuses = React.useRef<Map<string, SpeakerBus>>(new Map());
   const preMasterBus = React.useRef<GainNode | null>(null);
   const lfeBus = React.useRef<GainNode | null>(null);
   const mergePoint = React.useRef<GainNode | null>(null);
@@ -213,6 +308,11 @@ export function useStemPreview(
   const [error, setError] = React.useState<string | null>(null);
   const [ready, setReady] = React.useState(false);
   const [supported] = React.useState(() => Boolean(window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext));
+  // Per-speaker mute state — independent of stem mute/solo, since the
+  // renderer input is the channel bed, not the stems (see `SpeakerBus`).
+  const [speakerEnabled, setSpeakerEnabled] = React.useState<Record<string, boolean>>(
+    () => Object.fromEntries(POSITIONAL_CHANNELS.map((channel) => [channel, true])),
+  );
   const key = `${stems.map((stem) => `${stem.id}:${stem.preview_url || stem.audio_url}`).join("|")}|${sourcePreviewUrl || ""}`;
   // Value-stable key: `mastering` is a fresh object every render (the project
   // page rebuilds its manifest on every edit, including unrelated mixing
@@ -331,13 +431,8 @@ export function useStemPreview(
     stopTicker();
     stopSources();
     nodes.current.forEach((node) => {
-      node.legs.forEach((leg) => {
-        leg.hrtfSend.disconnect();
-        leg.panner.disconnect();
-        leg.drySend.disconnect();
-        leg.stereoPanner.disconnect();
-      });
-      node.splitter?.disconnect();
+      node.stemGain?.disconnect();
+      node.ownNodes.forEach((audioNode) => audioNode.disconnect());
       node.lfeGain?.disconnect();
       node.lfeFilters?.forEach((filter) => filter.disconnect());
       node.analyser?.disconnect();
@@ -349,12 +444,20 @@ export function useStemPreview(
     masteringNodes.current = [];
     resolvedBass.current = { active: false, lfeGainDb: 0 };
     measuredLkfs.current = -70;
-    hrtfCompNodes.current.forEach((node) => node.disconnect());
-    hrtfCompNodes.current = [];
-    hrtfBus.current?.disconnect();
-    hrtfBus.current = null;
-    dryBus.current?.disconnect();
-    dryBus.current = null;
+    speakerBuses.current.forEach((bus) => {
+      bus.muteGain.disconnect();
+      bus.encoder.in.disconnect();
+      bus.encoder.out.disconnect();
+    });
+    speakerBuses.current.clear();
+    hoaBus.current?.disconnect();
+    hoaBus.current = null;
+    rotator.current?.in.disconnect();
+    rotator.current?.out.disconnect();
+    rotator.current = null;
+    binDecoder.current?.in.disconnect();
+    binDecoder.current?.out.disconnect();
+    binDecoder.current = null;
     preMasterBus.current?.disconnect();
     preMasterBus.current = null;
     lfeBus.current?.disconnect();
@@ -393,7 +496,10 @@ export function useStemPreview(
   // Stages are entirely omitted when their manifest profile is unset, same
   // as the backend. LFE bypasses this chain (`lfeBus` feeds `mergePoint`
   // directly) since the backend excludes LFE from EQ, compression, and the
-  // sub/mid bass bands.
+  // sub/mid bass bands. Runs on the post-binaural stereo bus (the backend
+  // EQs/compresses per output channel; a single shared instance here is
+  // tonally equivalent for EQ/bass and a close approximation for the
+  // compressor).
   const buildMasteringTopology = React.useCallback(() => {
     const ctx = context.current;
     const bus = preMasterBus.current;
@@ -439,9 +545,9 @@ export function useStemPreview(
     const subGainDb = bassCfg?.sub_gain_db ?? bassPreset?.sub_gain_db ?? 0;
     const midGainDb = bassCfg?.mid_gain_db ?? bassPreset?.mid_gain_db ?? 0;
     const lfeGainDb = bassCfg?.lfe_gain_db ?? bassPreset?.lfe_gain_db ?? 0;
-    // Bass mono-maker (mono_cutoff_hz) is not realized here: every stem is
-    // already collapsed to mono by its PannerNode before HRTF processing, so
-    // an explicit mono-maker on the point-source model would be a no-op.
+    // Bass mono-maker (mono_cutoff_hz) is not realized here: the channel bed
+    // already carries the backend's own L/R signal per channel; there is no
+    // separate "mono below cutoff" stage to add on the binaural bus.
     const exciteActive = bassActive && Boolean(bassCfg?.excite || bassPreset?.excite);
     resolvedBass.current = { active: bassActive, lfeGainDb: bassActive ? lfeGainDb : 0 };
 
@@ -490,6 +596,37 @@ export function useStemPreview(
     buildMasteringTopology();
   }, [masteringKey, buildMasteringTopology]);
 
+  const applySpeakerMute = React.useCallback(() => {
+    speakerBuses.current.forEach((bus, channel) => {
+      bus.muteGain.gain.value = speakerEnabled[channel] === false ? 0 : 1;
+    });
+  }, [speakerEnabled]);
+
+  React.useEffect(() => {
+    applySpeakerMute();
+  }, [applySpeakerMute]);
+
+  const toggleSpeaker = React.useCallback((channel: string) => {
+    setSpeakerEnabled((current) => ({ ...current, [channel]: current[channel] === false }));
+  }, []);
+
+  const loadHrtf = React.useCallback((url: string) => {
+    const ctx = context.current;
+    const decoder = binDecoder.current;
+    if (!ctx || !decoder) return Promise.resolve(false);
+    return new Promise<boolean>((resolve) => {
+      try {
+        const loader = new AmbiHOAloader(ctx, AMBISONIC_ORDER, url, (buffer: AudioBuffer) => {
+          decoder.updateFilters(buffer);
+          resolve(true);
+        });
+        loader.load();
+      } catch {
+        resolve(false);
+      }
+    });
+  }, []);
+
   const apply = React.useCallback(() => {
     const targetLkfs = mastering?.loudness?.target ?? -18;
     const normalize = mastering?.loudness?.normalize ?? true;
@@ -498,38 +635,37 @@ export function useStemPreview(
     const anchor = mix?.stem_source_anchor_strength || 0;
     const source = nodes.current.get("__source_anchor__");
     if (source) {
-      // Both legs (FL, FR) sit at the same front/ear-level position, so
-      // they route the same way — dry, per `isDryRouted` (see
-      // masteringProfiles.ts: never both paths at once, that combs).
-      const dry = isDryRouted(speakerCoordinates.FL);
-      source.legs.forEach((leg) => {
-        leg.hrtfSend.gain.value = dry ? 0 : anchor;
-        leg.drySend.gain.value = dry ? anchor : 0;
-      });
+      // Dry stereo anchor blends straight into the FL/FR speaker buses —
+      // mirrors apply_source_anchor blending untouched source L/R into the
+      // native front pair, ahead of the ambisonic render.
+      const sendFL = source.sends.FL;
+      const sendFR = source.sends.FR;
+      if (sendFL) sendFL.gain.value = anchor;
+      if (sendFR) sendFR.gain.value = anchor;
     }
     for (const stem of stemsRef.current) {
       const node = nodes.current.get(stem.id);
       if (!node) continue;
       const base = stem.stem_key.split("@", 1)[0];
       const value = scene.stems?.[stem.stem_key] || scene.stems?.[base] || {};
-      const route = mix?.stem_routing?.[stem.stem_key] || mix?.stem_routing?.[base] || {};
-      let position = coordinates(value.azimuth_deg || 0, value.elevation_deg || 0);
+      let route = mix?.stem_routing?.[stem.stem_key] || mix?.stem_routing?.[base];
+      // No resolved routing yet (e.g. a freshly dropped stem before the
+      // backend/manifest has assigned it a channel map) — fall back to the
+      // same nearest-3-speakers, inverse-distance weighting the backend's
+      // own routing_for_scene uses to turn a dragged position into gains.
+      if (!route || Object.keys(route).length === 0) {
+        route = value.azimuth_deg != null || value.elevation_deg != null
+          ? routingFromAzimuthElevation(value.azimuth_deg || 0, value.elevation_deg || 0)
+          : {};
+      }
+
       let total = 0;
       let frontWeight = 0;
-      let x = 0;
-      let y = 0;
-      let z = 0;
       for (const [channel, weight] of Object.entries(route)) {
         if (weight <= 0) continue;
-        if (channel === "FL" || channel === "FR") frontWeight += weight;
-        const speaker = speakerCoordinates[channel];
-        if (!speaker) continue;
         total += weight;
-        x += speaker.x * weight;
-        y += speaker.y * weight;
-        z += speaker.z * weight;
+        if (channel === "FL" || channel === "FR") frontWeight += weight;
       }
-      if (total > 0) position = { x: x / total, y: y / total, z: z / total };
       // Only the FL/FR portion of a stem's routing crossfades toward the dry
       // source in the backend (source_anchor.py blends the front zone pair
       // only); other stems' surround/height/back content is left untouched.
@@ -539,20 +675,22 @@ export function useStemPreview(
       const muted = Boolean(mix?.stem_solo?.length && !mix.stem_solo.includes(stem.stem_key) && !mix.stem_solo.includes(base))
         || mix?.stem_enabled?.[base] === false || value.enabled === false;
       const gainDb = mix?.stem_rebalance?.[base] || 0;
-      const stemGain = muted ? 0 : (1.0 - anchor * frontFraction) * 10 ** (gainDb / 20);
-      appliedGain.current.set(base, stemGain);
+      const stemGainValue = muted ? 0 : (1.0 - anchor * frontFraction) * 10 ** (gainDb / 20);
+      appliedGain.current.set(base, stemGainValue);
+      if (node.stemGain) node.stemGain.gain.value = stemGainValue;
       if (node.lfeGain) {
         node.lfeGain.gain.value = muted
           ? 0
           : LFE_GAIN * lfeWeight * 10 ** (resolvedBass.current.lfeGainDb / 20);
       }
-      const leg = node.legs[0];
-      // Never leave both sends active for the same source at once — see
-      // masteringProfiles.ts's HRTF-clarity comment for why that combs.
-      const dry = isDryRouted(position);
-      leg.hrtfSend.gain.value = dry ? 0 : stemGain;
-      leg.drySend.gain.value = dry ? stemGain : 0;
-      setLegPosition(leg, position);
+
+      const routeScale = estimateRouteScale(route);
+      for (const channel of POSITIONAL_CHANNELS) {
+        const send = node.sends[channel];
+        if (!send) continue;
+        const weight = route[channel] || 0;
+        send.gain.value = weight > 0 ? routeScale * weight * channelGroupGain(channel) : 0;
+      }
     }
   }, [mix, scene.stems, volume, mastering]);
 
@@ -568,17 +706,40 @@ export function useStemPreview(
     const ctx = context.current;
     if (!ctx) return Promise.resolve();
 
-    const hrtfBusNode = ctx.createGain();
-    const dryBusNode = ctx.createGain();
     const preMasterBusNode = ctx.createGain();
     const lfeBusNode = ctx.createGain();
     const mergePointNode = ctx.createGain();
-    // See masteringProfiles.ts's HRTF-clarity section: the compensation
-    // cascade sits only on the HRTF sub-bus, before it joins the dry bus, so
-    // the dry (already-clear) path can't be over-brightened by it.
-    const compNodes = buildHrtfCompensation(ctx);
-    connectSeries(hrtfBusNode, compNodes).connect(preMasterBusNode);
-    dryBusNode.connect(preMasterBusNode);
+
+    // Shared ambisonic core: every speaker's encoder sums into `hoaBusNode`
+    // (explicit/discrete at 16ch so multiple encoders' outputs add
+    // channel-for-channel instead of being up/down-mixed), then the
+    // rotator (identity for now) and binaural decoder render the whole bed
+    // to stereo. See this file's top comment.
+    const nCh = (AMBISONIC_ORDER + 1) * (AMBISONIC_ORDER + 1);
+    const hoaBusNode = ctx.createGain();
+    hoaBusNode.channelCount = nCh;
+    hoaBusNode.channelCountMode = "explicit";
+    hoaBusNode.channelInterpretation = "discrete";
+    const rotatorNode = new AmbiSceneRotator(ctx, AMBISONIC_ORDER);
+    const binDecoderNode = new AmbiBinDecoder(ctx, AMBISONIC_ORDER);
+    hoaBusNode.connect(rotatorNode.in);
+    rotatorNode.out.connect(binDecoderNode.in);
+    binDecoderNode.out.connect(preMasterBusNode);
+
+    const busesMap = new Map<string, SpeakerBus>();
+    for (const channel of POSITIONAL_CHANNELS) {
+      const muteGain = ctx.createGain();
+      muteGain.gain.value = speakerEnabled[channel] === false ? 0 : 1;
+      const encoder = new AmbiMonoEncoder(ctx, AMBISONIC_ORDER);
+      const { azim, elev } = positionToAzimuthElevation(speakerCoordinates[channel]);
+      encoder.azim = azim;
+      encoder.elev = elev;
+      encoder.updateGains();
+      muteGain.connect(encoder.in);
+      encoder.out.connect(hoaBusNode);
+      busesMap.set(channel, { muteGain, encoder });
+    }
+
     // Backend final stage before loudness measurement: soft_limit(x, 0.95),
     // a tanh saturator above the threshold (upmixer/utils.py). Replaces a
     // plain DynamicsCompressor limiter, which has no counterpart in the
@@ -589,9 +750,11 @@ export function useStemPreview(
     const output = ctx.createGain();
     lfeBusNode.connect(mergePointNode);
     mergePointNode.connect(softLimitNode).connect(output).connect(ctx.destination);
-    hrtfBus.current = hrtfBusNode;
-    dryBus.current = dryBusNode;
-    hrtfCompNodes.current = compNodes;
+
+    hoaBus.current = hoaBusNode;
+    rotator.current = rotatorNode;
+    binDecoder.current = binDecoderNode;
+    speakerBuses.current = busesMap;
     preMasterBus.current = preMasterBusNode;
     lfeBus.current = lfeBusNode;
     mergePoint.current = mergePointNode;
@@ -599,6 +762,11 @@ export function useStemPreview(
     master.current = output;
     buildMasteringTopology();
     setReady(false);
+
+    // Non-blocking: the decoder starts on JSAmbisonics' built-in cardioid
+    // fallback and swaps to the real BRIR set once it's fetched, so preview
+    // audio can start immediately rather than waiting on this network call.
+    void loadHrtf(DEFAULT_HRIR_URL);
 
     const entries: { id: string; url: string; anchor: boolean }[] = [];
     for (const stem of stemsRef.current) {
@@ -613,25 +781,15 @@ export function useStemPreview(
           const buffer = await loadBuffer(ctx, entry.url);
 
           if (entry.anchor) {
-            // Stereo dry anchor: split into independent L/R legs at the
-            // FL/FR speaker positions instead of one mono center point,
-            // preserving the dry stereo image the backend keeps (it blends
-            // untouched source L/R directly into output FL/FR).
-            const legL = createLeg(ctx, hrtfBusNode, dryBusNode);
-            const legR = createLeg(ctx, hrtfBusNode, dryBusNode);
-            setLegPosition(legL, speakerCoordinates.FL);
-            setLegPosition(legR, speakerCoordinates.FR);
-            const splitter = ctx.createChannelSplitter(2);
-            splitter.connect(legL.hrtfSend, 0);
-            splitter.connect(legL.drySend, 0);
-            splitter.connect(legR.hrtfSend, 1);
-            splitter.connect(legR.drySend, 1);
+            const stemInput = ctx.createGain();
+            const built = createStemSends(ctx, stemInput, busesMap);
             nodes.current.set(entry.id, {
-              buffer, source: null, legs: [legL, legR], splitter,
+              buffer, source: null, stemGain: null, sends: built.sends, ownNodes: [stemInput, ...built.ownNodes],
               lfeGain: null, lfeFilters: null, analyser: null,
             });
           } else {
-            const leg = createLeg(ctx, hrtfBusNode, dryBusNode);
+            const stemGain = ctx.createGain();
+            const built = createStemSends(ctx, stemGain, busesMap);
             const lfeGain = ctx.createGain();
             const lfeFilter1 = ctx.createBiquadFilter();
             const lfeFilter2 = ctx.createBiquadFilter();
@@ -646,7 +804,7 @@ export function useStemPreview(
             analyser.fftSize = 256;
             analyser.smoothingTimeConstant = 0.7;
             nodes.current.set(entry.id, {
-              buffer, source: null, legs: [leg], splitter: null,
+              buffer, source: null, stemGain, sends: built.sends, ownNodes: [stemGain, ...built.ownNodes],
               lfeGain, lfeFilters: [lfeFilter1, lfeFilter2], analyser,
             });
           }
@@ -671,7 +829,8 @@ export function useStemPreview(
     })();
     initPromise.current = promise;
     return promise;
-  }, [apply, buildMasteringTopology, sourcePreviewUrl, supported]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- speakerEnabled read only for the initial mute value; live changes go through applySpeakerMute
+  }, [apply, buildMasteringTopology, loadHrtf, sourcePreviewUrl, supported]);
 
   React.useEffect(() => {
     initialize().catch(() => {
@@ -713,16 +872,13 @@ export function useStemPreview(
           source.loopStart = 0;
           source.loopEnd = durationRef.current;
         }
-        if (node.splitter) {
-          source.connect(node.splitter);
-        } else {
-          for (const leg of node.legs) {
-            source.connect(leg.hrtfSend);
-            source.connect(leg.drySend);
-          }
-          if (node.lfeGain) source.connect(node.lfeGain);
-          if (node.analyser) source.connect(node.analyser);
-        }
+        // `ownNodes[0]` is always the stem/anchor's input gain (`stemGain`
+        // for stems, a dedicated dry input for the anchor) — see
+        // `createStemSends`'s caller above.
+        const input = node.ownNodes[0];
+        if (input) source.connect(input);
+        if (node.lfeGain) source.connect(node.lfeGain);
+        if (node.analyser) source.connect(node.analyser);
         source.start(startAt, target);
         node.source = source;
       });
@@ -820,5 +976,8 @@ export function useStemPreview(
     commitScrub,
     toggleLoop,
     stemSpectrum,
+    speakerEnabled,
+    toggleSpeaker,
+    loadHrtf,
   };
 }

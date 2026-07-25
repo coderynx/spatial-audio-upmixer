@@ -145,76 +145,137 @@ export function connectSeries(start: AudioNode, nodes: AudioNode[]): AudioNode {
   return previous;
 }
 
-// --- HRTF clarity restoration -----------------------------------------
+// --- Channel-bed router (ported from upmixer/separation/stem_router.py) --
 //
-// Chrome/Firefox's built-in HRTF PannerNode convolves every source with one
-// generic, non-personalized IRCAM Listen HRIR set. That set has a
-// diffuse-field high-frequency rolloff, so HRTF-panned sources read as
-// duller than the dry final master — worse than a single EQ shelf can fix.
-// Real binaural renderers counter the tonal part with a fixed diffuse-field
-// compensation curve on the binaural bus (`HRTF_COMPENSATION_BANDS` below).
+// The preview used to binauralize each stem as a point object via a Web
+// Audio HRTF PannerNode — that convolves every source with one generic,
+// non-personalized HRIR with a diffuse-field high-frequency rolloff, so
+// HRTF-panned sources read as duller than the dry final master (worse than
+// a single EQ shelf could fix), and the API exposes no way to load a
+// different HRTF. An earlier fix layered a fixed compensation EQ on the
+// HRTF bus and hard-switched some sources to a dry stereo pan to dodge the
+// comb filtering an undelayed dry copy causes against the panner's
+// unqueryable ITD — both hacks are gone now.
 //
-// An earlier version of this fix also blended in some dry (non-HRTF) signal
-// for front/ear-level sources, summed in parallel with their HRTF copy. That
-// reintroduced comb filtering: the HRTF panner always adds *some* delay
-// (an interaural time delay that varies with position and is not exposed by
-// the API), so summing an undelayed dry copy against the delayed HRTF copy
-// of the *same* source comb-filters it. There's no reliable way to
-// delay-compensate the dry path since the exact ITD isn't queryable, so the
-// two paths must never be active at once for the same source — hence a hard
-// per-source choice, not a blend, in `isDryRouted` below.
-//
-// These constants/functions are preview-only; they have no backend/manifest
-// meaning.
+// The preview now mirrors the backend exactly: stems are routed into the
+// same 11-speaker channel bed `StemRouter.route` builds (this file's
+// constants below), and *that* channel bed — not the individual stems — is
+// what gets encoded to ambisonics and binauralized (see useStemPreview.ts).
+// This is the "virtual loudspeaker" rendering model (each output channel is
+// a fixed ambisonic point source), the same approach Apple's Spatial Audio
+// renderer uses, and it lets a user mute a speaker as well as a stem.
 
-/** Elevation (Web Audio `y`) at which a source is considered "full height"
- * for the purposes of the front/ear-level test below — matches the
- * height-layer `y` coordinate used for TFL/TFR/TBL/TBR in
- * `speakerCoordinates`. */
-export const DRY_ROUTING_HEIGHT_NORM = 0.6;
+/** Per-channel-group gains — upmixer/config.py `center_gain`/`surround_gain`/
+ * `back_gain`/`height_gain`. FL/FR always 1.0 (no group). */
+export const CENTER_GAIN = 0.85;
+export const SURROUND_GAIN = 0.6;
+export const BACK_GAIN = 0.55;
+export const HEIGHT_GAIN = 0.55;
 
-/** Minimum forward*levelness product (both in [0, 1]) for a source to route
- * fully dry instead of through HRTF. Tuned so dead-front/near-front,
- * ear-level content (FL/FR/C) qualifies, while anything with meaningful
- * side, rear, or height component does not. */
-export const DRY_ROUTING_THRESHOLD = 0.5;
-
-/** Whether a source at this normalized Web Audio position should bypass the
- * HRTF panner entirely and play through the plain stereo dry path instead.
- * A hard, non-blended choice — see the comment above for why a parallel
- * dry/HRTF blend is unsafe. Front, ear-level positions (weak HRTF cues,
- * worst HRTF coloration) route dry; anything with real side/rear/height
- * content stays on HRTF so it still localizes. */
-export function isDryRouted(position: { x: number; y: number; z: number }): boolean {
-  const forward = Math.min(Math.max(-position.z, 0), 1);
-  const levelness = Math.min(Math.max(1 - Math.abs(position.y) / DRY_ROUTING_HEIGHT_NORM, 0), 1);
-  return forward * levelness >= DRY_ROUTING_THRESHOLD;
+export function channelGroupGain(channel: string): number {
+  if (channel === "C") return CENTER_GAIN;
+  if (channel === "BL" || channel === "BR") return BACK_GAIN;
+  if (channel === "SL" || channel === "SR") return SURROUND_GAIN;
+  if (channel === "TFL" || channel === "TFR" || channel === "TBL" || channel === "TBR") return HEIGHT_GAIN;
+  return 1.0;
 }
 
-type HrtfCompensationBand = { type: BiquadFilterType; frequency: number; gain: number; q?: number };
+/** upmixer/config.py `surround_bass_cutoff_hz` — highpass applied to a
+ * stem's surround/back send before its Haas decorrelation delay. */
+export const SURROUND_BASS_CUTOFF_HZ = 250.0;
 
-/** Fixed diffuse-field compensation cascade for the HRTF sub-bus only
- * (applied before the dry bus joins it, so the dry path stays flat and
- * can't be over-brightened). Approximates the inverse of the generic HRIR
- * set's coloration: a modest dip to tame the boxy lower-mid buildup HRTF
- * convolution adds, a presence bump where the diffuse-field average dips
- * most, and an air shelf to restore the top-end the single-shelf fix
- * couldn't reach. */
-export const HRTF_COMPENSATION_BANDS: HrtfCompensationBand[] = [
-  { type: "peaking", frequency: 250, gain: -1.5, q: 1 },
-  { type: "peaking", frequency: 3500, gain: 3, q: 1 },
-  { type: "highshelf", frequency: 9000, gain: 5 },
-];
+/** upmixer/config.py height-send shaping (`_height_send` in
+ * stem_router.py, same formula as `upmixer/utils.py` `elevation_eq`):
+ * attenuate below `HEIGHT_LOW_ROLLOFF_HZ` to `HEIGHT_LOW_ROLLOFF_GAIN`,
+ * then boost above `HEIGHT_CROSSOVER_HZ` by `HEIGHT_HIGH_SHELF_GAIN`. */
+export const HEIGHT_LOW_ROLLOFF_HZ = 150.0;
+export const HEIGHT_LOW_ROLLOFF_GAIN = 0.15;
+export const HEIGHT_CROSSOVER_HZ = 3000.0;
+export const HEIGHT_HIGH_SHELF_GAIN = 1.5;
 
-export function buildHrtfCompensation(
-  ctx: AudioContext | { createBiquadFilter(): BiquadFilterNode },
-): BiquadFilterNode[] {
-  return HRTF_COMPENSATION_BANDS.map(({ type, frequency, gain, q }) => {
-    const filter = ctx.createBiquadFilter();
-    filter.type = type;
-    filter.frequency.value = frequency;
-    filter.gain.value = gain;
-    if (q != null && "Q" in filter) filter.Q.value = q;
-    return filter;
-  });
+/** upmixer/utils.py `diffuse_send` default wet blend. */
+export const DIFFUSE_SEND_BLEND = 0.55;
+
+/** stem_router.py `route()` — per-side Haas delays (ms) for surround/back
+ * and height sends. Different per side so L/R don't comb-filter. */
+export const SURROUND_HAAS_MS = { left: 31, right: 37 };
+export const HEIGHT_HAAS_MS = { left: 23, right: 29 };
+
+/** Web Audio version of `upmixer/utils.py` `diffuse_send`: blends a signal
+ * with a delayed copy of itself for early-reflection decorrelation. */
+export function buildDiffuseSend(
+  ctx: AudioContext,
+  input: AudioNode,
+  delayMs: number,
+  blend: number = DIFFUSE_SEND_BLEND,
+): { output: AudioNode; nodes: AudioNode[] } {
+  const delay = ctx.createDelay(1);
+  delay.delayTime.value = delayMs / 1000;
+  const dry = ctx.createGain();
+  dry.gain.value = 1 - blend;
+  const wet = ctx.createGain();
+  wet.gain.value = blend;
+  const output = ctx.createGain();
+  input.connect(dry).connect(output);
+  input.connect(delay).connect(wet).connect(output);
+  return { output, nodes: [delay, dry, wet, output] };
+}
+
+/** Web Audio version of `stem_router.py` `_height_send` /
+ * `upmixer/utils.py` `elevation_eq`: sub-bass rolloff (kept at
+ * `HEIGHT_LOW_ROLLOFF_GAIN`, not fully removed) plus a top-end shelf boost
+ * above the crossover. Implemented as the additive identity the Python
+ * `sosfilt` version reduces to: `shaped = x - low·(1-g); out = shaped +
+ * high(shaped)·(shelfGain-1)`. */
+export function buildHeightSend(ctx: AudioContext, input: AudioNode): { output: AudioNode; nodes: AudioNode[] } {
+  const lowpass = ctx.createBiquadFilter();
+  lowpass.type = "lowpass";
+  lowpass.frequency.value = HEIGHT_LOW_ROLLOFF_HZ;
+  const lowComp = ctx.createGain();
+  lowComp.gain.value = -(1 - HEIGHT_LOW_ROLLOFF_GAIN);
+  const shaped = ctx.createGain();
+  input.connect(shaped);
+  input.connect(lowpass).connect(lowComp).connect(shaped);
+
+  const highpass = ctx.createBiquadFilter();
+  highpass.type = "highpass";
+  highpass.frequency.value = HEIGHT_CROSSOVER_HZ;
+  const highGain = ctx.createGain();
+  highGain.gain.value = HEIGHT_HIGH_SHELF_GAIN - 1;
+  const output = ctx.createGain();
+  shaped.connect(output);
+  shaped.connect(highpass).connect(highGain).connect(output);
+
+  return { output, nodes: [lowpass, lowComp, shaped, highpass, highGain, output] };
+}
+
+/** Web Audio version of `stem_router.py`'s surround send: a highpass at
+ * `SURROUND_BASS_CUTOFF_HZ` (keeps rhythmic low end out of the diffuse
+ * surround/back layer) followed by the Haas diffuse send. */
+export function buildSurroundSend(
+  ctx: AudioContext,
+  input: AudioNode,
+  delayMs: number,
+): { output: AudioNode; nodes: AudioNode[] } {
+  const highpass = ctx.createBiquadFilter();
+  highpass.type = "highpass";
+  highpass.frequency.value = SURROUND_BASS_CUTOFF_HZ;
+  input.connect(highpass);
+  const diffuse = buildDiffuseSend(ctx, highpass, delayMs);
+  return { output: diffuse.output, nodes: [highpass, ...diffuse.nodes] };
+}
+
+/** Approximates `stem_router.py`'s per-stem constant-power `route_scale`
+ * (`sqrt(input_energy/routed_energy)`) from the route table alone, treating
+ * every contributing send as comparable energy — good enough to keep a
+ * widely-routed stem from reading louder than a narrowly-routed one, not an
+ * exact energy match (the real value needs the decoded buffers' energy). */
+export function estimateRouteScale(route: Record<string, number>): number {
+  let sumSquares = 0;
+  for (const [channel, weight] of Object.entries(route)) {
+    if (channel === "LFE" || weight <= 0) continue;
+    const scaled = weight * channelGroupGain(channel);
+    sumSquares += scaled * scaled;
+  }
+  return sumSquares > 1e-10 ? 1 / Math.sqrt(sumSquares) : 1;
 }
