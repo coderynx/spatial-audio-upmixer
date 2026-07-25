@@ -181,27 +181,21 @@ export default function HazeView({
         nextSpeakerHits.push({ channel, x: point.x, y: point.y, radius: 11 });
       }
       // LFE has no direction (it's a non-positional bass bus), so its mute
-      // point sits just below the listener marker instead of on the ring.
+      // point sits at the radar's center (the listener position) instead of
+      // on the ring.
       if (currentChannels.includes("LFE")) {
-        const lfePoint = { x: center.x, y: center.y + 16 };
         const lfeMuted = currentSpeakerEnabled.LFE === false;
         ctx.fillStyle = lfeMuted ? "#ef4444" : "#334155";
         ctx.beginPath();
-        ctx.arc(lfePoint.x, lfePoint.y, lfeMuted ? 4 : 5, 0, TAU);
+        ctx.arc(center.x, center.y, lfeMuted ? 4 : 5, 0, TAU);
         ctx.fill();
         ctx.font = "600 9px system-ui, sans-serif";
         ctx.fillStyle = lfeMuted ? "#f87171" : "#94a3b8";
         ctx.textAlign = "center";
-        ctx.fillText("LFE", lfePoint.x, lfePoint.y + 15);
-        nextSpeakerHits.push({ channel: "LFE", x: lfePoint.x, y: lfePoint.y, radius: 12 });
+        ctx.fillText("LFE", center.x, center.y + 16);
+        nextSpeakerHits.push({ channel: "LFE", x: center.x, y: center.y, radius: 12 });
       }
       speakerHitTargets.current = nextSpeakerHits;
-
-      // Listener marker.
-      ctx.fillStyle = "#e2e8f0";
-      ctx.beginPath();
-      ctx.arc(center.x, center.y, 3, 0, TAU);
-      ctx.fill();
 
       // Build this frame's voices (mono, or L/R pair for stereo stems).
       const stems = Object.keys(currentRouting);

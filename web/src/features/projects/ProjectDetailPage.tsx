@@ -280,7 +280,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             any stem, same virtual-loudspeaker idea as Apple's Spatial Audio
             renderer. */}
         <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} className="min-h-0 flex-[3]" />
-        <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} className="h-40 shrink-0" />
+        <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} className="h-40 shrink-0" />
       </section>;
       // Preview stays mounted across all three tabs (same center/left column
       // position) so playback and the routing graphs never stop just because
