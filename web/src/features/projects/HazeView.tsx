@@ -1,6 +1,6 @@
 import * as React from "react";
 import type { StemRouting } from "@/api";
-import { heightFraction, speakerCoordinates, speakerLabels, stemPosition, stemPositionStereo, vecAngle, type Vec3 } from "@/lib/spatial";
+import { heightFraction, speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo, vecAngle, type Vec3 } from "@/lib/spatial";
 
 // NUGEN Halo Upmix-style "Haze View": a 2D radar where radius encodes
 // spectral centroid (bass at the center, treble at the edge) and angle
@@ -150,6 +150,7 @@ export default function HazeView({
       // the dashed outer ring so the two dimensions don't overlap visually.
       const floorChannels = currentChannels.filter((channel) => channel !== "LFE" && speakerCoordinates[channel] && speakerCoordinates[channel].y === 0);
       const topChannels = currentChannels.filter((channel) => channel !== "LFE" && speakerCoordinates[channel] && speakerCoordinates[channel].y > 0);
+
       const nextSpeakerHits: SpeakerHitTarget[] = [];
       ctx.font = "600 11px system-ui, sans-serif";
       for (const channel of floorChannels) {
@@ -163,7 +164,7 @@ export default function HazeView({
         const labelPoint = polar(center, radius + 14, angle);
         ctx.fillStyle = muted ? "#f87171" : "#cbd5e1";
         ctx.textAlign = "center";
-        ctx.fillText(speakerLabels[channel] || channel, labelPoint.x, labelPoint.y + 4);
+        ctx.fillText(speakerDisplayLabel(channel, currentChannels), labelPoint.x, labelPoint.y + 4);
         nextSpeakerHits.push({ channel, x: point.x, y: point.y, radius: 12 });
       }
       ctx.font = "600 9px system-ui, sans-serif";
@@ -177,7 +178,7 @@ export default function HazeView({
         ctx.fill();
         const labelPoint = polar(center, heightRingRadius + 12, angle);
         ctx.fillStyle = muted ? "#f87171" : "#94a3b8";
-        ctx.fillText(speakerLabels[channel] || channel, labelPoint.x, labelPoint.y + 3);
+        ctx.fillText(speakerDisplayLabel(channel, currentChannels), labelPoint.x, labelPoint.y + 3);
         nextSpeakerHits.push({ channel, x: point.x, y: point.y, radius: 11 });
       }
       // LFE has no direction (it's a non-positional bass bus), so its mute

@@ -1,6 +1,6 @@
 import * as React from "react";
 import type { StemRouting } from "@/api";
-import { speakerCoordinates, speakerLabels, stemPosition, stemPositionStereo } from "@/lib/spatial";
+import { speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo } from "@/lib/spatial";
 
 // Secondary "elevation" view: a front-on cross-section showing the vertical
 // (height) axis that the Haze view's top-down radar collapses away. X = the
@@ -140,7 +140,7 @@ export default function ElevationView({
         const x = toX(speakerCoordinates[channel].x);
         const muted = currentSpeakerEnabled[channel] === false;
         ctx.fillStyle = muted ? "#f87171" : "#cbd5e1";
-        ctx.fillText(speakerLabels[channel] || channel, x, floorY + 15);
+        ctx.fillText(speakerDisplayLabel(channel, currentChannels), x, floorY + 15);
         ctx.fillStyle = muted ? "#ef4444" : "#334155";
         ctx.beginPath();
         ctx.arc(x, floorY, muted ? 3.5 : 2.5, 0, Math.PI * 2);
@@ -152,7 +152,7 @@ export default function ElevationView({
         const x = toX(speakerCoordinates[channel].x);
         const muted = currentSpeakerEnabled[channel] === false;
         ctx.fillStyle = muted ? "#f87171" : "#94a3b8";
-        ctx.fillText(speakerLabels[channel] || channel, x, padTop - 8);
+        ctx.fillText(speakerDisplayLabel(channel, currentChannels), x, padTop - 8);
         ctx.fillStyle = muted ? "#ef4444" : "#475569";
         ctx.beginPath();
         ctx.arc(x, padTop, muted ? 3.5 : 2.5, 0, Math.PI * 2);
