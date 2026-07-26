@@ -28,11 +28,12 @@ import { cn } from "@/lib/utils";
 import HazeView from "./HazeView";
 import ChannelMeters from "./ChannelMeters";
 import ElevationView from "./ElevationView";
+import { OutputModeSelect } from "./OutputModeSelect";
 import { PreparationView } from "./PreparationView";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import { Transport } from "./Transport";
-import { useStemPreview } from "./useStemPreview";
+import { useStemPreview, type OutputMode } from "./useStemPreview";
 
 export function ProjectDetailPage({ configuration }: { configuration: Configuration | null }) {
   const { projectId } = useParams();
@@ -190,7 +191,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     () => configuration?.choices.layout_channels?.[effectiveManifest?.mixing.channel_layout || "7.1.4"] || ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"],
     [configuration, effectiveManifest?.mixing.channel_layout],
   );
-  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering, channels);
+  // Session-only monitoring choice — not part of the manifest, so a reload
+  // always starts back on binaural.
+  const [outputMode, setOutputMode] = React.useState<OutputMode>("binaural");
+  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering, channels, outputMode);
   const ready = Boolean(project?.prepared_stems.length);
   const stemNames = project?.prepared_stems || [];
   // Reorder is a display-only preference (no backend field for it): kept in
@@ -319,16 +323,27 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           currentTimeRef={preview.currentTimeRef}
           duration={preview.duration}
           volume={preview.volume}
+          muted={preview.muted}
           loop={preview.loop}
           disabled={!preview.supported || !preview.ready || !previewStems.length}
           onPlayPause={() => void preview.playPause()}
           onStop={preview.stop}
           onToggleLoop={preview.toggleLoop}
           onSetVolume={preview.setVolume}
+          onToggleMute={preview.toggleMute}
           onBeginScrub={preview.beginScrub}
           onScrubTo={preview.scrubTo}
           onCommitScrub={(value) => void preview.commitScrub(value)}
-        />
+        >
+          <OutputModeSelect
+            value={outputMode}
+            onChange={setOutputMode}
+            nativeSupported={preview.nativeSupported}
+            devices={preview.outputDevices}
+            deviceId={preview.outputDeviceId}
+            onDeviceChange={(deviceId) => void preview.setOutputDeviceId(deviceId)}
+          />
+        </Transport>
         {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}
         {!preview.error && preview.supported && !preview.ready && previewStems.length > 0 && (
           <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs text-muted-foreground">
@@ -347,7 +362,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             Mixing/Mastering/Delivery since both live in this shared panel. */}
         <div className="flex min-h-0 flex-[3] gap-3">
           <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="min-h-0 min-w-0 flex-[2]" />
-          <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} />
+          <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} outputMode={outputMode} active={preview.playing} />
         </div>
         <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="h-40 shrink-0" />
       </section>;

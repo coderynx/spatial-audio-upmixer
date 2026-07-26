@@ -184,6 +184,7 @@ class FakeAudioContext {
     return delay;
   }
   createChannelSplitter() { return new FakeChannelSplitter(); }
+  createChannelMerger() { return new FakeChannelSplitter(); }
   createAnalyser() { return new FakeAnalyser(); }
   createBiquadFilter() {
     const filter = new FakeBiquadFilter();

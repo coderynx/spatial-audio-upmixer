@@ -50,6 +50,29 @@ const AMBISONIC_ORDER = 3;
 // expects this base name and looks for `<base>_01-08ch.wav`/`_09-16ch.wav`.
 const DEFAULT_HRIR_URL = "/hrir/aalto2016_N3.wav";
 
+// Preview monitoring mode: which final render stage the channel bed feeds.
+// "binaural" is the existing headphone-virtualized render; "stereo" is a
+// BS.775-compliant 2/0 downmix; "native" sends the channel bed's own
+// discrete channels straight to the chosen system output device.
+export type OutputMode = "binaural" | "stereo" | "native";
+
+// ITU-R BS.775-4 Annex 4 Table 2 2/0 downmix coefficients, mirroring
+// upmixer/utils.py::itu_downmix_stereo at its default surround_coeff
+// (1/√2). Back channels fold into the matching side channel attenuated by
+// the centre coefficient, same as the backend. Height channels and LFE are
+// excluded per the standard — LFE gets its own discrete native send instead.
+const ITU_CENTER_COEFF = 0.7071;
+const ITU_SURROUND_COEFF = 0.7071;
+const STEREO_DOWNMIX_GAINS: Partial<Record<string, { left: number; right: number }>> = {
+  FL: { left: 1, right: 0 },
+  FR: { left: 0, right: 1 },
+  C: { left: ITU_CENTER_COEFF, right: ITU_CENTER_COEFF },
+  SL: { left: ITU_SURROUND_COEFF, right: 0 },
+  SR: { left: 0, right: ITU_SURROUND_COEFF },
+  BL: { left: ITU_SURROUND_COEFF * ITU_CENTER_COEFF, right: 0 },
+  BR: { left: 0, right: ITU_SURROUND_COEFF * ITU_CENTER_COEFF },
+};
+
 // Which of a stem's shaped signals (see `createStemSends`) feeds each
 // positional speaker — mirrors upmixer/separation/stem_router.py `route()`:
 // left/right channels get the raw stem_L/stem_R, C gets the mono downmix,
@@ -82,6 +105,12 @@ type StemSignals = {
 type SpeakerBus = {
   muteGain: GainNode;
   encoder: AmbiMonoEncoder;
+  // Present only for channels the BS.775 stereo downmix uses (excludes
+  // height channels) — see STEREO_DOWNMIX_GAINS.
+  stereoSend: { gainL: GainNode; gainR: GainNode } | null;
+  // This channel's input index on the native discrete ChannelMergerNode, or
+  // -1 if the current layout doesn't carry it.
+  nativeIndex: number;
 };
 
 // One playable source (an ordinary stem, or the dry stereo source anchor).
@@ -293,8 +322,16 @@ export function useStemPreview(
   // layout — defaults to every positional channel for callers (e.g. tests)
   // that don't care about layout-scoping the preview's speaker bed.
   layoutChannels: string[] = POSITIONAL_CHANNELS,
+  // Which final render stage the channel bed feeds. Ephemeral, session-only
+  // choice (not part of the project manifest) — switching it re-routes the
+  // already-built graph rather than re-decoding stems, see `applyOutputMode`.
+  outputMode: OutputMode = "binaural",
 ) {
   const layoutChannelsKey = layoutChannels.join(",");
+  const layoutChannelsRef = React.useRef(layoutChannels);
+  layoutChannelsRef.current = layoutChannels;
+  const outputModeRef = React.useRef(outputMode);
+  outputModeRef.current = outputMode;
   // Stable-identity, layout-scoped speaker list: this is what actually
   // drives the ambisonic speaker-bus construction below, replacing the old
   // hardcoded `POSITIONAL_CHANNELS` so switching e.g. 7.1.4 -> 5.1 tears
@@ -340,6 +377,19 @@ export function useStemPreview(
   // Headphone L/R tap: a splitter on the final output node, i.e. the actual
   // binaural signal reaching the listener's headphones, post-mastering.
   const headphoneAnalysers = React.useRef<{ splitter: ChannelSplitterNode; left: AnalyserNode; right: AnalyserNode } | null>(null);
+  // Stereo-downmix bus (BS.775) and discrete native-channel bus, built
+  // alongside the binaural bus so switching `outputMode` only re-routes
+  // which one reaches `ctx.destination` (see `applyOutputMode`) instead of
+  // tearing down and re-decoding the whole graph.
+  const stereoMerger = React.useRef<ChannelMergerNode | null>(null);
+  const nativeMerger = React.useRef<ChannelMergerNode | null>(null);
+  const binauralGate = React.useRef<GainNode | null>(null);
+  const stereoGate = React.useRef<GainNode | null>(null);
+  const nativeOutputGain = React.useRef<GainNode | null>(null);
+  const nativeChannelCount = React.useRef(0);
+  const [maxChannels, setMaxChannels] = React.useState(2);
+  const [outputDevices, setOutputDevices] = React.useState<MediaDeviceInfo[]>([]);
+  const [outputDeviceId, setOutputDeviceIdState] = React.useState("");
   const masteringNodes = React.useRef<AudioNode[]>([]);
   const resolvedBass = React.useRef<{ active: boolean; lfeGainDb: number }>({ active: false, lfeGainDb: 0 });
   const measuredLkfs = React.useRef(-70);
@@ -375,6 +425,9 @@ export function useStemPreview(
   const [currentTime, setCurrentTime] = React.useState(0);
   const [duration, setDuration] = React.useState(0);
   const [volume, setVolume] = React.useState(0.8);
+  // Master mute — independent of `volume` so unmuting restores the exact
+  // prior level instead of whatever a slider drag left it at.
+  const [muted, setMuted] = React.useState(false);
   const [loop, setLoop] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [ready, setReady] = React.useState(false);
@@ -433,6 +486,14 @@ export function useStemPreview(
       node.source = null;
     });
     stemSpectrum.current.clear();
+    // Bus-tap analysers stop receiving signal the instant sources are torn
+    // down, but the smoothed level refs they feed (see `measureChannelLevels`)
+    // don't decay on their own without a running tick — clear them here so
+    // the meters drop to zero on pause/stop instead of freezing at the last
+    // sample. Peak-hold markers are a separate ref owned by ChannelMeters and
+    // still decay normally.
+    channelLevels.current.clear();
+    headphoneLevels.current = { left: 0, right: 0 };
   }, []);
 
   const measureLevels = React.useCallback(() => {
@@ -571,6 +632,8 @@ export function useStemPreview(
       bus.muteGain.disconnect();
       bus.encoder.in.disconnect();
       bus.encoder.out.disconnect();
+      bus.stereoSend?.gainL.disconnect();
+      bus.stereoSend?.gainR.disconnect();
     });
     speakerBuses.current.clear();
     channelAnalysers.current.forEach((analyser) => analyser.disconnect());
@@ -583,6 +646,17 @@ export function useStemPreview(
       headphoneAnalysers.current = null;
     }
     headphoneLevels.current = { left: 0, right: 0 };
+    stereoMerger.current?.disconnect();
+    stereoMerger.current = null;
+    nativeMerger.current?.disconnect();
+    nativeMerger.current = null;
+    binauralGate.current?.disconnect();
+    binauralGate.current = null;
+    stereoGate.current?.disconnect();
+    stereoGate.current = null;
+    nativeOutputGain.current?.disconnect();
+    nativeOutputGain.current = null;
+    nativeChannelCount.current = 0;
     hoaBus.current?.disconnect();
     hoaBus.current = null;
     rotator.current?.in.disconnect();
@@ -746,6 +820,75 @@ export function useStemPreview(
     setSpeakerEnabled((current) => ({ ...current, [channel]: current[channel] === false }));
   }, []);
 
+  // Routes `ctx.destination` to whichever render stage the requested mode
+  // needs, and gates `preMasterBus`'s two alternate inputs (binaural decoder
+  // vs. stereo downmix) accordingly. Falls back to the stereo path if native
+  // is requested but the current output device can't carry that many
+  // discrete channels — the selector already disables that option, but a
+  // device can change after the fact (e.g. unplugged mid-session).
+  const applyOutputMode = React.useCallback((mode: OutputMode) => {
+    const ctx = context.current;
+    if (!ctx) return;
+    const destination = ctx.destination;
+    const stereoOut = master.current;
+    const nativeOut = nativeOutputGain.current;
+    try { stereoOut?.disconnect(destination); } catch { /* not connected */ }
+    try { nativeOut?.disconnect(destination); } catch { /* not connected */ }
+    const nCh = nativeChannelCount.current;
+    const maxChannelCount = destination.maxChannelCount || 2;
+    const canNative = mode === "native" && nCh > 0 && nCh <= maxChannelCount;
+    if (canNative) {
+      destination.channelCount = nCh;
+      destination.channelCountMode = "explicit";
+      destination.channelInterpretation = "discrete";
+      nativeOut?.connect(destination);
+    } else {
+      destination.channelCount = Math.min(2, maxChannelCount);
+      destination.channelCountMode = "explicit";
+      destination.channelInterpretation = "speakers";
+      stereoOut?.connect(destination);
+    }
+    const effectiveMode: OutputMode = canNative ? "native" : mode === "native" ? "binaural" : mode;
+    if (binauralGate.current) binauralGate.current.gain.value = effectiveMode === "binaural" ? 1 : 0;
+    if (stereoGate.current) stereoGate.current.gain.value = effectiveMode === "stereo" ? 1 : 0;
+  }, []);
+
+  React.useEffect(() => {
+    applyOutputMode(outputMode);
+  }, [outputMode, applyOutputMode, ready]);
+
+  React.useEffect(() => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    let cancelled = false;
+    const load = () => {
+      navigator.mediaDevices.enumerateDevices()
+        .then((devices) => {
+          if (!cancelled) setOutputDevices(devices.filter((device) => device.kind === "audiooutput"));
+        })
+        .catch(() => {
+          // No permission/support to enumerate — device picker stays empty,
+          // native mode still plays to the default device.
+        });
+    };
+    load();
+    navigator.mediaDevices.addEventListener?.("devicechange", load);
+    return () => {
+      cancelled = true;
+      navigator.mediaDevices.removeEventListener?.("devicechange", load);
+    };
+  }, []);
+
+  const setOutputDeviceId = React.useCallback(async (deviceId: string) => {
+    setOutputDeviceIdState(deviceId);
+    const ctx = context.current as (AudioContext & { setSinkId?: (id: string) => Promise<void> }) | null;
+    if (!ctx?.setSinkId) return;
+    try {
+      await ctx.setSinkId(deviceId);
+    } catch {
+      // Browser or device rejected the sink switch — stays on the previous device.
+    }
+  }, []);
+
   const loadHrtf = React.useCallback((url: string) => {
     const ctx = context.current;
     const decoder = binDecoder.current;
@@ -767,7 +910,11 @@ export function useStemPreview(
     const targetLkfs = mastering?.loudness?.target ?? -18;
     const normalize = mastering?.loudness?.normalize ?? true;
     const loudnessGain = normalize ? loudnessGainFor(measuredLkfs.current, targetLkfs) : 1;
-    if (master.current) master.current.gain.value = volume * loudnessGain;
+    const effectiveVolume = muted ? 0 : volume;
+    if (master.current) master.current.gain.value = effectiveVolume * loudnessGain;
+    // Native bypasses the stereo mastering chain (no loudness-normalize gain
+    // to apply there), but the Transport volume slider and mute should still work.
+    if (nativeOutputGain.current) nativeOutputGain.current.gain.value = effectiveVolume;
     const anchor = mix?.stem_source_anchor_strength || 0;
     const source = nodes.current.get("__source_anchor__");
     if (source) {
@@ -828,7 +975,7 @@ export function useStemPreview(
         send.gain.value = weight > 0 ? routeScale * weight * channelGroupGain(channel) : 0;
       }
     }
-  }, [mix, scene.stems, volume, mastering]);
+  }, [mix, scene.stems, volume, muted, mastering]);
 
   React.useEffect(() => {
     apply();
@@ -860,7 +1007,26 @@ export function useStemPreview(
     const binDecoderNode = new AmbiBinDecoder(ctx, AMBISONIC_ORDER);
     hoaBusNode.connect(rotatorNode.in);
     rotatorNode.out.connect(binDecoderNode.in);
-    binDecoderNode.out.connect(preMasterBusNode);
+    // Binaural/stereo are alternate render stages that both feed
+    // `preMasterBus` through their own gate — see `applyOutputMode`, which
+    // zeroes whichever gate isn't the active mode instead of tearing down
+    // and rebuilding this graph on every mode switch.
+    const binauralGateNode = ctx.createGain();
+    binDecoderNode.out.connect(binauralGateNode);
+    binauralGateNode.connect(preMasterBusNode);
+
+    const stereoMergerNode = ctx.createChannelMerger(2);
+    const stereoGateNode = ctx.createGain();
+    stereoMergerNode.connect(stereoGateNode);
+    stereoGateNode.connect(preMasterBusNode);
+
+    // Discrete native bus: one ChannelMerger input per layout channel
+    // (including LFE), fed straight from each channel's mute gain — the
+    // exact per-speaker signal the channel meters already display.
+    const layoutChannelList = layoutChannelsRef.current;
+    const nativeMergerNode = ctx.createChannelMerger(Math.max(1, layoutChannelList.length));
+    const nativeOutputGainNode = ctx.createGain();
+    nativeMergerNode.connect(nativeOutputGainNode);
 
     const busesMap = new Map<string, SpeakerBus>();
     const channelAnalysersMap = new Map<string, AnalyserNode>();
@@ -874,7 +1040,25 @@ export function useStemPreview(
       encoder.updateGains();
       muteGain.connect(encoder.in);
       encoder.out.connect(hoaBusNode);
-      busesMap.set(channel, { muteGain, encoder });
+
+      const stereoCoeffs = STEREO_DOWNMIX_GAINS[channel];
+      let stereoSend: SpeakerBus["stereoSend"] = null;
+      if (stereoCoeffs) {
+        const gainL = ctx.createGain();
+        gainL.gain.value = stereoCoeffs.left;
+        const gainR = ctx.createGain();
+        gainR.gain.value = stereoCoeffs.right;
+        muteGain.connect(gainL);
+        gainL.connect(stereoMergerNode, 0, 0);
+        muteGain.connect(gainR);
+        gainR.connect(stereoMergerNode, 0, 1);
+        stereoSend = { gainL, gainR };
+      }
+
+      const nativeIndex = layoutChannelList.indexOf(channel);
+      if (nativeIndex >= 0) muteGain.connect(nativeMergerNode, 0, nativeIndex);
+
+      busesMap.set(channel, { muteGain, encoder, stereoSend, nativeIndex });
       // No output connection — a pure meter tap, cannot affect the audible signal.
       const channelAnalyser = ctx.createAnalyser();
       channelAnalyser.fftSize = 256;
@@ -894,7 +1078,11 @@ export function useStemPreview(
     const lfeMuteGainNode = ctx.createGain();
     lfeMuteGainNode.gain.value = speakerEnabled.LFE === false ? 0 : 1;
     lfeBusNode.connect(lfeMuteGainNode).connect(mergePointNode);
-    mergePointNode.connect(softLimitNode).connect(output).connect(ctx.destination);
+    mergePointNode.connect(softLimitNode).connect(output);
+    // LFE's own discrete native channel — bypasses the stereo mastering
+    // chain entirely, same as every other native channel.
+    const lfeNativeIndex = layoutChannelList.indexOf("LFE");
+    if (lfeNativeIndex >= 0) lfeMuteGainNode.connect(nativeMergerNode, 0, lfeNativeIndex);
     const lfeAnalyser = ctx.createAnalyser();
     lfeAnalyser.fftSize = 256;
     lfeAnalyser.smoothingTimeConstant = 0.7;
@@ -926,7 +1114,15 @@ export function useStemPreview(
     mergePoint.current = mergePointNode;
     softLimit.current = softLimitNode;
     master.current = output;
+    stereoMerger.current = stereoMergerNode;
+    nativeMerger.current = nativeMergerNode;
+    binauralGate.current = binauralGateNode;
+    stereoGate.current = stereoGateNode;
+    nativeOutputGain.current = nativeOutputGainNode;
+    nativeChannelCount.current = layoutChannelList.length;
+    setMaxChannels(ctx.destination.maxChannelCount || 2);
     buildMasteringTopology();
+    applyOutputMode(outputModeRef.current);
     setReady(false);
     setLoadProgress(0);
 
@@ -1013,8 +1209,8 @@ export function useStemPreview(
     })();
     initPromise.current = promise;
     return promise;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- speakerEnabled read only for the initial mute value; live changes go through applySpeakerMute
-  }, [apply, buildMasteringTopology, loadHrtf, sourcePreviewUrl, supported]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- speakerEnabled read only for the initial mute value; live changes go through applySpeakerMute; outputMode read via outputModeRef so a mode switch alone doesn't force a full reset/re-decode
+  }, [apply, applyOutputMode, buildMasteringTopology, loadHrtf, sourcePreviewUrl, supported]);
 
   React.useEffect(() => {
     initialize().catch(() => {
@@ -1142,6 +1338,10 @@ export function useStemPreview(
     });
   }, []);
 
+  const toggleMute = React.useCallback(() => {
+    setMuted((current) => !current);
+  }, []);
+
   return {
     supported,
     ready,
@@ -1150,9 +1350,11 @@ export function useStemPreview(
     currentTime,
     duration,
     volume,
+    muted,
     loop,
     error,
     setVolume,
+    toggleMute,
     playPause,
     stop,
     seek,
@@ -1167,5 +1369,10 @@ export function useStemPreview(
     speakerEnabled,
     toggleSpeaker,
     loadHrtf,
+    maxChannels,
+    nativeSupported: layoutChannelsRef.current.length > 0 && layoutChannelsRef.current.length <= maxChannels,
+    outputDevices,
+    outputDeviceId,
+    setOutputDeviceId,
   };
 }

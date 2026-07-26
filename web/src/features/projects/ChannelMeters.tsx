@@ -1,5 +1,6 @@
 import * as React from "react";
 import { speakerDisplayLabel } from "@/lib/spatial";
+import type { OutputMode } from "./useStemPreview";
 
 // Vertical dB-scale level meters beside the Haze view: one bar per channel of
 // the project's selected speaker layout (in `channels` order, LFE last),
@@ -14,13 +15,19 @@ export type ChannelMetersProps = {
   headphoneLevels: React.MutableRefObject<{ left: number; right: number }>;
   speakerEnabled: Record<string, boolean>;
   onToggleSpeaker?: (channel: string) => void;
+  // Which of the three preview output modes is live — controls the trailing
+  // group: two bars with a headphone glyph for binaural, two bars labeled
+  // L/R for stereo, or nothing (the per-layout bars already show every
+  // discrete channel) for native.
+  outputMode: OutputMode;
   // True while preview audio is live-updating `channelLevels`/
-  // `headphoneLevels` (i.e. `preview.playing`). While inactive, the draw
-  // loop keeps running only until the bars + peak markers settle (see
-  // `SETTLE_FRAMES` below), then stops — the level refs freeze at their
-  // last live value on pause rather than decaying, so once the peak-decay
-  // animation catches up to that frozen value nothing more will change
-  // until playback resumes.
+  // `headphoneLevels` (i.e. `preview.playing`). On pause/stop those refs are
+  // cleared to zero (see useStemPreview.ts's `stopSources`), and this
+  // component eases its displayed bars down toward that zero (`smoothLevel`)
+  // rather than snapping instantly, so the meters dissolve out on the same
+  // timing as HazeView/ElevationView. While inactive, the draw loop keeps
+  // running only until the bars + peak markers settle (see `SETTLE_FRAMES`
+  // below), then stops.
   active: boolean;
   className?: string;
 };
@@ -30,6 +37,11 @@ export type ChannelMetersProps = {
 // decay animation visibly settle rather than freeze mid-motion.
 const SETTLE_FRAMES = 20;
 const SETTLE_EPSILON_DB = 0.05;
+// Same exponential rate HazeView/ElevationView smooth their per-stem level
+// toward (see those files' `previous.level + (level - previous.level) *
+// Math.min(1, delta * 8)`) — keeps the meters' play/stop ramp visually in
+// sync with the haze blobs' and elevation dots' dissolve in/out.
+const LEVEL_SMOOTHING_RATE = 8;
 
 type HitTarget = { channel: string; x: number; width: number };
 
@@ -72,6 +84,26 @@ function drawLabel(ctx: CanvasRenderingContext2D, text: string, centerX: number,
     ctx.font = `700 ${fontSize}px system-ui, sans-serif`;
   }
   ctx.fillText(text, centerX, topY);
+}
+
+// Small canvas-path headphone glyph (headband arc + two ear cups), drawn
+// centered under the binaural group in place of "L"/"R" text — a canvas
+// path keeps it trivially aligned to the bars' coordinates rather than
+// syncing a DOM icon on top of the canvas.
+function drawHeadphoneIcon(ctx: CanvasRenderingContext2D, centerX: number, topY: number, color: string) {
+  const radius = 6;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(centerX, topY + radius, radius, Math.PI, 0, false);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(centerX - radius - 1.5, topY + radius - 1, 3, 5, 1.5);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.roundRect(centerX + radius - 1.5, topY + radius - 1, 3, 5, 1.5);
+  ctx.fill();
 }
 
 function drawZoneBar(
@@ -125,6 +157,7 @@ function ChannelMetersImpl({
   headphoneLevels,
   speakerEnabled,
   onToggleSpeaker,
+  outputMode,
   active,
   className,
 }: ChannelMetersProps) {
@@ -133,13 +166,25 @@ function ChannelMetersImpl({
   const frame = React.useRef<number | null>(null);
   const hitTargets = React.useRef<HitTarget[]>([]);
   const peaks = React.useRef<Map<string, number>>(new Map());
+  // Eased-toward-target level per bar (keyed same as `peaks`), so a fill
+  // ramps up/down over the same visible duration as the haze/elevation
+  // dissolve instead of jumping straight to the raw (possibly just-cleared)
+  // `channelLevels`/`headphoneLevels` value.
+  const displayLevels = React.useRef<Map<string, number>>(new Map());
   const lastTime = React.useRef<number | null>(null);
-  const propsRef = React.useRef({ channels, speakerEnabled });
-  propsRef.current = { channels, speakerEnabled };
+  const propsRef = React.useRef({ channels, speakerEnabled, outputMode });
+  propsRef.current = { channels, speakerEnabled, outputMode };
   const activeRef = React.useRef(active);
   activeRef.current = active;
   const idleFrames = React.useRef(0);
   const wakeRef = React.useRef<() => void>(() => {});
+
+  const smoothLevel = React.useCallback((key: string, target: number, deltaSec: number) => {
+    const previous = displayLevels.current.get(key) ?? 0;
+    const next = previous + (target - previous) * Math.min(1, deltaSec * LEVEL_SMOOTHING_RATE);
+    displayLevels.current.set(key, next);
+    return next;
+  }, []);
 
   const updatePeak = React.useCallback((key: string, currentDb: number, deltaSec: number) => {
     const previous = peaks.current.get(key) ?? -60;
@@ -178,7 +223,7 @@ function ChannelMetersImpl({
     const draw = (time: number) => {
       const deltaSec = lastTime.current === null ? 0 : Math.min(0.25, (time - lastTime.current) / 1000);
       lastTime.current = time;
-      const { channels: currentChannels, speakerEnabled: currentEnabled } = propsRef.current;
+      const { channels: currentChannels, speakerEnabled: currentEnabled, outputMode: currentMode } = propsRef.current;
       const dpr = window.devicePixelRatio || 1;
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
@@ -214,8 +259,11 @@ function ChannelMetersImpl({
         ...currentChannels.filter((channel) => channel !== "LFE"),
         ...(currentChannels.includes("LFE") ? ["LFE"] : []),
       ];
-      // +1 reserved slot for the gap before the headphone group, +2 for L/R.
-      const slots = order.length + 1 + 2;
+      // Native mode has no trailing group — the per-layout bars above
+      // already show every discrete channel reaching the device. Binaural
+      // and stereo both reserve +1 slot for the gap plus +2 for the group's
+      // two bars.
+      const slots = currentMode === "native" ? order.length : order.length + 1 + 2;
       const pitch = plotWidth / slots;
       const barWidth = Math.max(6, pitch * 0.6);
       const nextHits: HitTarget[] = [];
@@ -226,7 +274,8 @@ function ChannelMetersImpl({
         const centerX = padLeft + (index + 0.5) * pitch;
         const barX = centerX - barWidth / 2;
         const muted = currentEnabled[channel] === false;
-        const level = channelLevels.current.get(channel) ?? 0;
+        const rawLevel = channelLevels.current.get(channel) ?? 0;
+        const level = smoothLevel(channel, rawLevel, deltaSec);
         const currentDb = muted ? -60 : levelToDb(level);
         const peakDb = updatePeak(channel, currentDb, deltaSec);
         if (peakDb - currentDb > SETTLE_EPSILON_DB) settled = false;
@@ -241,30 +290,41 @@ function ChannelMetersImpl({
       });
       hitTargets.current = nextHits;
 
-      // Separator + "Headphones" group: reads the binaural output actually
-      // reaching the listener, independent of any speaker mute.
-      const dividerX = padLeft + (order.length + 0.5) * pitch;
-      ctx.strokeStyle = "#1e293b";
-      ctx.beginPath();
-      ctx.moveTo(dividerX, meterTop);
-      ctx.lineTo(dividerX, meterBottom);
-      ctx.stroke();
+      // Separator + trailing group: reads the actual final-output signal
+      // (binaural or stereo downmix — whichever is live), independent of any
+      // speaker mute. Native has no trailing group at all: the per-layout
+      // bars above already are the discrete output.
+      if (currentMode !== "native") {
+        const dividerX = padLeft + (order.length + 0.5) * pitch;
+        ctx.strokeStyle = "#1e293b";
+        ctx.beginPath();
+        ctx.moveTo(dividerX, meterTop);
+        ctx.lineTo(dividerX, meterBottom);
+        ctx.stroke();
 
-      const headphones = headphoneLevels.current;
-      (["L", "R"] as const).forEach((label, index) => {
-        const slotIndex = order.length + 1 + index;
-        const centerX = padLeft + (slotIndex + 0.5) * pitch;
-        const barX = centerX - barWidth / 2;
-        const level = label === "L" ? headphones.left : headphones.right;
-        const currentDb = levelToDb(level);
-        const peakDb = updatePeak(`hp:${label}`, currentDb, deltaSec);
-        if (peakDb - currentDb > SETTLE_EPSILON_DB) settled = false;
-        const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
-        const yellowBottomY = dbToY(YELLOW_ZONE_DB, meterTop, meterBottom);
+        const headphones = headphoneLevels.current;
+        const barCenters: number[] = [];
+        (["L", "R"] as const).forEach((label, index) => {
+          const slotIndex = order.length + 1 + index;
+          const centerX = padLeft + (slotIndex + 0.5) * pitch;
+          barCenters.push(centerX);
+          const barX = centerX - barWidth / 2;
+          const rawLevel = label === "L" ? headphones.left : headphones.right;
+          const level = smoothLevel(`hp:${label}`, rawLevel, deltaSec);
+          const currentDb = levelToDb(level);
+          const peakDb = updatePeak(`hp:${label}`, currentDb, deltaSec);
+          if (peakDb - currentDb > SETTLE_EPSILON_DB) settled = false;
+          const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
+          const yellowBottomY = dbToY(YELLOW_ZONE_DB, meterTop, meterBottom);
 
-        drawZoneBar(ctx, barX, barWidth, meterTop, meterBottom, redBottomY, yellowBottomY, currentDb, peakDb, false);
-        drawLabel(ctx, label, centerX, meterBottom + 3, "#7dd3fc", pitch);
-      });
+          drawZoneBar(ctx, barX, barWidth, meterTop, meterBottom, redBottomY, yellowBottomY, currentDb, peakDb, false);
+          if (currentMode === "stereo") drawLabel(ctx, label, centerX, meterBottom + 3, "#7dd3fc", pitch);
+        });
+        if (currentMode === "binaural") {
+          const groupCenterX = (barCenters[0] + barCenters[1]) / 2;
+          drawHeadphoneIcon(ctx, groupCenterX, meterBottom + 3, "#7dd3fc");
+        }
+      }
 
       idleFrames.current = !activeRef.current && settled ? idleFrames.current + 1 : 0;
       if (activeRef.current || idleFrames.current < SETTLE_FRAMES) {
@@ -289,7 +349,7 @@ function ChannelMetersImpl({
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, channels, speakerEnabled]);
+  }, [active, channels, speakerEnabled, outputMode]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!onToggleSpeaker) return;
