@@ -416,6 +416,7 @@ class WorkerManager:
                 track_ids = [track.id for track in project.tracks]
                 manifest = copy.deepcopy(project.manifest)
                 requested_stems = list(project.requested_stems)
+                preview_quality = project.preview_quality
 
             with ExitStack() as sources:
                 input_paths = [sources.enter_context(self.source.materialize(key)) for key in source_keys]
@@ -500,7 +501,7 @@ class WorkerManager:
                     for track_id, input_path in zip(track_ids, input_paths, strict=True):
                         track = session.get(ProjectTrack, track_id)
                         if track:
-                            self.project_stems.write_source_preview(track, input_path)
+                            self.project_stems.write_source_preview(track, input_path, quality=preview_quality)
                     session.commit()
 
             with self.sessions() as session:
@@ -509,7 +510,7 @@ class WorkerManager:
                     return
                 next_generation = project.stem_generation + 1
                 for track in project.tracks:
-                    self.project_stems.catalogue_track(session, project, track, next_generation)
+                    self.project_stems.catalogue_track(session, project, track, next_generation, quality=project.preview_quality)
                 project.prepared_stems = list(project.requested_stems)
                 project.stem_generation = next_generation
                 project.status = "ready"

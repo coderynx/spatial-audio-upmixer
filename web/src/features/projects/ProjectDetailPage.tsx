@@ -69,7 +69,18 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       setError(null);
     } catch (reason) { setError((reason as Error).message); }
   }, [projectId]);
-  React.useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 2000); return () => window.clearInterval(timer); }, [load]);
+  // Polling stops once the project reaches a terminal status — the SSE
+  // stream below covers live progress while preparing, and once ready there
+  // is nothing server-side left to pick up on this page (saves/exports all
+  // come back through their own API responses). Re-subscribes on `status`
+  // so a retry (which flips status back to non-terminal) resumes polling.
+  React.useEffect(() => {
+    void load();
+    if (project && ["ready", "failed", "expansion_failed"].includes(project.status)) return;
+    const timer = window.setInterval(() => void load(), 2000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status only, same as the SSE effect below: a mid-poll `project` update (content changes, same status) shouldn't tear down and restart the interval
+  }, [load, project?.status]);
   // While the project is preparing, layer a realtime SSE stream on top of the
   // 2s poll above so the log/percentage update live instead of in 2s steps.
   // The 2s poll keeps refreshing everything else (exports, other tracks) and
@@ -109,7 +120,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       format: { ...manifest.format, ...overrides.format },
     });
   }, [editScope, manifest, selected]);
-  const updateManifest = (next: Manifest) => {
+  const updateManifest = React.useCallback((next: Manifest) => {
     if (editScope === "project") {
       setManifest(next);
       queueSave(next);
@@ -123,7 +134,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       },
       scene_overrides: selected.scene_overrides,
     }).then(setProject).catch((reason) => setError((reason as Error).message));
-  };
+  }, [editScope, projectId, selected, queueSave]);
   // Mastering and delivery are whole-project concerns (one master, one
   // deliverable) — always write straight to the project manifest regardless
   // of the mixing tab's project/track edit scope. Track-scope saves
@@ -153,6 +164,16 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       }));
     } catch (reason) { setError((reason as Error).message); }
   };
+  const savePreviewQuality = async (preview_quality: string) => {
+    if (!projectId || !project || !manifest) return;
+    try {
+      setProject(await api.saveProject(projectId, {
+        preview_quality,
+        manifest: manifest as unknown as Record<string, unknown>,
+        scene: project.scene as Record<string, unknown>,
+      }));
+    } catch (reason) { setError((reason as Error).message); }
+  };
   const previewStems = selected?.stems.filter((stem) => project?.prepared_stems.includes(stem.stem_key.split("@", 1)[0])) || [];
   // Stereo stems get two halos (L/R) in the 3D scene instead of one collapsed
   // to a single point — keyed by base stem name, same convention as routing.
@@ -162,7 +183,13 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     for (const stem of source) counts[stem.stem_key.split("@", 1)[0]] = stem.channels;
     return counts;
   }, [selected, project]);
-  const channels = configuration?.choices.layout_channels?.[effectiveManifest?.mixing.channel_layout || "7.1.4"] || ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"];
+  // Stable identity across renders unless the layout actually changes — fed
+  // straight into HazeView/ElevationView/ChannelMeters, which are memoized
+  // specifically so they don't re-render on every playback frame.
+  const channels = React.useMemo(
+    () => configuration?.choices.layout_channels?.[effectiveManifest?.mixing.channel_layout || "7.1.4"] || ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"],
+    [configuration, effectiveManifest?.mixing.channel_layout],
+  );
   const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering, channels);
   const ready = Boolean(project?.prepared_stems.length);
   const stemNames = project?.prepared_stems || [];
@@ -175,15 +202,25 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     const missing = stemNames.filter((stem) => !kept.includes(stem));
     return [...kept, ...missing];
   }, [stemNames, stemOrder]);
-  const reorderStems = (source: string, target: string) => {
+  const reorderStems = React.useCallback((source: string, target: string) => {
     if (source === target) return;
     const next = orderedStems.filter((stem) => stem !== source);
     const targetIndex = next.indexOf(target);
     if (targetIndex === -1) return;
     next.splice(targetIndex, 0, source);
     setStemOrder(next);
-  };
-  const routing: StemRouting = effectiveManifest?.mixing.stem_routing || {};
+  }, [orderedStems]);
+  // Stable callbacks for the memoized `StemRow` list — recreated only when
+  // their few real dependencies change, not on every render (e.g. every
+  // playback frame), so `React.memo` on `StemRow` actually holds.
+  const clearDraggedStem = React.useCallback(() => setDraggedStem(null), []);
+  const handleDropOn = React.useCallback((target: string) => {
+    setDraggedStem((current) => {
+      if (current) reorderStems(current, target);
+      return null;
+    });
+  }, [reorderStems]);
+  const routing: StemRouting = React.useMemo(() => effectiveManifest?.mixing.stem_routing || {}, [effectiveManifest]);
   const updateRoute = (stem: string, patch: Record<string, number>) => {
     if (!effectiveManifest) return;
     updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_routing: { ...routing, [stem]: { ...routing[stem], ...patch } } } });
@@ -195,16 +232,16 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_routing: next } });
     } catch (reason) { setError((reason as Error).message); }
   };
-  const toggleEnabled = (stem: string) => {
+  const toggleEnabled = React.useCallback((stem: string) => {
     if (!effectiveManifest) return;
     const current = effectiveManifest.mixing.stem_enabled[stem] !== false;
     updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_enabled: { ...effectiveManifest.mixing.stem_enabled, [stem]: !current }, stem_solo: effectiveManifest.mixing.stem_solo.filter((solo) => solo !== stem) } });
-  };
-  const toggleSolo = (stem: string) => {
+  }, [effectiveManifest, updateManifest]);
+  const toggleSolo = React.useCallback((stem: string) => {
     if (!effectiveManifest) return;
     const solo = effectiveManifest.mixing.stem_solo;
     updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_solo: solo.includes(stem) ? solo.filter((item) => item !== stem) : [...solo, stem] } });
-  };
+  }, [effectiveManifest, updateManifest]);
   const exportProject = async () => {
     if (!projectId) return;
     setExporting(true);
@@ -260,6 +297,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           configuration={configuration}
           onRename={(name) => void renameProject(name)}
           onChange={(next) => updateProjectManifest(next)}
+          onPreviewQualityChange={(quality) => void savePreviewQuality(quality)}
         />
       </section>
     ) : manifestView ? (
@@ -278,6 +316,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         <Transport
           playing={preview.playing}
           currentTime={preview.currentTime}
+          currentTimeRef={preview.currentTimeRef}
           duration={preview.duration}
           volume={preview.volume}
           loop={preview.loop}
@@ -307,10 +346,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             array and mute state, and stays mounted alongside HazeView across
             Mixing/Mastering/Delivery since both live in this shared panel. */}
         <div className="flex min-h-0 flex-[3] gap-3">
-          <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} className="min-h-0 min-w-0 flex-[2]" />
-          <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} />
+          <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="min-h-0 min-w-0 flex-[2]" />
+          <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} />
         </div>
-        <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} className="h-40 shrink-0" />
+        <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="h-40 shrink-0" />
       </section>;
       // Preview stays mounted across all three tabs (same center/left column
       // position) so playback and the routing graphs never stop just because
@@ -329,12 +368,12 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             muted={effectiveManifest?.mixing.stem_enabled[stem] === false}
             soloed={Boolean(effectiveManifest?.mixing.stem_solo.includes(stem))}
             dragging={draggedStem === stem}
-            onSelect={() => setSelectedStem(stem)}
-            onToggleMute={() => toggleEnabled(stem)}
-            onToggleSolo={() => toggleSolo(stem)}
-            onDragStart={() => setDraggedStem(stem)}
-            onDragEnd={() => setDraggedStem(null)}
-            onDropOn={() => { if (draggedStem) reorderStems(draggedStem, stem); setDraggedStem(null); }}
+            onSelect={setSelectedStem}
+            onToggleMute={toggleEnabled}
+            onToggleSolo={toggleSolo}
+            onDragStart={setDraggedStem}
+            onDragEnd={clearDraggedStem}
+            onDropOn={handleDropOn}
           />)}
         </aside>
         {previewPanel}
@@ -372,7 +411,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   </main>;
 }
 
-function StemRow({
+const StemRow = React.memo(function StemRow({
   stem,
   selected,
   muted,
@@ -390,21 +429,21 @@ function StemRow({
   muted: boolean;
   soloed: boolean;
   dragging: boolean;
-  onSelect: () => void;
-  onToggleMute: () => void;
-  onToggleSolo: () => void;
-  onDragStart: () => void;
+  onSelect: (stem: string) => void;
+  onToggleMute: (stem: string) => void;
+  onToggleSolo: (stem: string) => void;
+  onDragStart: (stem: string) => void;
   onDragEnd: () => void;
-  onDropOn: () => void;
+  onDropOn: (stem: string) => void;
 }) {
   const StemIcon = getStemIcon(stem);
   return <div
     draggable
-    onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; onDragStart(); }}
+    onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; onDragStart(stem); }}
     onDragEnd={onDragEnd}
     onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
-    onDrop={(event) => { event.preventDefault(); onDropOn(); }}
-    onClick={onSelect}
+    onDrop={(event) => { event.preventDefault(); onDropOn(stem); }}
+    onClick={() => onSelect(stem)}
     className={cn(
       "mt-1 flex cursor-pointer items-center gap-1 rounded-md border-l-4 py-2 pl-1.5 pr-1 transition-colors",
       selected ? "bg-accent" : "hover:bg-muted/60",
@@ -419,7 +458,7 @@ function StemRow({
       type="button"
       aria-pressed={muted}
       aria-label={`${muted ? "Enable" : "Mute"} ${stem}`}
-      onClick={(event) => { event.stopPropagation(); onToggleMute(); }}
+      onClick={(event) => { event.stopPropagation(); onToggleMute(stem); }}
       className={cn(
         "flex h-6 w-6 shrink-0 items-center justify-center rounded text-[11px] font-bold",
         muted ? "bg-red-500 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -431,7 +470,7 @@ function StemRow({
       type="button"
       aria-pressed={soloed}
       aria-label={`${soloed ? "Clear solo" : "Solo"} ${stem}`}
-      onClick={(event) => { event.stopPropagation(); onToggleSolo(); }}
+      onClick={(event) => { event.stopPropagation(); onToggleSolo(stem); }}
       className={cn(
         "flex h-6 w-6 shrink-0 items-center justify-center rounded text-[11px] font-bold",
         soloed ? "bg-amber-400 text-black" : "text-muted-foreground hover:bg-muted hover:text-foreground",
@@ -440,15 +479,15 @@ function StemRow({
       S
     </button>
   </div>;
-}
+});
 
-function StemControls({ stem, route, channels, enabled, gain, eq, onRoute, onGain, onEq, stemEqProfiles }: { stem: string; route: Record<string, number>; channels: string[]; enabled: boolean; gain: number; eq: string; onRoute: (patch: Record<string, number>) => void; onGain: (gain: number) => void; onEq: (eq: string) => void; stemEqProfiles?: string[] }) {
+const StemControls = React.memo(function StemControls({ stem, route, channels, enabled, gain, eq, onRoute, onGain, onEq, stemEqProfiles }: { stem: string; route: Record<string, number>; channels: string[]; enabled: boolean; gain: number; eq: string; onRoute: (patch: Record<string, number>) => void; onGain: (gain: number) => void; onEq: (eq: string) => void; stemEqProfiles?: string[] }) {
   const position = routePosition(route, channels);
   const setPosition = (patch: Partial<typeof position>) => onRoute(routeForPosition(channels, { ...position, ...patch }, route.LFE || 0));
   const StemIcon = getStemIcon(stem);
   const hasHeight = channels.includes("TFL") || channels.includes("TFR") || channels.includes("TBL") || channels.includes("TBR");
   return <div className="space-y-4"><p className="flex items-center gap-2 text-sm font-semibold"><StemIcon className="h-4 w-4 shrink-0" style={{ color: getStemColor(stem) }} /><span className="min-w-0 flex-1 truncate">{stem}</span><span className="text-xs font-normal text-muted-foreground">{enabled ? "enabled" : "muted"}</span></p><p className="text-xs text-muted-foreground">Position writes the same explicit speaker matrix used by export.</p><label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><ArrowLeftRight className="h-3.5 w-3.5" />Front <span className="ml-auto">Back</span></span><Slider aria-label="Front to back" className="mt-2" min={0} max={1} step={0.01} value={[position.depth]} onValueChange={([depth]) => setPosition({ depth })} /></label>{hasHeight && <label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><ArrowUpDown className="h-3.5 w-3.5" />Floor <span className="ml-auto">Height</span></span><Slider aria-label="Floor to height" className="mt-2" min={0} max={1} step={0.01} value={[position.height]} onValueChange={([height]) => setPosition({ height })} /></label>}<label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><SlidersHorizontal className="h-3.5 w-3.5" />Gain <span className="ml-auto">{gain.toFixed(1)} dB</span></span><Slider className="mt-2" min={-12} max={6} step={0.1} value={[gain]} onValueChange={([value]) => onGain(value)} /></label><label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><AudioWaveform className="h-3.5 w-3.5" />EQ</span><select className="mt-2 flex h-8 w-full rounded border bg-background px-2" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option>{(stemEqProfiles || ["vocal-presence", "vocal-warmth", "bass-warmth", "bass-cut", "drums-punch", "other-air"]).filter((name) => name !== "flat").map((name) => <option key={name} value={name}>{name}</option>)}</select></label></div>;
-}
+});
 
 function routePosition(route: Record<string, number>, channels: string[]) {
   const weight = (names: string[]) => names.reduce((total, name) => total + (route[name] || 0), 0);

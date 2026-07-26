@@ -14,8 +14,8 @@ const asset: Asset = {
 
 const project: Project = {
   id: "project-1", import_id: "import-1", name: "Editable master", status: "ready", progress: 1,
-  status_message: "Project stems ready", manifest: {}, scene: {}, requested_stems: ["Vocals"],
-  prepared_stems: ["Vocals"], stem_generation: 1, revision: 1, error: null,
+  status_message: "Project stems ready", progress_log: [], manifest: {}, scene: {}, requested_stems: ["Vocals"],
+  prepared_stems: ["Vocals"], stem_generation: 1, preview_quality: "high", revision: 1, error: null,
   created_at: "2026-01-01T12:00:00Z", updated_at: "2026-01-01T12:01:00Z",
   tracks: [{
     id: "track-1", position: 0, status: "ready", progress: 1, manifest_overrides: {}, scene_overrides: {},

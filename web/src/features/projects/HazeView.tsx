@@ -37,6 +37,12 @@ function polar(center: { x: number; y: number }, radius: number, angle: number) 
   return { x: center.x + Math.sin(angle) * radius, y: center.y - Math.cos(angle) * radius };
 }
 
+// Consecutive idle frames (no audible voice) required before the draw loop
+// stops scheduling itself while inactive — long enough for the trailing
+// alpha-fade background clear and any in-flight blob/tendril fade to become
+// visually indistinguishable from a clean frame before the loop stops.
+const SETTLE_FRAMES = 40;
+
 export type HazeViewProps = {
   channels: string[];
   routing: StemRouting;
@@ -50,10 +56,15 @@ export type HazeViewProps = {
   // stem. Clicking a speaker's point on the graph toggles it directly.
   speakerEnabled: Record<string, boolean>;
   onToggleSpeaker: (channel: string) => void;
+  // True while preview audio is live-updating `stemSpectrum` (i.e.
+  // `preview.playing`). While inactive, the draw loop keeps running only
+  // until every voice has faded out and the trailing background fade has
+  // settled, then stops — see `SETTLE_FRAMES`.
+  active: boolean;
   className?: string;
 };
 
-export default function HazeView({
+function HazeViewImpl({
   channels,
   routing,
   selectedStem,
@@ -63,6 +74,7 @@ export default function HazeView({
   stemSpectrum,
   speakerEnabled,
   onToggleSpeaker,
+  active,
   className,
 }: HazeViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -76,6 +88,10 @@ export default function HazeView({
   // Latest props, read fresh by the draw loop without restarting it.
   const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled });
   propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled };
+  const activeRef = React.useRef(active);
+  activeRef.current = active;
+  const idleFrames = React.useRef(0);
+  const wakeRef = React.useRef<() => void>(() => {});
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
@@ -101,7 +117,16 @@ export default function HazeView({
       initializedSize.current = false;
     };
     resize();
-    const observer = new ResizeObserver(resize);
+    // Resizing a canvas clears its pixel buffer. While the draw loop is
+    // idle (see `SETTLE_FRAMES`), a layout shift — e.g. the "Preparing
+    // preview…" banner disappearing once ready — fires this observer after
+    // the loop already stopped, clearing the canvas with nothing left to
+    // redraw it. Waking the loop here (a no-op if it's already running)
+    // guarantees at least one fresh frame after every resize.
+    const observer = new ResizeObserver(() => {
+      resize();
+      wakeRef.current();
+    });
     observer.observe(container);
 
     let lastTime = performance.now();
@@ -329,15 +354,30 @@ export default function HazeView({
       ctx.drawImage(blobCanvas, 0, 0, width, height);
       ctx.restore();
 
-      frame.current = window.requestAnimationFrame(draw);
+      idleFrames.current = !activeRef.current && resolved.length === 0 ? idleFrames.current + 1 : 0;
+      if (activeRef.current || idleFrames.current < SETTLE_FRAMES) {
+        frame.current = window.requestAnimationFrame(draw);
+      } else {
+        frame.current = null;
+      }
     };
     frame.current = window.requestAnimationFrame(draw);
+    wakeRef.current = () => {
+      if (frame.current === null) {
+        idleFrames.current = 0;
+        frame.current = window.requestAnimationFrame(draw);
+      }
+    };
 
     return () => {
       observer.disconnect();
       if (frame.current !== null) window.cancelAnimationFrame(frame.current);
     };
   }, [stemSpectrum]);
+
+  React.useEffect(() => {
+    wakeRef.current();
+  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -376,3 +416,5 @@ export default function HazeView({
     </div>
   </div>;
 }
+
+export default React.memo(HazeViewImpl);

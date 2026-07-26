@@ -151,6 +151,7 @@ class ProjectView(ApiModel):
     requested_stems: list[str]
     prepared_stems: list[str]
     stem_generation: int
+    preview_quality: str
     revision: int
     error: str | None
     created_at: datetime
@@ -173,6 +174,7 @@ class UpdateProjectSettingsRequest(BaseModel):
     manifest: dict[str, Any]
     scene: dict[str, Any] = Field(default_factory=dict)
     mastering_reference_id: str | None = None
+    preview_quality: str | None = None
 
 
 class UpdateProjectTrackSettingsRequest(BaseModel):

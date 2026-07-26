@@ -224,19 +224,54 @@ async function loadBuffer(ctx: AudioContext, url: string): Promise<AudioBuffer> 
 // -0.691 dB offset the K-weighted measurement uses. No K-weighting or gating
 // blocks — good enough to steer a preview gain toward the mastering target,
 // not to reproduce the exact delivered LKFS.
-function measureApproxLkfs(buffers: AudioBuffer[]): number {
+//
+// Yielded to the event loop periodically rather than run in one synchronous
+// pass, so a multi-minute, multi-stem mix (tens of millions of sample ops)
+// doesn't block the main thread in one long task right as the preview
+// becomes ready. Slice length is time-budgeted (checked every
+// `LKFS_YIELD_CHECK_SAMPLES` samples) rather than a fixed sample count: an
+// earlier version used a fixed 250k-sample chunk, which for a real
+// multi-stem track meant hundreds of chunks — each one finishes in ~1ms of
+// actual work, but every chunk still paid a full ~16ms `requestAnimationFrame`
+// wait, adding up to several seconds of pure waiting for no benefit. Yielding
+// only after a real time budget elapses keeps yields rare (a handful per
+// track) while still preventing any single frame from blocking. This never
+// changes the accumulation order (still strictly sequential per
+// channel/sample), only where control yields, so the result stays
+// bit-for-bit identical to an unchunked computation.
+const LKFS_YIELD_CHECK_SAMPLES = 1 << 16;
+const LKFS_TIME_BUDGET_MS = 8;
+
+function yieldToMainThread(): Promise<void> {
+  return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+}
+
+async function measureApproxLkfs(buffers: AudioBuffer[]): Promise<number> {
   const len = buffers.reduce((min, buffer) => Math.min(min, buffer.length), Infinity);
   if (!Number.isFinite(len) || len <= 0) return -70;
   const mix = new Float32Array(len);
+  let sliceStart = performance.now();
   for (const buffer of buffers) {
     const channelCount = buffer.numberOfChannels || 1;
     for (let channel = 0; channel < channelCount; channel++) {
       const data = buffer.getChannelData(channel);
-      for (let i = 0; i < len; i++) mix[i] += data[i] / channelCount;
+      for (let i = 0; i < len; i++) {
+        mix[i] += data[i] / channelCount;
+        if ((i & (LKFS_YIELD_CHECK_SAMPLES - 1)) === 0 && performance.now() - sliceStart > LKFS_TIME_BUDGET_MS) {
+          await yieldToMainThread();
+          sliceStart = performance.now();
+        }
+      }
     }
   }
   let sumSquares = 0;
-  for (let i = 0; i < len; i++) sumSquares += mix[i] * mix[i];
+  for (let i = 0; i < len; i++) {
+    sumSquares += mix[i] * mix[i];
+    if ((i & (LKFS_YIELD_CHECK_SAMPLES - 1)) === 0 && performance.now() - sliceStart > LKFS_TIME_BUDGET_MS) {
+      await yieldToMainThread();
+      sliceStart = performance.now();
+    }
+  }
   const meanSquare = sumSquares / len;
   if (meanSquare <= 0) return -70;
   return -0.691 + 10 * Math.log10(meanSquare);
@@ -476,8 +511,15 @@ export function useStemPreview(
   const tick = React.useCallback(() => {
     if (!playingRef.current) return;
     const nextTime = expectedTime();
+    // Deliberately not `setCurrentTime` here: this runs every animation
+    // frame during playback, and a page-wide re-render at 60fps starved
+    // everything downstream (canvas draw loops, even CSS :hover repaints).
+    // Live playback position is exposed via `currentTimeRef`; `Transport`
+    // reads it directly in its own small rAF loop instead of subscribing to
+    // state. `currentTime` state still updates on every discrete transition
+    // (pause/stop/seek/end-of-track below) so paused/idle consumers stay
+    // correct without any live polling.
     currentTimeRef.current = nextTime;
-    setCurrentTime((current) => Math.abs(current - nextTime) >= 0.01 ? nextTime : current);
     measureLevels();
     measureChannelLevels();
     if (!loopRef.current && durationRef.current > 0 && nextTime >= durationRef.current) {
@@ -961,7 +1003,7 @@ export function useStemPreview(
         const stemBuffers = stemsRef.current
           .map((stem) => nodes.current.get(stem.id)?.buffer)
           .filter((buffer): buffer is AudioBuffer => Boolean(buffer));
-        if (stemBuffers.length) measuredLkfs.current = measureApproxLkfs(stemBuffers);
+        if (stemBuffers.length) measuredLkfs.current = await measureApproxLkfs(stemBuffers);
         setReady(nodes.current.size > 0);
         apply();
       } catch {
@@ -1121,6 +1163,7 @@ export function useStemPreview(
     stemSpectrum,
     channelLevels,
     headphoneLevels,
+    currentTimeRef,
     speakerEnabled,
     toggleSpeaker,
     loadHrtf,

@@ -14,8 +14,22 @@ export type ChannelMetersProps = {
   headphoneLevels: React.MutableRefObject<{ left: number; right: number }>;
   speakerEnabled: Record<string, boolean>;
   onToggleSpeaker?: (channel: string) => void;
+  // True while preview audio is live-updating `channelLevels`/
+  // `headphoneLevels` (i.e. `preview.playing`). While inactive, the draw
+  // loop keeps running only until the bars + peak markers settle (see
+  // `SETTLE_FRAMES` below), then stops — the level refs freeze at their
+  // last live value on pause rather than decaying, so once the peak-decay
+  // animation catches up to that frozen value nothing more will change
+  // until playback resumes.
+  active: boolean;
   className?: string;
 };
+
+// Consecutive idle frames (bars unchanging) required before the draw loop
+// stops scheduling itself. Not time-critical — just enough to let the peak
+// decay animation visibly settle rather than freeze mid-motion.
+const SETTLE_FRAMES = 20;
+const SETTLE_EPSILON_DB = 0.05;
 
 type HitTarget = { channel: string; x: number; width: number };
 
@@ -105,12 +119,13 @@ function drawZoneBar(
   ctx.fillRect(barX, meterTop - 9, barWidth, 5);
 }
 
-export default function ChannelMeters({
+function ChannelMetersImpl({
   channels,
   channelLevels,
   headphoneLevels,
   speakerEnabled,
   onToggleSpeaker,
+  active,
   className,
 }: ChannelMetersProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -121,6 +136,10 @@ export default function ChannelMeters({
   const lastTime = React.useRef<number | null>(null);
   const propsRef = React.useRef({ channels, speakerEnabled });
   propsRef.current = { channels, speakerEnabled };
+  const activeRef = React.useRef(active);
+  activeRef.current = active;
+  const idleFrames = React.useRef(0);
+  const wakeRef = React.useRef<() => void>(() => {});
 
   const updatePeak = React.useCallback((key: string, currentDb: number, deltaSec: number) => {
     const previous = peaks.current.get(key) ?? -60;
@@ -144,7 +163,16 @@ export default function ChannelMeters({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
-    const observer = new ResizeObserver(resize);
+    // Resizing a canvas clears its pixel buffer. While the draw loop is
+    // idle (see `SETTLE_FRAMES`), a layout shift — e.g. the "Preparing
+    // preview…" banner disappearing once ready — fires this observer after
+    // the loop already stopped, clearing the canvas with nothing left to
+    // redraw it. Waking the loop here (a no-op if it's already running)
+    // guarantees at least one fresh frame after every resize.
+    const observer = new ResizeObserver(() => {
+      resize();
+      wakeRef.current();
+    });
     observer.observe(container);
 
     const draw = (time: number) => {
@@ -191,6 +219,9 @@ export default function ChannelMeters({
       const pitch = plotWidth / slots;
       const barWidth = Math.max(6, pitch * 0.6);
       const nextHits: HitTarget[] = [];
+      // Tracks whether every bar's peak marker has caught up to its current
+      // fill level this frame — see the `active`-gating comment above.
+      let settled = true;
       order.forEach((channel, index) => {
         const centerX = padLeft + (index + 0.5) * pitch;
         const barX = centerX - barWidth / 2;
@@ -198,6 +229,7 @@ export default function ChannelMeters({
         const level = channelLevels.current.get(channel) ?? 0;
         const currentDb = muted ? -60 : levelToDb(level);
         const peakDb = updatePeak(channel, currentDb, deltaSec);
+        if (peakDb - currentDb > SETTLE_EPSILON_DB) settled = false;
         const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
         const yellowBottomY = dbToY(YELLOW_ZONE_DB, meterTop, meterBottom);
 
@@ -226,6 +258,7 @@ export default function ChannelMeters({
         const level = label === "L" ? headphones.left : headphones.right;
         const currentDb = levelToDb(level);
         const peakDb = updatePeak(`hp:${label}`, currentDb, deltaSec);
+        if (peakDb - currentDb > SETTLE_EPSILON_DB) settled = false;
         const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
         const yellowBottomY = dbToY(YELLOW_ZONE_DB, meterTop, meterBottom);
 
@@ -233,15 +266,30 @@ export default function ChannelMeters({
         drawLabel(ctx, label, centerX, meterBottom + 3, "#7dd3fc", pitch);
       });
 
-      frame.current = window.requestAnimationFrame(draw);
+      idleFrames.current = !activeRef.current && settled ? idleFrames.current + 1 : 0;
+      if (activeRef.current || idleFrames.current < SETTLE_FRAMES) {
+        frame.current = window.requestAnimationFrame(draw);
+      } else {
+        frame.current = null;
+      }
     };
     frame.current = window.requestAnimationFrame(draw);
+    wakeRef.current = () => {
+      if (frame.current === null) {
+        idleFrames.current = 0;
+        frame.current = window.requestAnimationFrame(draw);
+      }
+    };
 
     return () => {
       observer.disconnect();
       if (frame.current !== null) window.cancelAnimationFrame(frame.current);
     };
   }, [channelLevels, headphoneLevels, updatePeak]);
+
+  React.useEffect(() => {
+    wakeRef.current();
+  }, [active, channels, speakerEnabled]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!onToggleSpeaker) return;
@@ -260,3 +308,5 @@ export default function ChannelMeters({
     </div>
   );
 }
+
+export default React.memo(ChannelMetersImpl);

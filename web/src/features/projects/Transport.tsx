@@ -35,9 +35,10 @@ function LcdDisplay({ currentTime, duration, mode, onToggleMode }: { currentTime
   );
 }
 
-export function Transport({
+function TransportImpl({
   playing,
   currentTime,
+  currentTimeRef,
   duration,
   volume,
   loop,
@@ -52,6 +53,7 @@ export function Transport({
 }: {
   playing: boolean;
   currentTime: number;
+  currentTimeRef: React.MutableRefObject<number>;
   duration: number;
   volume: number;
   loop: boolean;
@@ -65,6 +67,23 @@ export function Transport({
   onCommitScrub: (value: number) => void;
 }) {
   const [mode, setMode] = React.useState<"elapsed" | "remaining">("elapsed");
+  // While playing, `currentTime` (React state on the shared preview hook) is
+  // deliberately not updated every frame — that used to re-render the whole
+  // page ~60x/sec. Instead this component polls `currentTimeRef` in its own
+  // small rAF loop, scoping the per-frame re-render to just the LCD/slider.
+  // Paused/idle, `currentTime` state is authoritative and already correct.
+  const [liveTime, setLiveTime] = React.useState(currentTime);
+  React.useEffect(() => {
+    if (!playing) return;
+    let frame: number;
+    const loop = () => {
+      setLiveTime(currentTimeRef.current);
+      frame = window.requestAnimationFrame(loop);
+    };
+    frame = window.requestAnimationFrame(loop);
+    return () => window.cancelAnimationFrame(frame);
+  }, [playing, currentTimeRef]);
+  const displayTime = playing ? liveTime : currentTime;
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/20 p-2.5">
       <div className="flex items-center gap-1">
@@ -85,7 +104,7 @@ export function Transport({
           <Repeat className="h-4 w-4" />
         </Button>
       </div>
-      <LcdDisplay currentTime={currentTime} duration={duration} mode={mode} onToggleMode={() => setMode((current) => (current === "elapsed" ? "remaining" : "elapsed"))} />
+      <LcdDisplay currentTime={displayTime} duration={duration} mode={mode} onToggleMode={() => setMode((current) => (current === "elapsed" ? "remaining" : "elapsed"))} />
       <input
         aria-label="Preview position"
         className={cn("h-1.5 min-w-32 flex-1 accent-primary", disabled && "opacity-50")}
@@ -94,7 +113,7 @@ export function Transport({
         max={Math.max(duration, 0)}
         step={0.01}
         disabled={disabled}
-        value={Math.min(currentTime, duration || 0)}
+        value={Math.min(displayTime, duration || 0)}
         onPointerDown={onBeginScrub}
         onPointerUp={(event) => onCommitScrub(Number(event.currentTarget.value))}
         onChange={(event) => onScrubTo(Number(event.target.value))}
@@ -115,3 +134,5 @@ export function Transport({
     </div>
   );
 }
+
+export const Transport = React.memo(TransportImpl);

@@ -347,6 +347,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+        previous_preview_quality = project.preview_quality
         try:
             reference = (
                 job_mastering_reference(session, project.import_batch, request.mastering_reference_id)
@@ -356,9 +357,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             project = update_project_settings(
                 session, project, request.manifest, request.scene, request.name,
                 mastering_reference=reference,
+                preview_quality=request.preview_quality,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Previews are only encoded once per stem (see `catalogue_track`'s
+        # if-not-exists guard), so a quality change on an already-prepared
+        # project needs an explicit re-encode rather than waiting on the
+        # normal pipeline to naturally pick up the new setting.
+        if (
+            request.preview_quality is not None
+            and request.preview_quality != previous_preview_quality
+            and project.prepared_stems
+        ):
+            app.state.project_stems.regenerate_previews(project, project.preview_quality, storage)
+            session.commit()
         if project.status == "queued":
             manager.notify()
         return _project_view(project, settings.root_path)

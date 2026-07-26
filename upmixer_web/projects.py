@@ -15,6 +15,7 @@ from upmixer.separation.stem_router import build_stem_routing
 from upmixer_web.jobs import create_job
 from upmixer_web.manifests import normalize_job_manifest
 from upmixer_web.models import ImportBatch, Job, MasteringReference, Project, ProjectStem, ProjectTrack
+from upmixer_web.project_storage import PREVIEW_QUALITY_LEVELS
 
 
 PROJECT_LOAD_OPTIONS = (
@@ -147,15 +148,20 @@ def update_project_settings(
     scene: dict[str, Any],
     name: str | None = None,
     mastering_reference: MasteringReference | None = None,
+    preview_quality: str | None = None,
 ) -> Project:
     normalized, stems = _normalized_project_manifest(manifest)
     if stems != project.requested_stems:
         raise ValueError("Use the project stem expansion action to add extraction targets")
+    if preview_quality is not None and preview_quality not in PREVIEW_QUALITY_LEVELS:
+        raise ValueError(f"Unknown preview quality: {preview_quality}")
     rebuild = _separation_settings(project.manifest) != _separation_settings(normalized)
     project.manifest = normalized
     project.scene = copy.deepcopy(scene)
     if name is not None:
         project.name = name
+    if preview_quality is not None:
+        project.preview_quality = preview_quality
     project.mastering_reference = mastering_reference
     if rebuild:
         project.prepared_stems = []

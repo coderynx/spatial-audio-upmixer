@@ -15,12 +15,14 @@ export function ProjectSettingsSection({
   configuration,
   onRename,
   onChange,
+  onPreviewQualityChange,
 }: {
   project: Project;
   manifest: Manifest;
   configuration: Configuration | null;
   onRename: (name: string) => void;
   onChange: (next: Manifest) => void;
+  onPreviewQualityChange: (quality: string) => void;
 }) {
   const [name, setName] = React.useState(project.name);
   React.useEffect(() => setName(project.name), [project.name]);
@@ -51,6 +53,13 @@ export function ProjectSettingsSection({
           configuration?.choices.channel_layouts || ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
         ).map((value) => ({ value, label: value }))}
         hint="Changes the routing graph, spatial preview, and audio preview engine to the exact speaker set of this layout."
+      />
+      <SelectField
+        label="Preview audio quality"
+        value={project.preview_quality}
+        onChange={onPreviewQualityChange}
+        options={(configuration?.choices.preview_qualities || ["low", "medium", "high"]).map((value) => ({ value, label: value }))}
+        hint="Lower quality decodes and loads faster in the browser preview. Does not affect the exported/delivered master."
       />
     </div>
   );

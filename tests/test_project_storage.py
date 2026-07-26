@@ -11,7 +11,7 @@ pytest.importorskip("sqlalchemy")
 
 from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
 from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectTrack
-from upmixer_web.project_storage import PREVIEW_SAMPLE_RATE, ProjectStemStorage, _write_preview
+from upmixer_web.project_storage import _PREVIEW_VORBIS_COMPRESSION_LEVEL, PREVIEW_SAMPLE_RATE, ProjectStemStorage, _write_preview
 
 
 @pytest.fixture
@@ -123,7 +123,10 @@ def _write_preview_on_a_thread(source_str: str, destination_str: str) -> None:
     whole process with SIGBUS/SIGSEGV rather than raising a Python exception.
     """
     def run() -> None:
-        _write_preview(Path(source_str), Path(destination_str))
+        _write_preview(
+            Path(source_str), Path(destination_str),
+            sample_rate=PREVIEW_SAMPLE_RATE, compression_level=_PREVIEW_VORBIS_COMPRESSION_LEVEL,
+        )
 
     thread = threading.Thread(target=run)
     thread.start()

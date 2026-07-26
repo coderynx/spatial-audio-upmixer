@@ -14,6 +14,10 @@ type SpeakerHitTarget = { channel: string; x: number; y: number; radius: number 
 
 const MAX_HEIGHT = 0.6;
 
+// Consecutive idle frames (no audible voice) required before the draw loop
+// stops scheduling itself while inactive — same rationale as HazeView.
+const SETTLE_FRAMES = 40;
+
 function hexToRgb(hex: string): [number, number, number] {
   const clean = hex.replace("#", "");
   const value = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
@@ -32,10 +36,14 @@ export type ElevationViewProps = {
   // useStemPreview.ts). Clicking a speaker's point on the graph toggles it.
   speakerEnabled: Record<string, boolean>;
   onToggleSpeaker: (channel: string) => void;
+  // True while preview audio is live-updating `stemSpectrum` (i.e.
+  // `preview.playing`) — see HazeView's `active` prop for the idle-gating
+  // rationale, identical here.
+  active: boolean;
   className?: string;
 };
 
-export default function ElevationView({
+function ElevationViewImpl({
   channels,
   routing,
   selectedStem,
@@ -44,6 +52,7 @@ export default function ElevationView({
   stemSpectrum,
   speakerEnabled,
   onToggleSpeaker,
+  active,
   className,
 }: ElevationViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -55,6 +64,10 @@ export default function ElevationView({
   const initializedSize = React.useRef(false);
   const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled });
   propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled };
+  const activeRef = React.useRef(active);
+  activeRef.current = active;
+  const idleFrames = React.useRef(0);
+  const wakeRef = React.useRef<() => void>(() => {});
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
@@ -80,7 +93,16 @@ export default function ElevationView({
       initializedSize.current = false;
     };
     resize();
-    const observer = new ResizeObserver(resize);
+    // Resizing a canvas clears its pixel buffer. While the draw loop is
+    // idle (see `SETTLE_FRAMES`), a layout shift — e.g. the "Preparing
+    // preview…" banner disappearing once ready — fires this observer after
+    // the loop already stopped, clearing the canvas with nothing left to
+    // redraw it. Waking the loop here (a no-op if it's already running)
+    // guarantees at least one fresh frame after every resize.
+    const observer = new ResizeObserver(() => {
+      resize();
+      wakeRef.current();
+    });
     observer.observe(container);
 
     let lastTime = performance.now();
@@ -274,15 +296,30 @@ export default function ElevationView({
       ctx.drawImage(blobCanvas, 0, 0, width, height);
       ctx.restore();
 
-      frame.current = window.requestAnimationFrame(draw);
+      idleFrames.current = !activeRef.current && resolved.length === 0 ? idleFrames.current + 1 : 0;
+      if (activeRef.current || idleFrames.current < SETTLE_FRAMES) {
+        frame.current = window.requestAnimationFrame(draw);
+      } else {
+        frame.current = null;
+      }
     };
     frame.current = window.requestAnimationFrame(draw);
+    wakeRef.current = () => {
+      if (frame.current === null) {
+        idleFrames.current = 0;
+        frame.current = window.requestAnimationFrame(draw);
+      }
+    };
 
     return () => {
       observer.disconnect();
       if (frame.current !== null) window.cancelAnimationFrame(frame.current);
     };
   }, [stemSpectrum]);
+
+  React.useEffect(() => {
+    wakeRef.current();
+  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -305,3 +342,5 @@ export default function ElevationView({
     </div>
   </div>;
 }
+
+export default React.memo(ElevationViewImpl);

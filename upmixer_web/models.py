@@ -156,6 +156,7 @@ class Project(Base):
     requested_stems: Mapped[list[str]] = mapped_column(JSON, default=list)
     prepared_stems: Mapped[list[str]] = mapped_column(JSON, default=list)
     stem_generation: Mapped[int] = mapped_column(Integer, default=0)
+    preview_quality: Mapped[str] = mapped_column(String(16), default="high", server_default="high")
     revision: Mapped[int] = mapped_column(Integer, default=1)
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

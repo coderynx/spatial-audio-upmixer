@@ -81,6 +81,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     from upmixer.separation.stem_eq import STEM_EQ_PROFILES
     from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
     from upmixer.separation.stem_router import STEM_ROUTING_PRESET_NAMES
+    from upmixer_web.project_storage import PREVIEW_QUALITY_LEVELS
 
     stems = list(dict.fromkeys(MANIFEST_TO_CANONICAL.values()))
 
@@ -105,6 +106,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
                 for name, fmt in FORMAT_MAP.items()
             },
             "stems": stems,
+            "preview_qualities": list(PREVIEW_QUALITY_LEVELS),
         },
         "capabilities": {"stem_separation": capability},
     }

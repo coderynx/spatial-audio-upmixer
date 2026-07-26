@@ -119,6 +119,7 @@ export type Project = {
   requested_stems: string[]
   prepared_stems: string[]
   stem_generation: number
+  preview_quality: string
   revision: number
   error: string | null
   created_at: string
@@ -145,6 +146,7 @@ export type Configuration = {
     stem_routing_presets?: string[]
     layout_channels?: Record<string, string[]>
     stems: string[]
+    preview_qualities?: string[]
   }
   capabilities: {
     stem_separation: {
@@ -202,7 +204,7 @@ export const api = {
   deleteJob: (id: string) => request(`/api/v1/jobs/${id}`, { method: "DELETE" }),
   createProject: (payload: { import_id: string; name: string; manifest: Record<string, unknown>; scene: Record<string, unknown>; mastering_reference_id?: string | null }) =>
     request<Project>("/api/v1/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
-  saveProject: (id: string, payload: { name?: string; manifest: Record<string, unknown>; scene: Record<string, unknown>; mastering_reference_id?: string | null }) =>
+  saveProject: (id: string, payload: { name?: string; manifest: Record<string, unknown>; scene: Record<string, unknown>; mastering_reference_id?: string | null; preview_quality?: string }) =>
     request<Project>(`/api/v1/projects/${id}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   saveProjectTrack: (projectId: string, trackId: string, payload: { manifest_overrides: Record<string, unknown>; scene_overrides: Record<string, unknown> }) =>
     request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
