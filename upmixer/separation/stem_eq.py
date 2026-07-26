@@ -115,7 +115,11 @@ def _build_fir(profile: str, sample_rate: int, n_taps: int) -> np.ndarray:
     gains_lin = [p[1] for p in pairs]
 
     h_lp = firwin2(n_taps, freqs_norm, gains_lin)
-    h_mp = minimum_phase(h_lp)
+    # ``half=True`` (SciPy default) returns a half-length filter whose
+    # magnitude is the square root of the requested response, halving every
+    # breakpoint's dB. Keep full length so breakpoint dB values remain exact
+    # (matches upmixer/mastering/eq.py's identical fix).
+    h_mp = minimum_phase(h_lp, half=False)
 
     _FIR_CACHE[cache_key] = h_mp
     return h_mp

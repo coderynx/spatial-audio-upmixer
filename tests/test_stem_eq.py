@@ -70,9 +70,10 @@ class TestBuildFirStem:
         assert isinstance(ir, np.ndarray)
 
     def test_fir_length(self):
-        # minimum_phase returns (n_taps // 2 + 1)
+        # half=False preserves requested magnitude response and tap count
+        # (matches upmixer/mastering/eq.py's identical choice).
         ir = _build_fir("drums-punch", 44100, 511)
-        assert len(ir) == 511 // 2 + 1
+        assert len(ir) == 511
 
     def test_cached(self):
         ir1 = _build_fir("bass-warmth", 48000, 511)
@@ -88,6 +89,19 @@ class TestBuildFirStem:
         for name in STEM_EQ_PROFILES:
             ir = _build_fir(name, 44100, 511)
             assert np.all(np.isfinite(ir)), f"Non-finite IR for '{name}'"
+
+    def test_reaches_configured_breakpoint_gain(self):
+        # Regression: minimum_phase's default half=True halves every
+        # breakpoint's dB (magnitude becomes its own square root). Without
+        # half=False, vocal-presence's +2.0dB@4kHz breakpoint only reached
+        # ~+1.0dB in the actual filter response.
+        from scipy.signal import freqz
+
+        ir = _build_fir("vocal-presence", 48000, 511)
+        w, h = freqz(ir, worN=8192, fs=48000)
+        idx = int(np.argmin(np.abs(w - 4000)))
+        gain_db = 20.0 * np.log10(np.abs(h[idx]))
+        assert gain_db == pytest.approx(2.0, abs=0.2)
 
 
 # ---------------------------------------------------------------------------

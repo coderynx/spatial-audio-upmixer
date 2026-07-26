@@ -23,13 +23,21 @@ Processing order
    bass mono-maker for L/R pairs, harmonic exciter, LFE gain trim.  Controlled
    by ``config.mastering_bass_profile`` and individual ``mastering_bass_*``
    params.  Disabled when both profile and all individual params are unset.
-3. **Soft limiting** — optional final analogue-style protection before
-   standards measurement.
-4. **ITU-R BS.1770-5 loudness normalization** (if
+3. **ITU-R BS.1770-5 loudness normalization** (if
    ``config.loudness_normalize`` is ``True``).  A scalar linear gain is applied
    to all channels simultaneously — no dynamic processing, no clipping.
-5. **Dolby Atmos True Peak ceiling** — if the post-LN peak exceeds
+4. **Dolby Atmos True Peak ceiling** — if the post-LN peak exceeds
    ``config.loudness_max_tp`` dBTP, a second linear gain reduction is applied.
+5. **Soft limiting** — final analogue-style protection, run *last* so it
+   only ever engages as a true-peak safety net on the loudness-corrected
+   signal.  Running this before loudness normalization would bake in tanh
+   saturation from whatever peaks the pre-gain bed happens to have — a
+   scalar gain applied afterward can't undo already-baked distortion.  (The
+   same bug class was previously found and fixed in
+   ``upmixer.binaural.renderer.render_binaural_delivery``; this ordering
+   brings the main chain in line with that fix.)  Loudness/True-Peak are
+   re-measured after this step so ``MasteringResult`` always reflects the
+   truly-final delivered waveform.
 
 Standards compliance (``atmos-music`` profile)
 -----------------------------------------------
@@ -209,13 +217,6 @@ class MasteringChain:
             )
             channels = bass.process(channels)
 
-        # Limiting must precede loudness/true-peak measurement.  Any
-        # post-measurement waveform change invalidates delivery metadata.
-        channels = {
-            name: soft_limit(ch, cfg.peak_limit_threshold)
-            for name, ch in channels.items()
-        }
-
         if cfg.loudness_normalize:
             _log.info("  Normalizing loudness (BS.1770-4)...")
             from upmixer.loudness import normalize_loudness
@@ -228,18 +229,33 @@ class MasteringChain:
                 max_tp_dbtp=cfg.loudness_max_tp,
                 max_gain_db=cfg.loudness_max_gain_db,
             )
-            result = MasteringResult(
-                measured_lkfs=ln_info["measured_lkfs"],
-                measured_tp_dbtp=ln_info["measured_tp_dbtp"],
-                applied_gain_db=ln_info["applied_gain_db"],
-                tp_limited=ln_info["tp_limited"],
-            )
             _log.info(
                 "  Loudness: %.1f LKFS → %.1f LKFS  gain %+.1f dB  TP %.1f dBTP%s",
                 ln_info["pre_lkfs"],
                 cfg.loudness_target_lkfs,
-                result.applied_gain_db,
-                result.measured_tp_dbtp,
-                "  [TP limited]" if result.tp_limited else "",
+                ln_info["applied_gain_db"],
+                ln_info["measured_tp_dbtp"],
+                "  [TP limited]" if ln_info["tp_limited"] else "",
+            )
+
+        # Soft limiting runs last, after loudness/true-peak correction, so it
+        # only ever engages as a safety net on the already-corrected signal —
+        # limiting first would bake in tanh saturation from whatever peaks
+        # the pre-gain bed happens to have, which no later scalar gain can
+        # undo (the same bug class fixed in
+        # render_binaural_delivery; see that module's docstring).
+        channels = {
+            name: soft_limit(ch, cfg.peak_limit_threshold)
+            for name, ch in channels.items()
+        }
+
+        if cfg.loudness_normalize:
+            from upmixer.loudness import measure_integrated_loudness, measure_true_peak
+
+            result = MasteringResult(
+                measured_lkfs=measure_integrated_loudness(channels, sample_rate, output_fmt),
+                measured_tp_dbtp=measure_true_peak(channels, sample_rate),
+                applied_gain_db=ln_info["applied_gain_db"],
+                tp_limited=ln_info["tp_limited"],
             )
         return channels, result

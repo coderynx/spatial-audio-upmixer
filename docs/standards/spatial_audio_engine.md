@@ -128,6 +128,18 @@ A speaker's contribution to the HOA bus is `gain[acn] * signal` summed
 across all positional speakers. Source of truth:
 `upmixer/binaural/ambisonics.py::encode_gains`.
 
+**ACN 12 normalization note:** `encode_gains`'s ACN 12 (Y₃⁰, the order-3
+vertical/zonal harmonic) deliberately omits the standard N3D `√7` factor
+(`gains[12] = 0.5 · sinδ · (5sin²δ − 3)`, not `0.5·√7·sinδ·(5sin²δ − 3)`). The
+decode filter bank (§4) was fit as the pseudo-inverse of this exact encoder,
+so the omission is load-bearing, not a bug to "correct" — doing so would
+retune every decode filter. The web preview's SH library
+(`spherical-harmonic-transform::computeRealSH`) applies the standard `√7`
+factor, so `useStemPreview.ts` scales its ACN 12 tap by `1/√7` before the
+decode convolvers to match this encoder's convention. All other 15 ACN
+channels already agree between the two encoders to within floating-point
+tolerance.
+
 **Parity note:** this is the standard published AmbiX ACN/N3D real-SH basis.
 The web implementation may use a third-party ambisonic library's encoder as
 long as it also implements ACN/N3D order 3 — bit-exact agreement with any

@@ -1,6 +1,8 @@
 """Tests for upmixer.mastering — MasteringChain + MasteringResult."""
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -177,6 +179,41 @@ class TestMasteringChainWithLoudness:
         _, result = chain.process(channels, 44100, FORMAT_MAP["5.1"])
         # tp_limited may or may not fire depending on signal, but it must be bool
         assert isinstance(result.tp_limited, bool)
+
+    def test_soft_limit_runs_after_loudness_gain_not_before(self):
+        """soft_limit must run last, so it never bakes distortion into a hot
+        pre-gain bed that a later scalar gain can't undo.
+
+        A hot (amplitude 1.3) pure tone measures near the top of scale, so
+        loudness normalization applies a large *downward* gain to reach the
+        -18 LKFS target. If soft_limit ran on the raw hot signal first (the
+        prior bug), its tanh saturation would flatten the peaks and bake in
+        strong odd harmonics that the subsequent linear gain only scales,
+        never removes. With the correct order (gain first, limit last as a
+        safety net), the post-gain signal is already well under the limiter
+        threshold, so the tone survives essentially undistorted.
+        """
+        sr = 44100
+        t = np.linspace(0, 2, 2 * sr, endpoint=False)
+        sig = (1.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float64)
+        channels = {"FL": sig.copy(), "FR": sig.copy()}
+        cfg = UpmixConfig(loudness_normalize=True, loudness_target_lkfs=-18.0)
+        out, result = MasteringChain(cfg).process(channels, sr, FORMAT_MAP["5.1"])
+
+        assert result.applied_gain_db < 0.0  # hot input requires downward gain
+
+        n = len(out["FL"])
+        spectrum = np.abs(np.fft.rfft(out["FL"] * np.hanning(n)))
+        freqs = np.fft.rfftfreq(n, 1.0 / sr)
+
+        def bin_peak(freq_hz: float) -> float:
+            idx = int(np.argmin(np.abs(freqs - freq_hz)))
+            return float(np.max(spectrum[max(idx - 2, 0):idx + 3]))
+
+        fundamental = bin_peak(440.0)
+        harmonics = math.sqrt(sum(bin_peak(440.0 * k) ** 2 for k in (2, 3, 4, 5)))
+        thd = harmonics / fundamental
+        assert thd < 0.01, f"THD {thd:.4f} indicates the limiter ran before loudness gain"
 
 
 # ---------------------------------------------------------------------------

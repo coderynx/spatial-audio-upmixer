@@ -26,3 +26,10 @@ declare module "numeric" {
   const numeric: unknown;
   export default numeric;
 }
+
+// No published types. Used directly (outside ambi-monoEncoder) only by
+// masteringProfiles.test.ts, to cross-check the ACN 12 N3D correction
+// against the same SH implementation ambi-monoEncoder calls internally.
+declare module "spherical-harmonic-transform" {
+  export function computeRealSH(order: number, directions: [number, number][]): number[][];
+}

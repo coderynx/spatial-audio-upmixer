@@ -135,6 +135,7 @@ class FakeAudioContext {
   delays: FakeDelay[] = [];
   gains: FakeGain[] = [];
   bufferSources: FakeBufferSource[] = [];
+  convolvers: FakeConvolver[] = [];
   createGain() {
     const gain = new FakeGain();
     this.gains.push(gain);
@@ -148,7 +149,11 @@ class FakeAudioContext {
   createChannelSplitter() { return new FakeChannelSplitter(); }
   createChannelMerger() { return new FakeChannelSplitter(); }
   createAnalyser() { return new FakeAnalyser(); }
-  createConvolver() { return new FakeConvolver(); }
+  createConvolver() {
+    const convolver = new FakeConvolver();
+    this.convolvers.push(convolver);
+    return convolver;
+  }
   createBiquadFilter() {
     const filter = new FakeBiquadFilter();
     this.eqFilters.push(filter);
@@ -259,16 +264,44 @@ describe("useStemPreview mastering chain", () => {
     expect(comp.release.value).toBeCloseTo(0.2);
   });
 
-  it("builds EQ peaking/shelf filters scaled by strength for the selected profile", async () => {
+  it("scales the sidechain sum by 1/sqrt(channelCount) before the detector, matching the backend's RMS-across-channels average", async () => {
     installAudio();
-    render(<Harness mastering={{ eq: { profile: "spatial-warm", strength: 0.5 } }} />);
+    render(<Harness mastering={{ compressor: { profile: "glue" } }} />);
     await act(async () => { await preview.playPause(); });
 
-    const warmFilters = lastContext().eqFilters.filter((f) => f.type === "peaking" || f.type === "highshelf");
-    expect(warmFilters.length).toBeGreaterThan(0);
-    // spatial-warm's 100 Hz breakpoint is +1.0 dB; strength 0.5 halves it.
-    const hundredHz = warmFilters.find((f) => f.frequency.value === 100);
-    expect(hundredHz?.gain.value).toBeCloseTo(0.5);
+    // Default test harness layout is every positional channel (11, no LFE) —
+    // upmixer/mastering/compressor.py detects on sqrt(sum(ch^2)/n_ch), an
+    // RMS average, not a raw sum; without this compensating gain the
+    // fanned-in `sum` node would be up to ~sqrt(11)x (~+20dB) hotter than
+    // the backend's detector for the same content.
+    const expected = 1 / Math.sqrt(11);
+    const detectorScale = lastContext().gains.find((g) => Math.abs(g.gain.value - expected) < 1e-6);
+    expect(detectorScale).toBeDefined();
+  });
+
+  it("convolves the mastering-bus EQ against the real backend FIR asset, wet/dry blended by strength", async () => {
+    installAudio();
+    render(<Harness mastering={{ eq: { profile: "spatial-warm", strength: 0.7 } }} />);
+    await act(async () => { await preview.playPause(); });
+
+    // Fix 4's real fix: no more biquad approximation — the preview fetches
+    // and convolves against the actual backend-computed FIR
+    // (scripts/build_eq_filters.py, see masteringProfiles.ts's
+    // buildFirEqNode) instead of a peaking/shelf cascade.
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const urls = fetchMock.mock.calls.map((args: unknown[]) => args[0] as string);
+    expect(urls).toContain("/eq_fir/master_spatial-warm.wav");
+
+    // _apply_fir's wet/dry blend: (1-strength)*dry + strength*filtered.
+    const dry = lastContext().gains.find((g) => Math.abs(g.gain.value - 0.3) < 1e-6);
+    const wet = lastContext().gains.find((g) => Math.abs(g.gain.value - 0.7) < 1e-6);
+    expect(dry).toBeDefined();
+    expect(wet).toBeDefined();
+
+    // Buffer starts unset (non-blocking) and gets assigned once the fetch
+    // + decode resolves.
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(lastContext().convolvers.some((c) => c.buffer !== null)).toBe(true);
   });
 
   it("builds bass sub/mid shelves from the resolved bass profile", async () => {
@@ -280,6 +313,38 @@ describe("useStemPreview mastering chain", () => {
     const mid = lastContext().eqFilters.find((f) => f.type === "peaking" && Math.round(f.frequency.value) === 126);
     expect(shelf?.gain.value).toBe(2.0);
     expect(mid?.gain.value).toBe(1.0);
+  });
+});
+
+describe("per-stem EQ (mix.stem_eq)", () => {
+  // upmixer/separation/stem_eq.py applies a per-stem tonal EQ (before
+  // spatial routing) on the backend export; this used to have no preview
+  // mirror at all, so a stem addressed with e.g. "vocal-presence" played
+  // unequalized in-browser but boosted (nasal-reading) on export.
+  it("builds no per-stem EQ convolver when a stem has no stem_eq entry", async () => {
+    installAudio();
+    render(<Harness mix={{}} />);
+    await act(async () => { await preview.playPause(); });
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const urls = fetchMock.mock.calls.map((args: unknown[]) => args[0] as string);
+    expect(urls.some((url) => url.startsWith("/eq_fir/stem_"))).toBe(false);
+  });
+
+  it("convolves the addressed stem against the real backend FIR asset, fully wet (no strength knob on stem_eq)", async () => {
+    installAudio();
+    render(<Harness mix={{ stem_eq: { Vocals: "vocal-presence" } }} />);
+    await act(async () => { await preview.playPause(); });
+
+    // Fix 4's real fix: no more biquad approximation of
+    // upmixer/separation/stem_eq.py STEM_EQ_PROFILES["vocal-presence"] —
+    // the preview convolves against the actual backend-computed FIR asset.
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const urls = fetchMock.mock.calls.map((args: unknown[]) => args[0] as string);
+    expect(urls).toContain("/eq_fir/stem_vocal-presence.wav");
+
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(lastContext().convolvers.some((c) => c.buffer !== null)).toBe(true);
   });
 });
 

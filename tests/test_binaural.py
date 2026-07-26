@@ -6,7 +6,7 @@ import pytest
 from upmixer.binaural.ambisonics import N_ACN_CHANNELS, encode_gains
 from upmixer.binaural.decoder import decode_to_binaural, load_decode_filter_set
 from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION, SPEAKER_COORDINATES
-from upmixer.binaural.profiles import BINAURAL_PROFILES, resolve_profile
+from upmixer.binaural.profiles import BINAURAL_PROFILES, VOICING_PARAMS, BinauralProfile, resolve_profile
 from upmixer.binaural.renderer import (
     BINAURAL_LOUDNESS_MAX_GAIN_DB,
     render_binaural,
@@ -34,6 +34,30 @@ def test_encode_gains_returns_16_channels():
     gains = encode_gains(0.3, -0.2)
     assert gains.shape == (N_ACN_CHANNELS,)
     assert np.all(np.isfinite(gains))
+
+
+def test_encode_gains_acn12_omits_n3d_sqrt7_factor():
+    # ACN 12 (Y3^0) is deliberately unscaled relative to standard N3D — the
+    # decode filter bank was fit as the pseudo-inverse of this exact encoder
+    # (docs/standards/spatial_audio_engine.md §3). The web preview's SH
+    # library uses standard N3D and scales this channel by 1/sqrt(7) to
+    # match; changing this formula requires regenerating the decode filters.
+    delta = 0.4
+    gains = encode_gains(0.0, delta)
+    sin_d = math.sin(delta)
+    expected = 0.5 * sin_d * (5.0 * sin_d**2 - 3.0)
+    assert gains[12] == pytest.approx(expected)
+
+
+def test_listening_voicing_params_exact():
+    # Pins the web mirror's target values (masteringProfiles.ts
+    # VOICING_PARAMS.listening) so a hand-sync drift like the one that
+    # doubled these values on the web side is caught here too.
+    params = VOICING_PARAMS[BinauralProfile.LISTENING]
+    assert params.bass_shelf_gain_db == pytest.approx(1.0)
+    assert params.air_shelf_gain_db == pytest.approx(1.0)
+    assert params.presence_gain_db == pytest.approx(0.5)
+    assert params.stereo_widen == pytest.approx(0.10)
 
 
 def test_geometry_matches_web_contract_coordinates():

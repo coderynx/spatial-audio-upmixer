@@ -16,20 +16,21 @@ import {
   BINAURAL_LOUDNESS_MAX_GAIN_DB,
   COMP_PROFILES,
   DECODE_FILTER_SET,
-  EQ_PROFILES,
+  EQ_FIR_ASSETS,
   EXCITE_BLEND,
   LFE_GAIN,
   LFE_LOWPASS_HZ,
   LOUDNESS_MAX_GAIN_DB,
   MID_CUTOFF_HZ,
+  STEM_EQ_FIR_ASSETS,
   SUB_CUTOFF_HZ,
   SURROUND_HAAS_MS,
   HEIGHT_HAAS_MS,
   VOICING_PARAMS,
   applyVoicingParams,
   buildDiffuseSend,
-  buildEqFilters,
   buildExciteCurve,
+  buildFirEqNode,
   buildHeightSend,
   buildSoftLimitCurve,
   buildSurroundSend,
@@ -37,10 +38,12 @@ import {
   channelGroupGain,
   connectSeries,
   estimateRouteScale,
+  fetchEqFirBuffer,
   type BassProfileName,
   type CompProfileName,
   type EqProfileName,
   type SpatialProfile,
+  type StemEqProfileName,
   type VoicingChain,
 } from "./masteringProfiles";
 
@@ -51,6 +54,17 @@ export type { SpatialProfile } from "./masteringProfiles";
 // channels ((order+1)^2 = 16 at order 3).
 const AMBISONIC_ORDER = 3;
 const N_ACN_CHANNELS = (AMBISONIC_ORDER + 1) * (AMBISONIC_ORDER + 1);
+
+// upmixer/binaural/ambisonics.py::encode_gains's ACN 12 (Y3^0, the order-3
+// vertical harmonic) omits the standard N3D sqrt(7) normalization factor. The
+// decode filter bank (docs/standards/spatial_audio_engine.md §4) was fit as
+// the pseudo-inverse of that unscaled encoder, so this preview's
+// standard-N3D `computeRealSH` output for ACN 12 must be scaled down to match
+// what the filters were designed against — otherwise elevated speakers'
+// order-3 vertical content is ~2.65x too hot here relative to the export.
+// See docs/standards/spatial_audio_engine.md §3.
+const ACN12_INDEX = 12;
+const ACN12_N3D_CORRECTION = 1 / Math.sqrt(7);
 
 // Decode filter set contract (docs/standards/spatial_audio_engine.md §4):
 // 16 ACN channels x {L, R} FIR filters, shipped as four 8-channel WAVs so
@@ -78,6 +92,22 @@ async function fetchDecodeFilterChannels(ctx: AudioContext, name: string): Promi
     throw new Error(`Decode filter set '${name}' has ${channels.length} channels, expected ${2 * N_ACN_CHANNELS}`);
   }
   return channels;
+}
+
+// Dedupes concurrent/repeat fetches of the same EQ FIR asset (see
+// `firEqBufferCache`) — the master bus and every stem addressed with the
+// same profile share one decode.
+function loadCachedEqBuffer(
+  cache: Map<string, Promise<AudioBuffer>>,
+  ctx: AudioContext,
+  assetName: string,
+): Promise<AudioBuffer> {
+  let pending = cache.get(assetName);
+  if (!pending) {
+    pending = fetchEqFirBuffer(ctx, assetName);
+    cache.set(assetName, pending);
+  }
+  return pending;
 }
 
 // Preview monitoring mode: which final render stage the channel bed feeds.
@@ -163,6 +193,14 @@ type AudioNodeSet = {
   // splitter so it scales every channel send at once. Anchor has none: its
   // two sends are driven directly by the anchor strength instead.
   stemGain: GainNode | null;
+  // Fixed post-EQ insert point `createStemSends` actually reads from — see
+  // `buildStemEqChains`, which rebuilds the `stemGain -> [EQ filters] ->
+  // postEqGain` chain in between whenever `mix.stem_eq` changes, mirroring
+  // upmixer/separation/stem_eq.py's per-stem EQ (applied before routing, on
+  // the backend's `all_stems`). Anchor has none: the backend's dry
+  // source-anchor blend bypasses stem_eq entirely (it operates on the
+  // original zone audio, not `all_stems`).
+  postEqGain: GainNode | null;
   sends: Partial<Record<string, GainNode>>;
   // Every node `createStemSends`/anchor setup created, for teardown.
   ownNodes: AudioNode[];
@@ -181,6 +219,7 @@ type Timeline = { offset: number; contextTime: number };
 type MixPreview = {
   stem_routing?: Record<string, Record<string, number>>;
   stem_rebalance?: Record<string, number>;
+  stem_eq?: Record<string, string>;
   stem_enabled?: Record<string, boolean>;
   stem_solo?: string[];
   stem_source_anchor_strength?: number;
@@ -412,7 +451,7 @@ export function useStemPreview(
   // convolution docs/standards/spatial_audio_engine.md §4 specifies, in
   // place of a third-party ambisonic decoder, so the exact same filter
   // files (fetched from /hrir/) drive both this preview and the core render.
-  const decodeConvolvers = React.useRef<{ left: ConvolverNode; right: ConvolverNode }[]>([]);
+  const decodeConvolvers = React.useRef<{ left: ConvolverNode; right: ConvolverNode; preGain: GainNode | null }[]>([]);
   const decodeSumLeft = React.useRef<GainNode | null>(null);
   const decodeSumRight = React.useRef<GainNode | null>(null);
   const decodeMerger = React.useRef<ChannelMergerNode | null>(null);
@@ -469,6 +508,17 @@ export function useStemPreview(
   const [outputDevices, setOutputDevices] = React.useState<MediaDeviceInfo[]>([]);
   const [outputDeviceId, setOutputDeviceIdState] = React.useState("");
   const masteringNodes = React.useRef<AudioNode[]>([]);
+  // Current per-stem EQ filter chain nodes (stem id -> nodes), so
+  // `buildStemEqChains` can disconnect exactly its own prior chain on
+  // rebuild without touching the fixed `stemGain`/`postEqGain` nodes.
+  const stemEqNodes = React.useRef<Map<string, AudioNode[]>>(new Map());
+  // Decoded EQ FIR asset cache (asset name -> pending/loaded AudioBuffer),
+  // keyed independently of profile scope (master vs stem asset names never
+  // collide, see EQ_FIR_ASSETS/STEM_EQ_FIR_ASSETS) so the same profile
+  // reused across many stems or across a rebuild fetches/decodes once. Tied
+  // to the single AudioContext this hook creates once per mount (see
+  // `initialize`) — never needs invalidating within that lifetime.
+  const firEqBufferCache = React.useRef<Map<string, Promise<AudioBuffer>>>(new Map());
   const resolvedBass = React.useRef<{ active: boolean; lfeGainDb: number }>({ active: false, lfeGainDb: 0 });
   const measuredLkfs = React.useRef(-70);
   const nodes = React.useRef<Map<string, AudioNodeSet>>(new Map());
@@ -532,6 +582,8 @@ export function useStemPreview(
   // edits), but the mastering audio graph only needs rebuilding when the
   // resolved values actually change.
   const masteringKey = JSON.stringify(mastering ?? null);
+  // Same value-stable-key trick as `masteringKey`, for `mix.stem_eq`.
+  const stemEqKey = JSON.stringify(mix?.stem_eq ?? null);
   stemsRef.current = stems;
 
   const expectedTime = React.useCallback(() => {
@@ -712,6 +764,7 @@ export function useStemPreview(
       node.analyser?.disconnect();
     });
     nodes.current.clear();
+    stemEqNodes.current.clear();
     stemSpectrum.current.clear();
     appliedGain.current.clear();
     masteringNodes.current.forEach((node) => node.disconnect());
@@ -752,9 +805,10 @@ export function useStemPreview(
     nativeChannelCount.current = 0;
     hoaBus.current?.disconnect();
     hoaBus.current = null;
-    decodeConvolvers.current.forEach(({ left, right }) => {
+    decodeConvolvers.current.forEach(({ left, right, preGain }) => {
       left.disconnect();
       right.disconnect();
+      preGain?.disconnect();
     });
     decodeConvolvers.current = [];
     decodeSumLeft.current?.disconnect();
@@ -843,8 +897,8 @@ export function useStemPreview(
     const newCompGains: GainNode[] = [];
 
     const eqCfg = mastering?.eq;
-    const eqBreakpoints = eqCfg?.profile && eqCfg.profile in EQ_PROFILES
-      ? EQ_PROFILES[eqCfg.profile as EqProfileName]
+    const eqAssetName = eqCfg?.profile && eqCfg.profile in EQ_FIR_ASSETS
+      ? EQ_FIR_ASSETS[eqCfg.profile as EqProfileName]
       : null;
     const eqStrength = eqCfg?.strength ?? 1;
 
@@ -874,9 +928,19 @@ export function useStemPreview(
     resolvedBass.current = { active: bassActive, lfeGainDb: bassActive ? lfeGainDb : 0 };
 
     for (const bus of speakerBuses.current.values()) {
-      const eqNodes = eqBreakpoints ? buildEqFilters(ctx, eqBreakpoints, eqStrength) : [];
-      created.push(...eqNodes);
-      const postEq = connectSeries(bus.masterIn, eqNodes);
+      let postEq: AudioNode = bus.masterIn;
+      if (eqAssetName) {
+        const firEq = buildFirEqNode(ctx, eqStrength);
+        created.push(...firEq.nodes);
+        bus.masterIn.connect(firEq.input);
+        postEq = firEq.output;
+        // Non-blocking: the convolver stays silent on its wet path until
+        // this resolves (see `buildFirEqNode`), so audio can play
+        // immediately while the FIR asset fetches/decodes.
+        void loadCachedEqBuffer(firEqBufferCache.current, ctx, eqAssetName)
+          .then((buffer) => { firEq.convolver.buffer = buffer; })
+          .catch(() => {});
+      }
       postEq.connect(sum);
 
       const compGain = ctx.createGain();
@@ -929,7 +993,19 @@ export function useStemPreview(
       comp.attack.value = (compCfg?.attack_ms ?? preset.attack_ms) / 1000;
       comp.release.value = (compCfg?.release_ms ?? preset.release_ms) / 1000;
       comp.knee.value = compCfg?.knee_db ?? preset.knee_db;
-      sum.connect(comp);
+      // `sum` is a raw fan-in of every bus's post-EQ signal (see the
+      // `postEq.connect(sum)` loop above), so for N correlated channels its
+      // level is ≈N× a single channel's — up to +20dB too hot into the
+      // detector for an 11-channel bed. upmixer/mastering/compressor.py
+      // detects on `sqrt(sum(ch²)/n_ch)` (an RMS *average* across channels,
+      // compressor.py:186,193), not a raw sum — this gain brings the
+      // sidechain back down to that same per-channel-average level before
+      // it reaches the detector.
+      const detectorScale = ctx.createGain();
+      detectorScale.gain.value = 1 / Math.sqrt(Math.max(speakerBuses.current.size, 1));
+      created.push(detectorScale);
+      sum.connect(detectorScale);
+      detectorScale.connect(comp);
       comp.connect(sink);
       created.push(comp);
       sidechainCompressor.current = comp;
@@ -953,6 +1029,51 @@ export function useStemPreview(
   React.useEffect(() => {
     buildMasteringTopology();
   }, [masteringKey, buildMasteringTopology]);
+
+  // Rebuilds each stem's `stemGain -> [FIR EQ] -> postEqGain` insert
+  // (upmixer/separation/stem_eq.py's per-stem EQ, applied before spatial
+  // routing) whenever `mix.stem_eq` changes. Mirrors `buildMasteringTopology`'s
+  // rebuild-in-place pattern: the fixed `postEqGain` node `createStemSends`
+  // was built against never changes identity, so only the FIR insert
+  // feeding it needs replacing. A stem with no (or an unrecognized) profile
+  // gets a direct bypass connection, matching the backend's pass-through for
+  // unaddressed stems. stem_eq has no wet/dry strength knob on the backend
+  // (always fully applied), so `buildFirEqNode` is always built at strength 1.
+  const buildStemEqChains = React.useCallback(() => {
+    const ctx = context.current;
+    if (!ctx) return;
+    for (const stem of stemsRef.current) {
+      const node = nodes.current.get(stem.id);
+      if (!node || !node.stemGain || !node.postEqGain) continue;
+      const base = stem.stem_key.split("@", 1)[0];
+      const profile = mix?.stem_eq?.[stem.stem_key] || mix?.stem_eq?.[base];
+
+      node.stemGain.disconnect();
+      (stemEqNodes.current.get(stem.id) || []).forEach((eqNode) => eqNode.disconnect());
+
+      const assetName = profile && profile in STEM_EQ_FIR_ASSETS
+        ? STEM_EQ_FIR_ASSETS[profile as StemEqProfileName]
+        : null;
+      if (assetName) {
+        const firEq = buildFirEqNode(ctx, 1);
+        stemEqNodes.current.set(stem.id, firEq.nodes);
+        node.ownNodes.push(...firEq.nodes);
+        node.stemGain.connect(firEq.input);
+        firEq.output.connect(node.postEqGain);
+        void loadCachedEqBuffer(firEqBufferCache.current, ctx, assetName)
+          .then((buffer) => { firEq.convolver.buffer = buffer; })
+          .catch(() => {});
+      } else {
+        stemEqNodes.current.set(stem.id, []);
+        node.stemGain.connect(node.postEqGain);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on stemEqKey, not `mix` (see stemEqKey comment above)
+  }, [stemEqKey]);
+
+  React.useEffect(() => {
+    buildStemEqChains();
+  }, [stemEqKey, buildStemEqChains]);
 
   const applySpeakerMute = React.useCallback(() => {
     speakerBuses.current.forEach((bus, channel) => {
@@ -1189,17 +1310,29 @@ export function useStemPreview(
     hoaBusNode.connect(hoaSplitter);
     const decodeSumLeftNode = ctx.createGain();
     const decodeSumRightNode = ctx.createGain();
-    const convolverPairs: { left: ConvolverNode; right: ConvolverNode }[] = [];
+    const convolverPairs: { left: ConvolverNode; right: ConvolverNode; preGain: GainNode | null }[] = [];
     for (let acn = 0; acn < N_ACN_CHANNELS; acn++) {
       const left = ctx.createConvolver();
       const right = ctx.createConvolver();
       left.normalize = false;
       right.normalize = false;
-      hoaSplitter.connect(left, acn);
-      hoaSplitter.connect(right, acn);
+      let preGain: GainNode | null = null;
+      if (acn === ACN12_INDEX) {
+        // Correct this encoder's standard-N3D ACN 12 down to the unscaled
+        // convention the decode filters were fit against — see the
+        // ACN12_N3D_CORRECTION comment above.
+        preGain = ctx.createGain();
+        preGain.gain.value = ACN12_N3D_CORRECTION;
+        hoaSplitter.connect(preGain, acn);
+        preGain.connect(left);
+        preGain.connect(right);
+      } else {
+        hoaSplitter.connect(left, acn);
+        hoaSplitter.connect(right, acn);
+      }
       left.connect(decodeSumLeftNode);
       right.connect(decodeSumRightNode);
-      convolverPairs.push({ left, right });
+      convolverPairs.push({ left, right, preGain });
     }
     const decodeMergerNode = ctx.createChannelMerger(2);
     decodeSumLeftNode.connect(decodeMergerNode, 0, 0);
@@ -1405,12 +1538,17 @@ export function useStemPreview(
             const stemInput = ctx.createGain();
             const built = createStemSends(ctx, stemInput, busesMap, positionalChannelsRef.current);
             nodes.current.set(entry.id, {
-              buffer, source: null, stemGain: null, sends: built.sends, ownNodes: [stemInput, ...built.ownNodes],
+              buffer, source: null, stemGain: null, postEqGain: null, sends: built.sends,
+              ownNodes: [stemInput, ...built.ownNodes],
               lfeGain: null, lfeFilters: null, analyser: null,
             });
           } else {
             const stemGain = ctx.createGain();
-            const built = createStemSends(ctx, stemGain, busesMap, positionalChannelsRef.current);
+            // `createStemSends` reads from `postEqGain`, not `stemGain`
+            // directly — `buildStemEqChains` wires the (rebuildable)
+            // stem_eq filter chain between them, initially as a bypass.
+            const postEqGain = ctx.createGain();
+            const built = createStemSends(ctx, postEqGain, busesMap, positionalChannelsRef.current);
             const lfeGain = ctx.createGain();
             const lfeFilter1 = ctx.createBiquadFilter();
             const lfeFilter2 = ctx.createBiquadFilter();
@@ -1425,7 +1563,8 @@ export function useStemPreview(
             analyser.fftSize = 256;
             analyser.smoothingTimeConstant = 0.7;
             nodes.current.set(entry.id, {
-              buffer, source: null, stemGain, sends: built.sends, ownNodes: [stemGain, ...built.ownNodes],
+              buffer, source: null, stemGain, postEqGain, sends: built.sends,
+              ownNodes: [stemGain, postEqGain, ...built.ownNodes],
               lfeGain, lfeFilters: [lfeFilter1, lfeFilter2], analyser,
             });
           }
@@ -1441,6 +1580,7 @@ export function useStemPreview(
           .map((stem) => nodes.current.get(stem.id)?.buffer)
           .filter((buffer): buffer is AudioBuffer => Boolean(buffer));
         if (stemBuffers.length) measuredLkfs.current = await measureApproxLkfs(stemBuffers);
+        buildStemEqChains();
         setReady(nodes.current.size > 0);
         apply();
       } catch {
@@ -1451,7 +1591,7 @@ export function useStemPreview(
     initPromise.current = promise;
     return promise;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- speakerEnabled read only for the initial mute value; live changes go through applySpeakerMute; outputMode/spatialProfile read via refs so switching either alone doesn't force a full reset/re-decode
-  }, [apply, applyOutputMode, buildMasteringTopology, loadDecodeFilterSet, sourcePreviewUrl, supported]);
+  }, [apply, applyOutputMode, buildMasteringTopology, buildStemEqChains, loadDecodeFilterSet, sourcePreviewUrl, supported]);
 
   React.useEffect(() => {
     initialize().catch(() => {
