@@ -308,29 +308,41 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         })}
       </ol>
       <div className="flex items-center gap-2">
-        <Button
-          variant={settingsView ? "default" : "outline"}
-          size="sm"
-          onClick={() => { setManifestView(false); setSettingsView((value) => !value); }}
+        <button
+          type="button"
+          aria-pressed={settingsView}
+          onClick={() => { setManifestView(false); setSettingsView(true); }}
+          className={cn(
+            "flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-medium transition-colors",
+            settingsView
+              ? "border-primary bg-primary text-primary-foreground shadow"
+              : "border-transparent bg-muted text-muted-foreground hover:text-foreground",
+          )}
         >
-          <Settings className="h-4 w-4" />
-          {settingsView ? "Close settings" : "Project settings"}
-        </Button>
-        <Button
-          variant={manifestView ? "default" : "outline"}
-          size="sm"
+          <Settings className="h-4 w-4 shrink-0" />
+          Project settings
+        </button>
+        <button
+          type="button"
+          aria-pressed={manifestView}
           onClick={() => {
             if (!manifestView && effectiveManifest) setRawManifest(JSON.stringify(effectiveManifest, null, 2));
             setSettingsView(false);
-            setManifestView((value) => !value);
+            setManifestView(true);
           }}
+          className={cn(
+            "flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-medium transition-colors",
+            manifestView
+              ? "border-primary bg-primary text-primary-foreground shadow"
+              : "border-transparent bg-muted text-muted-foreground hover:text-foreground",
+          )}
         >
-          <Code2 className="h-4 w-4" />
-          {manifestView ? "Close manifest" : "Manifest JSON"}
-        </Button>
+          <Code2 className="h-4 w-4 shrink-0" />
+          Manifest JSON
+        </button>
       </div>
     </div>
-    {settingsView ? (
+    {settingsView && manifest ? (
       <section className="mt-4 min-h-0 flex-1 overflow-auto rounded-lg border p-4">
         <ProjectSettingsSection
           project={project}
