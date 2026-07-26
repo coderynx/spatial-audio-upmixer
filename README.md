@@ -202,6 +202,28 @@ upmixer surround.wav output.wav --input-format 5.1.2 --format 7.1.4
 | 5.1.4 | 10 | 4 |
 | 7.1.2 | 10 | 2 |
 | 7.1.4 | 12 | 4 |
+| binaural | 2 | n/a (headphone render of an intermediate bed) |
+
+### Binaural (Spatial Audio Engine)
+
+`--format binaural` exports a headphone-ready stereo WAV instead of a discrete speaker bed. The pipeline first
+upmixes/masters to an intermediate bed (`--binaural-bed`, one of `5.1.4` / `7.1.2` / `7.1.4`; default `7.1.4`), then
+renders that bed to stereo through one of three profiles (`--binaural-profile`):
+
+| Profile | For | Room | Consumer voicing |
+|---|---|---|---|
+| `studio` (default) | Professional monitoring, as if in a treated spatial-audio mixing room | Neutral measured-style room | None |
+| `listening` | Previewing the Apple Music Atmos-on-headphones consumer experience | Consumer room | Crossfeed, bass/air lift, presence, stereo widen, −16 LKFS target |
+| `flat` | Anechoic reference — verify the mix with zero added coloration | None | None |
+
+```bash
+upmixer input.wav monitor.wav --format binaural --binaural-profile studio --binaural-bed 7.1.4
+upmixer input.wav consumer.wav --format binaural --binaural-profile listening
+```
+
+Not compatible with `--output-type adm-bwf` (ADM-BWF requires a discrete channel-based bed). See
+[`docs/standards/spatial_audio_engine.md`](docs/standards/spatial_audio_engine.md) for the full signal-graph
+contract — the same one the web UI's in-preview Spatial Audio Engine profile selector implements.
 
 ## CLI Workflows
 
@@ -321,6 +343,8 @@ CLI flags > per-asset manifest values > global manifest values > UpmixConfig def
 | [`stem_hierarchical.yaml`](examples/stem_hierarchical.yaml) | Automatic crowd, primary, drum, and backing-vocal stages |
 | [`atmos_music.yaml`](examples/atmos_music.yaml) | YAML ADM-BWF music-authoring bed |
 | [`atmos_music.json`](examples/atmos_music.json) | Equivalent JSON ADM-BWF example |
+| [`binaural_studio.yaml`](examples/binaural_studio.yaml) | Headphone export, neutral Studio monitoring profile |
+| [`binaural_listening.yaml`](examples/binaural_listening.yaml) | Headphone export, consumer Listening (Apple Music Atmos-style enhance) profile |
 | [`batch_album_stem.yaml`](examples/batch_album_stem.yaml) | Explicit album jobs with shared stem settings |
 | [`batch_dir_stem.yaml`](examples/batch_dir_stem.yaml) | Directory expansion and per-directory overrides |
 | [`batch_explicit_jobs.yaml`](examples/batch_explicit_jobs.yaml) | Per-track deep-merged overrides |

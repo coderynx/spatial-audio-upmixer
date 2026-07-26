@@ -31,6 +31,7 @@ Usage:
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import logging
 import math
@@ -43,6 +44,7 @@ import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
 
+from upmixer.binaural.renderer import render_binaural_delivery
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, FORMAT_MAP, INPUT_FORMAT_MAP, detect_input_format
 from upmixer.io.adm_writer import AdmBwfWriter
@@ -448,7 +450,13 @@ class StemUpmixPipeline:
             :class:`~upmixer.result.UpmixResult` with processing metadata.
         """
         t0 = time.monotonic()
-        cfg = self.config
+        is_binaural = self.config.output_format == "binaural"
+        if is_binaural and self.config.output_type == "adm-bwf":
+            raise ValueError("binaural output cannot be combined with ADM-BWF")
+        cfg = (
+            dataclasses.replace(self.config, output_format=self.config.binaural_bed)
+            if is_binaural else self.config
+        )
         if not 0.0 <= cfg.stem_source_anchor_strength <= 1.0:
             raise ValueError("stem_source_anchor_strength must be between 0.0 and 1.0")
 
@@ -784,7 +792,14 @@ class StemUpmixPipeline:
             }
             _log.info("  Resampled: %d Hz → %d Hz", sep_sr, out_sr)
 
-        if cfg.output_type == "adm-bwf":
+        if is_binaural:
+            channels, mastering_result = render_binaural_delivery(
+                channels, output_fmt, out_sr, self.config
+            )
+            output_fmt = FORMAT_MAP["binaural"]
+            writer = AudioWriter(output_path, out_sr, self.config)
+            writer.write(channels)
+        elif cfg.output_type == "adm-bwf":
             writer = AdmBwfWriter(output_path, out_sr, cfg)
             writer.write(
                 channels,
@@ -795,7 +810,7 @@ class StemUpmixPipeline:
             writer = AudioWriter(output_path, out_sr, cfg)
             writer.write(channels)
 
-        if cfg.downmix_output_path:
+        if cfg.downmix_output_path and not is_binaural:
             from upmixer.loudness import measure_true_peak
 
             L, R = itu_downmix_stereo(channels, surround_coeff=cfg.surround_downmix_coeff)

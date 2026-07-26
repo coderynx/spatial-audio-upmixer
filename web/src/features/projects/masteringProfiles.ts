@@ -83,6 +83,13 @@ export const LFE_LOWPASS_HZ = 120;
 // upmixer/config.py loudness_max_gain_db.
 export const LOUDNESS_MAX_GAIN_DB = 30.0;
 
+// upmixer/binaural/renderer.py BINAURAL_LOUDNESS_MAX_GAIN_DB. The bed is
+// already loudness-normalized before binaural collapse, so this pass only
+// lightly corrects for the level shift the HOA/HRTF collapse introduces
+// instead of re-running a full loudness match — a small ceiling keeps a
+// quiet collapse from being cranked back up past the mastered bed's level.
+export const BINAURAL_LOUDNESS_MAX_GAIN_DB = 6.0;
+
 /** WaveShaper curve for the backend's tanh soft-limit: identity below
  * `threshold`, tanh saturation above it. Mirrors upmixer/utils.py soft_limit. */
 export function buildSoftLimitCurve(threshold: number = SOFT_LIMIT_THRESHOLD, samples = 4096): Float32Array {
@@ -263,6 +270,184 @@ export function buildSurroundSend(
   input.connect(highpass);
   const diffuse = buildDiffuseSend(ctx, highpass, delayMs);
   return { output: diffuse.output, nodes: [highpass, ...diffuse.nodes] };
+}
+
+// --- Spatial Audio Engine voicing chain (ported from upmixer/binaural/) --
+//
+// Studio/Listening/Flat binaural profiles. Filter geometry/SH/decode-filter
+// contract lives in docs/standards/spatial_audio_engine.md; this section
+// only carries the post-decode "voicing" parameters (Listening's
+// Apple-Music-style enhance chain) so useStemPreview.ts's Web Audio graph
+// can match upmixer/binaural/voicing.py parameter-for-parameter.
+
+export type SpatialProfile = "studio" | "listening" | "flat";
+
+export const DECODE_FILTER_SET: Record<SpatialProfile, string> = {
+  flat: "flat_o3_decode",
+  studio: "studio_o3_decode",
+  listening: "listening_o3_decode",
+};
+
+export type VoicingParams = {
+  crossfeedAmount: number;
+  crossfeedCutoffHz: number;
+  bassShelfHz: number;
+  bassShelfGainDb: number;
+  airShelfHz: number;
+  airShelfGainDb: number;
+  presenceHz: number;
+  presenceGainDb: number;
+  presenceQ: number;
+  stereoWiden: number;
+  loudnessTargetLkfs: number | null;
+};
+
+const NEUTRAL_VOICING: VoicingParams = {
+  crossfeedAmount: 0, crossfeedCutoffHz: 700, bassShelfHz: 120, bassShelfGainDb: 0,
+  airShelfHz: 9000, airShelfGainDb: 0, presenceHz: 3000, presenceGainDb: 0, presenceQ: 0.9,
+  stereoWiden: 0, loudnessTargetLkfs: null,
+};
+
+// upmixer/binaural/profiles.py VOICING_PARAMS.
+export const VOICING_PARAMS: Record<SpatialProfile, VoicingParams> = {
+  flat: NEUTRAL_VOICING,
+  studio: NEUTRAL_VOICING,
+  listening: {
+    crossfeedAmount: 0.28, crossfeedCutoffHz: 700,
+    bassShelfHz: 120, bassShelfGainDb: 2.0,
+    airShelfHz: 9000, airShelfGainDb: 2.0,
+    presenceHz: 3000, presenceGainDb: 1.0, presenceQ: 0.9,
+    stereoWiden: 0.15, loudnessTargetLkfs: -16.0,
+  },
+};
+
+export type VoicingChain = {
+  left: AudioNode;
+  right: AudioNode;
+  nodes: AudioNode[];
+  lowL: BiquadFilterNode;
+  lowR: BiquadFilterNode;
+  dryL: GainNode;
+  dryR: GainNode;
+  bleedToL: GainNode;
+  bleedToR: GainNode;
+  bassL: BiquadFilterNode;
+  bassR: BiquadFilterNode;
+  airL: BiquadFilterNode;
+  airR: BiquadFilterNode;
+  presenceL: BiquadFilterNode;
+  presenceR: BiquadFilterNode;
+  sideL: GainNode;
+  sideR: GainNode;
+};
+
+/** Web Audio voicing chain: crossfeed -> bass/air shelves -> presence peak
+ * -> M/S widen. Mirrors upmixer/binaural/voicing.py::apply_voicing exactly
+ * (same order, same parameters). Builds a fixed topology regardless of
+ * profile — a zero-gain shelf/peak or zero-amount crossfeed/widen stage is
+ * already numerically an identity, so switching profiles only needs
+ * `applyVoicingParams` to retune existing AudioParams, never a graph
+ * rebuild. Returns the two output nodes to connect onward (left, right),
+ * every node created (for teardown), and the tunable nodes themselves. */
+export function buildVoicingChain(ctx: AudioContext, left: AudioNode, right: AudioNode): VoicingChain {
+  const lowL = ctx.createBiquadFilter();
+  lowL.type = "lowpass";
+  const lowR = ctx.createBiquadFilter();
+  lowR.type = "lowpass";
+  left.connect(lowL);
+  right.connect(lowR);
+
+  const dryL = ctx.createGain();
+  const dryR = ctx.createGain();
+  const bleedToL = ctx.createGain();
+  const bleedToR = ctx.createGain();
+  const crossfedL = ctx.createGain();
+  const crossfedR = ctx.createGain();
+  left.connect(dryL).connect(crossfedL);
+  lowR.connect(bleedToL).connect(crossfedL);
+  right.connect(dryR).connect(crossfedR);
+  lowL.connect(bleedToR).connect(crossfedR);
+
+  const bassL = ctx.createBiquadFilter();
+  bassL.type = "lowshelf";
+  const bassR = ctx.createBiquadFilter();
+  bassR.type = "lowshelf";
+  const airL = ctx.createBiquadFilter();
+  airL.type = "highshelf";
+  const airR = ctx.createBiquadFilter();
+  airR.type = "highshelf";
+  const presenceL = ctx.createBiquadFilter();
+  presenceL.type = "peaking";
+  const presenceR = ctx.createBiquadFilter();
+  presenceR.type = "peaking";
+  crossfedL.connect(bassL).connect(airL).connect(presenceL);
+  crossfedR.connect(bassR).connect(airR).connect(presenceR);
+
+  // M/S widen: mid = (L+R)/2, side = (L-R) * (1+w)/2; out = mid +- side.
+  // `side` carries the true L-R difference (presenceR negated via
+  // `sideDiff`) so both sideL and sideR scale the *same* difference signal —
+  // tapping presenceL/presenceR directly here would make sideL/sideR each
+  // pass a single raw channel instead of a true side signal, so even
+  // `stereoWiden = 0` would fail to reduce to identity.
+  const mid = ctx.createGain();
+  mid.gain.value = 0.5;
+  const side = ctx.createGain();
+  const sideDiff = ctx.createGain();
+  sideDiff.gain.value = -1;
+  const sideL = ctx.createGain();
+  const sideR = ctx.createGain();
+  presenceL.connect(mid);
+  presenceR.connect(mid);
+  presenceL.connect(side);
+  presenceR.connect(sideDiff).connect(side);
+  side.connect(sideL);
+  side.connect(sideR);
+
+  const outL = ctx.createGain();
+  const outR = ctx.createGain();
+  mid.connect(outL);
+  sideL.connect(outL);
+  mid.connect(outR);
+  sideR.connect(outR);
+
+  return {
+    left: outL,
+    right: outR,
+    nodes: [
+      lowL, lowR, dryL, dryR, bleedToL, bleedToR, crossfedL, crossfedR,
+      bassL, bassR, airL, airR, presenceL, presenceR,
+      mid, side, sideDiff, sideL, sideR, outL, outR,
+    ],
+    lowL, lowR, dryL, dryR, bleedToL, bleedToR,
+    bassL, bassR, airL, airR, presenceL, presenceR, sideL, sideR,
+  };
+}
+
+/** Retunes an existing `VoicingChain`'s AudioParams for a new profile — no
+ * node creation, so it's safe to call on every profile switch or animate. */
+export function applyVoicingParams(chain: VoicingChain, params: VoicingParams): void {
+  chain.lowL.frequency.value = params.crossfeedCutoffHz;
+  chain.lowR.frequency.value = params.crossfeedCutoffHz;
+  chain.dryL.gain.value = 1 - params.crossfeedAmount;
+  chain.dryR.gain.value = 1 - params.crossfeedAmount;
+  chain.bleedToL.gain.value = params.crossfeedAmount;
+  chain.bleedToR.gain.value = params.crossfeedAmount;
+  chain.bassL.frequency.value = params.bassShelfHz;
+  chain.bassR.frequency.value = params.bassShelfHz;
+  chain.bassL.gain.value = params.bassShelfGainDb;
+  chain.bassR.gain.value = params.bassShelfGainDb;
+  chain.airL.frequency.value = params.airShelfHz;
+  chain.airR.frequency.value = params.airShelfHz;
+  chain.airL.gain.value = params.airShelfGainDb;
+  chain.airR.gain.value = params.airShelfGainDb;
+  chain.presenceL.frequency.value = params.presenceHz;
+  chain.presenceR.frequency.value = params.presenceHz;
+  chain.presenceL.Q.value = params.presenceQ;
+  chain.presenceR.Q.value = params.presenceQ;
+  chain.presenceL.gain.value = params.presenceGainDb;
+  chain.presenceR.gain.value = params.presenceGainDb;
+  chain.sideL.gain.value = 0.5 * (1 + params.stereoWiden);
+  chain.sideR.gain.value = -0.5 * (1 + params.stereoWiden);
 }
 
 /** Approximates `stem_router.py`'s per-stem constant-power `route_scale`

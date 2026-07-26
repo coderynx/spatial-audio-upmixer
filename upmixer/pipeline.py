@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 import math
 import time
@@ -9,6 +10,7 @@ from scipy.signal import resample_poly
 from upmixer.analysis.coherence import CoherenceEstimator
 from upmixer.analysis.spatial import SpatialPlan, analyze_spatial_plan
 from upmixer.analysis.stft import StreamingSTFT
+from upmixer.binaural.renderer import render_binaural_delivery
 from upmixer.config import UpmixConfig
 from upmixer.decomposition.direct_ambient import SoftMatrixDecomposer
 from upmixer.formats import (
@@ -263,7 +265,13 @@ class UpmixPipeline:
             :class:`~upmixer.result.UpmixResult` with processing metadata.
         """
         t0 = time.monotonic()
-        cfg = self.config
+        is_binaural = self.config.output_format == "binaural"
+        if is_binaural and self.config.output_type == "adm-bwf":
+            raise ValueError("binaural output cannot be combined with ADM-BWF")
+        cfg = (
+            dataclasses.replace(self.config, output_format=self.config.binaural_bed)
+            if is_binaural else self.config
+        )
 
         def _progress(msg: str, frac: float) -> None:
             _log.info(msg)
@@ -331,7 +339,7 @@ class UpmixPipeline:
             if self._spatial_plan is not None:
                 _log.info("  Spatial: %s (confidence %.2f)", self._spatial_plan.profile, self._spatial_plan.confidence)
             channels = self._run_stereo_pipeline(
-                left, right, sr, n_samples, fft_size, hop_size, progress_callback
+                cfg, left, right, sr, n_samples, fft_size, hop_size, progress_callback
             )
             channels = self._post_process(channels)
         else:
@@ -369,7 +377,14 @@ class UpmixPipeline:
         mastering = MasteringChain(cfg)
         channels, mastering_result = mastering.process(channels, out_sr, output_fmt)
 
-        if cfg.output_type == "adm-bwf":
+        if is_binaural:
+            channels, mastering_result = render_binaural_delivery(
+                channels, output_fmt, out_sr, self.config
+            )
+            output_fmt = FORMAT_MAP["binaural"]
+            writer = AudioWriter(output_path, out_sr, self.config)
+            writer.write(channels)
+        elif cfg.output_type == "adm-bwf":
             writer = AdmBwfWriter(output_path, out_sr, cfg)
             writer.write(
                 channels,
@@ -382,7 +397,7 @@ class UpmixPipeline:
 
         _progress(f"Output: {output_path}", 1.0)
 
-        if cfg.downmix_output_path:
+        if cfg.downmix_output_path and not is_binaural:
             self._write_downmix(channels, out_sr, cfg)
 
         return UpmixResult(
@@ -406,6 +421,7 @@ class UpmixPipeline:
 
     def _run_stereo_pipeline(
         self,
+        cfg: UpmixConfig,
         left: np.ndarray,
         right: np.ndarray,
         sr: int,
@@ -420,7 +436,6 @@ class UpmixPipeline:
         accumulating tens of thousands of tiny numpy chunks — which causes heavy
         GC pressure and apparent stalls on long high-sample-rate files.
         """
-        cfg = self.config
         processor = StreamingProcessor(cfg, sr, self._spatial_plan)
         fmt = FORMAT_MAP[cfg.output_format]
         channel_names = [label.value for label in fmt.channels]

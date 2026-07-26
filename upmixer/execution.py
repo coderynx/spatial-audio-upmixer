@@ -77,9 +77,13 @@ def preflight_job(
         except ValueError as exc:
             raise PreflightError(str(exc)) from exc
 
-    output_fmt = FORMAT_MAP[config.output_format]
-    if not can_upmix(input_fmt, output_fmt):
-        raise PreflightError(f"Cannot upmix {input_fmt.name} to {output_fmt.name}")
+    is_binaural = config.output_format == "binaural"
+    if is_binaural and config.output_type == "adm-bwf":
+        raise PreflightError("binaural output cannot be combined with ADM-BWF")
+    bed_fmt = FORMAT_MAP[config.binaural_bed] if is_binaural else FORMAT_MAP[config.output_format]
+    if not can_upmix(input_fmt, bed_fmt):
+        raise PreflightError(f"Cannot upmix {input_fmt.name} to {bed_fmt.name}")
+    output_fmt = FORMAT_MAP["binaural"] if is_binaural else bed_fmt
 
     output_sr = expected_output_sample_rate(config, info.samplerate)
     if config.output_type == "adm-bwf":

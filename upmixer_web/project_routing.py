@@ -32,7 +32,11 @@ def routing_for_scene(scene: dict[str, Any], config: UpmixConfig) -> dict[str, d
     stems = scene.get("stems", {})
     if not isinstance(stems, dict):
         return {}
-    labels = [label for label in FORMAT_MAP[config.output_format].channels if label != ChannelLabel.LFE]
+    # Binaural exports route into the intermediate discrete bed, not the
+    # 2-channel binaural format — the bed is what actually has speakers.
+    bed_format = config.binaural_bed if config.output_format == "binaural" else config.output_format
+    out_fmt = FORMAT_MAP[bed_format]
+    labels = [label for label in out_fmt.channels if label != ChannelLabel.LFE]
     available = [(label, _POSITIONS[label]) for label in labels if label in _POSITIONS]
     if not available:
         return {}
@@ -41,7 +45,7 @@ def routing_for_scene(scene: dict[str, Any], config: UpmixConfig) -> dict[str, d
         if not isinstance(raw, dict):
             continue
         if raw.get("enabled", True) is False:
-            output[str(stem)] = {label.value: 0.0 for label in FORMAT_MAP[config.output_format].channels}
+            output[str(stem)] = {label.value: 0.0 for label in out_fmt.channels}
             continue
         if "azimuth_deg" not in raw:
             continue

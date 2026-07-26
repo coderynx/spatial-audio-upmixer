@@ -49,7 +49,8 @@ Canonical processing paths are:
 - `mixing.channel_layout`, `mixing.stem_rebalance`, `mixing.stem_eq`,
   `mixing.stem_routing`, `mixing.stem_enabled`, `mixing.stem_solo`,
   `mixing.stem_source_anchor_strength`, `mixing.spatial.profile`,
-  `mixing.spatial.intensity`, `mixing.spatial.preanalyze`, `mixing.stems`.
+  `mixing.spatial.intensity`, `mixing.spatial.preanalyze`, `mixing.stems`,
+  `mixing.binaural.profile`, `mixing.binaural.bed`.
 - `routing.center_gain`, `routing.surround_gain`, `routing.back_gain`,
   `routing.height_gain`, `routing.lfe_gain`, `routing.lfe_cutoff`,
   `routing.center_extraction_gain`, `routing.center_attenuation`,
@@ -80,6 +81,7 @@ Canonical processing paths are:
 | `mixing.stem_*` | Stem controls and Advanced JSON | Direct manifest mapping | None | Manifest behavior |
 | `mixing.spatial` / `routing.content_mix_strength` | Derived explicit-routing profile | Forced deterministic project values | Medium | Project behavior |
 | `mixing.stem_routing` | Position sliders, presets, Advanced matrix | Exact speaker matrix | None | Project behavior for UX |
+| `mixing.binaural.*` | Speaker-layout dropdown ("Binaural") + profile/bed selects; in-preview Spatial Audio Engine picker mirrors the project value but is session-only | `channel_layout: "binaural"` renders `binaural.bed` through the profile's decode+voicing chain to stereo (see [Spatial Audio Engine](standards/spatial_audio_engine.md)); routing/preview UI keys off `binaural.bed`, not the 2ch export format | Medium | Unified |
 | `routing.*` | Advanced JSON | Direct manifest mapping | High before change | Manifest behavior |
 | `mastering.*` | Mastering tab and reference upload | Exported job receives trusted reference | High before change | Unified |
 | `format.*` | Delivery controls and Advanced JSON | Direct mapping | None | Manifest behavior |

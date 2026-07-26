@@ -2,9 +2,13 @@
 // barrel `index.js` unconditionally `require()`s `serve-sofa-hrir` (for the
 // SOFA/IRCAM HRIR loaders this preview doesn't use), which has a broken
 // package.json `exports` map that trips up Vite/Vitest's resolver. Importing
-// each class straight from its `dist/` submodule (as done throughout this
-// codebase) avoids that dependency entirely, so this shim declares those
-// submodule paths instead of the barrel.
+// the class straight from its `dist/` submodule (as done throughout this
+// codebase) avoids that dependency entirely, so this shim declares that
+// submodule path instead of the barrel.
+//
+// Only the mono encoder is used — the decode/rotation stage is a plain
+// ConvolverNode bank fed by our own filter files (see useStemPreview.ts and
+// docs/standards/spatial_audio_engine.md), not JSAmbisonics' own decoder.
 declare module "ambisonics/dist/ambi-monoEncoder" {
   export default class monoEncoder {
     constructor(ctx: BaseAudioContext, order: number);
@@ -16,43 +20,9 @@ declare module "ambisonics/dist/ambi-monoEncoder" {
   }
 }
 
-declare module "ambisonics/dist/ambi-sceneRotator" {
-  export default class sceneRotator {
-    constructor(ctx: BaseAudioContext, order: number);
-    in: AudioNode;
-    out: AudioNode;
-    yaw: number;
-    pitch: number;
-    roll: number;
-    updateRotMtx(): void;
-  }
-}
-
-declare module "ambisonics/dist/ambi-binauralDecoder" {
-  export default class binDecoder {
-    constructor(ctx: BaseAudioContext, order: number);
-    in: AudioNode;
-    out: AudioNode;
-    updateFilters(buffer: AudioBuffer): void;
-    resetFilters(): void;
-  }
-}
-
-// No published types; only used to satisfy `ambi-sceneRotator`'s bare
+// No published types; only used to satisfy `ambi-monoEncoder`'s bare
 // `numeric` global (see useStemPreview.ts).
 declare module "numeric" {
   const numeric: unknown;
   export default numeric;
-}
-
-declare module "ambisonics/dist/hoa-loader" {
-  export default class HOAloader {
-    constructor(
-      ctx: BaseAudioContext,
-      order: number,
-      url: string,
-      onLoad: (buffer: AudioBuffer) => void,
-    );
-    load(): void;
-  }
 }

@@ -105,10 +105,15 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
         raise ValueError("Unknown channel layout")
     mixing["spatial"] = {"profile": "balanced", "intensity": 0.0, "preanalyze": False}
     mixing["stem_source_anchor_strength"] = mixing.get("stem_source_anchor_strength", 0.0)
+    if mixing["channel_layout"] == "binaural":
+        binaural = mixing.setdefault("binaural", {})
+        binaural.setdefault("profile", "studio")
+        binaural.setdefault("bed", "7.1.4")
+        routing_fmt = FORMAT_MAP[binaural["bed"]]
+    else:
+        routing_fmt = FORMAT_MAP[mixing["channel_layout"]]
     if not mixing.get("stem_routing"):
-        mixing["stem_routing"] = build_stem_routing(
-            stems, FORMAT_MAP[mixing["channel_layout"]]
-        )
+        mixing["stem_routing"] = build_stem_routing(stems, routing_fmt)
     routing = normalized.setdefault("routing", {})
     routing["content_mix_strength"] = 0.0
     normalized.setdefault("processing", {})["preview"] = False

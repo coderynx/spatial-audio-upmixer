@@ -1,0 +1,231 @@
+import math
+
+import numpy as np
+import pytest
+
+from upmixer.binaural.ambisonics import N_ACN_CHANNELS, encode_gains
+from upmixer.binaural.decoder import decode_to_binaural, load_decode_filter_set
+from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION, SPEAKER_COORDINATES
+from upmixer.binaural.profiles import BINAURAL_PROFILES, resolve_profile
+from upmixer.binaural.renderer import (
+    BINAURAL_LOUDNESS_MAX_GAIN_DB,
+    render_binaural,
+    render_binaural_delivery,
+)
+from upmixer.config import UpmixConfig
+from upmixer.formats import BINAURAL_BED_FORMATS, ChannelLabel, FORMAT_MAP
+
+
+def test_encode_gains_omni_channel_is_unity():
+    gains = encode_gains(0.0, 0.0)
+    assert gains[0] == pytest.approx(1.0)
+
+
+def test_encode_gains_front_source_has_zero_lateral_and_height_terms():
+    gains = encode_gains(0.0, 0.0)
+    # ACN1 (Y, lateral) and ACN2 (Z, height) must vanish dead-ahead.
+    assert gains[1] == pytest.approx(0.0, abs=1e-9)
+    assert gains[2] == pytest.approx(0.0, abs=1e-9)
+    # ACN3 (X, front/back) must be at its positive maximum (sqrt(3)).
+    assert gains[3] == pytest.approx(math.sqrt(3.0))
+
+
+def test_encode_gains_returns_16_channels():
+    gains = encode_gains(0.3, -0.2)
+    assert gains.shape == (N_ACN_CHANNELS,)
+    assert np.all(np.isfinite(gains))
+
+
+def test_geometry_matches_web_contract_coordinates():
+    assert SPEAKER_COORDINATES[ChannelLabel.FL].x == pytest.approx(-0.5)
+    assert SPEAKER_COORDINATES[ChannelLabel.C].z == pytest.approx(-1.0)
+    assert SPEAKER_COORDINATES[ChannelLabel.TFL].y == pytest.approx(0.6)
+    assert ChannelLabel.LFE not in SPEAKER_COORDINATES
+
+
+def test_azimuth_elevation_front_center_is_zero():
+    pos = SPEAKER_AZIMUTH_ELEVATION[ChannelLabel.C]
+    assert pos.azimuth_deg == pytest.approx(0.0, abs=1e-6)
+    assert pos.elevation_deg == pytest.approx(0.0, abs=1e-6)
+
+
+def test_azimuth_left_speaker_is_positive():
+    pos = SPEAKER_AZIMUTH_ELEVATION[ChannelLabel.FL]
+    assert pos.azimuth_deg > 0
+
+
+@pytest.mark.parametrize("profile", BINAURAL_PROFILES)
+def test_load_decode_filter_set_shape(profile):
+    name = {"flat": "flat_o3_decode", "studio": "studio_o3_decode", "listening": "listening_o3_decode"}[profile]
+    filter_set = load_decode_filter_set(name, 48000)
+    assert filter_set.taps.shape[0] == N_ACN_CHANNELS
+    assert filter_set.taps.shape[1] == 2
+    assert filter_set.sample_rate == 48000
+    assert np.all(np.isfinite(filter_set.taps))
+
+
+def test_load_decode_filter_set_resamples():
+    filter_set_48k = load_decode_filter_set("flat_o3_decode", 48000)
+    filter_set_44k = load_decode_filter_set("flat_o3_decode", 44100)
+    assert filter_set_44k.sample_rate == 44100
+    # Resampled length should scale roughly with the rate ratio.
+    ratio = filter_set_44k.taps.shape[-1] / filter_set_48k.taps.shape[-1]
+    assert ratio == pytest.approx(44100 / 48000, rel=0.05)
+
+
+def test_decode_to_binaural_silence_in_silence_out():
+    filter_set = load_decode_filter_set("flat_o3_decode", 48000)
+    hoa = np.zeros((N_ACN_CHANNELS, 1000))
+    left, right = decode_to_binaural(hoa, filter_set)
+    assert left.shape == (1000,)
+    assert np.all(left == 0.0)
+    assert np.all(right == 0.0)
+
+
+def test_resolve_profile_rejects_unknown():
+    with pytest.raises(ValueError):
+        resolve_profile("cinema")
+
+
+@pytest.mark.parametrize("bed_name", BINAURAL_BED_FORMATS)
+@pytest.mark.parametrize("profile", BINAURAL_PROFILES)
+def test_render_binaural_shape_and_finite(bed_name, profile):
+    sr = 48000
+    n = sr // 2
+    bed_fmt = FORMAT_MAP[bed_name]
+    rng = np.random.default_rng(42)
+    channels = {label.value: rng.standard_normal(n) * 0.05 for label in bed_fmt.channels}
+
+    left, right = render_binaural(channels, bed_fmt, sr, profile)
+    assert left.shape == (n,)
+    assert right.shape == (n,)
+    assert np.all(np.isfinite(left))
+    assert np.all(np.isfinite(right))
+
+
+def test_render_binaural_silent_bed_is_silent():
+    sr = 48000
+    n = 4800
+    bed_fmt = FORMAT_MAP["7.1.4"]
+    channels = {label.value: np.zeros(n) for label in bed_fmt.channels}
+    left, right = render_binaural(channels, bed_fmt, sr, "flat")
+    assert np.max(np.abs(left)) == pytest.approx(0.0, abs=1e-12)
+    assert np.max(np.abs(right)) == pytest.approx(0.0, abs=1e-12)
+
+
+def test_listening_profile_differs_from_flat():
+    sr = 48000
+    n = sr
+    bed_fmt = FORMAT_MAP["7.1.4"]
+    rng = np.random.default_rng(7)
+    channels = {label.value: rng.standard_normal(n) * 0.05 for label in bed_fmt.channels}
+
+    flat_l, flat_r = render_binaural(channels, bed_fmt, sr, "flat")
+    listening_l, listening_r = render_binaural(channels, bed_fmt, sr, "listening")
+
+    assert not np.allclose(flat_l, listening_l)
+    assert not np.allclose(flat_r, listening_r)
+
+
+def test_listening_targets_louder_lkfs_than_studio():
+    sr = 48000
+    n = sr * 2
+    bed_fmt = FORMAT_MAP["7.1.4"]
+    rng = np.random.default_rng(11)
+    channels = {label.value: rng.standard_normal(n) * 0.05 for label in bed_fmt.channels}
+    cfg_studio = UpmixConfig(output_format="binaural", binaural_profile="studio")
+    cfg_listening = UpmixConfig(output_format="binaural", binaural_profile="listening")
+
+    _, studio_result = render_binaural_delivery(channels, bed_fmt, sr, cfg_studio)
+    _, listening_result = render_binaural_delivery(channels, bed_fmt, sr, cfg_listening)
+
+    assert listening_result.measured_lkfs > studio_result.measured_lkfs
+
+
+def test_binaural_format_registered():
+    fmt = FORMAT_MAP["binaural"]
+    assert fmt.n_channels == 2
+    assert fmt.channels == (ChannelLabel.FL, ChannelLabel.FR)
+
+
+def test_binaural_bed_formats_are_valid_output_formats():
+    for name in BINAURAL_BED_FORMATS:
+        assert name in FORMAT_MAP
+        assert FORMAT_MAP[name].n_channels > 2
+
+
+@pytest.mark.parametrize("profile", BINAURAL_PROFILES)
+@pytest.mark.parametrize("bed_name", BINAURAL_BED_FORMATS)
+def test_render_binaural_is_left_right_balanced_for_a_centered_signal(bed_name, profile):
+    # Regression: the decode filter set's virtual-loudspeaker direction set
+    # must be exactly mirror-symmetric (see scripts/build_binaural_filters.py
+    # fibonacci_sphere) or a perfectly centered/symmetric bed decodes to
+    # audibly unequal L/R levels even though nothing in the mix is panned.
+    sr = 48000
+    n = sr
+    bed_fmt = FORMAT_MAP[bed_name]
+    rng = np.random.default_rng(0)
+    mono = rng.standard_normal(n) * 0.1
+    channels = {label.value: mono.copy() for label in bed_fmt.channels}
+
+    left, right = render_binaural(channels, bed_fmt, sr, profile)
+    left_rms = float(np.sqrt(np.mean(left**2)))
+    right_rms = float(np.sqrt(np.mean(right**2)))
+    assert left_rms == pytest.approx(right_rms, rel=1e-9)
+
+
+@pytest.mark.parametrize("profile", BINAURAL_PROFILES)
+def test_binaural_delivery_meets_true_peak_ceiling_on_hot_bed(profile):
+    # Regression: soft_limit used to run BEFORE loudness normalization on the
+    # raw HRTF sum, which could bake in tanh saturation and still leave the
+    # normalized delivery above the -1 dBTP ceiling. The limiter now runs
+    # last, after the (bounded) loudness correction.
+    sr = 48000
+    n = sr * 2
+    bed_fmt = FORMAT_MAP["7.1.4"]
+    rng = np.random.default_rng(7)
+    channels = {label.value: rng.standard_normal(n) * 0.9 for label in bed_fmt.channels}
+    cfg = UpmixConfig(output_format="binaural", binaural_profile=profile)
+
+    _, result = render_binaural_delivery(channels, bed_fmt, sr, cfg)
+
+    assert result.measured_tp_dbtp <= cfg.loudness_max_tp + 0.05
+
+
+@pytest.mark.parametrize("profile", BINAURAL_PROFILES)
+def test_binaural_delivery_upward_gain_is_bounded(profile):
+    # Regression: the collapse-stage loudness pass used to allow up to
+    # +30 dB of upward gain (the general mastering ceiling), which could
+    # crank a quiet collapse well past the already-mastered bed's level.
+    # It is now capped small since the bed is already loudness-matched.
+    sr = 48000
+    n = sr * 2
+    bed_fmt = FORMAT_MAP["7.1.4"]
+    rng = np.random.default_rng(13)
+    channels = {label.value: rng.standard_normal(n) * 1e-4 for label in bed_fmt.channels}
+    cfg = UpmixConfig(output_format="binaural", binaural_profile=profile)
+
+    _, result = render_binaural_delivery(channels, bed_fmt, sr, cfg)
+
+    assert result.applied_gain_db <= BINAURAL_LOUDNESS_MAX_GAIN_DB + 1e-6
+
+
+def test_lfe_is_attenuated_relative_to_unity_sum():
+    # Regression: the LFE was summed into both ears at unity gain, fully
+    # correlated across ears, effectively doubling its perceived weight next
+    # to the HRTF-decoded bed and reading as boomy. It must now be attenuated
+    # (default -10 dB, matching UpmixConfig.lfe_gain).
+    sr = 48000
+    n = sr
+    bed_fmt = FORMAT_MAP["7.1.4"]
+    rng = np.random.default_rng(3)
+    lfe = rng.standard_normal(n) * 0.2
+    channels = {label.value: np.zeros(n) for label in bed_fmt.channels}
+    channels[ChannelLabel.LFE.value] = lfe
+
+    attenuated_l, attenuated_r = render_binaural(channels, bed_fmt, sr, "flat")
+    unity_l, unity_r = render_binaural(channels, bed_fmt, sr, "flat", lfe_gain=1.0)
+
+    attenuated_rms = float(np.sqrt(np.mean(attenuated_l**2) + np.mean(attenuated_r**2)))
+    unity_rms = float(np.sqrt(np.mean(unity_l**2) + np.mean(unity_r**2)))
+    assert attenuated_rms < unity_rms * 0.5

@@ -50,10 +50,40 @@ export function ProjectSettingsSection({
           onChange({ ...manifest, mixing: { ...manifest.mixing, channel_layout } })
         }
         options={(
-          configuration?.choices.channel_layouts || ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
-        ).map((value) => ({ value, label: value }))}
-        hint="Changes the routing graph, spatial preview, and audio preview engine to the exact speaker set of this layout."
+          configuration?.choices.channel_layouts || ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4", "binaural"]
+        ).map((value) => ({
+          value,
+          label: value === "binaural" ? "Binaural (headphone export)" : value,
+        }))}
+        hint="Changes the routing graph, spatial preview, and audio preview engine to the exact speaker set of this layout. Binaural exports the intermediate bed below as headphone stereo."
       />
+      {manifest.mixing.channel_layout === "binaural" && (
+        <>
+          <SelectField
+            label="Spatial Audio Engine profile"
+            value={manifest.mixing.binaural.profile}
+            onChange={(profile) => onChange({
+              ...manifest,
+              mixing: { ...manifest.mixing, binaural: { ...manifest.mixing.binaural, profile } },
+            })}
+            options={(configuration?.choices.binaural_profiles || ["studio", "listening", "flat"]).map((value) => ({
+              value,
+              label: value.charAt(0).toUpperCase() + value.slice(1),
+            }))}
+            hint="Studio = neutral monitoring room. Listening = Apple Music Atmos-style enhance. Flat = anechoic reference. Matches the in-preview Spatial Audio Engine selector 1:1."
+          />
+          <SelectField
+            label="Binaural bed"
+            value={manifest.mixing.binaural.bed}
+            onChange={(bed) => onChange({
+              ...manifest,
+              mixing: { ...manifest.mixing, binaural: { ...manifest.mixing.binaural, bed } },
+            })}
+            options={(configuration?.choices.binaural_beds || ["5.1.4", "7.1.2", "7.1.4"]).map((value) => ({ value, label: value }))}
+            hint="Intermediate discrete layout the export virtualizes to stereo — also drives routing/preview/meters."
+          />
+        </>
+      )}
       <SelectField
         label="Preview audio quality"
         value={project.preview_quality}

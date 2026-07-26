@@ -52,12 +52,12 @@ class FakeDelay extends FakeNode {
   delayTime = new FakeAudioParam();
 }
 
-// Fakes for the `ambisonics` package's individual dist submodules (imported
-// directly rather than the barrel — see ambisonics.d.ts for why). The real
-// classes build WebAudio ChannelMerger/ChannelSplitter graphs with channel
-// counts jsdom's fake context doesn't model, so each is mocked. Defined
-// inline in each factory (no outer-scope references) since `vi.mock`
-// factories run before the rest of this module's top-level code.
+// Fake for the `ambisonics` package's mono encoder (imported directly rather
+// than the barrel — see ambisonics.d.ts for why); the decode stage no longer
+// uses this library (see useStemPreview.ts's ConvolverNode bank). The real
+// class builds a WebAudio graph with channel counts jsdom's fake context
+// doesn't model, so it's mocked. Defined inline (no outer-scope references)
+// since `vi.mock` factories run before the rest of this module's top-level code.
 vi.mock("ambisonics/dist/ambi-monoEncoder", () => {
   class MockNode {
     connections: MockNode[] = [];
@@ -85,48 +85,10 @@ vi.mock("ambisonics/dist/ambi-monoEncoder", () => {
   return { default: monoEncoder };
 });
 
-vi.mock("ambisonics/dist/ambi-sceneRotator", () => {
-  class MockNode {
-    connect(target: MockNode) { return target; }
-    disconnect() {}
-  }
-  class MockGain extends MockNode {
-    gain = { value: 0 };
-  }
-  class sceneRotator extends MockNode {
-    in = new MockGain();
-    out = new MockGain();
-    yaw = 0;
-    pitch = 0;
-    roll = 0;
-    updateRotMtx = vi.fn();
-  }
-  return { default: sceneRotator };
-});
-
-vi.mock("ambisonics/dist/ambi-binauralDecoder", () => {
-  class MockNode {
-    connect(target: MockNode) { return target; }
-    disconnect() {}
-  }
-  class MockGain extends MockNode {
-    gain = { value: 0 };
-  }
-  class binDecoder extends MockNode {
-    in = new MockGain();
-    out = new MockGain();
-    updateFilters = vi.fn();
-    resetFilters = vi.fn();
-  }
-  return { default: binDecoder };
-});
-
-vi.mock("ambisonics/dist/hoa-loader", () => {
-  class HOAloader {
-    load = vi.fn();
-  }
-  return { default: HOAloader };
-});
+class FakeConvolver extends FakeNode {
+  buffer: unknown = null;
+  normalize = true;
+}
 
 class FakeAnalyser extends FakeNode {
   fftSize = 2048;
@@ -186,6 +148,7 @@ class FakeAudioContext {
   createChannelSplitter() { return new FakeChannelSplitter(); }
   createChannelMerger() { return new FakeChannelSplitter(); }
   createAnalyser() { return new FakeAnalyser(); }
+  createConvolver() { return new FakeConvolver(); }
   createBiquadFilter() {
     const filter = new FakeBiquadFilter();
     this.eqFilters.push(filter);
@@ -270,9 +233,14 @@ describe("useStemPreview mastering chain", () => {
     expect(lastContext().compressors).toHaveLength(0);
     // Per-stem LFE lowpass pairs and the surround/height send shaping
     // filters (highpass/lowpass/highpass, see masteringProfiles.ts) are
-    // always present regardless of manifest settings; no manifest-driven
-    // EQ/bass filters (peaking/lowshelf) should exist alongside them.
-    const shapedFilters = lastContext().eqFilters.filter((f) => f.type === "peaking" || f.type === "lowshelf");
+    // always present regardless of manifest settings, as is the (always
+    // built, fixed-topology) binaural voicing chain — inert at the default
+    // "studio" profile's neutral params (gain 0). No manifest-driven,
+    // *active* EQ/bass filters (peaking/lowshelf with nonzero gain) should
+    // exist alongside them.
+    const shapedFilters = lastContext().eqFilters.filter(
+      (f) => (f.type === "peaking" || f.type === "lowshelf") && f.gain.value !== 0,
+    );
     const lfeLowpasses = lastContext().eqFilters.filter((f) => f.type === "lowpass" && f.frequency.value === 120);
     expect(shapedFilters).toHaveLength(0);
     expect(lfeLowpasses.length).toBeGreaterThan(0);

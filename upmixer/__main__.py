@@ -27,8 +27,19 @@ from upmixer.config import UpmixConfig
 from upmixer.formats import INPUT_FORMAT_MAP
 from upmixer.pipeline import UpmixPipeline
 
+# These register their manifest block keys (register_block_keys) as an
+# import-time side effect; without them a fresh process rejects any manifest
+# using mastering.eq/compressor/bass/match_reference.* or routing.* fields
+# with "Unknown manifest field", since MasteringChain only imports them
+# lazily inside process() once a profile is actually selected.
+import upmixer.mastering.bass  # noqa: F401
+import upmixer.mastering.compressor  # noqa: F401
+import upmixer.mastering.eq  # noqa: F401
+import upmixer.mastering.match_reference  # noqa: F401
+import upmixer.routing.channel_router  # noqa: F401
+
 _INPUT_FORMAT_CHOICES = sorted(INPUT_FORMAT_MAP.keys())
-_OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
+_OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4", "binaural"]
 
 
 def _positive_int(value: str, option: str) -> int:
@@ -94,6 +105,10 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.spatial_intensity = max(0.0, min(1.0, args.spatial_intensity))
     if args.no_spatial_preanalysis:
         config.spatial_preanalysis = False
+    if args.binaural_profile is not None:
+        config.binaural_profile = args.binaural_profile
+    if args.binaural_bed is not None:
+        config.binaural_bed = args.binaural_bed
     if args.no_loudness_normalize:
         config.loudness_normalize = False
     if args.loudness_target is not None:
@@ -566,6 +581,18 @@ def main() -> None:
     )
     parser.add_argument("--spatial-intensity", type=float, default=None, metavar="S", help="Spatial adaptation strength 0.0–1.0 (default: 1.0)")
     parser.add_argument("--no-spatial-preanalysis", action="store_true", help="Disable offline spatial analysis.")
+    parser.add_argument(
+        "--binaural-profile",
+        choices=["studio", "listening", "flat"],
+        default=None,
+        help="Spatial Audio Engine profile for --format binaural (default: studio).",
+    )
+    parser.add_argument(
+        "--binaural-bed",
+        choices=["5.1.4", "7.1.2", "7.1.4"],
+        default=None,
+        help="Intermediate discrete bed virtualized for --format binaural (default: 7.1.4).",
+    )
     parser.add_argument(
         "--content-hf-analysis-hz",
         type=lambda value: _positive_float(value, "--content-hf-analysis-hz"),

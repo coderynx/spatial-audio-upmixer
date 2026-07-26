@@ -139,6 +139,8 @@ export type Configuration = {
     sample_rates: number[]
     modes: string[]
     spatial_profiles: string[]
+    binaural_profiles?: string[]
+    binaural_beds?: string[]
     eq_profiles: string[]
     compressor_profiles: string[]
     bass_profiles: string[]

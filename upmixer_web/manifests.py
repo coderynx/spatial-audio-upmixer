@@ -11,6 +11,13 @@ from upmixer.config import UpmixConfig
 from upmixer.manifest import parse_manifest, validate_manifest
 from upmixer_web.models import ImportBatch, Job
 
+# These register their manifest block keys (register_block_keys) as an
+# import-time side effect; without them, validate_manifest rejects
+# mastering.match_reference.* fields with "Unknown manifest field" unless
+# something else already imported the module first (MasteringChain only
+# imports it lazily inside process(), once reference matching actually runs).
+import upmixer.mastering.match_reference  # noqa: F401 E402
+
 
 def ensure_stem_separation_available(
     manifest: dict[str, Any],
@@ -96,6 +103,8 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
             "sample_rates": [44100, 48000, 88200, 96000, 192000],
             "modes": ["realtime", "stem"],
             "spatial_profiles": ["auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"],
+            "binaural_profiles": ["studio", "listening", "flat"],
+            "binaural_beds": ["5.1.4", "7.1.2", "7.1.4"],
             "eq_profiles": sorted(EQ_PROFILES),
             "compressor_profiles": sorted(COMP_PROFILES),
             "bass_profiles": sorted(BASS_PROFILES),

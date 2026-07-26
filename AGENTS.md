@@ -63,6 +63,7 @@ Consult the relevant neutral project reference before changing code governed by 
 - [Dolby Atmos Master ADM Profile](docs/standards/dolby_atmos_profile.md) for Atmos delivery constraints.
 - [Loudness DSP and ITU-R BS.1770](docs/standards/loudness_dsp_bs1770.md) for loudness and true-peak behavior.
 - [Spatial layouts and ITU-R BS.775/BS.2051](docs/standards/spatial_layouts_bs775_bs2051.md) for speaker layouts, labels, LFE, and downmixes.
+- [Spatial Audio Engine (binaural rendering)](docs/standards/spatial_audio_engine.md) for the `binaural` output format, Studio/Listening/Flat profiles, and the core/web parity contract.
 
 ## Commits and Pull Requests
 

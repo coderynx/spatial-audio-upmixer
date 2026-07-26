@@ -69,9 +69,40 @@ export function OutputSection({
             "5.1.4",
             "7.1.2",
             "7.1.4",
+            "binaural",
           ]
-        ).map((value) => ({ value, label: value }))}
+        ).map((value) => ({
+          value,
+          label: value === "binaural" ? "Binaural (headphone export)" : value,
+        }))}
       />
+      {manifest.mixing.channel_layout === "binaural" && (
+        <>
+          <SelectField
+            label="Spatial Audio Engine profile"
+            value={manifest.mixing.binaural.profile}
+            onChange={(profile) => setManifest({
+              ...manifest,
+              mixing: { ...manifest.mixing, binaural: { ...manifest.mixing.binaural, profile } },
+            })}
+            options={(choices?.binaural_profiles || ["studio", "listening", "flat"]).map((value) => ({
+              value,
+              label: value.charAt(0).toUpperCase() + value.slice(1),
+            }))}
+            hint="Studio = neutral monitoring room. Listening = Apple Music Atmos-style enhance. Flat = anechoic reference."
+          />
+          <SelectField
+            label="Binaural bed"
+            value={manifest.mixing.binaural.bed}
+            onChange={(bed) => setManifest({
+              ...manifest,
+              mixing: { ...manifest.mixing, binaural: { ...manifest.mixing.binaural, bed } },
+            })}
+            options={(choices?.binaural_beds || ["5.1.4", "7.1.2", "7.1.4"]).map((value) => ({ value, label: value }))}
+            hint="Intermediate discrete layout virtualized to stereo."
+          />
+        </>
+      )}
       <SelectField
         label="Container"
         value={manifest.format.type}

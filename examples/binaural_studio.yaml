@@ -1,0 +1,51 @@
+# Binaural headphone export — Studio profile
+#
+# Renders a neutral spatial-audio mixing-room monitor mix for headphones: a
+# 7.1.4 bed virtualized through the Spatial Audio Engine's Studio decode
+# filters (room BRIR, no consumer voicing). See
+# docs/standards/spatial_audio_engine.md for the full signal-graph contract.
+#
+# Usage:
+#   upmixer --manifest examples/binaural_studio.yaml
+
+version: "1.0"
+
+metadata:
+  name: "Binaural Studio Monitor"
+  description: "Headphone monitoring mix for a professional spatial-audio mixing room"
+
+engine:
+  mode: stem
+  stems: [vocals, bass, drums, guitar, piano, other]
+  stem_silence_skip: true
+
+mixing:
+  channel_layout: binaural
+  binaural:
+    profile: studio
+    bed: 7.1.4
+  stem_source_anchor_strength: 0.5
+  spatial:
+    profile: balanced
+    intensity: 0.6
+
+# ── Output format — binaural is always 2ch WAV; not compatible with adm-bwf ──
+format:
+  type: wav
+  subtype: PCM_24
+  sample_rate: 48000
+
+mastering:
+  eq:
+    profile: spatial-transparent
+    strength: 1.0
+  compressor:
+    profile: transparent
+  loudness:
+    normalize: true
+    target: -18.0
+    max_tp: -1.0
+
+assets:
+  - input:  stereo.flac
+    output: binaural_studio.wav

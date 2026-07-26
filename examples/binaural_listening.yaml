@@ -1,0 +1,56 @@
+# Binaural headphone export — Listening profile
+#
+# Renders the consumer "Apple Music Atmos-on-headphones" experience: a 7.1.4
+# bed virtualized through the Spatial Audio Engine's Listening decode
+# filters (consumer room BRIR) plus the full enhance/voicing chain
+# (crossfeed, bass/air lift, presence, stereo widen, -16 LKFS target). See
+# docs/standards/spatial_audio_engine.md for the full contract.
+#
+# Usage:
+#   upmixer --manifest examples/binaural_listening.yaml
+
+version: "1.0"
+
+metadata:
+  name: "Binaural Listening (Consumer Enhance)"
+  description: "Headphone preview approximating Apple Music Atmos-on-headphones playback"
+
+engine:
+  mode: stem
+  stems: [vocals, bass, drums, guitar, piano, other]
+  stem_silence_skip: true
+
+mixing:
+  channel_layout: binaural
+  binaural:
+    profile: listening
+    bed: 7.1.4
+  stem_source_anchor_strength: 0.5
+  spatial:
+    profile: spacious
+    intensity: 0.8
+
+# ── Output format — binaural is always 2ch WAV; not compatible with adm-bwf ──
+format:
+  type: wav
+  subtype: PCM_24
+  sample_rate: 48000
+
+mastering:
+  eq:
+    profile: atmos-streaming
+    strength: 0.8
+  compressor:
+    profile: glue
+  loudness:
+    normalize: true
+    # Note: the Listening profile's own -16.0 LKFS consumer target overrides
+    # this value for the final binaural render (see VOICING_PARAMS in
+    # upmixer/binaural/profiles.py); this target still governs the discrete
+    # bed's own mastering pass before the binaural render.
+    target: -18.0
+    max_tp: -1.0
+
+assets:
+  - input:  stereo.flac
+    output: binaural_listening.wav

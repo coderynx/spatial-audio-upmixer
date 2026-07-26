@@ -28,10 +28,12 @@ import { cn } from "@/lib/utils";
 import HazeView from "./HazeView";
 import ChannelMeters from "./ChannelMeters";
 import ElevationView from "./ElevationView";
+import type { SpatialProfile } from "./masteringProfiles";
 import { OutputModeSelect } from "./OutputModeSelect";
 import { PreparationView } from "./PreparationView";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
+import { SpatialProfileSelect } from "./SpatialProfileSelect";
 import { Transport } from "./Transport";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
 
@@ -187,14 +189,21 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // Stable identity across renders unless the layout actually changes — fed
   // straight into HazeView/ElevationView/ChannelMeters, which are memoized
   // specifically so they don't re-render on every playback frame.
+  // "binaural" is a 2-channel *delivery* format, not a speaker bed — the
+  // interactive routing/preview UI always keys off the intermediate bed
+  // (mixing.binaural.bed) instead, same bed the binaural render virtualizes.
+  const routingLayout = effectiveManifest?.mixing.channel_layout === "binaural"
+    ? effectiveManifest.mixing.binaural.bed
+    : effectiveManifest?.mixing.channel_layout || "7.1.4";
   const channels = React.useMemo(
-    () => configuration?.choices.layout_channels?.[effectiveManifest?.mixing.channel_layout || "7.1.4"] || ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"],
-    [configuration, effectiveManifest?.mixing.channel_layout],
+    () => configuration?.choices.layout_channels?.[routingLayout] || ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"],
+    [configuration, routingLayout],
   );
-  // Session-only monitoring choice — not part of the manifest, so a reload
-  // always starts back on binaural.
+  // Session-only monitoring choices — not part of the manifest, so a reload
+  // always starts back on binaural/studio.
   const [outputMode, setOutputMode] = React.useState<OutputMode>("binaural");
-  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering, channels, outputMode);
+  const [spatialProfile, setSpatialProfile] = React.useState<SpatialProfile>("studio");
+  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering, channels, outputMode, spatialProfile);
   const ready = Boolean(project?.prepared_stems.length);
   const stemNames = project?.prepared_stems || [];
   // Reorder is a display-only preference (no backend field for it): kept in
@@ -342,6 +351,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             devices={preview.outputDevices}
             deviceId={preview.outputDeviceId}
             onDeviceChange={(deviceId) => void preview.setOutputDeviceId(deviceId)}
+          />
+          <SpatialProfileSelect
+            value={spatialProfile}
+            onChange={setSpatialProfile}
+            disabled={outputMode !== "binaural"}
           />
         </Transport>
         {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}

@@ -165,6 +165,10 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
             "intensity": ("config", "spatial_intensity"),
             "preanalyze": ("config", "spatial_preanalysis"),
         },
+        "binaural": {
+            "profile": ("config", "binaural_profile"),
+            "bed":     ("config", "binaural_bed"),
+        },
         "stems":          ("engine", "stems"),
     },
 
@@ -243,6 +247,8 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "spatial_profile":            ("spatial_profile",          str),
     "spatial_intensity":          ("spatial_intensity",        float),
     "spatial_preanalysis":        ("spatial_preanalysis",      bool),
+    "binaural_profile":           ("binaural_profile",         str),
+    "binaural_bed":               ("binaural_bed",             str),
     "height_low_rolloff_gain":    ("height_low_rolloff_gain",  float),
     "height_high_shelf_gain":     ("height_high_shelf_gain",   float),
     "fft_size":                   ("fft_size",                 int),
@@ -372,6 +378,18 @@ def _leaf_type(entry: tuple[str, str]) -> type:
     return _FIELD_MAP[key][1]
 
 
+def _binaural_profile_choices() -> tuple[str, ...]:
+    # Deferred import: upmixer.binaural imports upmixer.mastering.chain, which
+    # imports this module at load time — a top-level import here would cycle.
+    from upmixer.binaural.profiles import BINAURAL_PROFILES
+    return BINAURAL_PROFILES
+
+
+def _binaural_bed_choices() -> tuple[str, ...]:
+    from upmixer.formats import BINAURAL_BED_FORMATS
+    return BINAURAL_BED_FORMATS
+
+
 def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
     if value is None:
         return
@@ -431,6 +449,8 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
         "format.subtype": {"PCM_16", "PCM_24", "PCM_32", "FLOAT"},
         "format.downmix.surround_coeff": {0.7071, 0.5, 0.0},
         "mixing.spatial.profile": {"auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"},
+        "mixing.binaural.profile": set(_binaural_profile_choices()),
+        "mixing.binaural.bed": set(_binaural_bed_choices()),
     }
     if path in choices and value not in choices[path]:
         raise ManifestError(f"{path} has an unsupported value: {value!r}.")

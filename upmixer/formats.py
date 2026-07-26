@@ -102,6 +102,15 @@ SURROUND_714 = OutputFormat(
     ),
 )
 
+BINAURAL = OutputFormat(
+    name="binaural",
+    channels=(ChannelLabel.FL, ChannelLabel.FR),
+)
+"""Headphone-ready stereo produced by the Spatial Audio Engine (see
+``upmixer/binaural/``). Not a direct spatial upmix target — the pipeline
+first upmixes to ``UpmixConfig.binaural_bed`` and only the binaural render
+stage collapses that bed to this 2-channel format."""
+
 FORMAT_MAP = {
     "5.1": SURROUND_51,
     "7.1": SURROUND_71,
@@ -109,7 +118,11 @@ FORMAT_MAP = {
     "5.1.4": SURROUND_514,
     "7.1.2": SURROUND_712,
     "7.1.4": SURROUND_714,
+    "binaural": BINAURAL,
 }
+
+BINAURAL_BED_FORMATS: tuple[str, ...] = ("5.1.4", "7.1.2", "7.1.4")
+"""Valid intermediate bed layouts for ``UpmixConfig.binaural_bed``."""
 
 
 @dataclass(frozen=True)
