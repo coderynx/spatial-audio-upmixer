@@ -74,12 +74,12 @@ class UpmixConfig:
     spatial_intensity: float = 1.0
     spatial_preanalysis: bool = True
 
-    # Spatial Audio Engine (binaural headphone rendering). Only meaningful
-    # when output_format == "binaural": the pipeline upmixes to binaural_bed,
-    # masters normally, then collapses that bed to stereo through the
-    # profile's virtual-loudspeaker HOA decode. See upmixer/binaural/.
+    # Spatial Audio Engine (binaural headphone rendering), selected via
+    # ``output_type == "binaural"`` (which requires ``output_format`` to be
+    # one of ``upmixer.formats.BINAURAL_BED_FORMATS``): the pipeline upmixes
+    # and masters to that bed normally, then collapses it to stereo through
+    # the profile's virtual-loudspeaker HOA decode. See upmixer/binaural/.
     binaural_profile: str = "studio"
-    binaural_bed: str = "7.1.4"
 
     surround_downmix_coeff: float = 0.7071
 

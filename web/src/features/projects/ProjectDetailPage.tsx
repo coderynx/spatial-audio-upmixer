@@ -4,6 +4,7 @@ import {
   ArrowUpDown,
   AudioWaveform,
   ChevronLeft,
+  ChevronRight,
   Code2,
   Download,
   GripVertical,
@@ -19,7 +20,6 @@ import { useHeaderTitle } from "@/app/HeaderSlot";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AdvancedSection } from "@/features/composer/sections/AdvancedSection";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
@@ -33,7 +33,6 @@ import { OutputModeSelect } from "./OutputModeSelect";
 import { PreparationView } from "./PreparationView";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
-import { SpatialProfileSelect } from "./SpatialProfileSelect";
 import { Transport } from "./Transport";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
 
@@ -189,12 +188,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // Stable identity across renders unless the layout actually changes — fed
   // straight into HazeView/ElevationView/ChannelMeters, which are memoized
   // specifically so they don't re-render on every playback frame.
-  // "binaural" is a 2-channel *delivery* format, not a speaker bed — the
-  // interactive routing/preview UI always keys off the intermediate bed
-  // (mixing.binaural.bed) instead, same bed the binaural render virtualizes.
-  const routingLayout = effectiveManifest?.mixing.channel_layout === "binaural"
-    ? effectiveManifest.mixing.binaural.bed
-    : effectiveManifest?.mixing.channel_layout || "7.1.4";
+  const routingLayout = effectiveManifest?.mixing.channel_layout || "7.1.4";
   const channels = React.useMemo(
     () => configuration?.choices.layout_channels?.[routingLayout] || ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"],
     [configuration, routingLayout],
@@ -272,13 +266,47 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   return <main className="flex h-[calc(100vh-3.5rem)] w-full flex-col overflow-hidden p-3 sm:px-6 sm:py-4">
     {error && <p className="mb-3 flex-none rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
     <div className="flex flex-none items-center justify-between gap-3">
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)}>
-        <TabsList>
-          <TabsTrigger value="mixing" className="gap-2"><SlidersHorizontal className="h-4 w-4" />Mixing</TabsTrigger>
-          <TabsTrigger value="mastering" className="gap-2"><AudioWaveform className="h-4 w-4" />Mastering</TabsTrigger>
-          <TabsTrigger value="delivery" className="gap-2"><Package className="h-4 w-4" />Delivery</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <ol className="flex items-center">
+        {([
+          { value: "mixing", label: "Mixing", icon: SlidersHorizontal },
+          { value: "mastering", label: "Mastering", icon: AudioWaveform },
+          { value: "delivery", label: "Delivery", icon: Package },
+        ] as const).map((step, index) => {
+          const Icon = step.icon;
+          const active = activeTab === step.value && !settingsView && !manifestView;
+          return (
+            <li key={step.value} className="flex items-center">
+              {index > 0 && <ChevronRight className="mx-1 h-4 w-4 shrink-0 text-muted-foreground" />}
+              <button
+                type="button"
+                aria-current={active ? "step" : undefined}
+                onClick={() => {
+                  setActiveTab(step.value);
+                  setSettingsView(false);
+                  setManifestView(false);
+                }}
+                className={cn(
+                  "flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-medium transition-colors",
+                  active
+                    ? "border-primary bg-primary text-primary-foreground shadow"
+                    : "border-transparent bg-muted text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs",
+                    active ? "bg-primary-foreground/20" : "bg-background",
+                  )}
+                >
+                  {index + 1}
+                </span>
+                <Icon className="h-4 w-4 shrink-0" />
+                {step.label}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
       <div className="flex items-center gap-2">
         <Button
           variant={settingsView ? "default" : "outline"}
@@ -351,11 +379,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             devices={preview.outputDevices}
             deviceId={preview.outputDeviceId}
             onDeviceChange={(deviceId) => void preview.setOutputDeviceId(deviceId)}
-          />
-          <SpatialProfileSelect
-            value={spatialProfile}
-            onChange={setSpatialProfile}
-            disabled={outputMode !== "binaural"}
+            spatialProfile={spatialProfile}
+            onSpatialProfileChange={setSpatialProfile}
           />
         </Transport>
         {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}

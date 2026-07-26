@@ -21,18 +21,17 @@ engine:
   stem_silence_skip: true
 
 mixing:
-  channel_layout: binaural
-  binaural:
-    profile: listening
-    bed: 7.1.4
+  channel_layout: 7.1.4
   stem_source_anchor_strength: 0.5
   spatial:
     profile: spacious
     intensity: 0.8
 
-# ── Output format — binaural is always 2ch WAV; not compatible with adm-bwf ──
+# ── Output format — binaural delivery is always 2ch WAV; not compatible with adm-bwf ──
 format:
-  type: wav
+  type: binaural
+  binaural:
+    profile: listening
   subtype: PCM_24
   sample_rate: 48000
 

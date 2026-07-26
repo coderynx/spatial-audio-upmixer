@@ -13,7 +13,7 @@ from upmixer.binaural.renderer import (
     render_binaural_delivery,
 )
 from upmixer.config import UpmixConfig
-from upmixer.formats import BINAURAL_BED_FORMATS, ChannelLabel, FORMAT_MAP
+from upmixer.formats import BINAURAL, BINAURAL_BED_FORMATS, ChannelLabel, FORMAT_MAP
 
 
 def test_encode_gains_omni_channel_is_unity():
@@ -133,8 +133,8 @@ def test_listening_targets_louder_lkfs_than_studio():
     bed_fmt = FORMAT_MAP["7.1.4"]
     rng = np.random.default_rng(11)
     channels = {label.value: rng.standard_normal(n) * 0.05 for label in bed_fmt.channels}
-    cfg_studio = UpmixConfig(output_format="binaural", binaural_profile="studio")
-    cfg_listening = UpmixConfig(output_format="binaural", binaural_profile="listening")
+    cfg_studio = UpmixConfig(binaural_profile="studio")
+    cfg_listening = UpmixConfig(binaural_profile="listening")
 
     _, studio_result = render_binaural_delivery(channels, bed_fmt, sr, cfg_studio)
     _, listening_result = render_binaural_delivery(channels, bed_fmt, sr, cfg_listening)
@@ -143,9 +143,9 @@ def test_listening_targets_louder_lkfs_than_studio():
 
 
 def test_binaural_format_registered():
-    fmt = FORMAT_MAP["binaural"]
-    assert fmt.n_channels == 2
-    assert fmt.channels == (ChannelLabel.FL, ChannelLabel.FR)
+    assert BINAURAL.n_channels == 2
+    assert BINAURAL.channels == (ChannelLabel.FL, ChannelLabel.FR)
+    assert "binaural" not in FORMAT_MAP
 
 
 def test_binaural_bed_formats_are_valid_output_formats():
@@ -185,7 +185,7 @@ def test_binaural_delivery_meets_true_peak_ceiling_on_hot_bed(profile):
     bed_fmt = FORMAT_MAP["7.1.4"]
     rng = np.random.default_rng(7)
     channels = {label.value: rng.standard_normal(n) * 0.9 for label in bed_fmt.channels}
-    cfg = UpmixConfig(output_format="binaural", binaural_profile=profile)
+    cfg = UpmixConfig(binaural_profile=profile)
 
     _, result = render_binaural_delivery(channels, bed_fmt, sr, cfg)
 
@@ -203,7 +203,7 @@ def test_binaural_delivery_upward_gain_is_bounded(profile):
     bed_fmt = FORMAT_MAP["7.1.4"]
     rng = np.random.default_rng(13)
     channels = {label.value: rng.standard_normal(n) * 1e-4 for label in bed_fmt.channels}
-    cfg = UpmixConfig(output_format="binaural", binaural_profile=profile)
+    cfg = UpmixConfig(binaural_profile=profile)
 
     _, result = render_binaural_delivery(channels, bed_fmt, sr, cfg)
 

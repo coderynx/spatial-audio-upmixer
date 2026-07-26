@@ -10,7 +10,7 @@ from typing import Any
 import soundfile as sf
 
 from upmixer.config import UpmixConfig
-from upmixer.formats import FORMAT_MAP, INPUT_FORMAT_MAP, can_upmix, detect_input_format
+from upmixer.formats import BINAURAL, BINAURAL_BED_FORMATS, FORMAT_MAP, INPUT_FORMAT_MAP, can_upmix, detect_input_format
 from upmixer.result import UpmixResult
 
 
@@ -77,13 +77,15 @@ def preflight_job(
         except ValueError as exc:
             raise PreflightError(str(exc)) from exc
 
-    is_binaural = config.output_format == "binaural"
-    if is_binaural and config.output_type == "adm-bwf":
-        raise PreflightError("binaural output cannot be combined with ADM-BWF")
-    bed_fmt = FORMAT_MAP[config.binaural_bed] if is_binaural else FORMAT_MAP[config.output_format]
+    is_binaural = config.output_type == "binaural"
+    if is_binaural and config.output_format not in BINAURAL_BED_FORMATS:
+        raise PreflightError(
+            f"binaural output requires --format one of {BINAURAL_BED_FORMATS}, got '{config.output_format}'"
+        )
+    bed_fmt = FORMAT_MAP[config.output_format]
     if not can_upmix(input_fmt, bed_fmt):
         raise PreflightError(f"Cannot upmix {input_fmt.name} to {bed_fmt.name}")
-    output_fmt = FORMAT_MAP["binaural"] if is_binaural else bed_fmt
+    output_fmt = BINAURAL if is_binaural else bed_fmt
 
     output_sr = expected_output_sample_rate(config, info.samplerate)
     if config.output_type == "adm-bwf":

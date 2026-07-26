@@ -1,7 +1,8 @@
 import * as React from "react";
-import { ChevronDown, Grid3x3, Headphones, Waves } from "lucide-react";
+import { Building2, ChevronDown, ChevronRight, Grid3x3, Headphones, Sofa, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { SpatialProfile } from "./masteringProfiles";
 import type { OutputMode } from "./useStemPreview";
 
 const MODE_OPTIONS: { value: OutputMode; label: string; hint: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -10,10 +11,20 @@ const MODE_OPTIONS: { value: OutputMode; label: string; hint: string; icon: Reac
   { value: "native", label: "Native", hint: "Discrete channels of the selected layout, sent to a system output device.", icon: Grid3x3 },
 ];
 
+// Studio/Listening/Flat picker for the Spatial Audio Engine binaural render
+// (docs/standards/spatial_audio_engine.md), embedded as a submenu off the
+// binaural row below rather than a separate button.
+const PROFILE_OPTIONS: { value: SpatialProfile; label: string; hint: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { value: "studio", label: "Studio", hint: "Neutral spatial-audio mixing room monitor — no added coloration.", icon: Building2 },
+  { value: "listening", label: "Listening", hint: "Consumer room + Apple Music Atmos-style enhance (bass/air lift, crossfeed, widen).", icon: Sofa },
+  { value: "flat", label: "Flat", hint: "Anechoic reference — zero room, zero voicing.", icon: Headphones },
+];
+
 // Icon dropdown for the preview box's output-mode picker — plain <select>
 // (SelectField, components/forms/fields.tsx) can't render per-option icons,
 // so this is a small custom popover instead of a native <select>. Includes
-// a secondary system-device picker, shown only once native mode is chosen.
+// a secondary system-device picker, shown only once native mode is chosen,
+// and a submenu on the binaural row for the Spatial Audio Engine profile.
 export function OutputModeSelect({
   value,
   onChange,
@@ -21,6 +32,8 @@ export function OutputModeSelect({
   devices,
   deviceId,
   onDeviceChange,
+  spatialProfile,
+  onSpatialProfileChange,
 }: {
   value: OutputMode;
   onChange: (mode: OutputMode) => void;
@@ -28,14 +41,28 @@ export function OutputModeSelect({
   devices: MediaDeviceInfo[];
   deviceId: string;
   onDeviceChange: (deviceId: string) => void;
+  spatialProfile: SpatialProfile;
+  onSpatialProfileChange: (profile: SpatialProfile) => void;
 }) {
   const [open, setOpen] = React.useState(false);
+  const [submenuOpen, setSubmenuOpen] = React.useState(false);
+  const [submenuFlip, setSubmenuFlip] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const binauralRowRef = React.useRef<HTMLDivElement>(null);
+
+  const openSubmenu = () => {
+    const rect = binauralRowRef.current?.getBoundingClientRect();
+    setSubmenuFlip(!!rect && rect.right + 256 + 4 > window.innerWidth);
+    setSubmenuOpen(true);
+  };
 
   React.useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+        setSubmenuOpen(false);
+      }
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
@@ -43,6 +70,7 @@ export function OutputModeSelect({
 
   const current = MODE_OPTIONS.find((option) => option.value === value) ?? MODE_OPTIONS[0];
   const CurrentIcon = current.icon;
+  const currentProfile = PROFILE_OPTIONS.find((option) => option.value === spatialProfile) ?? PROFILE_OPTIONS[0];
 
   return (
     <div ref={containerRef} className="relative flex shrink-0 items-center gap-2">
@@ -64,27 +92,76 @@ export function OutputModeSelect({
           {MODE_OPTIONS.map((option) => {
             const Icon = option.icon;
             const disabled = option.value === "native" && !nativeSupported;
+            const isBinaural = option.value === "binaural";
             return (
-              <button
+              <div
                 key={option.value}
-                type="button"
-                disabled={disabled}
-                title={disabled ? "Current output device doesn't support this layout's discrete channel count." : undefined}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-                className={cn(
-                  "flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50",
-                  option.value === value && "bg-accent/60",
-                )}
+                ref={isBinaural ? binauralRowRef : undefined}
+                className="relative"
+                onMouseEnter={() => (isBinaural ? openSubmenu() : setSubmenuOpen(false))}
+                onMouseLeave={() => isBinaural && setSubmenuOpen(false)}
               >
-                <Icon className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>
-                  <span className="block font-medium">{option.label}</span>
-                  <span className="block text-xs text-muted-foreground">{option.hint}</span>
-                </span>
-              </button>
+                <button
+                  type="button"
+                  disabled={disabled}
+                  title={disabled ? "Current output device doesn't support this layout's discrete channel count." : undefined}
+                  onClick={() => {
+                    onChange(option.value);
+                    if (isBinaural) openSubmenu();
+                    else setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50",
+                    option.value === value && "bg-accent/60",
+                  )}
+                >
+                  <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span className="flex-1">
+                    <span className="block font-medium">{option.label}</span>
+                    <span className="block text-xs text-muted-foreground">{option.hint}</span>
+                  </span>
+                  {isBinaural && (
+                    <span className="mt-0.5 flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                      {currentProfile.label}
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </span>
+                  )}
+                </button>
+                {isBinaural && submenuOpen && (
+                  <div
+                    className={cn(
+                      "absolute top-0 z-20 w-64 rounded-md border bg-popover p-1 shadow-md",
+                      submenuFlip ? "right-full mr-1" : "left-full ml-1",
+                    )}
+                  >
+                    {PROFILE_OPTIONS.map((profileOption) => {
+                      const ProfileIcon = profileOption.icon;
+                      return (
+                        <button
+                          key={profileOption.value}
+                          type="button"
+                          onClick={() => {
+                            onSpatialProfileChange(profileOption.value);
+                            onChange("binaural");
+                            setOpen(false);
+                            setSubmenuOpen(false);
+                          }}
+                          className={cn(
+                            "flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground",
+                            profileOption.value === spatialProfile && "bg-accent/60",
+                          )}
+                        >
+                          <ProfileIcon className="mt-0.5 h-4 w-4 shrink-0" />
+                          <span>
+                            <span className="block font-medium">{profileOption.label}</span>
+                            <span className="block text-xs text-muted-foreground">{profileOption.hint}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>

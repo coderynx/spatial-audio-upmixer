@@ -32,10 +32,10 @@ def routing_for_scene(scene: dict[str, Any], config: UpmixConfig) -> dict[str, d
     stems = scene.get("stems", {})
     if not isinstance(stems, dict):
         return {}
-    # Binaural exports route into the intermediate discrete bed, not the
-    # 2-channel binaural format — the bed is what actually has speakers.
-    bed_format = config.binaural_bed if config.output_format == "binaural" else config.output_format
-    out_fmt = FORMAT_MAP[bed_format]
+    # Binaural rendering collapses config.output_format's own bed to stereo
+    # after routing/mastering, so routing always targets that bed directly —
+    # config.output_format is a real speaker layout even when binaural is on.
+    out_fmt = FORMAT_MAP[config.output_format]
     labels = [label for label in out_fmt.channels if label != ChannelLabel.LFE]
     available = [(label, _POSITIONS[label]) for label in labels if label in _POSITIONS]
     if not available:

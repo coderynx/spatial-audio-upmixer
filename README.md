@@ -202,13 +202,13 @@ upmixer surround.wav output.wav --input-format 5.1.2 --format 7.1.4
 | 5.1.4 | 10 | 4 |
 | 7.1.2 | 10 | 2 |
 | 7.1.4 | 12 | 4 |
-| binaural | 2 | n/a (headphone render of an intermediate bed) |
 
 ### Binaural (Spatial Audio Engine)
 
-`--format binaural` exports a headphone-ready stereo WAV instead of a discrete speaker bed. The pipeline first
-upmixes/masters to an intermediate bed (`--binaural-bed`, one of `5.1.4` / `7.1.2` / `7.1.4`; default `7.1.4`), then
-renders that bed to stereo through one of three profiles (`--binaural-profile`):
+`--output-type binaural` is a delivery format alongside `wav`/`adm-bwf`, not a channel layout — pick it to render a
+headphone-ready stereo WAV instead of the discrete speaker bed you chose with `--format` (which must be one of
+`5.1.4` / `7.1.2` / `7.1.4`). The pipeline upmixes/masters to that bed as normal, then collapses it to stereo
+through one of three profiles (`--binaural-profile`):
 
 | Profile | For | Room | Consumer voicing |
 |---|---|---|---|
@@ -217,13 +217,14 @@ renders that bed to stereo through one of three profiles (`--binaural-profile`):
 | `flat` | Anechoic reference — verify the mix with zero added coloration | None | None |
 
 ```bash
-upmixer input.wav monitor.wav --format binaural --binaural-profile studio --binaural-bed 7.1.4
-upmixer input.wav consumer.wav --format binaural --binaural-profile listening
+upmixer input.wav monitor.wav --format 7.1.4 --output-type binaural --binaural-profile studio
+upmixer input.wav consumer.wav --format 7.1.4 --output-type binaural --binaural-profile listening
 ```
 
-Not compatible with `--output-type adm-bwf` (ADM-BWF requires a discrete channel-based bed). See
-[`docs/standards/spatial_audio_engine.md`](docs/standards/spatial_audio_engine.md) for the full signal-graph
-contract — the same one the web UI's in-preview Spatial Audio Engine profile selector implements.
+Mutually exclusive with `--output-type adm-bwf` (ADM-BWF requires a discrete channel-based bed) since both share the
+same `--output-type` flag. See [`docs/standards/spatial_audio_engine.md`](docs/standards/spatial_audio_engine.md)
+for the full signal-graph contract — the same one the web UI's in-preview Spatial Audio Engine profile selector
+implements.
 
 ## CLI Workflows
 

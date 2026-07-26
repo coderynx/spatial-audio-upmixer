@@ -17,7 +17,7 @@ from upmixer.binaural.decoder import decode_to_binaural, load_decode_filter_set
 from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION, positional_labels
 from upmixer.binaural.profiles import DECODE_FILTER_SET, VOICING_PARAMS, resolve_profile
 from upmixer.binaural.voicing import apply_voicing
-from upmixer.formats import ChannelLabel, FORMAT_MAP, OutputFormat
+from upmixer.formats import BINAURAL, ChannelLabel, OutputFormat
 from upmixer.loudness import normalize_loudness
 from upmixer.mastering.chain import MasteringResult
 from upmixer.utils import soft_limit
@@ -121,7 +121,7 @@ def render_binaural_delivery(
     stereo_channels, info = normalize_loudness(
         stereo_channels,
         sample_rate,
-        FORMAT_MAP["binaural"],
+        BINAURAL,
         target_lkfs=target_lkfs,
         max_tp_dbtp=cfg.loudness_max_tp,
         max_gain_db=min(cfg.loudness_max_gain_db, BINAURAL_LOUDNESS_MAX_GAIN_DB),

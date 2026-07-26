@@ -107,9 +107,11 @@ BINAURAL = OutputFormat(
     channels=(ChannelLabel.FL, ChannelLabel.FR),
 )
 """Headphone-ready stereo produced by the Spatial Audio Engine (see
-``upmixer/binaural/``). Not a direct spatial upmix target — the pipeline
-first upmixes to ``UpmixConfig.binaural_bed`` and only the binaural render
-stage collapses that bed to this 2-channel format."""
+``upmixer/binaural/``). Not a channel layout — it is an optional rendering
+pass (``UpmixConfig.binaural``) applied on top of a real speaker-layout bed
+(``UpmixConfig.output_format``), collapsing that bed to this 2-channel
+format. Deliberately absent from ``FORMAT_MAP``, which enumerates only
+selectable speaker layouts."""
 
 FORMAT_MAP = {
     "5.1": SURROUND_51,
@@ -118,11 +120,11 @@ FORMAT_MAP = {
     "5.1.4": SURROUND_514,
     "7.1.2": SURROUND_712,
     "7.1.4": SURROUND_714,
-    "binaural": BINAURAL,
 }
 
 BINAURAL_BED_FORMATS: tuple[str, ...] = ("5.1.4", "7.1.2", "7.1.4")
-"""Valid intermediate bed layouts for ``UpmixConfig.binaural_bed``."""
+"""Valid speaker-layout beds for ``UpmixConfig.output_format`` when
+``UpmixConfig.binaural`` is enabled."""
 
 
 @dataclass(frozen=True)

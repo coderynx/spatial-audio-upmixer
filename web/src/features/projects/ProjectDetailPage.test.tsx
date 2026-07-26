@@ -67,7 +67,7 @@ describe("ProjectDetailPage tabs", () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
 
-    expect(screen.getByRole("tab", { name: "Mixing" })).toHaveAttribute("data-state", "active");
+    expect(screen.getByRole("button", { name: /Mixing/ })).toHaveAttribute("aria-current", "step");
     expect(screen.getByText("Routing preset")).toBeInTheDocument();
     // Preview transport and speaker graph render regardless of tab.
     expect(screen.getByRole("button", { name: /^(Play|Pause)$/i })).toBeInTheDocument();
@@ -78,7 +78,7 @@ describe("ProjectDetailPage tabs", () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
 
-    await user.click(screen.getByRole("tab", { name: "Mastering" }));
+    await user.click(screen.getByRole("button", { name: /Mastering/ }));
 
     expect(screen.getByText("Spectral EQ")).toBeInTheDocument();
     expect(screen.getByText("Loudness normalization")).toBeInTheDocument();
@@ -92,9 +92,9 @@ describe("ProjectDetailPage tabs", () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
 
-    await user.click(screen.getByRole("tab", { name: "Delivery" }));
+    await user.click(screen.getByRole("button", { name: /Delivery/ }));
 
-    expect(screen.getByText("Container")).toBeInTheDocument();
+    expect(screen.getByText("Format")).toBeInTheDocument();
     expect(screen.getByText("Normalize output")).toBeInTheDocument();
     const exportButton = screen.getByRole("button", { name: /Export project/ });
     fireEvent.click(exportButton);
@@ -109,7 +109,7 @@ describe("ProjectDetailPage tabs", () => {
     // Switch mixing edit scope to "track" first.
     fireEvent.change(screen.getByLabelText("Edit scope"), { target: { value: "track" } });
 
-    await user.click(screen.getByRole("tab", { name: "Mastering" }));
+    await user.click(screen.getByRole("button", { name: /Mastering/ }));
     const loudnessToggle = screen.getByText("Loudness normalization")
       .closest("div")!.parentElement!.querySelector("button")!;
     fireEvent.click(loudnessToggle);

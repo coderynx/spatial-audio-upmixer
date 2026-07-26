@@ -150,6 +150,11 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
             "output":         ("config", "downmix_output"),
             "surround_coeff": ("config", "downmix_surround_coeff"),
         },
+        # Spatial Audio Engine binaural render — a delivery format
+        # (format.type: binaural), not a channel layout or a mixing concern.
+        "binaural": {
+            "profile": ("config", "binaural_profile"),
+        },
     },
 
     "mixing": {
@@ -164,10 +169,6 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
             "profile": ("config", "spatial_profile"),
             "intensity": ("config", "spatial_intensity"),
             "preanalyze": ("config", "spatial_preanalysis"),
-        },
-        "binaural": {
-            "profile": ("config", "binaural_profile"),
-            "bed":     ("config", "binaural_bed"),
         },
         "stems":          ("engine", "stems"),
     },
@@ -248,7 +249,6 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "spatial_intensity":          ("spatial_intensity",        float),
     "spatial_preanalysis":        ("spatial_preanalysis",      bool),
     "binaural_profile":           ("binaural_profile",         str),
-    "binaural_bed":               ("binaural_bed",             str),
     "height_low_rolloff_gain":    ("height_low_rolloff_gain",  float),
     "height_high_shelf_gain":     ("height_high_shelf_gain",   float),
     "fft_size":                   ("fft_size",                 int),
@@ -385,11 +385,6 @@ def _binaural_profile_choices() -> tuple[str, ...]:
     return BINAURAL_PROFILES
 
 
-def _binaural_bed_choices() -> tuple[str, ...]:
-    from upmixer.formats import BINAURAL_BED_FORMATS
-    return BINAURAL_BED_FORMATS
-
-
 def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
     if value is None:
         return
@@ -445,12 +440,11 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             raise ManifestError(f"{path} must be at most {maximums[path]}.")
     choices = {
         "engine.mode": {"realtime", "stem"},
-        "format.type": {"wav", "adm-bwf"},
+        "format.type": {"wav", "adm-bwf", "binaural"},
         "format.subtype": {"PCM_16", "PCM_24", "PCM_32", "FLOAT"},
         "format.downmix.surround_coeff": {0.7071, 0.5, 0.0},
         "mixing.spatial.profile": {"auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"},
-        "mixing.binaural.profile": set(_binaural_profile_choices()),
-        "mixing.binaural.bed": set(_binaural_bed_choices()),
+        "format.binaural.profile": set(_binaural_profile_choices()),
     }
     if path in choices and value not in choices[path]:
         raise ManifestError(f"{path} has an unsupported value: {value!r}.")

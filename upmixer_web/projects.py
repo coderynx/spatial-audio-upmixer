@@ -91,8 +91,36 @@ def list_projects(session: Session, limit: int = 100, offset: int = 0) -> list[P
     ).all())
 
 
+def _migrate_legacy_binaural_shape(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Fold older stored shapes of the binaural render into the current one.
+
+    Binaural has moved twice: originally a ``mixing.channel_layout: binaural``
+    value with the real bed under ``mixing.binaural.bed``, then briefly an
+    independent ``mixing.binaural.enabled`` flag — it is now
+    ``format.type: binaural`` (a delivery format, alongside ``wav``/
+    ``adm-bwf``) with ``format.binaural.profile``. Migrate in place so
+    previously stored projects keep validating and round-tripping.
+    """
+    manifest = copy.deepcopy(manifest)
+    mixing = manifest.get("mixing")
+    if not isinstance(mixing, dict):
+        return manifest
+    legacy_binaural = mixing.pop("binaural", None)
+    if not isinstance(legacy_binaural, dict):
+        return manifest
+    was_binaural = mixing.get("channel_layout") == "binaural" or legacy_binaural.get("enabled") is True
+    if mixing.get("channel_layout") == "binaural":
+        mixing["channel_layout"] = legacy_binaural.get("bed", "7.1.4")
+    if not was_binaural:
+        return manifest
+    format_block = manifest.setdefault("format", {})
+    format_block["type"] = "binaural"
+    format_block["binaural"] = {"profile": legacy_binaural.get("profile", "studio")}
+    return manifest
+
+
 def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    normalized = normalize_job_manifest(manifest)
+    normalized = normalize_job_manifest(_migrate_legacy_binaural_shape(manifest))
     engine = normalized.setdefault("engine", {})
     engine["mode"] = "stem"
     stems = _normalize_project_stems(engine.get("stems") or [])
@@ -105,13 +133,11 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
         raise ValueError("Unknown channel layout")
     mixing["spatial"] = {"profile": "balanced", "intensity": 0.0, "preanalyze": False}
     mixing["stem_source_anchor_strength"] = mixing.get("stem_source_anchor_strength", 0.0)
-    if mixing["channel_layout"] == "binaural":
-        binaural = mixing.setdefault("binaural", {})
-        binaural.setdefault("profile", "studio")
-        binaural.setdefault("bed", "7.1.4")
-        routing_fmt = FORMAT_MAP[binaural["bed"]]
-    else:
-        routing_fmt = FORMAT_MAP[mixing["channel_layout"]]
+    format_block = normalized.setdefault("format", {})
+    format_block.setdefault("type", "wav")
+    binaural = format_block.setdefault("binaural", {})
+    binaural.setdefault("profile", "studio")
+    routing_fmt = FORMAT_MAP[mixing["channel_layout"]]
     if not mixing.get("stem_routing"):
         mixing["stem_routing"] = build_stem_routing(stems, routing_fmt)
     routing = normalized.setdefault("routing", {})

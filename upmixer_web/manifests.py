@@ -59,8 +59,10 @@ def materialize_manifest(
 ) -> dict[str, Any]:
     """Inject server-owned paths into a stored manifest."""
     data = copy.deepcopy(job.manifest)
-    output_type = data.get("format", {}).get("type", "wav")
-    extension = ".wav" if output_type in {"wav", "adm-bwf"} else ".wav"
+    # Every format.type ("wav", "adm-bwf", "binaural") currently delivers a
+    # WAV container; this will need to key off output_type once non-PCM
+    # containers/codecs (ogg/opus, flac) are added.
+    extension = ".wav"
     assets = []
     for track, asset, input_path in zip(job.tracks, import_batch.assets, input_paths, strict=True):
         output = work_dir / f"{track.position + 1:02d}-{Path(asset.filename).stem}{extension}"
@@ -80,7 +82,7 @@ def materialize_manifest(
 
 def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     """Return defaults used by dynamic and advanced web controls."""
-    from upmixer.formats import FORMAT_MAP
+    from upmixer.formats import BINAURAL_BED_FORMATS, FORMAT_MAP
     from upmixer.manifest import list_manifest_keys, manifest_parameter_schema
     from upmixer.mastering.bass import BASS_PROFILES
     from upmixer.mastering.compressor import COMP_PROFILES
@@ -98,13 +100,13 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
         "manifest_parameters": manifest_parameter_schema(),
         "choices": {
             "channel_layouts": list(FORMAT_MAP),
-            "output_types": ["wav", "adm-bwf"],
+            "output_types": ["wav", "adm-bwf", "binaural"],
             "output_subtypes": ["PCM_16", "PCM_24", "PCM_32", "FLOAT"],
             "sample_rates": [44100, 48000, 88200, 96000, 192000],
             "modes": ["realtime", "stem"],
             "spatial_profiles": ["auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"],
             "binaural_profiles": ["studio", "listening", "flat"],
-            "binaural_beds": ["5.1.4", "7.1.2", "7.1.4"],
+            "binaural_beds": list(BINAURAL_BED_FORMATS),
             "eq_profiles": sorted(EQ_PROFILES),
             "compressor_profiles": sorted(COMP_PROFILES),
             "bass_profiles": sorted(BASS_PROFILES),

@@ -39,7 +39,7 @@ import upmixer.mastering.match_reference  # noqa: F401
 import upmixer.routing.channel_router  # noqa: F401
 
 _INPUT_FORMAT_CHOICES = sorted(INPUT_FORMAT_MAP.keys())
-_OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4", "binaural"]
+_OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
 
 
 def _positive_int(value: str, option: str) -> int:
@@ -107,8 +107,6 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.spatial_preanalysis = False
     if args.binaural_profile is not None:
         config.binaural_profile = args.binaural_profile
-    if args.binaural_bed is not None:
-        config.binaural_bed = args.binaural_bed
     if args.no_loudness_normalize:
         config.loudness_normalize = False
     if args.loudness_target is not None:
@@ -585,13 +583,7 @@ def main() -> None:
         "--binaural-profile",
         choices=["studio", "listening", "flat"],
         default=None,
-        help="Spatial Audio Engine profile for --format binaural (default: studio).",
-    )
-    parser.add_argument(
-        "--binaural-bed",
-        choices=["5.1.4", "7.1.2", "7.1.4"],
-        default=None,
-        help="Intermediate discrete bed virtualized for --format binaural (default: 7.1.4).",
+        help="Spatial Audio Engine profile for --output-type binaural (default: studio).",
     )
     parser.add_argument(
         "--content-hf-analysis-hz",
@@ -614,12 +606,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-type",
-        choices=["wav", "adm-bwf"],
+        choices=["wav", "adm-bwf", "binaural"],
         default=None,
         help=(
             "'wav' = standard multichannel WAV. "
-            "'adm-bwf' = Dolby ADM-BWF. "
-            "(Logic Pro, DaVinci Resolve, Pro Tools). "
+            "'adm-bwf' = Dolby ADM-BWF (Logic Pro, DaVinci Resolve, Pro Tools). "
+            "'binaural' = Spatial Audio Engine headphone-stereo render of --format's "
+            "bed (--format must be 5.1.4, 7.1.2, or 7.1.4; see --binaural-profile). "
             "Default: 'wav' (or as set by manifest)."
         ),
     )

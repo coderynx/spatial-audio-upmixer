@@ -62,58 +62,51 @@ export function OutputSection({
           })
         }
         options={(
-          choices?.channel_layouts || [
-            "5.1",
-            "7.1",
-            "5.1.2",
-            "5.1.4",
-            "7.1.2",
-            "7.1.4",
-            "binaural",
-          ]
-        ).map((value) => ({
-          value,
-          label: value === "binaural" ? "Binaural (headphone export)" : value,
-        }))}
+          choices?.channel_layouts || ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
+        ).map((value) => ({ value, label: value }))}
       />
-      {manifest.mixing.channel_layout === "binaural" && (
-        <>
-          <SelectField
-            label="Spatial Audio Engine profile"
-            value={manifest.mixing.binaural.profile}
-            onChange={(profile) => setManifest({
-              ...manifest,
-              mixing: { ...manifest.mixing, binaural: { ...manifest.mixing.binaural, profile } },
-            })}
-            options={(choices?.binaural_profiles || ["studio", "listening", "flat"]).map((value) => ({
-              value,
-              label: value.charAt(0).toUpperCase() + value.slice(1),
-            }))}
-            hint="Studio = neutral monitoring room. Listening = Apple Music Atmos-style enhance. Flat = anechoic reference."
-          />
-          <SelectField
-            label="Binaural bed"
-            value={manifest.mixing.binaural.bed}
-            onChange={(bed) => setManifest({
-              ...manifest,
-              mixing: { ...manifest.mixing, binaural: { ...manifest.mixing.binaural, bed } },
-            })}
-            options={(choices?.binaural_beds || ["5.1.4", "7.1.2", "7.1.4"]).map((value) => ({ value, label: value }))}
-            hint="Intermediate discrete layout virtualized to stereo."
-          />
-        </>
-      )}
-      <SelectField
-        label="Container"
-        value={manifest.format.type}
-        onChange={(type) =>
-          setManifest({ ...manifest, format: { ...manifest.format, type } })
-        }
-        options={(choices?.output_types || ["wav", "adm-bwf"]).map((value) => ({
-          value,
-          label: value === "adm-bwf" ? "ADM-BWF" : "Multichannel WAV",
-        }))}
-      />
+      {(() => {
+        const binauralBeds = choices?.binaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
+        const bedSupported = binauralBeds.includes(manifest.mixing.channel_layout);
+        return (
+          <>
+            <SelectField
+              label="Format"
+              value={manifest.format.type}
+              onChange={(type) =>
+                setManifest({ ...manifest, format: { ...manifest.format, type } })
+              }
+              options={(choices?.output_types || ["wav", "adm-bwf", "binaural"]).map((value) => ({
+                value,
+                label: value === "adm-bwf" ? "ADM-BWF" : value === "binaural" ? "Binaural (headphone stereo)" : "Multichannel WAV",
+                disabled: value === "binaural" && !bedSupported,
+              }))}
+              hint={
+                manifest.format.type === "binaural"
+                  ? "Renders the speaker layout above as headphone stereo through the Spatial Audio Engine."
+                  : !bedSupported
+                    ? `Binaural requires speaker layout ${binauralBeds.join(", ")}.`
+                    : undefined
+              }
+            />
+            {manifest.format.type === "binaural" && (
+              <SelectField
+                label="Spatial Audio Engine profile"
+                value={manifest.format.binaural.profile}
+                onChange={(profile) => setManifest({
+                  ...manifest,
+                  format: { ...manifest.format, binaural: { ...manifest.format.binaural, profile } },
+                })}
+                options={(choices?.binaural_profiles || ["studio", "listening", "flat"]).map((value) => ({
+                  value,
+                  label: value.charAt(0).toUpperCase() + value.slice(1),
+                }))}
+                hint="Studio = neutral monitoring room. Listening = Apple Music Atmos-style enhance. Flat = anechoic reference."
+              />
+            )}
+          </>
+        );
+      })()}
       <SelectField
         label="Sample rate"
         value={String(manifest.format.sample_rate)}

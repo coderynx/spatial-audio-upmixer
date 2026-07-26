@@ -256,15 +256,18 @@ not an acceptable implementation difference.
 
 ## 7. Delivery format
 
-Exposed as the `binaural` output format (`upmixer.formats.FORMAT_MAP
-["binaural"]`, 2 channels: `FL`, `FR`). Selecting it does not upmix directly
-to 2 channels — the pipeline first upmixes/masters to an intermediate
-discrete bed (`UpmixConfig.binaural_bed`, one of `5.1.4` / `7.1.2` / `7.1.4`),
-then this engine collapses that mastered bed to stereo. Incompatible with
-`output_type = "adm-bwf"` (ADM-BWF requires a discrete channel-based bed by
-definition). Manifest keys: `mixing.channel_layout: binaural`,
-`mixing.binaural.profile`, `mixing.binaural.bed`. CLI: `--format binaural
---binaural-profile {studio,listening,flat} --binaural-bed {5.1.4,7.1.2,7.1.4}`.
+Exposed as `UpmixConfig.output_type == "binaural"` (`upmixer.formats.BINAURAL`,
+2 channels: `FL`, `FR`) — a delivery format alongside `"wav"` and `"adm-bwf"`,
+selected the same way they are (`format.type` in the manifest, `--output-type`
+on the CLI), not a channel layout. Selecting it does not change what layout is
+upmixed — the pipeline upmixes/masters `UpmixConfig.output_format` as normal
+(which must be one of `5.1.4` / `7.1.2` / `7.1.4` for binaural to be valid),
+then this engine collapses that mastered bed to stereo. Mutually exclusive
+with `"adm-bwf"` by construction (both live in the same `output_type` field;
+ADM-BWF requires a discrete channel-based bed by definition). Manifest keys:
+`mixing.channel_layout` (the bed, unchanged), `format.type: binaural`,
+`format.binaural.profile`. CLI: `--format {5.1.4,7.1.2,7.1.4} --output-type
+binaural --binaural-profile {studio,listening,flat}`.
 
 **Gain staging.** The intermediate bed is already BS.1770-normalized by
 `MasteringChain` before collapse. The binaural delivery stage does **not**
