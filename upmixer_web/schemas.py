@@ -145,6 +145,7 @@ class ProjectView(ApiModel):
     status: str
     progress: float
     status_message: str
+    progress_log: list[dict[str, Any]] = Field(default_factory=list)
     manifest: dict[str, Any]
     scene: dict[str, Any]
     requested_stems: list[str]

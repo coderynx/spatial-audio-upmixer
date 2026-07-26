@@ -150,6 +150,7 @@ class Project(Base):
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     status_message: Mapped[str] = mapped_column(String(1024), default="Waiting for worker")
+    progress_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     manifest: Mapped[dict[str, Any]] = mapped_column(JSON)
     scene: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     requested_stems: Mapped[list[str]] = mapped_column(JSON, default=list)

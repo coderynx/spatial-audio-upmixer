@@ -297,6 +297,14 @@ export function useStemPreview(
   // `mergePoint`. Keyed into the same `speakerEnabled` map under "LFE".
   const lfeMuteGain = React.useRef<GainNode | null>(null);
   const mergePoint = React.useRef<GainNode | null>(null);
+  // Passive per-channel level taps for the UI's vertical meters — one
+  // analyser per positional speaker bus plus "LFE", all fed from the same
+  // mute-gain points as the ambisonic encoders/LFE bypass, so a meter
+  // reflects exactly what that speaker is contributing (including mute).
+  const channelAnalysers = React.useRef<Map<string, AnalyserNode>>(new Map());
+  // Headphone L/R tap: a splitter on the final output node, i.e. the actual
+  // binaural signal reaching the listener's headphones, post-mastering.
+  const headphoneAnalysers = React.useRef<{ splitter: ChannelSplitterNode; left: AnalyserNode; right: AnalyserNode } | null>(null);
   const masteringNodes = React.useRef<AudioNode[]>([]);
   const resolvedBass = React.useRef<{ active: boolean; lfeGainDb: number }>({ active: false, lfeGainDb: 0 });
   const measuredLkfs = React.useRef(-70);
@@ -310,6 +318,12 @@ export function useStemPreview(
   // `centroid`: 0 (bass-weighted spectrum) .. 1 (treble-weighted spectrum),
   // the Haze view's radial "inner = bass, outer = treble" axis.
   const stemSpectrum = React.useRef<Map<string, { level: number; centroid: number }>>(new Map());
+  // Live per-channel meter levels (speaker code, incl. "LFE" -> smoothed
+  // 0..1 RMS) and the headphone L/R levels of the final binaural output.
+  // Refs, not state — updated every animation frame from `tick()`; the
+  // meter component reads these in its own rAF loop, same as `stemSpectrum`.
+  const channelLevels = React.useRef<Map<string, number>>(new Map());
+  const headphoneLevels = React.useRef<{ left: number; right: number }>({ left: 0, right: 0 });
   const appliedGain = React.useRef<Map<string, number>>(new Map());
   const timeDomainBuffer = React.useRef<Uint8Array | null>(null);
   const frequencyBuffer = React.useRef<Uint8Array | null>(null);
@@ -329,6 +343,7 @@ export function useStemPreview(
   const [loop, setLoop] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [ready, setReady] = React.useState(false);
+  const [loadProgress, setLoadProgress] = React.useState(0);
   const [supported] = React.useState(() => Boolean(window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext));
   // Per-speaker mute state — independent of stem mute/solo, since the
   // renderer input is the channel bed, not the stems (see `SpeakerBus`).
@@ -425,12 +440,46 @@ export function useStemPreview(
     }
   }, []);
 
+  // Bus-tap RMS is unscaled by any applied gain (unlike `measureLevels`, the
+  // stem path), so smooth it directly to keep meter bars from flickering.
+  const rmsFromAnalyser = React.useCallback((analyser: AnalyserNode) => {
+    const size = analyser.fftSize;
+    if (!timeDomainBuffer.current || timeDomainBuffer.current.length !== size) {
+      timeDomainBuffer.current = new Uint8Array(size);
+    }
+    analyser.getByteTimeDomainData(timeDomainBuffer.current);
+    let sumSquares = 0;
+    for (let i = 0; i < size; i++) {
+      const deviation = (timeDomainBuffer.current[i] - 128) / 128;
+      sumSquares += deviation * deviation;
+    }
+    return Math.min(1, Math.sqrt(sumSquares / size) * 2.5);
+  }, []);
+
+  const measureChannelLevels = React.useCallback(() => {
+    channelAnalysers.current.forEach((analyser, channel) => {
+      const rms = rmsFromAnalyser(analyser);
+      const previous = channelLevels.current.get(channel) ?? 0;
+      channelLevels.current.set(channel, previous * 0.7 + rms * 0.3);
+    });
+    const headphones = headphoneAnalysers.current;
+    if (headphones) {
+      const left = rmsFromAnalyser(headphones.left);
+      const right = rmsFromAnalyser(headphones.right);
+      headphoneLevels.current = {
+        left: headphoneLevels.current.left * 0.7 + left * 0.3,
+        right: headphoneLevels.current.right * 0.7 + right * 0.3,
+      };
+    }
+  }, [rmsFromAnalyser]);
+
   const tick = React.useCallback(() => {
     if (!playingRef.current) return;
     const nextTime = expectedTime();
     currentTimeRef.current = nextTime;
     setCurrentTime((current) => Math.abs(current - nextTime) >= 0.01 ? nextTime : current);
     measureLevels();
+    measureChannelLevels();
     if (!loopRef.current && durationRef.current > 0 && nextTime >= durationRef.current) {
       stopSources();
       timeline.current = null;
@@ -441,7 +490,7 @@ export function useStemPreview(
       return;
     }
     animationFrame.current = window.requestAnimationFrame(tick);
-  }, [expectedTime, measureLevels, stopSources]);
+  }, [expectedTime, measureLevels, measureChannelLevels, stopSources]);
 
   const startTicker = React.useCallback(() => {
     stopTicker();
@@ -482,6 +531,16 @@ export function useStemPreview(
       bus.encoder.out.disconnect();
     });
     speakerBuses.current.clear();
+    channelAnalysers.current.forEach((analyser) => analyser.disconnect());
+    channelAnalysers.current.clear();
+    channelLevels.current.clear();
+    if (headphoneAnalysers.current) {
+      headphoneAnalysers.current.splitter.disconnect();
+      headphoneAnalysers.current.left.disconnect();
+      headphoneAnalysers.current.right.disconnect();
+      headphoneAnalysers.current = null;
+    }
+    headphoneLevels.current = { left: 0, right: 0 };
     hoaBus.current?.disconnect();
     hoaBus.current = null;
     rotator.current?.in.disconnect();
@@ -762,6 +821,7 @@ export function useStemPreview(
     binDecoderNode.out.connect(preMasterBusNode);
 
     const busesMap = new Map<string, SpeakerBus>();
+    const channelAnalysersMap = new Map<string, AnalyserNode>();
     for (const channel of positionalChannelsRef.current) {
       const muteGain = ctx.createGain();
       muteGain.gain.value = speakerEnabled[channel] === false ? 0 : 1;
@@ -773,6 +833,12 @@ export function useStemPreview(
       muteGain.connect(encoder.in);
       encoder.out.connect(hoaBusNode);
       busesMap.set(channel, { muteGain, encoder });
+      // No output connection — a pure meter tap, cannot affect the audible signal.
+      const channelAnalyser = ctx.createAnalyser();
+      channelAnalyser.fftSize = 256;
+      channelAnalyser.smoothingTimeConstant = 0.7;
+      muteGain.connect(channelAnalyser);
+      channelAnalysersMap.set(channel, channelAnalyser);
     }
 
     // Backend final stage before loudness measurement: soft_limit(x, 0.95),
@@ -787,12 +853,32 @@ export function useStemPreview(
     lfeMuteGainNode.gain.value = speakerEnabled.LFE === false ? 0 : 1;
     lfeBusNode.connect(lfeMuteGainNode).connect(mergePointNode);
     mergePointNode.connect(softLimitNode).connect(output).connect(ctx.destination);
+    const lfeAnalyser = ctx.createAnalyser();
+    lfeAnalyser.fftSize = 256;
+    lfeAnalyser.smoothingTimeConstant = 0.7;
+    lfeMuteGainNode.connect(lfeAnalyser);
+    channelAnalysersMap.set("LFE", lfeAnalyser);
+
+    // Headphone L/R tap: splits the final output (post soft-limit, the exact
+    // signal reaching headphones) into two mono analysers.
+    const headphoneSplitter = ctx.createChannelSplitter(2);
+    const headphoneLeftAnalyser = ctx.createAnalyser();
+    const headphoneRightAnalyser = ctx.createAnalyser();
+    headphoneLeftAnalyser.fftSize = 256;
+    headphoneLeftAnalyser.smoothingTimeConstant = 0.7;
+    headphoneRightAnalyser.fftSize = 256;
+    headphoneRightAnalyser.smoothingTimeConstant = 0.7;
+    output.connect(headphoneSplitter);
+    headphoneSplitter.connect(headphoneLeftAnalyser, 0);
+    headphoneSplitter.connect(headphoneRightAnalyser, 1);
 
     hoaBus.current = hoaBusNode;
     lfeMuteGain.current = lfeMuteGainNode;
     rotator.current = rotatorNode;
     binDecoder.current = binDecoderNode;
     speakerBuses.current = busesMap;
+    channelAnalysers.current = channelAnalysersMap;
+    headphoneAnalysers.current = { splitter: headphoneSplitter, left: headphoneLeftAnalyser, right: headphoneRightAnalyser };
     preMasterBus.current = preMasterBusNode;
     lfeBus.current = lfeBusNode;
     mergePoint.current = mergePointNode;
@@ -800,6 +886,7 @@ export function useStemPreview(
     master.current = output;
     buildMasteringTopology();
     setReady(false);
+    setLoadProgress(0);
 
     // Non-blocking: the decoder starts on JSAmbisonics' built-in cardioid
     // fallback and swaps to the real BRIR set once it's fetched, so preview
@@ -815,8 +902,25 @@ export function useStemPreview(
 
     const promise = (async () => {
       try {
+        let decoded = 0;
+        // Stems finish decoding in tight clusters, not evenly spaced —
+        // flushing `setLoadProgress` straight from each `Promise.all` branch
+        // would fire a full page re-render per stem in that cluster, right
+        // when the main thread is busiest with decode work. Coalesce same-
+        // frame completions into a single state update instead.
+        let progressFlushScheduled = false;
+        const scheduleProgressFlush = () => {
+          if (progressFlushScheduled) return;
+          progressFlushScheduled = true;
+          window.requestAnimationFrame(() => {
+            progressFlushScheduled = false;
+            setLoadProgress(entries.length ? decoded / entries.length : 1);
+          });
+        };
         await Promise.all(entries.map(async (entry) => {
           const buffer = await loadBuffer(ctx, entry.url);
+          decoded += 1;
+          scheduleProgressFlush();
 
           if (entry.anchor) {
             const stemInput = ctx.createGain();
@@ -999,6 +1103,7 @@ export function useStemPreview(
   return {
     supported,
     ready,
+    loadProgress,
     playing,
     currentTime,
     duration,
@@ -1014,6 +1119,8 @@ export function useStemPreview(
     commitScrub,
     toggleLoop,
     stemSpectrum,
+    channelLevels,
+    headphoneLevels,
     speakerEnabled,
     toggleSpeaker,
     loadHrtf,

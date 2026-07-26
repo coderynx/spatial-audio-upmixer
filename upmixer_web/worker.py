@@ -34,6 +34,19 @@ class JobDeleting(Exception):
     pass
 
 
+_PROGRESS_LOG_LIMIT = 200
+
+
+def _append_progress_log(project: Project, message: str, fraction: float) -> None:
+    """Append one entry to a project's realtime preparation log, capped in length."""
+    entry = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "message": message,
+        "fraction": fraction,
+    }
+    project.progress_log = [*project.progress_log, entry][-_PROGRESS_LOG_LIMIT:]
+
+
 class WorkerManager:
     """Polls durable state and executes jobs with bounded concurrency."""
 
@@ -101,32 +114,30 @@ class WorkerManager:
             capacity = self.worker_count - len(self._active)
         if capacity <= 0:
             return
+        # Merge both queues by creation time so a long-running project prepare
+        # cannot starve export jobs (or vice versa) indefinitely on a single
+        # worker — whichever was queued first gets the next free slot.
         with self.sessions() as session:
-            projects = list(session.scalars(
-                select(Project.id)
+            projects = list(session.execute(
+                select(Project.id, Project.created_at)
                 .where(Project.status.in_(("queued", "expanding")))
-                .order_by(Project.created_at)
-                .limit(capacity)
             ))
-            remaining = max(0, capacity - len(projects))
-            jobs = list(session.scalars(
-                select(Job.id).where(Job.status == "queued").order_by(Job.created_at).limit(remaining)
+            jobs = list(session.execute(
+                select(Job.id, Job.created_at).where(Job.status == "queued")
             ))
-        for project_id in projects:
-            active_id = f"project:{project_id}"
+        candidates = sorted(
+            [("project", pid, created_at) for pid, created_at in projects]
+            + [("job", jid, created_at) for jid, created_at in jobs],
+            key=lambda item: item[2],
+        )[:capacity]
+        for kind, item_id, _created_at in candidates:
+            active_id = f"{kind}:{item_id}"
             with self._lock:
                 if active_id in self._active:
                     continue
                 self._active.add(active_id)
-            future = self._executor.submit(self._run_project, project_id)
-            future.add_done_callback(lambda _future, value=active_id: self._finished(value))
-        for job_id in jobs:
-            active_id = f"job:{job_id}"
-            with self._lock:
-                if active_id in self._active:
-                    continue
-                self._active.add(active_id)
-            future = self._executor.submit(self._run_job, job_id)
+            target = self._run_project if kind == "project" else self._run_job
+            future = self._executor.submit(target, item_id)
             future.add_done_callback(lambda _future, value=active_id: self._finished(value))
 
     def _finished(self, active_id: str) -> None:
@@ -394,6 +405,8 @@ class WorkerManager:
                 project.progress = 0.0
                 project.error = None
                 project.status_message = "Preparing project stems"
+                project.progress_log = []
+                _append_progress_log(project, project.status_message, 0.0)
                 for track in project.tracks:
                     track.status = "queued"
                     track.progress = 0.0
@@ -461,7 +474,13 @@ class WorkerManager:
                                 project_row.progress = (
                                     (index_by_track[track_id] + track_row.progress) / max(1, len(track_ids))
                                 )
-                                project_row.status_message = message.strip()
+                                stripped = message.strip()
+                                project_row.status_message = stripped
+                                logged = (
+                                    stripped if len(track_ids) == 1
+                                    else f"Track {index_by_track[track_id] + 1}/{len(track_ids)}: {stripped}"
+                                )
+                                _append_progress_log(project_row, logged, project_row.progress)
                                 session.commit()
                         elif kind == "track_done":
                             _, track_id, _result_dict = event
@@ -497,6 +516,7 @@ class WorkerManager:
                 project.progress = 1.0
                 project.status_message = "Project stems ready"
                 project.error = None
+                _append_progress_log(project, project.status_message, 1.0)
                 session.commit()
         except JobDeleting:
             self._delete_project(project_id)
@@ -507,6 +527,7 @@ class WorkerManager:
                     project.status = "expansion_failed" if project.prepared_stems else "failed"
                     project.error = str(exc)
                     project.status_message = "Project stem preparation failed"
+                    _append_progress_log(project, f"{project.status_message}: {exc}", project.progress)
                     for track in project.tracks:
                         if track.status == "running":
                             track.status = "failed"

@@ -7,8 +7,8 @@ import {
   Code2,
   Download,
   GripVertical,
+  Loader2,
   Package,
-  RotateCcw,
   Settings,
   SlidersHorizontal,
   Wand2,
@@ -26,7 +26,9 @@ import { normalizeManifest, type Manifest } from "@/lib/manifest";
 import { getStemColor, getStemIcon, stemColors } from "@/lib/stems";
 import { cn } from "@/lib/utils";
 import HazeView from "./HazeView";
+import ChannelMeters from "./ChannelMeters";
 import ElevationView from "./ElevationView";
+import { PreparationView } from "./PreparationView";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import { Transport } from "./Transport";
@@ -68,6 +70,21 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     } catch (reason) { setError((reason as Error).message); }
   }, [projectId]);
   React.useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 2000); return () => window.clearInterval(timer); }, [load]);
+  // While the project is preparing, layer a realtime SSE stream on top of the
+  // 2s poll above so the log/percentage update live instead of in 2s steps.
+  // The 2s poll keeps refreshing everything else (exports, other tracks) and
+  // acts as the fallback if EventSource is unavailable or the stream drops.
+  React.useEffect(() => {
+    if (!projectId || !project) return;
+    if (["ready", "failed", "expansion_failed"].includes(project.status)) return;
+    const source = new EventSource(api.projectEventsUrl(projectId));
+    source.onmessage = (event) => {
+      try { setProject(JSON.parse(event.data)); } catch { /* ignore malformed frame */ }
+    };
+    source.onerror = () => source.close();
+    return () => source.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status only, so a mid-stream progress update (also named `project`) doesn't tear down and reopen the connection
+  }, [projectId, project?.status]);
   React.useEffect(() => () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); }, []);
   const queueSave = React.useCallback((next: Manifest) => {
     if (!projectId || !project) return;
@@ -201,7 +218,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const headerTitle = React.useMemo(() => project ? <div className="flex min-w-0 items-center gap-2"><Link to="/projects" className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ChevronLeft className="h-3.5 w-3.5" />Projects</Link><span className="text-muted-foreground">/</span><span className="truncate text-sm font-semibold">{project.name}</span></div> : null, [project?.name]);
   useHeaderTitle(headerTitle);
   if (!project) return <main className="p-5">{error || "Loading project…"}</main>;
-  if (!ready) return <main className="mx-auto max-w-3xl p-5"><h1 className="text-2xl font-semibold">{project.name}</h1><p className="mt-2 text-sm text-muted-foreground">{project.status_message}</p><Progress className="mt-5" value={project.progress * 100} />{["failed", "expansion_failed"].includes(project.status) && <Button className="mt-5" onClick={() => void retry()}><RotateCcw />Retry preparation</Button>}</main>;
+  if (!ready) return <PreparationView project={project} onRetry={() => void retry()} />;
   return <main className="flex h-[calc(100vh-3.5rem)] w-full flex-col overflow-hidden p-3 sm:px-6 sm:py-4">
     {error && <p className="mb-3 flex-none rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
     <div className="flex flex-none items-center justify-between gap-3">
@@ -274,12 +291,25 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           onCommitScrub={(value) => void preview.commitScrub(value)}
         />
         {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}
+        {!preview.error && preview.supported && !preview.ready && previewStems.length > 0 && (
+          <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            <span className="flex-1">Preparing preview — decoding stems…</span>
+            <Progress value={preview.loadProgress * 100} className="w-24" />
+            <span className="w-9 shrink-0 text-right tabular-nums">{Math.round(preview.loadProgress * 100)}%</span>
+          </div>
+        )}
         {/* Per-speaker mute is clickable directly on HazeView's speaker
             points — the preview renders the channel bed (see
             useStemPreview.ts), so a speaker can be silenced independently of
             any stem, same virtual-loudspeaker idea as Apple's Spatial Audio
-            renderer. */}
-        <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} className="min-h-0 flex-[3]" />
+            renderer. ChannelMeters mirrors the same layout-scoped `channels`
+            array and mute state, and stays mounted alongside HazeView across
+            Mixing/Mastering/Delivery since both live in this shared panel. */}
+        <div className="flex min-h-0 flex-[3] gap-3">
+          <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} className="min-h-0 min-w-0 flex-[2]" />
+          <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} />
+        </div>
         <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} className="h-40 shrink-0" />
       </section>;
       // Preview stays mounted across all three tabs (same center/left column
@@ -312,7 +342,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             stemEqProfiles={configuration?.choices.stem_eq_profiles}
           /> : <p className="text-sm text-muted-foreground">Select stem to edit sends.</p>}</div><div className="mt-5 border-t pt-4"><div className="flex items-center justify-between text-sm"><span className="font-medium">Source anchor</span><span className="text-muted-foreground">{Math.round(effectiveManifest.mixing.stem_source_anchor_strength * 100)}%</span></div><Slider aria-label="Source anchor" className="mt-3" min={0} max={1} step={0.01} value={[effectiveManifest.mixing.stem_source_anchor_strength]} onValueChange={([stem_source_anchor_strength]) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } })} /><p className="mt-2 text-xs text-muted-foreground">Blends original channel pairs back into the mix.</p></div></>}</aside>
       </div>;
-      if (activeTab === "mastering") return manifest && <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
+      if (activeTab === "mastering") return manifest && <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_480px]">
         {previewPanel}
         <section className="min-h-0 overflow-auto">
           <MasteringSection
@@ -331,7 +361,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           />
         </section>
       </div>;
-      return manifest && <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[330px_minmax(0,1fr)]">
+      return manifest && <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_480px]">
         {previewPanel}
         <section className="min-h-0 space-y-4 overflow-auto">
           <ProjectDeliverySection manifest={manifest} configuration={configuration} onChange={updateProjectManifest} />

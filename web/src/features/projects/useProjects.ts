@@ -6,12 +6,17 @@ export function useProjects() {
   const [configuration, setConfiguration] = React.useState<Configuration | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const configurationRef = React.useRef(configuration);
+  configurationRef.current = configuration;
+  // Deliberately excludes `configuration` from deps: `refresh` sets
+  // `configuration`, so depending on it would recreate `refresh` on every
+  // fetch and re-fire the mount effect below in a self-triggering loop.
   const refresh = React.useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
     try {
       const [nextProjects, nextConfiguration] = await Promise.all([
         api.listProjects(),
-        configuration ? Promise.resolve(configuration) : api.getConfiguration(),
+        configurationRef.current ? Promise.resolve(configurationRef.current) : api.getConfiguration(),
       ]);
       setProjects(nextProjects);
       setConfiguration(nextConfiguration);
@@ -21,7 +26,7 @@ export function useProjects() {
     } finally {
       if (!quiet) setLoading(false);
     }
-  }, [configuration]);
+  }, []);
   React.useEffect(() => {
     void refresh();
   }, [refresh]);

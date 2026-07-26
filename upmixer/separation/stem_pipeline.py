@@ -228,6 +228,7 @@ class StemUpmixPipeline:
         plan: SeparationPlan,
         sep_path: str,
         sep_sr: int,
+        stage_callback: Callable[[int, int, str, frozenset[str]], None] | None = None,
     ) -> dict[str, np.ndarray]:
         """Execute all tasks in the plan against one audio zone (sep_path).
 
@@ -236,6 +237,10 @@ class StemUpmixPipeline:
         - Stage 1 keeps ``Drums`` on disk so Stage 2 can read it.
         - Intermediate files not in the final requested stems are deleted after
           all stages complete.
+
+        Args:
+            stage_callback: Optional callable ``(stage_idx, n_tasks, model,
+                output_stems)`` invoked before each model stage runs.
 
         Returns a dict of canonical_name → ndarray for all requested stems.
         """
@@ -248,6 +253,8 @@ class StemUpmixPipeline:
 
         n_tasks = len(plan.tasks)
         for stage_idx, task in enumerate(plan.tasks):
+            if stage_callback is not None:
+                stage_callback(stage_idx, n_tasks, task.model, task.output_stems)
             _log.info(
                 "  [stage %d/%d] model=%s  input=%s  keep_on_disk=%s",
                 stage_idx + 1,
@@ -329,6 +336,7 @@ class StemUpmixPipeline:
         sep_sr: int,
         cfg: UpmixConfig,
         original_path: str | None = None,
+        stage_callback: Callable[[int, int, str, frozenset[str]], None] | None = None,
     ) -> dict[str, np.ndarray]:
         """Run stem separation on active spans only, skipping silent regions.
 
@@ -370,11 +378,11 @@ class StemUpmixPipeline:
         if len(spans) == 1 and spans[0] == (0, n_sr):
             if original_path is not None:
                 _log.debug("  Silence-skip: full-active fast path uses source file")
-                return self._execute_plan(plan, original_path, sep_sr)
+                return self._execute_plan(plan, original_path, sep_sr, stage_callback)
             tmp = _temporary_wav_path("upmixer_full_")
             try:
                 sf.write(tmp, zone_audio, sr, subtype="FLOAT")
-                return self._execute_plan(plan, tmp, sep_sr)
+                return self._execute_plan(plan, tmp, sep_sr, stage_callback)
             finally:
                 if os.path.exists(tmp):
                     os.unlink(tmp)
@@ -392,7 +400,7 @@ class StemUpmixPipeline:
             tmp = _temporary_wav_path("upmixer_span_")
             try:
                 sf.write(tmp, span_audio, sr, subtype="FLOAT")
-                outputs = self._execute_plan(plan, tmp, sep_sr)
+                outputs = self._execute_plan(plan, tmp, sep_sr, stage_callback)
                 sep_start = (
                     int(round(s_start * sep_sr / sr))
                     if sep_sr != sr else s_start
@@ -585,6 +593,7 @@ class StemUpmixPipeline:
             all_stems = _cache_hit_stems
             _cache_hit_stems = None
             _log.info("  Stem cache: using cached stems (separation skipped)")
+            _progress("  Using cached stems...", 0.75)
         else:
             tmp_files: list[str] = []
             zone_names = list(sep_zones.keys())
@@ -594,7 +603,24 @@ class StemUpmixPipeline:
                 for zone_idx, zone_name in enumerate(zone_names):
                     pair_src = sep_zones[zone_name]
                     zone_frac = 0.15 + 0.60 * (zone_idx / n_zones)
+                    next_zone_frac = 0.15 + 0.60 * ((zone_idx + 1) / n_zones)
                     _progress(f"    Separating zone: {zone_name}...", zone_frac)
+
+                    def _stage_callback(
+                        stage_idx: int,
+                        n_tasks: int,
+                        model: str,
+                        output_stems: frozenset[str],
+                        zone_name: str = zone_name,
+                        zone_frac: float = zone_frac,
+                        next_zone_frac: float = next_zone_frac,
+                    ) -> None:
+                        stage_frac = zone_frac + (next_zone_frac - zone_frac) * (stage_idx / n_tasks)
+                        stems_desc = ", ".join(sorted(output_stems)) or model
+                        _progress(
+                            f"    Extracting {stems_desc} (zone {zone_name}, model {model})...",
+                            stage_frac,
+                        )
 
                     if cfg.stem_silence_skip:
                         if isinstance(pair_src, str):
@@ -606,6 +632,7 @@ class StemUpmixPipeline:
                         zone_stems = self._execute_plan_with_silence_skip(
                             plan, _zone_audio, sr, sep_sr, cfg,
                             original_path=original_path,
+                            stage_callback=_stage_callback,
                         )
                     else:
                         if isinstance(pair_src, str):
@@ -615,7 +642,7 @@ class StemUpmixPipeline:
                             sf.write(tmp, pair_src, sr, subtype="FLOAT")
                             sep_path = tmp
                             tmp_files.append(tmp)
-                        zone_stems = self._execute_plan(plan, sep_path, sep_sr)
+                        zone_stems = self._execute_plan(plan, sep_path, sep_sr, _stage_callback)
 
                     for stem_name, stem_audio in zone_stems.items():
                         key = stem_name if stereo_mode else f"{stem_name}@{zone_name}"
@@ -683,6 +710,7 @@ class StemUpmixPipeline:
 
         if cfg.stem_rebalance:
             from upmixer.separation.stem_rebalance import StemRebalancer
+            _progress("  Rebalancing stems...", 0.76)
             _log.info("  Applying stem rebalance: %s", cfg.stem_rebalance)
             rebalancer = StemRebalancer(cfg.stem_rebalance, sep_sr)
             all_stems = rebalancer.process(all_stems)
@@ -690,6 +718,7 @@ class StemUpmixPipeline:
 
         if cfg.stem_eq_profiles:
             from upmixer.separation.stem_eq import StemEQ
+            _progress("  Applying per-stem EQ...", 0.77)
             _log.info("  Applying per-stem EQ: %s", cfg.stem_eq_profiles)
             stem_eq = StemEQ(cfg.stem_eq_profiles, sep_sr)
             all_stems = stem_eq.process(all_stems)
@@ -719,11 +748,14 @@ class StemUpmixPipeline:
                 channels[ch_name][:n] += ch_audio[:n]
         ch_audio = None
 
+        if cfg.stem_source_anchor_strength > 0.0:
+            _progress("  Applying source anchor...", 0.83)
         channels = apply_source_anchor(
             channels, source_zones, output_fmt, cfg.stem_source_anchor_strength,
         )
 
         if cfg.normalize_output:
+            _progress("  Normalizing output...", 0.86)
             if sr != sep_sr:
                 g = math.gcd(sr, sep_sr)
                 source_audio = resample_poly(audio_full, sep_sr // g, sr // g, axis=0)

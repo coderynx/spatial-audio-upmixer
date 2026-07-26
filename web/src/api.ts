@@ -113,6 +113,7 @@ export type Project = {
   status: string
   progress: number
   status_message: string
+  progress_log: { ts: string; message: string; fraction: number }[]
   manifest: Record<string, unknown>
   scene: { stems?: StemScene }
   requested_stems: string[]
@@ -178,6 +179,7 @@ export const api = {
   listJobs: () => request<Job[]>("/api/v1/jobs"),
   listProjects: () => request<Project[]>("/api/v1/projects"),
   getProject: (id: string) => request<Project>(`/api/v1/projects/${id}`),
+  projectEventsUrl: (id: string) => `${rootPath}/api/v1/projects/${id}/events`,
   upload: async (items: { file: File; path: string }[]) => {
     const data = new FormData()
     for (const item of items) {
