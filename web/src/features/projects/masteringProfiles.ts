@@ -88,6 +88,29 @@ export const MID_CUTOFF_HZ = 200.0;
 export const EXCITE_BLEND = 0.15;
 export const EXCITE_DRIVE = 3.0;
 
+// scipy.signal.butter's default Q for a 2nd-order Butterworth section.
+// Web Audio's BiquadFilterNode lowpass/highpass default Q=1 has a small
+// resonant peak (about +1dB near cutoff) a true Butterworth response
+// doesn't — set explicitly on any biquad standing in for a
+// `butter(2, ..., output="sos")` backend filter (bass mono-maker,
+// surround/height sends) so passband/stopband energy near the cutoff
+// tracks the backend more closely. Found via
+// docs/contracts/preview_export_parity.md's golden-diff harness: without
+// this, the bass mono-maker leaked enough extra energy near its cutoff to
+// flip its net level effect from a slight cut (backend) to a slight boost
+// (preview) on decorrelated multichannel content — see Ledger D9.
+export const BUTTERWORTH_Q = 1 / Math.sqrt(2);
+
+// upmixer/mastering/bass.py STEREO_PAIRS — bass mono-maker operates on these
+// L/R channel pairs (see `useStemPreview.ts`'s `buildMasteringTopology`).
+export const MONO_MAKER_STEREO_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ["FL", "FR"],
+  ["SL", "SR"],
+  ["BL", "BR"],
+  ["TFL", "TFR"],
+  ["TBL", "TBR"],
+];
+
 // upmixer/config.py peak_limit_threshold — not manifest-editable, fixed default.
 export const SOFT_LIMIT_THRESHOLD = 0.95;
 
@@ -97,6 +120,18 @@ export const LFE_LOWPASS_HZ = 120;
 
 // upmixer/config.py loudness_max_gain_db.
 export const LOUDNESS_MAX_GAIN_DB = 30.0;
+
+// upmixer/utils.py _ITU_C_COEFF (1/sqrt(2), exact) — the fixed center-channel
+// downmix coefficient ITU-R BS.775-4 Annex 4 Table 2 uses for the C-term and
+// the back->side fold, distinct from the user-configurable surround
+// coefficient below even though they default to (nearly) the same number.
+export const ITU_CENTER_COEFF = 1 / Math.sqrt(2);
+
+// upmixer/config.py surround_downmix_coeff default. User-configurable via
+// format.downmix.surround_coeff (see manifest.ts); 0.7071 is a truncated
+// approximation of 1/sqrt(2), not the exact value — matching the backend's
+// own truncated default exactly, not a rounding error to "fix".
+export const SURROUND_DOWNMIX_COEFF = 0.7071;
 
 // upmixer/binaural/renderer.py BINAURAL_LOUDNESS_MAX_GAIN_DB. The bed is
 // already loudness-normalized before binaural collapse, so this pass only
@@ -162,7 +197,7 @@ export type FirEqNode = {
  * rebuild their whole topology on any mastering-config change (as
  * `buildMasteringTopology`/`buildStemEqChains` do) just build a fresh node
  * at the new `strength` rather than retuning an existing one. */
-export function buildFirEqNode(ctx: AudioContext, strength: number): FirEqNode {
+export function buildFirEqNode(ctx: BaseAudioContext, strength: number): FirEqNode {
   const input = ctx.createGain();
   const convolver = ctx.createConvolver();
   convolver.normalize = false;
@@ -282,6 +317,7 @@ export function buildHeightSend(ctx: AudioContext, input: AudioNode): { output: 
   const highpass = ctx.createBiquadFilter();
   highpass.type = "highpass";
   highpass.frequency.value = HEIGHT_CROSSOVER_HZ;
+  highpass.Q.value = BUTTERWORTH_Q;
   const highGain = ctx.createGain();
   highGain.gain.value = HEIGHT_HIGH_SHELF_GAIN - 1;
   const output = ctx.createGain();
@@ -302,6 +338,7 @@ export function buildSurroundSend(
   const highpass = ctx.createBiquadFilter();
   highpass.type = "highpass";
   highpass.frequency.value = SURROUND_BASS_CUTOFF_HZ;
+  highpass.Q.value = BUTTERWORTH_Q;
   input.connect(highpass);
   const diffuse = buildDiffuseSend(ctx, highpass, delayMs);
   return { output: diffuse.output, nodes: [highpass, ...diffuse.nodes] };

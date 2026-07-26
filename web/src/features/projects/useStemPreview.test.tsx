@@ -304,15 +304,27 @@ describe("useStemPreview mastering chain", () => {
     expect(lastContext().convolvers.some((c) => c.buffer !== null)).toBe(true);
   });
 
-  it("builds bass sub/mid shelves from the resolved bass profile", async () => {
+  it("builds bass sub/mid additive band-gain stages from the resolved bass profile", async () => {
+    // previewGraph.ts's bass sub/mid stage mirrors
+    // upmixer/mastering/bass.py::BassController._apply_band_gain's additive
+    // identity (`(ch - band) + band*gain_lin`) via a lowpass (sub) / lowpass
+    // -> highpass bandpass (mid) feeding a GainNode set to `gain_lin - 1`,
+    // not a native "lowshelf"/"peaking" BiquadFilterNode — see Ledger D9.
     installAudio();
     render(<Harness mastering={{ bass: { profile: "boost" } }} />);
     await act(async () => { await preview.playPause(); });
 
-    const shelf = lastContext().eqFilters.find((f) => f.type === "lowshelf" && f.frequency.value === 80);
-    const mid = lastContext().eqFilters.find((f) => f.type === "peaking" && Math.round(f.frequency.value) === 126);
-    expect(shelf?.gain.value).toBe(2.0);
-    expect(mid?.gain.value).toBe(1.0);
+    const subLowpass = lastContext().eqFilters.find((f) => f.type === "lowpass" && f.frequency.value === 80);
+    const midLowpass = lastContext().eqFilters.find((f) => f.type === "lowpass" && f.frequency.value === 200);
+    const midHighpass = lastContext().eqFilters.find((f) => f.type === "highpass" && f.frequency.value === 80);
+    expect(subLowpass).toBeDefined();
+    expect(midLowpass).toBeDefined();
+    expect(midHighpass).toBeDefined();
+
+    const subBandGain = lastContext().gains.find((g) => Math.abs(g.gain.value - (10 ** (2.0 / 20) - 1)) < 1e-6);
+    const midBandGain = lastContext().gains.find((g) => Math.abs(g.gain.value - (10 ** (1.0 / 20) - 1)) < 1e-6);
+    expect(subBandGain).toBeDefined();
+    expect(midBandGain).toBeDefined();
   });
 });
 

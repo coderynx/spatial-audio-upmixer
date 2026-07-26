@@ -2,6 +2,7 @@ import js from "@eslint/js";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import tseslint from "typescript-eslint";
+import globals from "globals";
 
 export default tseslint.config(
   { ignores: ["dist", "node_modules", ".vite"] },
@@ -14,5 +15,12 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": "off",
     },
+  },
+  {
+    // Node-side tooling (e.g. the golden-diff harness in
+    // docs/contracts/preview_export_parity.md §5) — not part of the
+    // browser bundle, runs under plain Node via `npm run golden:render`.
+    files: ["scripts/**/*.mjs"],
+    languageOptions: { globals: globals.node },
   },
 );

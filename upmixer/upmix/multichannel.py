@@ -8,7 +8,7 @@ from upmixer.utils import (
     elevation_eq as _elevation_eq,
     haas_decorrelate,
     diffuse_send,
-    _ITU_C_COEFF,
+    ITU_CENTER_COEFF,
 )
 
 
@@ -60,7 +60,7 @@ class MultichannelUpmixer:
         BR = out.get("BR")
 
         if "C" not in out and FL is not None and FR is not None:
-            out["C"] = (_ITU_C_COEFF * 0.5) * (FL + FR)
+            out["C"] = (ITU_CENTER_COEFF * 0.5) * (FL + FR)
             C = out["C"]
 
         if "LFE" not in out:

@@ -3,7 +3,11 @@ import math
 import numpy as np
 from scipy.signal import butter, sosfilt
 
-_ITU_C_COEFF: float = 1.0 / math.sqrt(2)
+ITU_CENTER_COEFF: float = 1.0 / math.sqrt(2)
+
+# Public so upmixer/contract.py can import the exact default instead of
+# re-typing it — see docs/contracts/preview_export_parity.md.
+DIFFUSE_SEND_BLEND: float = 0.55
 
 
 def db_to_linear(db: float) -> float:
@@ -77,7 +81,7 @@ def diffuse_send(
     signal: np.ndarray,
     sr: int,
     delay_ms: float = 35.0,
-    blend: float = 0.55,
+    blend: float = DIFFUSE_SEND_BLEND,
 ) -> np.ndarray:
     """Early-reflection diffusion for surround/height sends.
 
@@ -128,7 +132,7 @@ def preview_slice(
 
 def itu_downmix_stereo(
     channels: dict[str, np.ndarray],
-    surround_coeff: float = _ITU_C_COEFF,
+    surround_coeff: float = ITU_CENTER_COEFF,
 ) -> tuple[np.ndarray, np.ndarray]:
     """ITU-R BS.775-4 Annex 4 Table 2 — multichannel to 2/0 stereo downmix.
 
@@ -154,11 +158,11 @@ def itu_downmix_stereo(
     def _ch(key: str) -> np.ndarray:
         return channels.get(key, np.zeros(n, dtype=np.float64))
 
-    SL = _ch("SL") + (_ITU_C_COEFF * _ch("BL") if "BL" in channels else 0.0)
-    SR = _ch("SR") + (_ITU_C_COEFF * _ch("BR") if "BR" in channels else 0.0)
+    SL = _ch("SL") + (ITU_CENTER_COEFF * _ch("BL") if "BL" in channels else 0.0)
+    SR = _ch("SR") + (ITU_CENTER_COEFF * _ch("BR") if "BR" in channels else 0.0)
 
-    L_out = _ch("FL") + _ITU_C_COEFF * _ch("C") + surround_coeff * SL
-    R_out = _ch("FR") + _ITU_C_COEFF * _ch("C") + surround_coeff * SR
+    L_out = _ch("FL") + ITU_CENTER_COEFF * _ch("C") + surround_coeff * SL
+    R_out = _ch("FR") + ITU_CENTER_COEFF * _ch("C") + surround_coeff * SR
 
     return L_out.astype(np.float64), R_out.astype(np.float64)
 
@@ -189,7 +193,7 @@ def itu_downmix_mono(
     def _ch(key: str) -> np.ndarray:
         return channels.get(key, np.zeros(n, dtype=np.float64))
 
-    SL = _ch("SL") + (_ITU_C_COEFF * _ch("BL") if "BL" in channels else 0.0)
-    SR = _ch("SR") + (_ITU_C_COEFF * _ch("BR") if "BR" in channels else 0.0)
+    SL = _ch("SL") + (ITU_CENTER_COEFF * _ch("BL") if "BL" in channels else 0.0)
+    SR = _ch("SR") + (ITU_CENTER_COEFF * _ch("BR") if "BR" in channels else 0.0)
 
-    return (_ITU_C_COEFF * (_ch("FL") + _ch("FR")) + _ch("C") + surround_coeff * (SL + SR)).astype(np.float64)
+    return (ITU_CENTER_COEFF * (_ch("FL") + _ch("FR")) + _ch("C") + surround_coeff * (SL + SR)).astype(np.float64)

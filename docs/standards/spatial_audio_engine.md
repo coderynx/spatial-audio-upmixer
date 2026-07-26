@@ -254,10 +254,16 @@ sample-identical: the core uses SciPy `sosfilt` IIR sections, the web uses
 Web Audio `BiquadFilterNode`s. These differ in numerical precision and
 exact phase response, the same accepted gap that already exists between
 `upmixer/mastering/*.py` and the web's `buildMasteringTopology` mirror.
-Parity is verified at the **parameter table** level (§5) plus a bounded
-audible-difference tolerance on a reference render (see the acceptance test
-in `tests/test_binaural.py` and its web-side counterpart), not through
-guaranteed identical output samples.
+Parity is verified at the **parameter table** level (§5) via a signed
+constants contract — see `docs/contracts/preview_export_parity.md`, whose
+signature is pinned by `tests/test_contract_parity.py` (core) and
+`web/src/lib/contract.test.ts` (web) — plus a bounded audible-difference
+tolerance on an actual cross-engine reference render, checked by
+`tests/test_preview_export_golden.py`. (Constant-level parity has long been
+pinned independently on each side by `tests/test_binaural.py` and
+`masteringProfiles.test.ts`; the contract above is what ties the two
+together and what the cross-engine render diff actually verifies, closing a
+gap this document previously described as already covered when it was not.)
 
 The **decode convolution** itself (§4) is a plain linear FIR bank applied to
 the same files on both sides, so it *is* expected to match closely (within

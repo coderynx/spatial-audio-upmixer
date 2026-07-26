@@ -53,6 +53,15 @@ _VOCAL_STEM_NAMES: frozenset[str] = frozenset({
     "Vocals", "Lead Vocals", "Backing Vocals",
 })
 
+# Per-side Haas delays (ms) for surround/back and height diffuse sends.
+# Different per side so L/R don't comb-filter. Public so
+# upmixer/contract.py can import the exact values instead of re-typing them
+# — see docs/contracts/preview_export_parity.md.
+SURROUND_HAAS_DELAY_MS_L: float = 31.0
+SURROUND_HAAS_DELAY_MS_R: float = 37.0
+HEIGHT_HAAS_DELAY_MS_L: float = 23.0
+HEIGHT_HAAS_DELAY_MS_R: float = 29.0
+
 ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
     "front": {
         "Vocals":         {"C": 0.72, "FL": 0.28, "FR": 0.28, "TFL": 0.08, "TFR": 0.08},
@@ -513,19 +522,19 @@ class StemRouter:
                 for label in self._fmt.channels
             )
             surround_L = (
-                diffuse_send(sosfilt(self._surround_sos, stem_L), self._sr, delay_ms=31.0)
+                diffuse_send(sosfilt(self._surround_sos, stem_L), self._sr, delay_ms=SURROUND_HAAS_DELAY_MS_L)
                 if needs_surround else stem_L
             )
             surround_R = (
-                diffuse_send(sosfilt(self._surround_sos, stem_R), self._sr, delay_ms=37.0)
+                diffuse_send(sosfilt(self._surround_sos, stem_R), self._sr, delay_ms=SURROUND_HAAS_DELAY_MS_R)
                 if needs_surround else stem_R
             )
             height_L = (
-                diffuse_send(self._height_send(stem_L), self._sr, delay_ms=23.0)
+                diffuse_send(self._height_send(stem_L), self._sr, delay_ms=HEIGHT_HAAS_DELAY_MS_L)
                 if needs_height else stem_L
             )
             height_R = (
-                diffuse_send(self._height_send(stem_R), self._sr, delay_ms=29.0)
+                diffuse_send(self._height_send(stem_R), self._sr, delay_ms=HEIGHT_HAAS_DELAY_MS_R)
                 if needs_height else stem_R
             )
 

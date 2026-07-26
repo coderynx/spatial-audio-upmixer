@@ -70,7 +70,9 @@ BASS_PROFILES: dict[str, dict] = {
 
 BASS_PROFILE_NAMES: tuple[str, ...] = tuple(sorted(BASS_PROFILES.keys()))
 
-_STEREO_PAIRS: list[tuple[str, str]] = [
+# Public (not module-private) so upmixer/contract.py can import the exact
+# values instead of re-typing them — see docs/contracts/preview_export_parity.md.
+STEREO_PAIRS: list[tuple[str, str]] = [
     ("FL", "FR"),
     ("SL", "SR"),
     ("BL", "BR"),
@@ -78,11 +80,11 @@ _STEREO_PAIRS: list[tuple[str, str]] = [
     ("TBL", "TBR"),
 ]
 
-_SUB_CUTOFF_HZ: float = 80.0
-_MID_CUTOFF_HZ: float = 200.0
+SUB_CUTOFF_HZ: float = 80.0
+MID_CUTOFF_HZ: float = 200.0
 
-_EXCITE_BLEND: float = 0.15
-_EXCITE_DRIVE: float = 3.0
+EXCITE_BLEND: float = 0.15
+EXCITE_DRIVE: float = 3.0
 
 
 class BassController:
@@ -122,10 +124,10 @@ class BassController:
 
         nyq = sample_rate / 2.0
 
-        self._sos_sub_lp = butter(2, _SUB_CUTOFF_HZ / nyq, btype="low", output="sos")
+        self._sos_sub_lp = butter(2, SUB_CUTOFF_HZ / nyq, btype="low", output="sos")
 
-        self._sos_mid_lp = butter(2, _MID_CUTOFF_HZ / nyq, btype="low", output="sos")
-        self._sos_mid_hp = butter(2, _SUB_CUTOFF_HZ / nyq, btype="high", output="sos")
+        self._sos_mid_lp = butter(2, MID_CUTOFF_HZ / nyq, btype="low", output="sos")
+        self._sos_mid_hp = butter(2, SUB_CUTOFF_HZ / nyq, btype="high", output="sos")
 
         if self._mono_hz is not None:
             mono_norm = float(np.clip(self._mono_hz / nyq, 1e-4, 0.999))
@@ -189,7 +191,7 @@ class BassController:
             )
 
         if self._sos_mono_lp is not None:
-            for l_key, r_key in _STEREO_PAIRS:
+            for l_key, r_key in STEREO_PAIRS:
                 if l_key not in out or r_key not in out:
                     continue
                 LR = np.stack([
@@ -212,7 +214,7 @@ class BassController:
             for name in excite_names:
                 signal = out[name].astype(np.float64)
                 sub = sosfilt(self._sos_sub_lp, signal)
-                harmonics = np.tanh(sub * _EXCITE_DRIVE) * _EXCITE_BLEND
+                harmonics = np.tanh(sub * EXCITE_DRIVE) * EXCITE_BLEND
                 out[name] = signal + harmonics
             _log.debug("  BassController: harmonic exciter enabled")
 

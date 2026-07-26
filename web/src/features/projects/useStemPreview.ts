@@ -12,40 +12,31 @@ import type { ProjectStem, StemScene } from "@/api";
 (globalThis as typeof globalThis & { numeric?: unknown }).numeric = numericLib;
 import { positionToAzimuthElevation, routingFromAzimuthElevation, speakerCoordinates } from "@/lib/spatial";
 import {
-  BASS_PROFILES,
   BINAURAL_LOUDNESS_MAX_GAIN_DB,
-  COMP_PROFILES,
   DECODE_FILTER_SET,
-  EQ_FIR_ASSETS,
-  EXCITE_BLEND,
+  ITU_CENTER_COEFF,
   LFE_GAIN,
   LFE_LOWPASS_HZ,
   LOUDNESS_MAX_GAIN_DB,
-  MID_CUTOFF_HZ,
   STEM_EQ_FIR_ASSETS,
-  SUB_CUTOFF_HZ,
+  SURROUND_DOWNMIX_COEFF,
   SURROUND_HAAS_MS,
   HEIGHT_HAAS_MS,
   VOICING_PARAMS,
   applyVoicingParams,
   buildDiffuseSend,
-  buildExciteCurve,
   buildFirEqNode,
   buildHeightSend,
   buildSoftLimitCurve,
   buildSurroundSend,
   buildVoicingChain,
   channelGroupGain,
-  connectSeries,
   estimateRouteScale,
-  fetchEqFirBuffer,
-  type BassProfileName,
-  type CompProfileName,
-  type EqProfileName,
   type SpatialProfile,
   type StemEqProfileName,
   type VoicingChain,
 } from "./masteringProfiles";
+import { buildMasteringGraph, loadCachedEqBuffer, type MasterPreview } from "./previewGraph";
 
 export type { SpatialProfile } from "./masteringProfiles";
 
@@ -94,21 +85,6 @@ async function fetchDecodeFilterChannels(ctx: AudioContext, name: string): Promi
   return channels;
 }
 
-// Dedupes concurrent/repeat fetches of the same EQ FIR asset (see
-// `firEqBufferCache`) — the master bus and every stem addressed with the
-// same profile share one decode.
-function loadCachedEqBuffer(
-  cache: Map<string, Promise<AudioBuffer>>,
-  ctx: AudioContext,
-  assetName: string,
-): Promise<AudioBuffer> {
-  let pending = cache.get(assetName);
-  if (!pending) {
-    pending = fetchEqFirBuffer(ctx, assetName);
-    cache.set(assetName, pending);
-  }
-  return pending;
-}
 
 // Preview monitoring mode: which final render stage the channel bed feeds.
 // "binaural" is the existing headphone-virtualized render; "stereo" is a
@@ -117,20 +93,18 @@ function loadCachedEqBuffer(
 export type OutputMode = "binaural" | "stereo" | "native";
 
 // ITU-R BS.775-4 Annex 4 Table 2 2/0 downmix coefficients, mirroring
-// upmixer/utils.py::itu_downmix_stereo at its default surround_coeff
-// (1/√2). Back channels fold into the matching side channel attenuated by
-// the centre coefficient, same as the backend. Height channels and LFE are
-// excluded per the standard — LFE gets its own discrete native send instead.
-const ITU_CENTER_COEFF = 0.7071;
-const ITU_SURROUND_COEFF = 0.7071;
+// upmixer/utils.py::itu_downmix_stereo. Back channels fold into the
+// matching side channel attenuated by the centre coefficient, same as the
+// backend. Height channels and LFE are excluded per the standard — LFE
+// gets its own discrete native send instead.
 const STEREO_DOWNMIX_GAINS: Partial<Record<string, { left: number; right: number }>> = {
   FL: { left: 1, right: 0 },
   FR: { left: 0, right: 1 },
   C: { left: ITU_CENTER_COEFF, right: ITU_CENTER_COEFF },
-  SL: { left: ITU_SURROUND_COEFF, right: 0 },
-  SR: { left: 0, right: ITU_SURROUND_COEFF },
-  BL: { left: ITU_SURROUND_COEFF * ITU_CENTER_COEFF, right: 0 },
-  BR: { left: 0, right: ITU_SURROUND_COEFF * ITU_CENTER_COEFF },
+  SL: { left: SURROUND_DOWNMIX_COEFF, right: 0 },
+  SR: { left: 0, right: SURROUND_DOWNMIX_COEFF },
+  BL: { left: SURROUND_DOWNMIX_COEFF * ITU_CENTER_COEFF, right: 0 },
+  BR: { left: 0, right: SURROUND_DOWNMIX_COEFF * ITU_CENTER_COEFF },
 };
 
 // Which of a stem's shaped signals (see `createStemSends`) feeds each
@@ -223,28 +197,6 @@ type MixPreview = {
   stem_enabled?: Record<string, boolean>;
   stem_solo?: string[];
   stem_source_anchor_strength?: number;
-};
-
-type MasterPreview = {
-  loudness?: { normalize?: boolean; target?: number; max_tp?: number };
-  eq?: { profile?: string | null; strength?: number };
-  compressor?: {
-    profile?: string | null;
-    threshold_db?: number | null;
-    ratio?: number | null;
-    attack_ms?: number | null;
-    release_ms?: number | null;
-    knee_db?: number | null;
-    makeup_db?: number | null;
-  };
-  bass?: {
-    profile?: string | null;
-    sub_gain_db?: number | null;
-    mid_gain_db?: number | null;
-    mono_cutoff_hz?: number | null;
-    excite?: boolean;
-    lfe_gain_db?: number | null;
-  };
 };
 
 // Sources share one AudioContext-clock start time so every stem begins on
@@ -886,143 +838,27 @@ export function useStemPreview(
   // without an AudioWorklet.
   const buildMasteringTopology = React.useCallback(() => {
     const ctx = context.current;
-    const sum = sidechainSum.current;
-    const sink = sidechainSink.current;
-    if (!ctx || !sum || !sink || speakerBuses.current.size === 0) return;
+    if (!ctx || speakerBuses.current.size === 0) return;
 
     speakerBuses.current.forEach((bus) => bus.masterIn.disconnect());
-    sum.disconnect();
     masteringNodes.current.forEach((node) => node.disconnect());
-    const created: AudioNode[] = [];
-    const newCompGains: GainNode[] = [];
 
-    const eqCfg = mastering?.eq;
-    const eqAssetName = eqCfg?.profile && eqCfg.profile in EQ_FIR_ASSETS
-      ? EQ_FIR_ASSETS[eqCfg.profile as EqProfileName]
-      : null;
-    const eqStrength = eqCfg?.strength ?? 1;
-
-    const compCfg = mastering?.compressor;
-    const compPreset = compCfg?.profile && compCfg.profile in COMP_PROFILES
-      ? COMP_PROFILES[compCfg.profile as CompProfileName]
-      : null;
-
-    const bassCfg = mastering?.bass;
-    const bassPreset = bassCfg?.profile && bassCfg.profile in BASS_PROFILES
-      ? BASS_PROFILES[bassCfg.profile as BassProfileName]
-      : undefined;
-    const bassActive = Boolean(bassPreset) || Boolean(
-      bassCfg && (
-        bassCfg.sub_gain_db != null || bassCfg.mid_gain_db != null
-        || bassCfg.mono_cutoff_hz != null || bassCfg.lfe_gain_db != null || bassCfg.excite
-      ),
-    );
-    const subGainDb = bassCfg?.sub_gain_db ?? bassPreset?.sub_gain_db ?? 0;
-    const midGainDb = bassCfg?.mid_gain_db ?? bassPreset?.mid_gain_db ?? 0;
-    const lfeGainDb = bassCfg?.lfe_gain_db ?? bassPreset?.lfe_gain_db ?? 0;
-    // Bass mono-maker (mono_cutoff_hz, sums L/R-style pairs below a cutoff)
-    // is not yet ported — everything else in this chain now runs on the
-    // discrete pre-spatial bed where it *would* be meaningful, unlike
-    // before, but adding it is unrelated to fixing the mastering-order bug.
-    const exciteActive = bassActive && Boolean(bassCfg?.excite || bassPreset?.excite);
-    resolvedBass.current = { active: bassActive, lfeGainDb: bassActive ? lfeGainDb : 0 };
-
-    for (const bus of speakerBuses.current.values()) {
-      let postEq: AudioNode = bus.masterIn;
-      if (eqAssetName) {
-        const firEq = buildFirEqNode(ctx, eqStrength);
-        created.push(...firEq.nodes);
-        bus.masterIn.connect(firEq.input);
-        postEq = firEq.output;
-        // Non-blocking: the convolver stays silent on its wet path until
-        // this resolves (see `buildFirEqNode`), so audio can play
-        // immediately while the FIR asset fetches/decodes.
-        void loadCachedEqBuffer(firEqBufferCache.current, ctx, eqAssetName)
-          .then((buffer) => { firEq.convolver.buffer = buffer; })
-          .catch(() => {});
-      }
-      postEq.connect(sum);
-
-      const compGain = ctx.createGain();
-      compGain.gain.value = 1;
-      created.push(compGain);
-      newCompGains.push(compGain);
-      postEq.connect(compGain);
-
-      const bassNodes: AudioNode[] = [];
-      if (bassActive && subGainDb !== 0) {
-        const shelf = ctx.createBiquadFilter();
-        shelf.type = "lowshelf";
-        shelf.frequency.value = SUB_CUTOFF_HZ;
-        shelf.gain.value = subGainDb;
-        bassNodes.push(shelf);
-      }
-      if (bassActive && midGainDb !== 0) {
-        const peak = ctx.createBiquadFilter();
-        peak.type = "peaking";
-        peak.frequency.value = Math.sqrt(SUB_CUTOFF_HZ * MID_CUTOFF_HZ);
-        peak.Q.value = 1;
-        peak.gain.value = midGainDb;
-        bassNodes.push(peak);
-      }
-      created.push(...bassNodes);
-      const chainEnd = connectSeries(compGain, bassNodes);
-      chainEnd.connect(bus.masterOut);
-
-      if (exciteActive) {
-        const lowpass = ctx.createBiquadFilter();
-        lowpass.type = "lowpass";
-        lowpass.frequency.value = SUB_CUTOFF_HZ;
-        const shaper = ctx.createWaveShaper();
-        shaper.curve = buildExciteCurve();
-        const blend = ctx.createGain();
-        blend.gain.value = EXCITE_BLEND;
-        compGain.connect(lowpass);
-        lowpass.connect(shaper);
-        shaper.connect(blend);
-        blend.connect(bus.masterOut);
-        created.push(lowpass, shaper, blend);
-      }
+    const channelPorts = new Map<string, { input: AudioNode; output: AudioNode }>();
+    for (const [channel, bus] of speakerBuses.current.entries()) {
+      channelPorts.set(channel, { input: bus.masterIn, output: bus.masterOut });
     }
 
-    if (compPreset || compCfg?.profile) {
-      const preset = compPreset ?? { threshold_db: -22, ratio: 1.5, attack_ms: 30, release_ms: 300, knee_db: 9, makeup_db: 0 };
-      const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = compCfg?.threshold_db ?? preset.threshold_db;
-      comp.ratio.value = compCfg?.ratio ?? preset.ratio;
-      comp.attack.value = (compCfg?.attack_ms ?? preset.attack_ms) / 1000;
-      comp.release.value = (compCfg?.release_ms ?? preset.release_ms) / 1000;
-      comp.knee.value = compCfg?.knee_db ?? preset.knee_db;
-      // `sum` is a raw fan-in of every bus's post-EQ signal (see the
-      // `postEq.connect(sum)` loop above), so for N correlated channels its
-      // level is ≈N× a single channel's — up to +20dB too hot into the
-      // detector for an 11-channel bed. upmixer/mastering/compressor.py
-      // detects on `sqrt(sum(ch²)/n_ch)` (an RMS *average* across channels,
-      // compressor.py:186,193), not a raw sum — this gain brings the
-      // sidechain back down to that same per-channel-average level before
-      // it reaches the detector.
-      const detectorScale = ctx.createGain();
-      detectorScale.gain.value = 1 / Math.sqrt(Math.max(speakerBuses.current.size, 1));
-      created.push(detectorScale);
-      sum.connect(detectorScale);
-      detectorScale.connect(comp);
-      comp.connect(sink);
-      created.push(comp);
-      sidechainCompressor.current = comp;
-      // makeup_db is a static addition, not part of the detected reduction —
-      // the per-tick poll multiplies it into every channel's comp-gain
-      // alongside the live reduction (see `tick()`), since setting
-      // `.gain.value` here would just be overwritten on the next poll.
-      compMakeupGain.current = 10 ** ((compCfg?.makeup_db ?? preset.makeup_db) / 20);
-      newCompGains.forEach((g) => { g.gain.value = compMakeupGain.current; });
-    } else {
-      sidechainCompressor.current = null;
-      compMakeupGain.current = 1;
-      newCompGains.forEach((g) => { g.gain.value = 1; });
-    }
+    const handle = buildMasteringGraph(ctx, channelPorts, mastering, firEqBufferCache.current, {
+      sidechain: sidechainSum.current && sidechainSink.current
+        ? { sum: sidechainSum.current, sink: sidechainSink.current }
+        : undefined,
+    });
 
-    masteringNodes.current = created;
-    compGains.current = newCompGains;
+    masteringNodes.current = handle.nodes;
+    compGains.current = handle.compGains;
+    sidechainCompressor.current = handle.compressor;
+    compMakeupGain.current = handle.compMakeupGain;
+    resolvedBass.current = { active: handle.bassActive, lfeGainDb: handle.bassLfeGainDb };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on masteringKey, not `mastering` (see masteringKey comment above)
   }, [masteringKey]);
 
