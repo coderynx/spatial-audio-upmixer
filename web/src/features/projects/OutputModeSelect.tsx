@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Grid3x3, Headphones, Waves } from "lucide-react";
+import { ChevronDown, Grid3x3, Headphones, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { OutputMode } from "./useStemPreview";
@@ -50,13 +50,14 @@ export function OutputModeSelect({
         type="button"
         variant="outline"
         size="sm"
-        aria-label="Preview output mode"
+        title={`Preview output: ${current.label}`}
+        aria-label={`Preview output mode: ${current.label}`}
         aria-expanded={open}
         onClick={() => setOpen((next) => !next)}
-        className="gap-1.5"
+        className="shrink-0 gap-1 px-2.5"
       >
-        <CurrentIcon className="h-4 w-4" />
-        {current.label}
+        <CurrentIcon className="h-4 w-4 shrink-0" />
+        <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
       </Button>
       {open && (
         <div className="absolute left-0 top-full z-10 mt-1 w-64 rounded-md border bg-popover p-1 shadow-md">

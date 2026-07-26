@@ -93,7 +93,7 @@ function TransportImpl({
   }, [playing, currentTimeRef]);
   const displayTime = playing ? liveTime : currentTime;
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/20 p-2.5">
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border p-2.5">
       <div className="flex items-center gap-1">
         <Button variant="outline" size="icon" aria-label="Stop" disabled={disabled} onClick={onStop}>
           <Square className="h-4 w-4" />
