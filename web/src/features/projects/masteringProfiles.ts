@@ -166,6 +166,53 @@ export function buildExciteCurve(drive: number = EXCITE_DRIVE, samples = 4096): 
   return curve;
 }
 
+// 4x-oversampled true-peak estimate: a short windowed-sinc upsample (not
+// upmixer/loudness.py's exact 48-tap polyphase kernel — a Tier-3
+// approximation bounded by docs/contracts/preview_export_parity.md §5's
+// 1.0 dBTP tolerance) followed by max |x|. Shared by the live preview's
+// post-mastering true-peak safety net (useStemPreview.ts's
+// measureOutputLoudness/apply) and the golden-diff harness's cross-engine
+// true-peak metric (render-preview-golden.mjs), so there is exactly one
+// implementation of this approximation, not two that could drift apart.
+const _TRUE_PEAK_UPSAMPLE_TAPS = 32;
+
+function _upsampleTruePeak4x(x: Float32Array | Float64Array): Float64Array {
+  const taps = _TRUE_PEAK_UPSAMPLE_TAPS;
+  const kernel = new Float64Array(taps);
+  const center = (taps - 1) / 2;
+  for (let i = 0; i < taps; i++) {
+    const t = i - center;
+    const sinc = t === 0 ? 1 : Math.sin((Math.PI * t) / 4) / ((Math.PI * t) / 4);
+    const window = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (taps - 1)); // Hann
+    kernel[i] = sinc * window;
+  }
+  const upsampled = new Float64Array(x.length * 4);
+  for (let i = 0; i < x.length; i++) upsampled[i * 4] = x[i];
+  const out = new Float64Array(upsampled.length);
+  const half = Math.floor(taps / 2);
+  for (let i = 0; i < upsampled.length; i++) {
+    let sum = 0;
+    for (let k = 0; k < taps; k++) {
+      const idx = i - half + k;
+      if (idx >= 0 && idx < upsampled.length) sum += upsampled[idx] * kernel[k];
+    }
+    out[i] = sum;
+  }
+  return out;
+}
+
+/** True-peak estimate (dBTP) for one channel's samples — see the
+ * `_upsampleTruePeak4x` comment above for provenance/tolerance. */
+export function measureBufferTruePeakDbtp(x: Float32Array | Float64Array): number {
+  const up = _upsampleTruePeak4x(x);
+  let maxPeak = 1e-12;
+  for (let i = 0; i < up.length; i++) {
+    const a = Math.abs(up[i]);
+    if (a > maxPeak) maxPeak = a;
+  }
+  return 20 * Math.log10(maxPeak);
+}
+
 /** Fetches and decodes an EQ FIR asset (see `EQ_FIR_ASSETS`/`STEM_EQ_FIR_ASSETS`)
  * from `/eq_fir/<assetName>.wav`. Callers should cache the returned promise
  * per `assetName` (see `useStemPreview.ts`'s buffer cache) — the same

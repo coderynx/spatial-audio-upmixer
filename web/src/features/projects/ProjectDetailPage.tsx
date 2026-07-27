@@ -74,30 +74,42 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // Polling stops once the project reaches a terminal status — the SSE
   // stream below covers live progress while preparing, and once ready there
   // is nothing server-side left to pick up on this page (saves/exports all
-  // come back through their own API responses). Re-subscribes on `status`
-  // so a retry (which flips status back to non-terminal) resumes polling.
+  // come back through their own API responses) — except a reference-match
+  // recompute, which runs asynchronously after a settings save (see
+  // upmixer_web/worker.py::WorkerManager.schedule_reference_match); keep
+  // polling while one is pending so `reference_match` refreshes once it
+  // lands. Re-subscribes on `status`/`reference_match_pending` so a retry or
+  // a pending recompute resumes polling.
   React.useEffect(() => {
     void load();
-    if (project && ["ready", "failed", "expansion_failed"].includes(project.status)) return;
+    if (
+      project
+      && ["ready", "failed", "expansion_failed"].includes(project.status)
+      && !project.reference_match_pending
+    ) return;
     const timer = window.setInterval(() => void load(), 2000);
     return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status only, same as the SSE effect below: a mid-poll `project` update (content changes, same status) shouldn't tear down and restart the interval
-  }, [load, project?.status]);
-  // While the project is preparing, layer a realtime SSE stream on top of the
-  // 2s poll above so the log/percentage update live instead of in 2s steps.
-  // The 2s poll keeps refreshing everything else (exports, other tracks) and
-  // acts as the fallback if EventSource is unavailable or the stream drops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status/reference_match_pending only, same as the SSE effect below: a mid-poll `project` update (content changes, same status) shouldn't tear down and restart the interval
+  }, [load, project?.status, project?.reference_match_pending]);
+  // While the project is preparing (or a reference-match recompute is
+  // pending), layer a realtime SSE stream on top of the 2s poll above so the
+  // log/percentage/asset update live instead of in 2s steps. The 2s poll
+  // keeps refreshing everything else (exports, other tracks) and acts as the
+  // fallback if EventSource is unavailable or the stream drops.
   React.useEffect(() => {
     if (!projectId || !project) return;
-    if (["ready", "failed", "expansion_failed"].includes(project.status)) return;
+    if (
+      ["ready", "failed", "expansion_failed"].includes(project.status)
+      && !project.reference_match_pending
+    ) return;
     const source = new EventSource(api.projectEventsUrl(projectId));
     source.onmessage = (event) => {
       try { setProject(JSON.parse(event.data)); } catch { /* ignore malformed frame */ }
     };
     source.onerror = () => source.close();
     return () => source.close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status only, so a mid-stream progress update (also named `project`) doesn't tear down and reopen the connection
-  }, [projectId, project?.status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status/reference_match_pending only, so a mid-stream progress update (also named `project`) doesn't tear down and reopen the connection
+  }, [projectId, project?.status, project?.reference_match_pending]);
   React.useEffect(() => () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); }, []);
   const queueSave = React.useCallback((next: Manifest) => {
     if (!projectId || !project) return;
@@ -197,7 +209,32 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // always starts back on binaural/studio.
   const [outputMode, setOutputMode] = React.useState<OutputMode>("binaural");
   const [spatialProfile, setSpatialProfile] = React.useState<SpatialProfile>("studio");
-  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, effectiveManifest?.mastering, channels, outputMode, spatialProfile);
+  // Live strength/spectrum/rms toggles come from the manifest (instant, no
+  // server round-trip needed — they're just a wet/dry blend and an RMS gate,
+  // same as the named-EQ `strength` slider); the FIR itself and the
+  // computed RMS gain value come from the project's server-precomputed
+  // asset (`project.reference_match`), which only changes when the
+  // reference, layout, or match params are saved (see
+  // upmixer_web/worker.py::WorkerManager.prepare_reference_match and
+  // docs/contracts/preview_export_parity.md Ledger D12).
+  const previewMastering = React.useMemo(() => {
+    if (!effectiveManifest?.mastering) return effectiveManifest?.mastering;
+    const asset = project?.reference_match;
+    if (!asset) return effectiveManifest.mastering;
+    const liveMatch = effectiveManifest.mastering.match_reference;
+    return {
+      ...effectiveManifest.mastering,
+      match_reference: {
+        fir_url: asset.fir_url,
+        channels: asset.channels,
+        rms_gain_db: asset.rms_gain_db,
+        strength: liveMatch?.strength ?? asset.strength,
+        spectrum: liveMatch?.spectrum ?? asset.spectrum,
+        rms: liveMatch?.rms ?? asset.rms,
+      },
+    };
+  }, [effectiveManifest?.mastering, project?.reference_match]);
+  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, previewMastering, channels, outputMode, spatialProfile);
   const ready = Boolean(project?.prepared_stems.length);
   const stemNames = project?.prepared_stems || [];
   // Reorder is a display-only preference (no backend field for it): kept in

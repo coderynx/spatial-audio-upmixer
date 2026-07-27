@@ -252,6 +252,72 @@ class TestRmsMatching:
         assert abs(ratio_before - ratio_after) < 1e-6
 
 
+# ── compute_channel_filters (web reference-match precompute) ─────────────────
+
+class TestComputeChannelFilters:
+    """compute_channel_filters must return exactly what process() builds and
+    applies internally — the web preview's server-side FIR precompute ships
+    these arrays as-is instead of re-deriving the algorithm in JS."""
+
+    def test_firs_match_what_process_applies(self):
+        proc = _make_proc(match_rms=True, match_spectrum=True, strength=1.0)
+        channels = _51_channels()
+        _inject_ref(proc, _stereo_ref())
+        fir_by_channel, rms_gain_db = proc.compute_channel_filters(channels)
+
+        from upmixer.mastering.eq import _apply_fir
+
+        rms_gain_lin = 10.0 ** (rms_gain_db / 20.0)
+        expected = {
+            name: _apply_fir(ch.astype(np.float64) * rms_gain_lin, fir_by_channel[name], proc._strength)
+            for name, ch in channels.items()
+        }
+        proc2 = _make_proc(match_rms=True, match_spectrum=True, strength=1.0)
+        _inject_ref(proc2, _stereo_ref())
+        actual = proc2.process(channels)
+        for name in channels:
+            np.testing.assert_array_almost_equal(actual[name], expected[name])
+
+    def test_rms_gain_matches_process_rms_stage(self):
+        proc = _make_proc(match_rms=True, match_spectrum=False)
+        channels = {"FL": _sine(440.0, amplitude=0.1), "FR": _sine(550.0, amplitude=0.1)}
+        ref = np.stack([_sine(440.0, amplitude=0.4), _sine(550.0, amplitude=0.4)], axis=1)
+        _inject_ref(proc, ref)
+        _, rms_gain_db = proc.compute_channel_filters(channels)
+        expected_gain_db = proc._compute_rms_gain_db(proc._ref_data, proc._proxy_table, channels, "LFE")
+        assert rms_gain_db == expected_gain_db
+
+    def test_empty_when_spectrum_disabled(self):
+        proc = _make_proc(match_spectrum=False, match_rms=True)
+        channels = _51_channels()
+        _inject_ref(proc, _stereo_ref())
+        fir_by_channel, _ = proc.compute_channel_filters(channels)
+        assert fir_by_channel == {}
+
+    def test_empty_when_strength_zero(self):
+        proc = _make_proc(strength=0.0, match_spectrum=True)
+        channels = _51_channels()
+        _inject_ref(proc, _stereo_ref())
+        fir_by_channel, _ = proc.compute_channel_filters(channels)
+        assert fir_by_channel == {}
+
+    def test_keys_match_input_channels(self):
+        proc = _make_proc(match_spectrum=True, strength=1.0)
+        channels = _51_channels()
+        _inject_ref(proc, _stereo_ref())
+        fir_by_channel, _ = proc.compute_channel_filters(channels)
+        assert set(fir_by_channel.keys()) == set(channels.keys())
+
+    def test_does_not_mutate_input_channels(self):
+        proc = _make_proc(match_rms=True, match_spectrum=True, strength=1.0)
+        channels = _51_channels()
+        before = {name: arr.copy() for name, arr in channels.items()}
+        _inject_ref(proc, _stereo_ref())
+        proc.compute_channel_filters(channels)
+        for name, arr in channels.items():
+            np.testing.assert_array_equal(arr, before[name])
+
+
 # ── channel proxy table ───────────────────────────────────────────────────────
 
 class TestChannelProxies:

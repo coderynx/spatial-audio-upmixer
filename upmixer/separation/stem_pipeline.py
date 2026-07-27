@@ -45,7 +45,7 @@ from scipy.signal import resample_poly
 
 from upmixer.binaural.renderer import render_binaural_delivery
 from upmixer.config import UpmixConfig
-from upmixer.formats import BINAURAL, BINAURAL_BED_FORMATS, ChannelLabel, FORMAT_MAP, INPUT_FORMAT_MAP, detect_input_format
+from upmixer.formats import BINAURAL, BINAURAL_BED_FORMATS, ChannelLabel, FORMAT_MAP, INPUT_FORMAT_MAP, OutputFormat, detect_input_format
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
 from upmixer.io.writer import AudioWriter
@@ -104,6 +104,15 @@ def _stem_cache_identity(plan: SeparationPlan, config: UpmixConfig) -> str:
         return base
     raw = f"{base}|batch={options[0]}|segment={options[1]}|chunk={options[2]}"
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
+
+
+class PreMasterAbort(Exception):
+    """Raise from a ``process_file`` ``pre_master_hook`` to stop the run right
+    after the hook observes the pre-mastering bed, before mastering/writing.
+
+    Safe to raise unconditionally from the hook: nothing has been written to
+    ``output_path`` yet at that point, so aborting leaves no partial output.
+    """
 
 
 class StemUpmixPipeline:
@@ -434,6 +443,7 @@ class StemUpmixPipeline:
         output_path: str,
         input_format_override: str | None = None,
         progress_callback: Callable[[str, float], None] | None = None,
+        pre_master_hook: Callable[[dict[str, np.ndarray], int, OutputFormat], None] | None = None,
     ) -> UpmixResult:
         """Separate stems and write spatially routed multichannel output file.
 
@@ -444,6 +454,14 @@ class StemUpmixPipeline:
                 auto-detecting from channel count.
             progress_callback: Optional callable ``(message, fraction)`` invoked
                 at key stages.  *fraction* is in [0, 1].
+            pre_master_hook: Optional callable ``(channels, sample_rate,
+                output_format)`` invoked with the fully routed, pre-mastering
+                channel bed, right before :class:`~upmixer.mastering.chain.MasteringChain`
+                runs. Lets a caller inspect or analyze the exact bed the export
+                would master (e.g. to precompute a reference-match FIR) without
+                duplicating separation/routing. Raise :class:`PreMasterAbort`
+                from the hook to stop the run here, before mastering/writing —
+                safe because no output has been written yet.
 
         Returns:
             :class:`~upmixer.result.UpmixResult` with processing metadata.
@@ -777,6 +795,9 @@ class StemUpmixPipeline:
 
         del all_stems, audio_full, source_zones, sep_zones, passthrough
         del passthrough_resampled
+
+        if pre_master_hook is not None:
+            pre_master_hook(channels, sep_sr, output_fmt)
 
         _progress("  Mastering...", 0.90)
         mastering = MasteringChain(cfg)

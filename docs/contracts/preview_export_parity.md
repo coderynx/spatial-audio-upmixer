@@ -22,10 +22,12 @@ and is cross-referenced, not repeated, below.
 | Virtual-loudspeaker geometry | `upmixer/binaural/geometry.py` | `web/src/lib/spatial.ts::speakerCoordinates` — see `spatial_audio_engine.md` §2 |
 | HOA decode → binaural | `upmixer/binaural/decoder.py` | Per-ACN `ConvolverNode` bank in `buildBinauralGraph` (`previewGraph.ts`), called from `initialize()` in `useStemPreview.ts` — see `spatial_audio_engine.md` §4 and **Ledger D10** |
 | Binaural voicing chain | `upmixer/binaural/voicing.py::apply_voicing` | `buildVoicingChain`/`applyVoicingParams` in `masteringProfiles.ts`, wired inside `buildBinauralGraph` (`previewGraph.ts`) — see `spatial_audio_engine.md` §5 |
+| Reference match (spectral + RMS) | `upmixer/mastering/match_reference.py::ReferenceMatchProcessor` | Server-precomputed per-channel FIR bank + RMS gain (`ReferenceMatchProcessor.compute_channel_filters`, `upmixer_web/worker.py::WorkerManager.prepare_reference_match`), served as a project asset and convolved via `buildFirEqNode` inside `buildMasteringGraph` (`previewGraph.ts`), before the named-EQ stage — see **Ledger D12** |
 | Spectral (mastering) EQ | `upmixer/mastering/eq.py::SpectralShaper` | `EQ_FIR_ASSETS` + `buildFirEqNode` in `masteringProfiles.ts` (same asset scheme as stem EQ, applied post-routing) |
 | Bus compression | `upmixer/mastering/compressor.py::BusCompressor` | Linked `DynamicsCompressorNode` detector + polled `.reduction` in `buildMasteringTopology` (`useStemPreview.ts`) |
 | Bass control | `upmixer/mastering/bass.py::BassController` | Bass shelves/exciter/mono-maker in `buildMasteringTopology` (**Ledger D5**) |
 | BS.1770 loudness normalization | `upmixer/loudness.py::normalize_loudness` (bed) / `render_binaural_delivery`'s own pass (collapse) | `measureOutputLoudness`/`loudnessGainFor` (`useStemPreview.ts`) — approximate, see **Tier 3**; the collapse-stage pass is now golden-diff-covered, see **Ledger D10** |
+| True-peak ceiling | `normalize_loudness`'s `max_tp_dbtp` gain reduction (`upmixer/loudness.py`) | Second gain reduction in `apply()` (`useStemPreview.ts`), driven by `measureBufferTruePeakDbtp` (`masteringProfiles.ts`) on the same `mergePointAnalyser` window `measureOutputLoudness` reads — approximate, see **Tier 3** and **Ledger D12** |
 | Soft limiting (last) | `upmixer/utils.py::soft_limit` | `buildSoftLimitCurve` (`masteringProfiles.ts`), applied last in `buildMasteringTopology` |
 | ITU-R BS.775 stereo downmix | `upmixer/utils.py::itu_downmix_stereo` | `STEREO_DOWNMIX_GAINS` + `applyOutputMode` (`useStemPreview.ts`) |
 
@@ -38,7 +40,8 @@ preview side is the parity-critical surface.
 compression → bass control → BS.1770 loudness → soft-limit *last*. Soft
 limiting after loudness (not before) is deliberate — see
 `upmixer/mastering/chain.py`'s module docstring — and the preview graph
-must build its nodes in the same order.
+must build its nodes in the same order. Reference match is now implemented
+in the preview (not ordering-only) — see **Ledger D12**.
 
 ---
 
@@ -63,6 +66,17 @@ minimum-phase FIR `upmixer/mastering/eq.py::_build_fir` computed
 (`scripts/build_eq_filters.py` calls that function directly and ships the
 WAV under `web/public/eq_fir/`), so the convolution itself is Tier 1, not
 an approximation of the curve.
+
+The reference-match FIR asset is the same special case, computed per-project
+instead of built once at build time: `upmixer_web/worker.py::WorkerManager
+.prepare_reference_match` calls `ReferenceMatchProcessor.compute_channel_
+filters` — the exact function `process()` uses internally — against a
+server-rendered bed, and ships those real FIRs plus the real RMS gain to the
+browser (`GET /api/v1/projects/{id}/reference-match/fir`). The convolution
+and RMS gain are Tier 1 by asset identity; what *is* an approximation (Tier
+3, see **Ledger D12**) is the bed the FIR was computed against — a canonical
+server render of the project's default manifest, not the browser's live-
+edited mix.
 
 ---
 
@@ -140,13 +154,41 @@ DSP-realization gap already accepted for the rest of this chain (§2 Tier 2).
 | LKFS offset | −0.691 | 3 |
 | Gating block / hop | 400 ms / 100 ms | 3 |
 | Absolute / relative gate | −70 LKFS / −10 LU | 3 |
-| True-peak oversample | 4× (≤48 kHz), 2× (96 kHz) | 3 (not ported to preview) |
+| True-peak oversample | 4× (≤48 kHz), 2× (96 kHz) | 3 — preview uses a 32-tap windowed-sinc 4× oversample (`measureBufferTruePeakDbtp`, `masteringProfiles.ts`), not the standard's exact kernel |
 
 The preview's `measureOutputLoudness` (`useStemPreview.ts`) has no
 K-weighting or gating, and measures a single ~1s window near playback start
 rather than the whole track — see **Tier 3 tolerance** in §5. This is the
 largest bounded gap in the contract; tightening it (full BS.1770 in-browser,
-whole-file measurement) would move these rows to Tier 1/2.
+whole-file measurement) would move these rows to Tier 1/2. `apply()`'s
+true-peak safety net (see §1's "True-peak ceiling" row and **Ledger D12**)
+reads the same window, so it inherits this same bounded-window caveat — it
+protects against the level the mastered signal reaches in that window, not
+a whole-file peak.
+
+### Reference match — `upmixer/mastering/match_reference.py`
+
+| Constant | Value | Tier |
+|---|---|---|
+| FIR taps | 1023 | *(server-only — the FIR is shipped as a computed asset, see §2, not re-derived in TS)* |
+| Welch FFT length | 8192 | *(server-only)* |
+| Spectral breakpoints | 40, log-spaced 20 Hz–Nyquist | *(server-only)* |
+| Spectral smoothing | 0.25 octave (Gaussian) | *(server-only)* |
+| Normalization band | 80–8000 Hz | *(server-only)* |
+| Sub-bass correction clamp | ±2.0 dB below 120 Hz | *(server-only)* |
+| RMS gain clamp | ±6.0 dB | *(server-only)* |
+| Default strength / max correction | 0.7 / 12.0 dB | *(server-only — live-editable via the manifest, see below)* |
+
+These constants live only in `upmixer/mastering/match_reference.py` — the
+web never re-derives the algorithm, only convolves with the FIR bytes the
+server already computed (§2), so none of them enter `contract_signature()`
+(§4), the same rationale as the loudness K-weighting rows above. `strength`,
+`spectrum`, and `rms` *are* read live from the manifest by the preview
+(`ProjectDetailPage.tsx`'s `previewMastering`) — they gate/blend the
+server-computed FIR and RMS gain without needing a recompute, since neither
+the FIR shape nor the RMS gain value depends on them (`process()` builds the
+FIR independent of `strength`, then blends wet/dry at apply time — the
+preview does the same).
 
 ### Binaural — see `spatial_audio_engine.md` for the full geometry/SH/decode-filter/voicing table. Cross-cutting constant repeated here because it also gates delivery gain-staging:
 
@@ -288,6 +330,18 @@ Building this harness surfaced two real bugs, both fixed (Ledger **D8**,
 binaural stage (Ledger **D11**) — the harness keeps doing exactly what it
 was built for.
 
+**Not yet exercised by the golden diff:** the live preview's true-peak
+safety net (§1's "True-peak ceiling" row, **Ledger D12**) is not wired into
+`render-preview-golden.mjs`'s binaural-collapse stage — that stage still
+only applies `loudnessGainFor`'s gain before soft-limit, matching the
+harness's pre-D12 behavior. `tests/test_pre_master_hook.py` and
+`tests/test_match_reference.py`'s `TestComputeChannelFilters` cover the
+server-side reference-match plumbing and algorithm respectively;
+`test_worker_prepare_reference_match_computes_and_serves_fir`
+(`tests/test_web.py`) covers the asset precompute/signature/serve path
+end-to-end. None of these are cross-engine signal-level diffs the way §5's
+table above is — extending the harness to cover both is future work.
+
 ---
 
 ## 6. Discrepancy ledger
@@ -305,6 +359,9 @@ was built for.
 | D9 | The bass mono-maker's paired lowpass filters used a single `BiquadFilterNode` (default `Q`, single-pass) to stand in for the backend's `butter(2, ...)` applied via `sosfiltfilt` (zero-phase — forward+backward, i.e. a squared/steeper magnitude response) — found via the golden-diff harness: on decorrelated per-channel test content, the extra energy the single-pass filter leaked near the cutoff was enough to flip the mono-maker's net level effect from a slight cut (backend) to a slight boost (preview). The bass sub/mid stage separately used native `BiquadFilterNode` "lowshelf"/"peaking" types instead of the backend's additive-lowpass-band identity (`(ch - band) + band*gain_lin`), a different frequency-response shape than what `elevation_eq`/height-send filters elsewhere in this same file already correctly use. | Fixed — added `BUTTERWORTH_Q = 1/√2` (`masteringProfiles.ts`), applied to the mono-maker's now-cascaded (two-stage, approximating the zero-phase magnitude response) lowpass pair and to the surround/height send highpass filters; rewrote the bass sub/mid stage as `buildAdditiveBandGain` (`previewGraph.ts`), matching `_apply_band_gain`'s topology exactly instead of using native shelf/peak filter types. Cross-engine per-channel RMS delta on the golden bed dropped from over 5 dB to within the 3 dB threshold. |
 | D10 | The golden diff (§5) covered only the EQ/compressor/bass mastering-chain stage. BS.1770 loudness normalization, the final soft-limit, and the binaural/ambisonic collapse were not exercised by any cross-engine render comparison — confirmed as a real, non-trivial gap by a manual export/preview A/B on a real track (not automated, see D4), which found deltas well outside this contract's tolerances. | Fixed for the binaural-collapse loudness/soft-limit stage — `buildBinauralGraph` (`previewGraph.ts`, extracted from `useStemPreview.ts`'s `initialize()`) + the binaural stage `render-preview-golden.mjs` adds (ambisonic encode → HOA decode → voicing → one-shot loudness gain → real oversampled soft-limit) + `test_python_binaural_metrics_golden`/`test_cross_engine_binaural_golden_diff` (mirroring `render_binaural_delivery`) now cover this at the Studio profile, passing on real measured LKFS/true-peak/per-ear-RMS numbers. Still open: (1) the bed-level loudness/soft-limit stage (before binaural collapse) remains untested, since the preview doesn't implement it at the bed level at all; (2) the 1/3-octave spectral-difference check has no test yet — see the Implementation status note above; (3) only the Studio profile is exercised, so Listening's non-identity voicing chain (and Ledger D11) isn't. |
 | D11 | The live preview adds LFE to the binaural mix *after* the voicing chain (at `mergePoint`, alongside the gated binaural/stereo signal), but the backend's `render_binaural` adds LFE to left/right *before* `apply_voicing` runs. At the Studio/Flat profiles this is numerically inert (voicing is all-zero/identity there), which is why building the D10 harness at Studio profile didn't surface it — but at the Listening profile (the only one with a non-identity voicing chain: crossfeed, shelves, presence, widen), LFE would be crossfed/shelved/widened in the backend and would not be in the preview, a real signal difference for any content with LFE energy. Separately, the web's `mergePoint` LFE addition also applies uniformly to the *stereo* (BS.775 downmix) output mode, whereas BS.775 excludes LFE from the downmix entirely — a second, related gap for that mode. | Open — found while extracting `buildBinauralGraph` for D10; not fixed here to keep that extraction's diff minimal and low-risk (it's a live-hook refactor, not just new test code). Fixing means either moving the live hook's LFE add to before `buildBinauralGraph`'s voicing stage for binaural mode, or excluding it entirely for stereo mode — no golden-diff coverage exists for the Listening profile or stereo-downmix LFE handling yet to verify a fix against. |
+| D12 | Every existing project ran `mastering.eq.profile: null` with `mastering.match_reference` active (server-side export applies `ReferenceMatchProcessor`), but the web preview never implemented reference-matching EQ at all — only named EQ profiles reached `buildMasteringGraph`, and `MasterPreview` had no `match_reference` field. Separately, the preview also never implemented true-peak limiting — `normalize_loudness`'s `max_tp_dbtp` gain reduction had no preview-side mirror. | Fixed. Reference match: `ReferenceMatchProcessor.compute_channel_filters` (new method, `upmixer/mastering/match_reference.py`) exposes the real per-channel FIRs + RMS gain `process()` builds internally; `StemUpmixPipeline.process_file` gained an optional `pre_master_hook` (+ `PreMasterAbort`) so `upmixer_web/worker.py::WorkerManager.prepare_reference_match` can capture the pre-mastering bed from a real (cache-hit, no-inference) pipeline run without paying for mastering/write. The result is persisted per-project (`ProjectStemStorage.write_reference_match`, signature-gated on reference id/layout/match-params — deliberately *not* on live mixing edits, since the bed is a canonical server render, not the browser's live-edited mix) and served via `GET /api/v1/projects/{id}/reference-match/fir`. The preview loads it into per-channel `ConvolverNode`s in `buildMasteringGraph` (`previewGraph.ts`), before the named-EQ stage, plus a global RMS gain node (including LFE, wired separately in `useStemPreview.ts` since LFE bypasses `buildMasteringGraph`) — see §1's new pipeline-map row and §3's "Reference match" section. True peak: `measureBufferTruePeakDbtp` (`masteringProfiles.ts`, extracted from and now shared with `render-preview-golden.mjs`'s own true-peak measurement, deleting that duplicate) measures the same `mergePointAnalyser` window `measureOutputLoudness` already reads; `apply()` (`useStemPreview.ts`) applies a second gain reduction — mirroring `normalize_loudness`'s two-stage correction — gated on the same `normalize` flag as the loudness correction, matching the backend folding both into one `if cfg.loudness_normalize:` block. Both fixes are bounded Tier-3 approximations (server-canonical-bed FIR; bounded-window true-peak) — see §2/§3 for exactly which parts are Tier 1 (the FIR bytes and RMS gain themselves) vs. Tier 3 (what bed/window they were computed against). |
+
+| D13 | `WorkerManager.prepare_reference_match`'s recompute signature (introduced in D12) hashed `strength` and `rms` alongside `spectrum`/`max_db`/reference/layout — but `strength` (wet/dry blend) and `rms` (gate) are live preview-only knobs applied in the browser (`ProjectDetailPage.tsx`'s `previewMastering`) that never change the FIR bytes or `rms_gain_db` `compute_channel_filters` produces. Since `MasteringSection.tsx`'s "Spectral match strength" is a slider, every drag flipped the signature. Compounding this, `save_project_settings` called `prepare_reference_match` — a full-song mix pass — *inline* on the API request thread. With settings saves debounced at only 350ms in the browser, dragging the slider launched one full mix pass per tick, pegging the backend at 130-150% CPU sustained (reported as a real-world stutter, confirmed via Activity Monitor). | Fixed. Signature (`_reference_match_signature`, `upmixer_web/worker.py`) no longer hashes `strength`/`rms` — only `reference_id`/`reference_sha256`/`channel_layout`/`spectrum`/`max_db`, the inputs that actually change the asset. Separately, `WorkerManager` gained a dedicated single-thread `_refmatch_executor` and `schedule_reference_match`/`_run_reference_match`, which coalesce rapid repeat calls for the same project into one trailing recompute instead of one run per call, and `reference_match_pending` reports the queued-or-running state. `save_project_settings` (`api.py`) and the post-prepare hook in `_run_project` now call `schedule_reference_match` instead of running `prepare_reference_match` inline — the request returns immediately. `ProjectView.reference_match_pending` (`schemas.py`) surfaces this to the frontend, which keeps its 2s poll and SSE stream open (`ProjectDetailPage.tsx`) while a recompute is pending so `project.reference_match` refreshes once the background pass lands. |
 
 Add new rows here when a discrepancy is found; do not delete resolved rows,
 mark them fixed so the history of what was found and corrected stays

@@ -347,6 +347,54 @@ class ReferenceMatchProcessor:
         return float(np.clip(gain_db, -_RMS_CLAMP_DB, _RMS_CLAMP_DB))
 
 
+    def compute_channel_filters(
+        self,
+        channels: dict[str, np.ndarray],
+        lfe_key: str = "LFE",
+    ) -> tuple[dict[str, np.ndarray], float]:
+        """Compute the per-channel correction FIRs and RMS gain ``process()``
+        would apply, without applying them.
+
+        Lets a caller (e.g. the web preview's server-side precompute) ship the
+        exact minimum-phase FIRs and RMS gain this processor would use, rather
+        than re-deriving the algorithm elsewhere. The spectral breakpoints are
+        computed against the RMS-scaled target — same order ``process()``
+        uses — so the returned FIRs are bit-for-bit what ``process()`` builds
+        internally.
+
+        Args:
+            channels: Dict channel_name → 1-D float64 array.
+            lfe_key:  LFE channel name (default ``"LFE"``); LFE is not
+                      bypassed, matching ``process()``.
+
+        Returns:
+            ``(fir_by_channel, rms_gain_db)``. ``fir_by_channel`` is empty when
+            spectral matching is disabled or ``strength`` is 0.
+        """
+        self._load_if_needed()
+        ref_data = self._ref_data
+        proxy_table = self._proxy_table
+
+        rms_gain_db = 0.0
+        if self._match_rms:
+            rms_gain_db = self._compute_rms_gain_db(
+                ref_data, proxy_table, channels, lfe_key
+            )
+        rms_gain_lin = 10.0 ** (rms_gain_db / 20.0) if self._match_rms else 1.0
+
+        fir_by_channel: dict[str, np.ndarray] = {}
+        if self._match_spectrum and self._strength > 0.0:
+            for name, ch in channels.items():
+                scaled = ch.astype(np.float64) * rms_gain_lin
+                proxy = proxy_table.get(name, "mid")
+                ref_ch = self._reference_proxy(proxy)
+                bps = self._compute_spectral_breakpoints(ref_ch, scaled)
+                fir_by_channel[name] = _build_fir_from_breakpoints(
+                    bps, self._sr, self._n_taps
+                )
+
+        return fir_by_channel, rms_gain_db
+
     def process(
         self,
         channels: dict[str, np.ndarray],
@@ -366,17 +414,12 @@ class ReferenceMatchProcessor:
         if not self._match_spectrum and not self._match_rms:
             return channels
 
-        self._load_if_needed()
-        ref_data = self._ref_data
-        proxy_table = self._proxy_table
+        fir_by_channel, rms_gain_db = self.compute_channel_filters(channels, lfe_key)
+        rms_gain_lin = 10.0 ** (rms_gain_db / 20.0)
 
         out: dict[str, np.ndarray] = {}
 
         if self._match_rms:
-            rms_gain_db = self._compute_rms_gain_db(
-                ref_data, proxy_table, channels, lfe_key
-            )
-            rms_gain_lin = 10.0 ** (rms_gain_db / 20.0)
             _log.info("  Match reference: RMS gain %+.1f dB", rms_gain_db)
             for name, ch in channels.items():
                 out[name] = ch.astype(np.float64) * rms_gain_lin
@@ -391,12 +434,10 @@ class ReferenceMatchProcessor:
             )
             for name in list(out.keys()):
                 ch = out[name].astype(np.float64)
-                proxy = proxy_table.get(name, "mid")
-                ref_ch = self._reference_proxy(proxy)
-
-                bps = self._compute_spectral_breakpoints(ref_ch, ch)
-                ir = _build_fir_from_breakpoints(bps, self._sr, self._n_taps)
+                ir = fir_by_channel.get(name)
+                if ir is None:
+                    continue
                 out[name] = _apply_fir(ch, ir, self._strength)
-                _log.debug("  Match reference: %s (proxy=%s) corrected", name, proxy)
+                _log.debug("  Match reference: %s corrected", name)
 
         return out

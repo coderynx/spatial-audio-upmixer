@@ -22,6 +22,7 @@ import {
   buildSurroundSend,
   channelGroupGain,
   estimateRouteScale,
+  measureBufferTruePeakDbtp,
   type SpatialProfile,
   type StemEqProfileName,
   type VoicingChain,
@@ -32,6 +33,7 @@ import {
   buildMasteringGraph,
   createPositionalEncoder,
   loadCachedEqBuffer,
+  loadCachedRefMatchBuffers,
   loadDecodeFilterChannels,
   type MasterPreview,
 } from "./previewGraph";
@@ -253,6 +255,20 @@ function loudnessGainFor(measuredLkfs: number, targetLkfs: number, maxGainDb: nu
   return 10 ** (gainDb / 20);
 }
 
+/** Second-stage gain reduction mirroring `normalize_loudness`'s
+ * `max_tp_dbtp` correction (`upmixer/loudness.py`): given the gain
+ * `loudnessGainFor` above already computed, reduce it further if applying
+ * it would push the measured pre-gain true peak (`preGainTpDbtp`) over
+ * `maxTpDbtp`. Returns the final gain to apply (folds `loudnessGain` in,
+ * not just the extra reduction) — a no-op (`loudnessGain` unchanged) when
+ * already under the ceiling. Exported (pure, no AudioContext) so this
+ * exact formula is unit-testable without a live graph. */
+export function applyTruePeakCeiling(preGainTpDbtp: number, loudnessGain: number, maxTpDbtp: number): number {
+  const postGainTpDbtp = preGainTpDbtp + 20 * Math.log10(loudnessGain);
+  if (postGainTpDbtp <= maxTpDbtp) return loudnessGain;
+  return loudnessGain * 10 ** ((maxTpDbtp - postGainTpDbtp) / 20);
+}
+
 export function useStemPreview(
   stems: ProjectStem[],
   scene: { stems?: StemScene },
@@ -347,6 +363,15 @@ export function useStemPreview(
   // `sidechainCompressor.current.reduction` poll in `tick()`.
   const compMakeupGain = React.useRef(1);
   const lfeBus = React.useRef<GainNode | null>(null);
+  // Stable LFE mastering insert points, same role as `SpeakerBus.masterIn`/
+  // `masterOut` for the positional bed — permanently wired `lfeBus ->
+  // lfeMasterIn` and `lfeMasterOut -> lfeMuteGain` in `initialize()`;
+  // `buildMasteringTopology` rewires only the bridge between them on every
+  // mastering-config change (LFE reference-match — see that function's LFE
+  // block). upmixer/mastering/match_reference.py does NOT bypass LFE (unlike
+  // named-profile EQ), so this is the one mastering stage LFE needs.
+  const lfeMasterIn = React.useRef<GainNode | null>(null);
+  const lfeMasterOut = React.useRef<GainNode | null>(null);
   // Gates the LFE bus independently of any stem — same per-speaker mute idea
   // as `SpeakerBus.muteGain`, but LFE has no ambisonic encoder (it bypasses
   // the binaural render entirely), so it needs its own gate on the way into
@@ -387,12 +412,21 @@ export function useStemPreview(
   // to the single AudioContext this hook creates once per mount (see
   // `initialize`) — never needs invalidating within that lifetime.
   const firEqBufferCache = React.useRef<Map<string, Promise<AudioBuffer>>>(new Map());
+  // Same per-context cache lifetime as `firEqBufferCache`, keyed by
+  // `fir_url` instead of a profile name (see `loadCachedRefMatchBuffers`) —
+  // a server recompute changes the URL, which naturally busts this cache.
+  const refMatchBufferCache = React.useRef<Map<string, Promise<Map<string, AudioBuffer>>>>(new Map());
   const resolvedBass = React.useRef<{ active: boolean; lfeGainDb: number }>({ active: false, lfeGainDb: 0 });
   // Lets `measureOutputLoudness` (defined before `apply`, called from `tick`)
   // invoke the always-current `apply` without needing it in a dependency
   // array at a point in the file where `apply` isn't declared yet.
   const applyRef = React.useRef<() => void>(() => {});
   const measuredLkfs = React.useRef(-70);
+  // Same one-shot measurement window as `measuredLkfs`, but true peak
+  // (dBTP) instead of loudness — feeds `apply()`'s true-peak safety net, the
+  // preview-side mirror of `normalize_loudness`'s `max_tp_dbtp` gain
+  // reduction (see that function's comment in `apply()`).
+  const preGainTpDbtp = React.useRef(-70);
   // Pure meter tap on `mergePointNode` — the actual post-mastering,
   // post-binaural-collapse (or post-stereo-downmix) signal, immediately
   // before `master`'s loudness/volume gain is applied. `measureOutputLoudness`
@@ -615,6 +649,7 @@ export function useStemPreview(
     // measureApproxLkfs used — good enough to steer this correction gain
     // toward the mastering target, not to reproduce the exact delivered LKFS.
     measuredLkfs.current = meanSquare > 0 ? -0.691 + 10 * Math.log10(meanSquare) : -70;
+    preGainTpDbtp.current = measureBufferTruePeakDbtp(buf);
     state.done = true;
     applyRef.current();
   }, []);
@@ -682,6 +717,7 @@ export function useStemPreview(
     compGains.current = [];
     resolvedBass.current = { active: false, lfeGainDb: 0 };
     measuredLkfs.current = -70;
+    preGainTpDbtp.current = -70;
     loudnessMeasureState.current = { framesElapsed: 0, done: false };
     speakerBuses.current.forEach((bus) => {
       bus.muteGain.disconnect();
@@ -738,6 +774,10 @@ export function useStemPreview(
     sidechainCompressor.current = null;
     lfeBus.current?.disconnect();
     lfeBus.current = null;
+    lfeMasterIn.current?.disconnect();
+    lfeMasterIn.current = null;
+    lfeMasterOut.current?.disconnect();
+    lfeMasterOut.current = null;
     lfeMuteGain.current?.disconnect();
     lfeMuteGain.current = null;
     mergePoint.current?.disconnect();
@@ -799,6 +839,7 @@ export function useStemPreview(
     if (!ctx || speakerBuses.current.size === 0) return;
 
     speakerBuses.current.forEach((bus) => bus.masterIn.disconnect());
+    lfeMasterIn.current?.disconnect();
     masteringNodes.current.forEach((node) => node.disconnect());
 
     const channelPorts = new Map<string, { input: AudioNode; output: AudioNode }>();
@@ -810,6 +851,7 @@ export function useStemPreview(
       sidechain: sidechainSum.current && sidechainSink.current
         ? { sum: sidechainSum.current, sink: sidechainSink.current }
         : undefined,
+      refMatchBufferCache: refMatchBufferCache.current,
     });
 
     masteringNodes.current = handle.nodes;
@@ -817,6 +859,41 @@ export function useStemPreview(
     sidechainCompressor.current = handle.compressor;
     compMakeupGain.current = handle.compMakeupGain;
     resolvedBass.current = { active: handle.bassActive, lfeGainDb: handle.bassLfeGainDb };
+
+    // LFE reference-match: unlike named-profile EQ (which bypasses LFE, see
+    // eq.py's lfe_key bypass), upmixer/mastering/match_reference.py does NOT
+    // bypass LFE — it resolves a reference proxy for it too (this module's
+    // doc comment, "LFE handling"). `buildMasteringGraph` only wires the
+    // positional channel bed, so LFE's own RMS gain + spectral FIR bridge
+    // `lfeMasterIn` -> ... -> `lfeMasterOut` here, gated the same way —
+    // those two are the stable insert points `initialize()` permanently
+    // wired `lfeBus -> lfeMasterIn` and `lfeMasterOut -> lfeMuteGain` around.
+    const refCfg = mastering?.match_reference;
+    if (lfeMasterIn.current && lfeMasterOut.current) {
+      let lfeChainEnd: AudioNode = lfeMasterIn.current;
+      if (refCfg?.rms && refCfg.rms_gain_db) {
+        const lfeRmsGain = ctx.createGain();
+        lfeRmsGain.gain.value = 10 ** (refCfg.rms_gain_db / 20);
+        masteringNodes.current.push(lfeRmsGain);
+        lfeChainEnd.connect(lfeRmsGain);
+        lfeChainEnd = lfeRmsGain;
+      }
+      if (refCfg?.spectrum && refCfg.fir_url && (refCfg.strength ?? 0) > 0 && refCfg.channels?.includes("LFE")) {
+        const firLfeRef = buildFirEqNode(ctx, refCfg.strength ?? 1);
+        masteringNodes.current.push(...firLfeRef.nodes);
+        lfeChainEnd.connect(firLfeRef.input);
+        lfeChainEnd = firLfeRef.output;
+        void loadCachedRefMatchBuffers(
+          refMatchBufferCache.current, ctx, refCfg.fir_url, refCfg.channels,
+        )
+          .then((buffers) => {
+            const buffer = buffers.get("LFE");
+            if (buffer) firLfeRef.convolver.buffer = buffer;
+          })
+          .catch(() => {});
+      }
+      lfeChainEnd.connect(lfeMasterOut.current);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on masteringKey, not `mastering` (see masteringKey comment above)
   }, [masteringKey]);
 
@@ -989,8 +1066,19 @@ export function useStemPreview(
     // shift instead of re-running a full match that would inflate loudness.
     const maxGainDb = outputModeRef.current === "binaural" ? BINAURAL_LOUDNESS_MAX_GAIN_DB : LOUDNESS_MAX_GAIN_DB;
     const loudnessGain = normalize ? loudnessGainFor(measuredLkfs.current, targetLkfs, maxGainDb) : 1;
+    // Mirrors normalize_loudness's second gain reduction (upmixer/loudness.py)
+    // — gated on the same `normalize` flag as the loudness correction itself:
+    // the backend only calls normalize_loudness (which folds in both stages)
+    // when loudness_normalize is set, so true-peak protection is skipped
+    // exactly when the backend would skip it too. Before the first
+    // measurement lands (preGainTpDbtp still its -70 reset default), this is
+    // a no-op (see applyTruePeakCeiling).
+    const maxTpDbtp = mastering?.loudness?.max_tp ?? -1;
+    const tpSafeGain = normalize
+      ? applyTruePeakCeiling(preGainTpDbtp.current, loudnessGain, maxTpDbtp)
+      : loudnessGain;
     const effectiveVolume = muted ? 0 : volume;
-    if (master.current) master.current.gain.value = effectiveVolume * loudnessGain;
+    if (master.current) master.current.gain.value = effectiveVolume * tpSafeGain;
     // Native bypasses the stereo mastering chain (no loudness-normalize gain
     // to apply there), but the Transport volume slider and mute should still work.
     if (nativeOutputGain.current) nativeOutputGain.current.gain.value = effectiveVolume;
@@ -1185,7 +1273,13 @@ export function useStemPreview(
     const output = ctx.createGain();
     const lfeMuteGainNode = ctx.createGain();
     lfeMuteGainNode.gain.value = speakerEnabled.LFE === false ? 0 : 1;
-    lfeBusNode.connect(lfeMuteGainNode).connect(mergePointNode);
+    // Stable insert points for LFE reference-match, mirroring the
+    // positional bed's masterIn/masterOut — `buildMasteringTopology` bridges
+    // these two on every rebuild; nothing downstream needs to know.
+    const lfeMasterInNode = ctx.createGain();
+    const lfeMasterOutNode = ctx.createGain();
+    lfeBusNode.connect(lfeMasterInNode);
+    lfeMasterOutNode.connect(lfeMuteGainNode).connect(mergePointNode);
     mergePointNode.connect(output).connect(softLimitNode);
     // Pure meter tap for measureOutputLoudness — see mergePointAnalyser's
     // declaration. Sits before `output`'s own loudness/volume gain, so it
@@ -1230,6 +1324,8 @@ export function useStemPreview(
     sidechainSum.current = sidechainSumNode;
     sidechainSink.current = sidechainSinkNode;
     lfeBus.current = lfeBusNode;
+    lfeMasterIn.current = lfeMasterInNode;
+    lfeMasterOut.current = lfeMasterOutNode;
     mergePoint.current = mergePointNode;
     mergePointAnalyser.current = mergePointAnalyserNode;
     loudnessMeasureBuf.current = new Float32Array(mergePointAnalyserNode.fftSize);

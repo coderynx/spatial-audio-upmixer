@@ -45,6 +45,7 @@ from upmixer_web.schemas import (
     CreateProjectRequest,
     ExpandProjectStemsRequest,
     ProjectView,
+    ReferenceMatchAssetView,
     ResolveStemRoutingRequest,
     UpdateProjectSettingsRequest,
     UpdateProjectTrackSettingsRequest,
@@ -83,8 +84,13 @@ def _job_view(job: Job, root_path: str = "") -> JobView:
     return view
 
 
-def _project_view(project: Project, root_path: str = "") -> ProjectView:
+def _project_view(
+    project: Project, root_path: str = "", project_stems: ProjectStemStorage | None = None,
+    manager: WorkerManager | None = None,
+) -> ProjectView:
     view = ProjectView.model_validate(project)
+    if manager is not None:
+        view.reference_match_pending = manager.reference_match_pending(project.id)
     stem_by_id = {stem.id: stem for stem in project.stems}
     for track in view.tracks:
         track.asset.audio_url = (
@@ -101,6 +107,20 @@ def _project_view(project: Project, root_path: str = "") -> ProjectView:
             stem.audio_url = base_url
             if stem_by_id[stem.id].preview_relative_path:
                 stem.preview_url = f"{base_url}?quality=preview"
+    meta = project_stems.read_reference_match_meta(project.id) if project_stems else None
+    if meta:
+        view.reference_match = ReferenceMatchAssetView(
+            fir_url=(
+                f"{root_path}/api/v1/projects/{project.id}/reference-match/fir"
+                if meta.get("channels") else None
+            ),
+            channels=meta.get("channels", []),
+            rms_gain_db=meta.get("rms_gain_db", 0.0),
+            strength=meta.get("strength", 0.0),
+            spectrum=meta.get("spectrum", False),
+            rms=meta.get("rms", False),
+            sample_rate=meta.get("sample_rate", 0),
+        )
     return view
 
 
@@ -325,7 +345,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         manager.notify()
-        return _project_view(project, settings.root_path)
+        return _project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.get("/api/v1/projects", response_model=list[ProjectView], tags=["projects"])
     def read_projects(
@@ -333,14 +353,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         offset: int = Query(0, ge=0),
         session: Session = Depends(database_session),
     ) -> list[ProjectView]:
-        return [_project_view(project, settings.root_path) for project in list_projects(session, limit, offset)]
+        return [_project_view(project, settings.root_path, app.state.project_stems, manager) for project in list_projects(session, limit, offset)]
 
     @app.get("/api/v1/projects/{project_id}", response_model=ProjectView, tags=["projects"])
     def read_project(project_id: str, session: Session = Depends(database_session)) -> ProjectView:
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        return _project_view(project, settings.root_path)
+        return _project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.put("/api/v1/projects/{project_id}/settings", response_model=ProjectView, tags=["projects"])
     def save_project_settings(project_id: str, request: UpdateProjectSettingsRequest, session: Session = Depends(database_session)) -> ProjectView:
@@ -372,9 +392,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ):
             app.state.project_stems.regenerate_previews(project, project.preview_quality, storage)
             session.commit()
+        # Scheduled on a background executor rather than run inline: the
+        # underlying mix+PSD pass is heavy, and settings saves are debounced
+        # at 350ms in the browser, so a slider drag would otherwise fire one
+        # full-song pass per tick on this request thread (see
+        # docs/contracts/preview_export_parity.md Ledger D12). The scheduler
+        # itself no-ops unless the reference, layout, or match params
+        # actually changed, and coalesces rapid repeat calls into one
+        # trailing run.
+        manager.schedule_reference_match(project_id)
         if project.status == "queued":
             manager.notify()
-        return _project_view(project, settings.root_path)
+        return _project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.put("/api/v1/projects/{project_id}/tracks/{track_id}/settings", response_model=ProjectView, tags=["projects"])
     def save_project_track_settings(project_id: str, track_id: str, request: UpdateProjectTrackSettingsRequest, session: Session = Depends(database_session)) -> ProjectView:
@@ -385,7 +414,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             project = update_track_settings(session, project, track_id, request.manifest_overrides, request.scene_overrides)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return _project_view(project, settings.root_path)
+        return _project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.post("/api/v1/projects/{project_id}/stems", response_model=ProjectView, tags=["projects"])
     def add_project_stems(project_id: str, request: ExpandProjectStemsRequest, session: Session = Depends(database_session)) -> ProjectView:
@@ -397,7 +426,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         manager.notify()
-        return _project_view(project, settings.root_path)
+        return _project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.post("/api/v1/projects/{project_id}/exports", response_model=JobView, status_code=status.HTTP_201_CREATED, tags=["projects"])
     def export_project(project_id: str, session: Session = Depends(database_session)) -> JobView:
@@ -428,7 +457,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             track.error = None
         session.commit()
         manager.notify()
-        return _project_view(project, settings.root_path)
+        return _project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.delete("/api/v1/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["projects"])
     def delete_project(project_id: str, session: Session = Depends(database_session)) -> Response:
@@ -466,6 +495,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Project stem file not found") from exc
         return FileResponse(path, media_type=media_type)
 
+    @app.get("/api/v1/projects/{project_id}/reference-match/fir", tags=["projects"])
+    def read_project_reference_match_fir(
+        project_id: str,
+        session: Session = Depends(database_session),
+    ) -> FileResponse:
+        project = get_project(session, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        path = app.state.project_stems.reference_match_fir_path(project_id)
+        if not path:
+            raise HTTPException(status_code=404, detail="Reference-match FIR is not available")
+        return FileResponse(path, media_type="audio/wav")
+
     @app.get("/api/v1/projects/{project_id}/tracks/{track_id}/source-preview", tags=["projects"])
     def read_project_source_preview(
         project_id: str,
@@ -498,7 +540,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if not project:
                         yield "event: deleted\ndata: {}\n\n"
                         break
-                    payload = _project_view(project, settings.root_path).model_dump(mode="json")
+                    payload = _project_view(project, settings.root_path, app.state.project_stems, manager).model_dump(mode="json")
                 encoded = json.dumps(payload, separators=(",", ":"))
                 if encoded != previous:
                     yield f"data: {encoded}\n\n"

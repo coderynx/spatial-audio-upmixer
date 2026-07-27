@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { computeRealSH } from "spherical-harmonic-transform";
-import { EQ_FIR_ASSETS, STEM_EQ_FIR_ASSETS, VOICING_PARAMS, buildFirEqNode, fetchEqFirBuffer } from "./masteringProfiles";
+import {
+  EQ_FIR_ASSETS,
+  STEM_EQ_FIR_ASSETS,
+  VOICING_PARAMS,
+  buildFirEqNode,
+  fetchEqFirBuffer,
+  measureBufferTruePeakDbtp,
+} from "./masteringProfiles";
 
 class FakeAudioParam {
   value = 0;
@@ -102,5 +109,45 @@ describe("FIR EQ (real backend filter, not a biquad approximation)", () => {
     const input = node.input as unknown as FakeNode;
     expect(input.connections).toContain(node.dryGain);
     expect(input.connections).toContain(node.convolver);
+  });
+});
+
+describe("measureBufferTruePeakDbtp", () => {
+  // Shared with render-preview-golden.mjs's cross-engine true-peak metric
+  // (see docs/contracts/preview_export_parity.md Ledger D12) — this is the
+  // one implementation of the 4x-oversampled approximation, so these tests
+  // cover both the live preview's true-peak safety net and the harness.
+
+  it("reads close to 0 dBTP for a full-scale constant signal", () => {
+    // The 32-tap Hann-windowed-sinc kernel isn't a perfect unity-gain
+    // interpolator (that's the Tier-3 approximation this contract accepts,
+    // see docs/contracts/preview_export_parity.md §3) — it has a small,
+    // fixed overshoot even for a flat DC input, so this is a loose sanity
+    // bound, not an exact-0 assertion.
+    const buf = new Float32Array(64).fill(1.0);
+    const dbtp = measureBufferTruePeakDbtp(buf);
+    expect(dbtp).toBeGreaterThan(-1.5);
+    expect(dbtp).toBeLessThan(1.5);
+  });
+
+  it("scales with amplitude: halving the signal drops the reading by ~6.02 dB", () => {
+    const full = measureBufferTruePeakDbtp(new Float32Array(64).fill(1.0));
+    const half = measureBufferTruePeakDbtp(new Float32Array(64).fill(0.5));
+    expect(full - half).toBeCloseTo(6.02, 1);
+  });
+
+  it("reads a very negative value for silence", () => {
+    const buf = new Float32Array(64).fill(0);
+    expect(measureBufferTruePeakDbtp(buf)).toBeLessThan(-100);
+  });
+
+  it("finds an inter-sample peak above 0 dBTP for a full-scale Nyquist square wave", () => {
+    // The classic true-peak scenario: every discrete sample is exactly
+    // +-1.0 (no sample-peak clipping), but the reconstructed waveform
+    // between samples overshoots — a sample-peak-only measurement would
+    // read 0 dBTP here and miss it entirely.
+    const buf = new Float32Array(64);
+    for (let i = 0; i < buf.length; i++) buf[i] = i % 2 === 0 ? 1 : -1;
+    expect(measureBufferTruePeakDbtp(buf)).toBeGreaterThan(0);
   });
 });

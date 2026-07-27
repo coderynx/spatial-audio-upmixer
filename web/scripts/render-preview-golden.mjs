@@ -146,45 +146,19 @@ function measureIntegratedLkfs(channels, sr) {
   return -0.691 + 10 * Math.log10(Math.max(meanGated, 1e-30));
 }
 
-/** Approximate true peak: 4x oversample via a short windowed-sinc FIR, then
- * max abs. Not the standard's exact 48-tap kernel (see
- * upmixer/loudness.py::_TRUE_PEAK_FIR_4X) — good enough given this
- * contract's 1.0 dBTP tolerance (docs/contracts/preview_export_parity.md §5). */
-function upsample4x(x) {
-  const TAPS = 32;
-  const kernel = new Float64Array(TAPS);
-  const center = (TAPS - 1) / 2;
-  for (let i = 0; i < TAPS; i++) {
-    const t = i - center;
-    const sinc = t === 0 ? 1 : Math.sin(Math.PI * t / 4) / (Math.PI * t / 4);
-    const window = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (TAPS - 1)); // Hann
-    kernel[i] = sinc * window;
-  }
-  const upsampled = new Float64Array(x.length * 4);
-  for (let i = 0; i < x.length; i++) upsampled[i * 4] = x[i];
-  const out = new Float64Array(upsampled.length);
-  const half = Math.floor(TAPS / 2);
-  for (let i = 0; i < upsampled.length; i++) {
-    let sum = 0;
-    for (let k = 0; k < TAPS; k++) {
-      const idx = i - half + k;
-      if (idx >= 0 && idx < upsampled.length) sum += upsampled[idx] * kernel[k];
-    }
-    out[i] = sum;
-  }
-  return out;
-}
-
-function measureTruePeakDbtp(channels) {
-  let maxPeak = 1e-12;
+// True-peak measurement (4x-oversampled windowed-sinc, Tier-3 approximation)
+// is implemented once, in masteringProfiles.ts's `measureBufferTruePeakDbtp`
+// — shared with the live preview's own true-peak safety net
+// (useStemPreview.ts) so there's exactly one JS implementation of this
+// approximation. `measureTruePeakDbtp` here just applies it per channel and
+// takes the max; see `main()` below for where the module is loaded.
+function measureTruePeakDbtp(channels, measureBufferTruePeakDbtpFn) {
+  let maxDbtp = -Infinity;
   for (const data of Object.values(channels)) {
-    const up = upsample4x(data);
-    for (let i = 0; i < up.length; i++) {
-      const a = Math.abs(up[i]);
-      if (a > maxPeak) maxPeak = a;
-    }
+    const dbtp = measureBufferTruePeakDbtpFn(data);
+    if (dbtp > maxDbtp) maxDbtp = dbtp;
   }
-  return 20 * Math.log10(maxPeak);
+  return maxDbtp;
 }
 
 function rms(x) {
@@ -270,6 +244,7 @@ function loudnessGainFor(measuredLkfs, targetLkfs, maxGainDb) {
 
 async function main() {
   const { buildMasteringGraph } = await loadPreviewGraphModule();
+  const { buildSoftLimitCurve, measureBufferTruePeakDbtp } = await loadMasteringProfilesModule();
 
   const { n, channels: bedSamples } = deterministicBed(SR, DURATION_S);
   const ctx = new OfflineAudioContext(CHANNELS.length, n, SR);
@@ -340,7 +315,7 @@ async function main() {
 
   const metrics = {
     measured_lkfs: measureIntegratedLkfs(outputChannels, SR),
-    measured_tp_dbtp: measureTruePeakDbtp(outputChannels),
+    measured_tp_dbtp: measureTruePeakDbtp(outputChannels, measureBufferTruePeakDbtp),
     channel_rms: Object.fromEntries(CHANNELS.map((name) => [name, rms(outputChannels[name])])),
   };
 
@@ -363,7 +338,6 @@ async function main() {
   const { buildBinauralGraph, createPositionalEncoder, loadDecodeFilterChannels, assignDecodeFilterBuffers } =
     await loadPreviewGraphModule();
   const { speakerCoordinates, positionToAzimuthElevation } = await loadSpatialModule();
-  const { buildSoftLimitCurve } = await loadMasteringProfilesModule();
 
   const positionalChannels = CHANNELS.filter((name) => name !== "LFE");
   // Generous tail margin for the decode filters' convolution ringout
@@ -449,7 +423,7 @@ async function main() {
 
   const binauralMetrics = {
     measured_lkfs: measureIntegratedLkfs(finalChannels, SR),
-    measured_tp_dbtp: measureTruePeakDbtp(finalChannels),
+    measured_tp_dbtp: measureTruePeakDbtp(finalChannels, measureBufferTruePeakDbtp),
     channel_rms: { FL: rms(finalChannels.FL), FR: rms(finalChannels.FR) },
   };
 

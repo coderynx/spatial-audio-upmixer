@@ -7,12 +7,16 @@ import math
 import shutil
 from pathlib import Path
 
+import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from upmixer_web.models import Project, ProjectStem, ProjectTrack
+
+REFERENCE_MATCH_FILENAME = "reference_match.wav"
+REFERENCE_MATCH_META_FILENAME = "reference_match.json"
 
 PREVIEW_SAMPLE_RATE = 44100
 """Full audible bandwidth: the mix preview drives HRTF spatialization, and a
@@ -165,3 +169,72 @@ class ProjectStemStorage:
             destination = self.root / track.source_preview_relative_path
             _write_preview(source_path, destination, sample_rate=sample_rate_hz, compression_level=compression_level)
             track.source_preview_size_bytes = destination.stat().st_size
+
+    def reference_match_dir(self, project_id: str) -> Path:
+        path = self.root / project_id / "reference_match"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def write_reference_match(
+        self,
+        project_id: str,
+        fir_by_channel: dict[str, np.ndarray],
+        rms_gain_db: float,
+        sample_rate: int,
+        signature: str,
+        strength: float,
+        spectrum: bool,
+        rms: bool,
+    ) -> None:
+        """Persist a project's server-precomputed reference-match FIR bank
+        and RMS gain for the web preview to consume as-is.
+
+        `fir_by_channel` is exactly what
+        `ReferenceMatchProcessor.compute_channel_filters` returns — the
+        browser convolves with these real minimum-phase FIRs rather than
+        re-deriving the PSD-matching algorithm in JS (see
+        docs/contracts/preview_export_parity.md Ledger D12). Empty when
+        spectral matching is disabled or `strength` is 0; RMS-only match
+        still needs the sidecar's `rms_gain_db`.
+        """
+        directory = self.reference_match_dir(project_id)
+        wav_path = directory / REFERENCE_MATCH_FILENAME
+        channels = list(fir_by_channel.keys())
+        if channels:
+            n_taps = len(next(iter(fir_by_channel.values())))
+            data = np.column_stack(
+                [fir_by_channel[name] for name in channels]
+            ).astype(np.float32)
+            sf.write(str(wav_path), data, sample_rate, subtype="FLOAT")
+        else:
+            n_taps = 0
+            wav_path.unlink(missing_ok=True)
+        meta = {
+            "signature": signature,
+            "sample_rate": sample_rate,
+            "n_taps": n_taps,
+            "rms_gain_db": rms_gain_db,
+            "channels": channels,
+            "strength": strength,
+            "spectrum": spectrum,
+            "rms": rms,
+        }
+        (directory / REFERENCE_MATCH_META_FILENAME).write_text(
+            json.dumps(meta), encoding="utf-8"
+        )
+
+    def read_reference_match_meta(self, project_id: str) -> dict | None:
+        path = self.root / project_id / "reference_match" / REFERENCE_MATCH_META_FILENAME
+        if not path.is_file():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def reference_match_fir_path(self, project_id: str) -> Path | None:
+        path = self.root / project_id / "reference_match" / REFERENCE_MATCH_FILENAME
+        return path if path.is_file() else None
+
+    def clear_reference_match(self, project_id: str) -> None:
+        shutil.rmtree(self.root / project_id / "reference_match", ignore_errors=True)

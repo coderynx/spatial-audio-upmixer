@@ -74,6 +74,22 @@ import {
 export type MasterPreview = {
   loudness?: { normalize?: boolean; target?: number; max_tp?: number };
   eq?: { profile?: string | null; strength?: number };
+  // Server-precomputed reference-match FIR asset — see
+  // upmixer_web/worker.py::WorkerManager.prepare_reference_match and
+  // docs/contracts/preview_export_parity.md Ledger D12. `fir_url` points at
+  // a multichannel WAV (one channel per bed-channel FIR, fixed order given
+  // by `channels`); absent/null when no reference is attached or the asset
+  // hasn't been computed yet. Unlike `eq`'s named-profile FIR (a static
+  // asset shipped with the app), this one is per-project and can change
+  // when the reference, layout, or match params change.
+  match_reference?: {
+    fir_url?: string | null;
+    channels?: string[];
+    rms_gain_db?: number;
+    strength?: number;
+    spectrum?: boolean;
+    rms?: boolean;
+  };
   compressor?: {
     profile?: string | null;
     threshold_db?: number | null;
@@ -136,6 +152,54 @@ export function loadCachedEqBuffer(
   if (!pending) {
     pending = loader(ctx, assetName);
     cache.set(assetName, pending);
+  }
+  return pending;
+}
+
+/** Fetches a project's server-precomputed reference-match FIR asset
+ * (`MasterPreview.match_reference.fir_url`) — a single multichannel WAV —
+ * and splits it into one mono `AudioBuffer` per channel, keyed by
+ * `channels[i]`: the fixed order
+ * `upmixer_web/project_storage.py::write_reference_match` wrote them in.
+ * Mirrors `loadDecodeFilterChannels`'s disk/browser split pattern, but as a
+ * single fetch since this asset (unlike the 32-channel decode filter set)
+ * fits under the browser's per-file multichannel decode cap. */
+export async function fetchRefMatchFirBuffers(
+  ctx: BaseAudioContext,
+  firUrl: string,
+  channels: string[],
+): Promise<Map<string, AudioBuffer>> {
+  const response = await fetch(firUrl);
+  if (!response.ok) throw new Error(`Reference-match FIR asset missing: ${firUrl}`);
+  const data = await response.arrayBuffer();
+  const decoded = await ctx.decodeAudioData(data);
+  const buffers = new Map<string, AudioBuffer>();
+  channels.forEach((name, index) => {
+    if (index >= decoded.numberOfChannels) return;
+    const mono = ctx.createBuffer(1, decoded.length, decoded.sampleRate);
+    mono.copyToChannel(decoded.getChannelData(index), 0);
+    buffers.set(name, mono);
+  });
+  return buffers;
+}
+
+/** Dedupes concurrent/repeat fetches of a project's reference-match FIR
+ * asset by `fir_url` — same cache-by-key pattern as `loadCachedEqBuffer`,
+ * keyed on the URL (which changes whenever the server recomputes the asset)
+ * instead of a fixed profile name. */
+export function loadCachedRefMatchBuffers(
+  cache: Map<string, Promise<Map<string, AudioBuffer>>>,
+  ctx: BaseAudioContext,
+  firUrl: string,
+  channels: string[],
+  loader: (
+    ctx: BaseAudioContext, firUrl: string, channels: string[],
+  ) => Promise<Map<string, AudioBuffer>> = fetchRefMatchFirBuffers,
+): Promise<Map<string, AudioBuffer>> {
+  let pending = cache.get(firUrl);
+  if (!pending) {
+    pending = loader(ctx, firUrl, channels);
+    cache.set(firUrl, pending);
   }
   return pending;
 }
@@ -206,6 +270,16 @@ export type BuildMasteringGraphOptions = {
    * single-shot build (e.g. the golden-diff harness), which gets fresh
    * nodes included in the returned `nodes` array for teardown. */
   sidechain?: { sum: GainNode; sink: GainNode };
+  /** Cache for `mastering.match_reference`'s FIR asset, keyed by `fir_url`
+   * (see `loadCachedRefMatchBuffers`) — same one-cache-per-context lifetime
+   * as `firBufferCache` above; the caller owns it so it persists across
+   * rebuilds. Required whenever `mastering.match_reference.fir_url` is set. */
+  refMatchBufferCache?: Map<string, Promise<Map<string, AudioBuffer>>>;
+  /** Lets a non-browser host supply its own reference-match FIR loader,
+   * mirroring `firLoader` above. */
+  refMatchLoader?: (
+    ctx: BaseAudioContext, firUrl: string, channels: string[],
+  ) => Promise<Map<string, AudioBuffer>>;
 };
 
 /** Builds the EQ -> compressor -> bass-shelf (incl. mono-maker/exciter)
@@ -230,7 +304,7 @@ export function buildMasteringGraph(
 ): MasteringGraphHandle {
   const created: AudioNode[] = [];
   const newCompGains: GainNode[] = [];
-  const { firLoader, sidechain } = options;
+  const { firLoader, sidechain, refMatchBufferCache, refMatchLoader } = options;
   const sum = sidechain?.sum ?? ctx.createGain();
   const sink = sidechain?.sink ?? ctx.createGain();
   if (sidechain) {
@@ -239,6 +313,23 @@ export function buildMasteringGraph(
     sink.gain.value = 0;
     created.push(sum, sink);
   }
+
+  // Reference match (mastering step 0, before named EQ) — a server-real
+  // FIR bank + RMS gain, not a re-derived approximation (see
+  // `MasterPreview.match_reference`'s doc comment). `refMatchBuffers`
+  // resolves non-blocking, same pattern as the named-EQ FIR below.
+  const refCfg = mastering?.match_reference;
+  const refMatchRmsGainLin = refCfg?.rms ? 10 ** ((refCfg.rms_gain_db ?? 0) / 20) : 1;
+  const refMatchSpectrumActive = Boolean(
+    refCfg?.spectrum && refCfg.fir_url && (refCfg.strength ?? 0) > 0
+    && refCfg.channels && refCfg.channels.length > 0,
+  );
+  const refMatchStrength = refCfg?.strength ?? 1;
+  const refMatchBuffers = refMatchSpectrumActive
+    ? loadCachedRefMatchBuffers(
+      refMatchBufferCache ?? new Map(), ctx, refCfg!.fir_url as string, refCfg!.channels!, refMatchLoader,
+    )
+    : null;
 
   const eqCfg = mastering?.eq;
   const eqAssetName = eqCfg?.profile && eqCfg.profile in EQ_FIR_ASSETS
@@ -274,11 +365,35 @@ export function buildMasteringGraph(
   const pendingMonoChain = new Map<string, AudioNode>();
 
   for (const [channel, port] of channelPorts.entries()) {
-    let postEq: AudioNode = port.input;
+    // Reference match runs first, matching upmixer/mastering/chain.py's
+    // order: RMS scalar (all channels, incl. LFE), then per-channel
+    // spectral FIR — see match_reference.py::ReferenceMatchProcessor.process.
+    let postRefMatch: AudioNode = port.input;
+    if (refCfg?.rms && refMatchRmsGainLin !== 1) {
+      const rmsGain = ctx.createGain();
+      rmsGain.gain.value = refMatchRmsGainLin;
+      created.push(rmsGain);
+      postRefMatch.connect(rmsGain);
+      postRefMatch = rmsGain;
+    }
+    if (refMatchBuffers) {
+      const firRef = buildFirEqNode(ctx, refMatchStrength);
+      created.push(...firRef.nodes);
+      postRefMatch.connect(firRef.input);
+      postRefMatch = firRef.output;
+      void refMatchBuffers
+        .then((buffers) => {
+          const buffer = buffers.get(channel);
+          if (buffer) firRef.convolver.buffer = buffer;
+        })
+        .catch(() => {});
+    }
+
+    let postEq: AudioNode = postRefMatch;
     if (eqAssetName) {
       const firEq = buildFirEqNode(ctx, eqStrength);
       created.push(...firEq.nodes);
-      port.input.connect(firEq.input);
+      postRefMatch.connect(firEq.input);
       postEq = firEq.output;
       // Non-blocking: the convolver stays silent on its wet path until
       // this resolves (see `buildFirEqNode`), so audio can play

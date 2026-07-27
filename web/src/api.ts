@@ -35,6 +35,21 @@ export type MasteringReference = {
   channels: number | null
 }
 
+// A project's server-precomputed reference-match FIR asset — see
+// docs/contracts/preview_export_parity.md Ledger D12 and
+// upmixer_web/worker.py::WorkerManager.prepare_reference_match. `fir_url` is
+// null when spectral matching is disabled (rms_gain_db still applies) or the
+// asset hasn't been computed yet.
+export type ReferenceMatchAsset = {
+  fir_url: string | null
+  channels: string[]
+  rms_gain_db: number
+  strength: number
+  spectrum: boolean
+  rms: boolean
+  sample_rate: number
+}
+
 export type Artifact = {
   id: string
   kind: string
@@ -127,6 +142,12 @@ export type Project = {
   tracks: ProjectTrack[]
   exports: Job[]
   mastering_reference?: MasteringReference | null
+  reference_match?: ReferenceMatchAsset | null
+  // True while a reference-match recompute is queued or running on the
+  // server (see upmixer_web/worker.py::WorkerManager.schedule_reference_match)
+  // — the frontend keeps polling while this is set so `reference_match`
+  // refreshes once the background pass lands.
+  reference_match_pending?: boolean
 }
 
 export type Configuration = {

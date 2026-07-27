@@ -2,7 +2,7 @@ import * as React from "react";
 import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectStem } from "@/api";
-import { useStemPreview } from "./useStemPreview";
+import { applyTruePeakCeiling, useStemPreview } from "./useStemPreview";
 
 class FakeAudioParam {
   value = 0;
@@ -419,5 +419,36 @@ describe("useStemPreview mixing alignment", () => {
     // Reach into the hook's internal node map indirectly via play behavior:
     // both sources should still be created and started regardless of gain.
     expect(preview.playing).toBe(true);
+  });
+});
+
+describe("applyTruePeakCeiling", () => {
+  // The preview-side mirror of normalize_loudness's max_tp_dbtp gain
+  // reduction (upmixer/loudness.py) — see docs/contracts/
+  // preview_export_parity.md Ledger D12's "True-peak ceiling" row.
+
+  it("is a no-op when the loudness-corrected signal is already under the ceiling", () => {
+    // -20 dBTP pre-gain + 6 dB loudness gain = -14 dBTP post-gain, well
+    // under a -1 dBTP ceiling.
+    const gain = applyTruePeakCeiling(-20, 10 ** (6 / 20), -1);
+    expect(gain).toBeCloseTo(10 ** (6 / 20), 6);
+  });
+
+  it("reduces gain exactly enough to land the post-gain peak on the ceiling", () => {
+    // -5 dBTP pre-gain + 10 dB loudness gain = 5 dBTP post-gain, 6 dB over
+    // a -1 dBTP ceiling -> expect the returned gain to be 6 dB less than
+    // the uncorrected loudness gain.
+    const loudnessGain = 10 ** (10 / 20);
+    const gain = applyTruePeakCeiling(-5, loudnessGain, -1);
+    expect(gain).toBeCloseTo(loudnessGain * 10 ** (-6 / 20), 6);
+    // Verify the invariant directly: applying `gain` lands exactly at -1 dBTP.
+    const postGainTpDbtp = -5 + 20 * Math.log10(gain);
+    expect(postGainTpDbtp).toBeCloseTo(-1, 6);
+  });
+
+  it("never increases gain, even when the pre-gain signal is already quiet", () => {
+    const loudnessGain = 10 ** (30 / 20);
+    const gain = applyTruePeakCeiling(-70, loudnessGain, -1);
+    expect(gain).toBeCloseTo(loudnessGain, 6);
   });
 });

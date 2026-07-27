@@ -138,6 +138,20 @@ class ProjectTrackView(ApiModel):
     stems: list[StemView] = Field(default_factory=list)
 
 
+class ReferenceMatchAssetView(BaseModel):
+    """A project's server-precomputed reference-match FIR bank — see
+    `docs/contracts/preview_export_parity.md` Ledger D12. `fir_url` is empty
+    when spectral matching is disabled; `rms_gain_db` still applies."""
+
+    fir_url: str | None = None
+    channels: list[str] = Field(default_factory=list)
+    rms_gain_db: float = 0.0
+    strength: float
+    spectrum: bool
+    rms: bool
+    sample_rate: int
+
+
 class ProjectView(ApiModel):
     id: str
     import_id: str
@@ -159,6 +173,8 @@ class ProjectView(ApiModel):
     tracks: list[ProjectTrackView] = Field(default_factory=list)
     exports: list[JobView] = Field(default_factory=list)
     mastering_reference: MasteringReferenceView | None = None
+    reference_match: ReferenceMatchAssetView | None = None
+    reference_match_pending: bool = False
 
 
 class CreateProjectRequest(BaseModel):
