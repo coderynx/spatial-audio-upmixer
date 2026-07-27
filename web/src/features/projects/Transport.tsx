@@ -115,7 +115,7 @@ function TransportImpl({
       <LcdDisplay currentTime={displayTime} duration={duration} mode={mode} onToggleMode={() => setMode((current) => (current === "elapsed" ? "remaining" : "elapsed"))} />
       <input
         aria-label="Preview position"
-        className={cn("h-1 min-w-32 flex-1 accent-primary", disabled && "opacity-40")}
+        className={cn("h-1 min-w-0 flex-1 accent-primary", disabled && "opacity-40")}
         type="range"
         min={0}
         max={Math.max(duration, 0)}

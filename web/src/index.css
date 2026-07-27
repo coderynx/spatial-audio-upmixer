@@ -34,7 +34,12 @@
     --topbar-h: 2.75rem;
   }
   .dark {
-    --background: 0 0% 0%;
+    /* #131316 — a charcoal in the same 240 hue family as the rest of the dark
+       ramp rather than Apple's pure-black systemBackground. Pure black left
+       the workspace substrate reading as a hole behind the chrome; this keeps
+       it clearly below `card` while still letting the canvas displays recess
+       into it. */
+    --background: 240 6% 8%;
     --foreground: 0 0% 100%;
     --card: 240 3% 11%;
     --card-foreground: 0 0% 100%;

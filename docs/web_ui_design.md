@@ -41,7 +41,7 @@ literal colour in a component — the only sanctioned literals live in
 
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
-| `background` | `#F2F2F7` | `#000000` | Workspace substrate |
+| `background` | `#F2F2F7` | `#131316` | Workspace substrate |
 | `card` | `#FFFFFF` | `#1C1C1E` | Chrome: toolbars, rails, panels, status bar |
 | `popover` | `#FFFFFF` | `#2C2C2E` | Menus, dropdowns |
 | `muted` | `240 12% 94%` | `#2C2C2E` | Recessed tracks (segmented control) |
@@ -56,9 +56,19 @@ literal colour in a component — the only sanctioned literals live in
 | `warning` | `#FF9500` | `#FF9F0A` | systemOrange — attention, solo, loop |
 | `ring` | `#007AFF` | `#0A84FF` | Focus ring |
 
-Dark values are Apple's named system colours. The light greys between
+Dark values are Apple's named system colours, with one deliberate exception:
+`background` is a `#131316` charcoal rather than Apple's pure-black
+systemBackground. Pure black made the workspace substrate read as a hole
+behind the chrome instead of a surface under it. The light greys between
 `background` and `border` are not named Apple colours, so they are listed as
 the HSL triples that `index.css` actually declares.
+
+**No pure black anywhere in chrome.** The dark surface order is
+`background` (#131316) < `card` (#1C1C1E) < `popover`/`muted` (#2C2C2E) <
+`secondary` (#3A3A3C). Canvas displays sit below all of it at `plotField`
+(#070E17), which is what makes them recess. The only near-black literals that
+remain are instrument displays — the canvas field and the transport LCD —
+plus the dialog scrim.
 
 Layout properties:
 

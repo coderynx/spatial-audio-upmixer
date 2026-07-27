@@ -14,9 +14,12 @@ import { SettingsPage } from "@/features/settings/SettingsPage";
 import { StoragePage } from "@/features/storage/StoragePage";
 
 export default function App() {
-  const { jobs, configuration, loading, error, refresh, action } = useJobs();
-  const projectsState = useProjects();
   const location = useLocation();
+  const projectRoute = location.pathname.startsWith("/projects");
+  const jobsRoute = location.pathname.startsWith("/jobs");
+  const storageRoute = location.pathname.startsWith("/storage");
+  const { jobs, configuration, loading, error, refresh, action } = useJobs(jobsRoute || storageRoute);
+  const projectsState = useProjects();
   const navigate = useNavigate();
   const [composerOpen, setComposerOpen] = React.useState(false);
   const [remix, setRemix] = React.useState<Job | null>(null);
@@ -24,8 +27,6 @@ export default function App() {
     setRemix(null);
     setComposerOpen(true);
   };
-  const projectRoute = location.pathname.startsWith("/projects");
-  const jobsRoute = location.pathname.startsWith("/jobs");
   const remixJob = (job: Job) => {
     setRemix(job);
     setComposerOpen(true);

@@ -95,12 +95,12 @@ function ElevationViewImpl({
       initializedSize.current = false;
     };
     resize();
-    // Resizing a canvas clears its pixel buffer. While the draw loop is
-    // idle (see `SETTLE_FRAMES`), a layout shift — e.g. the "Preparing
-    // preview…" banner disappearing once ready — fires this observer after
-    // the loop already stopped, clearing the canvas with nothing left to
-    // redraw it. Waking the loop here (a no-op if it's already running)
-    // guarantees at least one fresh frame after every resize.
+    // Resizing a canvas clears its pixel buffer, and a ResizeObserver fires
+    // after layout but before paint, so `wakeRef` repaints synchronously
+    // rather than scheduling a frame. Scheduling would let the browser paint
+    // the cleared buffer once per resize — which during an animated resize
+    // (the 150ms sidebar collapse resizes on every frame) leaves the display
+    // blank for the whole transition.
     const observer = new ResizeObserver(() => {
       resize();
       wakeRef.current();
@@ -326,10 +326,10 @@ function ElevationViewImpl({
     };
     frame.current = window.requestAnimationFrame(draw);
     wakeRef.current = () => {
-      if (frame.current === null) {
-        idleFrames.current = 0;
-        frame.current = window.requestAnimationFrame(draw);
-      }
+      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
+      frame.current = null;
+      idleFrames.current = 0;
+      draw(performance.now());
     };
 
     return () => {

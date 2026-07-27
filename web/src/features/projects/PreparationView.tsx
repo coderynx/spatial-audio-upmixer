@@ -104,12 +104,12 @@ export function PreparationView({ project, onRetry }: { project: Project; onRetr
         </StatusBar>
       }
     >
-      <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto bg-black p-3 font-mono text-[11px] leading-relaxed">
+      <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto bg-background p-3 font-mono text-[11px] leading-relaxed">
         {lines.length === 0 && <p className="text-muted-foreground">Waiting for worker…</p>}
         {lines.map((entry, index) => (
           <p key={index} className="flex gap-2">
-            <span className="shrink-0 text-[#8E8E93]">{new Date(entry.ts).toLocaleTimeString()}</span>
-            <span className="text-[#EBEBF5]">{entry.message}</span>
+            <span className="shrink-0 text-muted-foreground">{new Date(entry.ts).toLocaleTimeString()}</span>
+            <span className="text-foreground">{entry.message}</span>
           </p>
         ))}
       </div>

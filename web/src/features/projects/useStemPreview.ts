@@ -439,7 +439,9 @@ export function useStemPreview(
   const firEqBufferCache = React.useRef<Map<string, Promise<AudioBuffer>>>(new Map());
   // Same per-context cache lifetime as `firEqBufferCache`, keyed by
   // `fir_url` instead of a profile name (see `loadCachedRefMatchBuffers`) —
-  // a server recompute changes the URL, which naturally busts this cache.
+  // the URL carries the asset's `?v=<signature>` query param (see
+  // `_project_view` in upmixer_web/api.py), so a genuine server recompute
+  // naturally busts this cache instead of serving a stale FIR.
   const refMatchBufferCache = React.useRef<Map<string, Promise<Map<string, AudioBuffer>>>>(new Map());
   // Same per-context cache lifetime, keyed by decode filter set name — see
   // loadCachedDecodeFilterChannels. Not cleared in reset(): the profile's

@@ -109,11 +109,18 @@ def _project_view(
                 stem.preview_url = f"{base_url}?quality=preview"
     meta = project_stems.read_reference_match_meta(project.id) if project_stems else None
     if meta:
+        fir_url = None
+        if meta.get("channels"):
+            fir_url = f"{root_path}/api/v1/projects/{project.id}/reference-match/fir"
+            # Version the URL with the asset's signature so the browser's
+            # fir_url-keyed decode cache (useStemPreview.ts's
+            # refMatchBufferCache) is naturally busted by a real recompute
+            # instead of serving a stale FIR for the rest of the AudioContext's
+            # lifetime — the route itself ignores this query param.
+            if meta.get("signature"):
+                fir_url = f"{fir_url}?v={meta['signature']}"
         view.reference_match = ReferenceMatchAssetView(
-            fir_url=(
-                f"{root_path}/api/v1/projects/{project.id}/reference-match/fir"
-                if meta.get("channels") else None
-            ),
+            fir_url=fir_url,
             channels=meta.get("channels", []),
             rms_gain_db=meta.get("rms_gain_db", 0.0),
             strength=meta.get("strength", 0.0),

@@ -78,6 +78,32 @@ def _reference_match_signature(project: Project) -> str | None:
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
+def _reference_match_needs_work(project: Project | None, project_stems: ProjectStemStorage) -> bool:
+    """Whether `prepare_reference_match` would do anything for *project* right
+    now — mirrors that method's own early-outs (see below) so
+    `schedule_reference_match` can skip opening a `reference_match_pending`
+    window for a call that is provably a no-op.
+
+    `prepare_reference_match` remains the authority: it re-validates
+    everything itself, since project state can change between scheduling and
+    the run actually executing.
+    """
+    if not project:
+        return False
+    target_signature = _reference_match_signature(project)
+    if target_signature is None:
+        # No reference attached — work is needed only to clear a
+        # still-existing asset from a prior reference.
+        return (
+            project_stems.read_reference_match_meta(project.id) is not None
+            or project_stems.reference_match_fir_path(project.id) is not None
+        )
+    if not project.prepared_stems or not project.tracks or not project.import_batch.assets:
+        return False
+    existing = project_stems.read_reference_match_meta(project.id)
+    return not existing or existing.get("signature") != target_signature
+
+
 def _append_progress_log(project: Project, message: str, fraction: float) -> None:
     """Append one entry to a project's realtime preparation log, capped in length."""
     entry = {
@@ -602,9 +628,23 @@ class WorkerManager:
         already in flight for this project, the request is recorded and
         picked up by that run's trailing check rather than starting a second
         one.
+
+        Callers (the settings-save endpoint, stem-prep completion) always
+        run after their own `session.commit()`, so the fresh session opened
+        here to check `_reference_match_needs_work` sees current state. This
+        check is purely an optimisation for `reference_match_pending`'s
+        window — it must never open (and the caller's UI must never show
+        "preparing…") for an edit that changes nothing the FIR depends on
+        (see `_reference_match_signature`'s exclusions). It is not a
+        correctness gate: `prepare_reference_match` re-validates everything
+        itself once it actually runs.
         """
         if not self._refmatch_executor:
             return
+        with self.sessions() as session:
+            project = get_project(session, project_id)
+            if not _reference_match_needs_work(project, self.project_stems):
+                return
         with self._lock:
             self._refmatch_pending.add(project_id)
             if project_id in self._refmatch_running:
