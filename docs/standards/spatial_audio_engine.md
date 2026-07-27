@@ -13,19 +13,19 @@ identically at the parameter level (see §6 for what "identically" means).
 
 ## 0. Why three profiles
 
-Apple's Spatial Audio renders Dolby Atmos Music on headphones by convolving
-directional HRTF/BRIR filters against an object/channel bed, with an
-opinionated "enhance" stage layered on top for consumer playback. The Dolby
-Atmos binaural renderer instead exposes distance-based BRIR modes
-(Off/Near/Mid/Far) that change frequency response and reverb time per
-object. Professional mixing needs a third mode neither offers: a **neutral
-monitoring reference** with no consumer coloration. This engine models all
-three as explicit, selectable profiles:
+Apple's Spatial Audio renders a discrete bed (not per-object distance
+metadata) on headphones by convolving directional HRTF/BRIR filters against
+the full channel layout, with a room emulation layered on top of the direct
+HRTF. This engine follows that model — a single room decode applied to the
+whole bed, no per-object near/mid/far modes. Professional mixing needs a
+second mode Apple's consumer-facing renderer doesn't offer: a **neutral
+monitoring reference** with no room coloration at all. This engine models
+three explicit, selectable profiles:
 
 | Profile | Purpose | Room | Voicing |
 |---|---|---|---|
 | `studio` | Monitor the mix as if in a treated spatial-audio mixing room | Neutral measured-style room BRIR | None |
-| `listening` | Preview what a listener hears on Apple Music Atmos-on-headphones | Consumer room BRIR | Full "enhance" chain (§5) |
+| `listening` | Flattering "hi-fi system" consumer preview on headphones | Reference cinema room BRIR | Hi-fi enhance (§5) |
 | `flat` | Anechoic reference — verify the mix with zero added coloration | None (anechoic) | None |
 
 ---
@@ -180,8 +180,8 @@ session's sample rate if it differs.
 | Profile | Filter set name | Room | Notes |
 |---|---|---|---|
 | `flat` | `flat_o3_decode` | none (anechoic) | 128-tap direct HRIR only |
-| `studio` | `studio_o3_decode` | RT60 ≈ 120 ms | neutral monitor room |
-| `listening` | `listening_o3_decode` | RT60 ≈ 150 ms | consumer room; voicing (§5) layered on top |
+| `studio` | `studio_o3_decode` | RT60 ≈ 120 ms | neutral monitor room, 5 ms pre-delay, bright tail (3500 Hz) |
+| `listening` | `listening_o3_decode` | RT60 ≈ 120 ms | reference cinema room — same room amount as `studio`, warmer/darker tail (2500 Hz); light polish (§5) layered on top |
 
 ### Provenance (synthesis, not measurement)
 
@@ -193,7 +193,11 @@ from:
    (Woodworth ITD formula + frequency-dependent head-shadow ILD lowpass).
 2. For `studio`/`listening`: an exponentially-decaying filtered-noise room
    tail (independent per ear for decorrelation) convolved onto the direct
-   HRIR, pre-delayed ~5 ms.
+   HRIR, pre-delayed 5 ms. Both profiles share the same reverberant amount
+   (RT60 ≈ 120 ms, same pre-delay and tail level); they differ only in tail
+   high-frequency rolloff — `studio` keeps a bright 3500 Hz tail, `listening`
+   darkens it to 2500 Hz so the same decay reads as a warmer, larger cinema
+   room rather than a near-field monitor room.
 3. A pseudo-inverse (mode-matching) ambisonic decode matrix from 32
    Fibonacci-lattice virtual-loudspeaker directions, folded through the
    per-direction BRIRs into the 16×{L,R} FIR bank above.
@@ -216,23 +220,33 @@ Applied **after** decode + LFE re-add, in this order: crossfeed → bass shelf
 
 | Parameter | Flat | Studio | Listening |
 |---|---|---|---|
-| Crossfeed amount | 0 | 0 | 0.28 |
+| Crossfeed amount | 0 | 0 | 0.10 |
 | Crossfeed cutoff | — | — | 700 Hz |
-| Bass shelf | — | — | +1.0 dB @ 120 Hz (low-shelf) |
-| Air shelf | — | — | +1.0 dB @ 9000 Hz (high-shelf) |
-| Presence peak | — | — | +0.5 dB @ 3000 Hz, Q 0.9 |
-| Stereo widen (M/S side scale) | 0 | 0 | +10% |
-| Loudness target | −18.0 LKFS (config default) | −18.0 LKFS | **−16.0 LKFS** |
+| Bass shelf | — | — | +2.0 dB @ 100 Hz (low-shelf) |
+| Air shelf | — | — | +3.0 dB @ 10000 Hz (high-shelf) |
+| Presence peak | — | — | +1.5 dB @ 3000 Hz, Q 0.9 |
+| Stereo widen (M/S side scale) | 0 | 0 | +15% |
+| Loudness target | −18.0 LKFS (config default) | −18.0 LKFS | −18.0 LKFS (config default) |
 
-These are deliberately subtle — Listening only lightly voices what the
-mastered bed and baked room decode already deliver (the bed's own EQ/bass
-handling and the room-tail decode filters already add warmth; layering a
-second full "enhance" pass on top of both reads as boomy/hot, the failure
-mode this profile previously had).
+Unlike `studio` (a neutral monitoring reference), `listening` is a
+deliberately **flattering "hi-fi enhance"** voicing — its job is to make
+headphone playback sound like an impressive hi-fi system, not to be neutral.
+It shares Studio's room amount (§4, warmer cinema tail) and layers an
+obvious, consumer-style enhancement on top: a Harman-style tonal tilt
+(+2 dB low-end warmth, +3 dB air, +1.5 dB presence for clarity), a
+cinema-width soundstage (+15% side), and light crossfeed (0.10) for
+externalization. It is **loudness-matched** to `studio` (no target of its
+own — an earlier revision added a +2 dB lift, but that inflated perceived
+bass via the equal-loudness effect and read as too hot, so the enhancement
+now stands on tone and space alone). It is still deliberately *tone*-colored,
+not neutral — use `studio`/`flat` for reference monitoring and `listening`
+only for the enhanced consumer preview. The bass shelf sits at 100 Hz with
+the room tail highpassed at 200 Hz (§4), so the warmth lift adds weight
+without boomy ringing.
 
 Crossfeed: each ear mixed with a low-passed copy of the opposite ear
-(`out_L = L·(1−a) + lowpass(R)·a`), reducing hard-panned harshness the way
-consumer "enhance" processing does. Shelf/peak filters use the same
+(`out_L = L·(1−a) + lowpass(R)·a`), softening hard-panned harshness the way
+headphone crossfeed does in general. Shelf/peak filters use the same
 subtract/add biquad trick as `upmixer/utils.py::elevation_eq` so the Web
 Audio `BiquadFilterNode` chain can match parameter-for-parameter.
 
@@ -308,9 +322,10 @@ ordering was fixed. The web mirror applies the same ceiling and ordering
 ## References
 
 - Apple Spatial Audio / Spatialize Stereo overview — Sweetwater InSync,
-  Apple Support (Logic Pro binaural render modes).
-- Dolby Atmos binaural renderer distance modes (Off/Near/Mid/Far) —
-  Audient "The essential guide to binaural simulation for Dolby Atmos".
+  Apple Support (Logic Pro binaural render modes). Apple's renderer convolves
+  HRTF/BRIR filters against the full channel/object bed directly — no
+  per-object distance-mode metadata — which is the model this engine's
+  `listening` (reference cinema room) profile follows.
 - Dolby BRIR design and reverberation-generation patents (numerically
   optimized BRIRs; reverberation generation for headphone virtualization),
   USPTO 10,834,519 and 12,143,797 — general BRIR/virtualization concepts,

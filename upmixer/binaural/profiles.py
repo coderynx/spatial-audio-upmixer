@@ -40,7 +40,7 @@ class VoicingParams:
     """0 = no change, >0 widens the mid/side balance toward side."""
 
     loudness_target_lkfs: float | None = None
-    """Consumer loudness target for the voicing stage's own gain compensation.
+    """Optional loudness target for the voicing stage's own gain compensation.
     ``None`` disables the extra pass (delivery-stage loudness still runs)."""
 
 
@@ -54,17 +54,17 @@ VOICING_PARAMS: dict[BinauralProfile, VoicingParams] = {
     BinauralProfile.FLAT: VoicingParams(),
     BinauralProfile.STUDIO: VoicingParams(),
     BinauralProfile.LISTENING: VoicingParams(
-        crossfeed_amount=0.28,
+        crossfeed_amount=0.10,
         crossfeed_cutoff_hz=700.0,
-        bass_shelf_hz=120.0,
-        bass_shelf_gain_db=1.0,
-        air_shelf_hz=9000.0,
-        air_shelf_gain_db=1.0,
+        bass_shelf_hz=100.0,
+        bass_shelf_gain_db=2.0,
+        air_shelf_hz=10000.0,
+        air_shelf_gain_db=3.0,
         presence_hz=3000.0,
-        presence_gain_db=0.5,
+        presence_gain_db=1.5,
         presence_q=0.9,
-        stereo_widen=0.10,
-        loudness_target_lkfs=-16.0,
+        stereo_widen=0.15,
+        loudness_target_lkfs=None,
     ),
 }
 

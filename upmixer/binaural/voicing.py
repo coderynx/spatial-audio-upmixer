@@ -1,11 +1,13 @@
 """Post-decode voicing chain: crossfeed, shelving/presence EQ, M/S widen.
 
 Applies :class:`~upmixer.binaural.profiles.VoicingParams`. Bypassed entirely
-for Flat and Studio (all-zero params); only Listening uses this to
-approximate Apple Music's "enhanced" Atmos-on-headphones voicing. Filter
-topology mirrors ``upmixer/utils.py`` ``elevation_eq`` (subtract/add shelf
-trick) so the web preview's Web Audio ``BiquadFilterNode`` chain can match
-parameter-for-parameter — see ``docs/standards/spatial_audio_engine.md`` §5.
+for Flat and Studio (all-zero params); only Listening uses this to apply a
+flattering "hi-fi enhance" (crossfeed for externalization, a Harman-style
+bass/air/presence tilt, and a wide soundstage) on top of the profile's
+reference cinema room decode. Filter topology mirrors
+``upmixer/utils.py`` ``elevation_eq`` (subtract/add shelf trick) so the web
+preview's Web Audio ``BiquadFilterNode`` chain can match parameter-for-
+parameter — see ``docs/standards/spatial_audio_engine.md`` §5.
 """
 from __future__ import annotations
 

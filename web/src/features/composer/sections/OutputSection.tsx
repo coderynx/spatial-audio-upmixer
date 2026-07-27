@@ -101,7 +101,7 @@ export function OutputSection({
                   value,
                   label: value.charAt(0).toUpperCase() + value.slice(1),
                 }))}
-                hint="Studio = neutral monitoring room. Listening = Apple Music Atmos-style enhance. Flat = anechoic reference."
+                hint="Studio = neutral monitoring room. Listening = flattering hi-fi enhance (warm, airy, cinema-wide; loudness-matched). Flat = anechoic reference."
               />
             )}
           </>

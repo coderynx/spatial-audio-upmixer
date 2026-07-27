@@ -54,10 +54,12 @@ def test_listening_voicing_params_exact():
     # VOICING_PARAMS.listening) so a hand-sync drift like the one that
     # doubled these values on the web side is caught here too.
     params = VOICING_PARAMS[BinauralProfile.LISTENING]
-    assert params.bass_shelf_gain_db == pytest.approx(1.0)
-    assert params.air_shelf_gain_db == pytest.approx(1.0)
-    assert params.presence_gain_db == pytest.approx(0.5)
-    assert params.stereo_widen == pytest.approx(0.10)
+    assert params.crossfeed_amount == pytest.approx(0.10)
+    assert params.bass_shelf_gain_db == pytest.approx(2.0)
+    assert params.air_shelf_gain_db == pytest.approx(3.0)
+    assert params.presence_gain_db == pytest.approx(1.5)
+    assert params.stereo_widen == pytest.approx(0.15)
+    assert params.loudness_target_lkfs is None
 
 
 def test_geometry_matches_web_contract_coordinates():
@@ -151,19 +153,37 @@ def test_listening_profile_differs_from_flat():
     assert not np.allclose(flat_r, listening_r)
 
 
-def test_listening_targets_louder_lkfs_than_studio():
+def test_listening_output_differs_from_studio():
+    # Listening's cinema tail plus its hi-fi enhancement voicing (bass/air
+    # tilt, presence, wide M/S) should render audibly differently from
+    # Studio's neutral monitor room + bypassed voicing.
+    sr = 48000
+    n = sr
+    bed_fmt = FORMAT_MAP["7.1.4"]
+    rng = np.random.default_rng(11)
+    channels = {label.value: rng.standard_normal(n) * 0.05 for label in bed_fmt.channels}
+
+    studio_l, studio_r = render_binaural(channels, bed_fmt, sr, "studio")
+    listening_l, listening_r = render_binaural(channels, bed_fmt, sr, "listening")
+
+    assert not np.allclose(studio_l, listening_l)
+    assert not np.allclose(studio_r, listening_r)
+
+
+def test_listening_is_loudness_matched_to_studio():
+    # Listening's enhance voicing is level-matched to Studio (no loudness
+    # lift of its own — loudness_target_lkfs is None), so both deliver at the
+    # same config-default target within the measurement tolerance.
     sr = 48000
     n = sr * 2
     bed_fmt = FORMAT_MAP["7.1.4"]
     rng = np.random.default_rng(11)
     channels = {label.value: rng.standard_normal(n) * 0.05 for label in bed_fmt.channels}
-    cfg_studio = UpmixConfig(binaural_profile="studio")
-    cfg_listening = UpmixConfig(binaural_profile="listening")
 
-    _, studio_result = render_binaural_delivery(channels, bed_fmt, sr, cfg_studio)
-    _, listening_result = render_binaural_delivery(channels, bed_fmt, sr, cfg_listening)
+    _, studio_result = render_binaural_delivery(channels, bed_fmt, sr, UpmixConfig(binaural_profile="studio"))
+    _, listening_result = render_binaural_delivery(channels, bed_fmt, sr, UpmixConfig(binaural_profile="listening"))
 
-    assert listening_result.measured_lkfs > studio_result.measured_lkfs
+    assert listening_result.measured_lkfs == pytest.approx(studio_result.measured_lkfs, abs=1.0)
 
 
 def test_binaural_format_registered():

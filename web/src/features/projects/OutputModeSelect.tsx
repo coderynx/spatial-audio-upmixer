@@ -15,10 +15,13 @@ const MODE_OPTIONS: { value: OutputMode; label: string; hint: string; icon: Reac
 // (docs/standards/spatial_audio_engine.md), embedded as a submenu off the
 // binaural row below rather than a separate button.
 const PROFILE_OPTIONS: { value: SpatialProfile; label: string; hint: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { value: "studio", label: "Studio", hint: "Neutral spatial-audio mixing room monitor — no added coloration.", icon: Building2 },
-  { value: "listening", label: "Listening", hint: "Consumer room + Apple Music Atmos-style enhance (bass/air lift, crossfeed, widen).", icon: Sofa },
-  { value: "flat", label: "Flat", hint: "Anechoic reference — zero room, zero voicing.", icon: Headphones },
+  { value: "studio", label: "Studio", hint: "Neutral spatial-audio mixing room", icon: Building2 },
+  { value: "listening", label: "Listening", hint: "Hi-Fi Cinema room", icon: Sofa },
+  { value: "flat", label: "Flat", hint: "Anechoic reference", icon: Headphones },
 ];
+
+// Grace period before the profile submenu closes on mouse-out.
+const SUBMENU_CLOSE_DELAY_MS = 200;
 
 // Icon dropdown for the preview box's output-mode picker — plain <select>
 // (SelectField, components/forms/fields.tsx) can't render per-option icons,
@@ -49,17 +52,38 @@ export function OutputModeSelect({
   const [submenuFlip, setSubmenuFlip] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
   const binauralRowRef = React.useRef<HTMLDivElement>(null);
+  const closeTimer = React.useRef<number | null>(null);
+
+  // Reaching the submenu means travelling off the binaural row, and a
+  // diagonal path crosses a sibling row on the way. Closing on the first
+  // mouse-out therefore snatches the submenu away mid-gesture; every close is
+  // deferred instead, and re-entering anywhere in the pair cancels it.
+  const cancelClose = () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    closeTimer.current = null;
+  };
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null;
+      setSubmenuOpen(false);
+    }, SUBMENU_CLOSE_DELAY_MS);
+  };
 
   const openSubmenu = () => {
+    cancelClose();
     const rect = binauralRowRef.current?.getBoundingClientRect();
     setSubmenuFlip(!!rect && rect.right + 256 + 4 > window.innerWidth);
     setSubmenuOpen(true);
   };
 
+  React.useEffect(() => cancelClose, []);
+
   React.useEffect(() => {
     if (!open) return;
     const onPointerDown = (event: PointerEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        cancelClose();
         setOpen(false);
         setSubmenuOpen(false);
       }
@@ -98,8 +122,8 @@ export function OutputModeSelect({
                 key={option.value}
                 ref={isBinaural ? binauralRowRef : undefined}
                 className="relative"
-                onMouseEnter={() => (isBinaural ? openSubmenu() : setSubmenuOpen(false))}
-                onMouseLeave={() => isBinaural && setSubmenuOpen(false)}
+                onMouseEnter={() => (isBinaural ? openSubmenu() : scheduleClose())}
+                onMouseLeave={() => isBinaural && scheduleClose()}
               >
                 <button
                   type="button"
@@ -128,12 +152,19 @@ export function OutputModeSelect({
                   )}
                 </button>
                 {isBinaural && submenuOpen && (
+                  // The offset is padding on this wrapper, not a margin: a
+                  // margin would leave a dead 4px channel between row and
+                  // submenu that the pointer has to cross, which reads to the
+                  // browser as leaving the row entirely.
                   <div
                     className={cn(
-                      "absolute top-0 z-20 w-64 rounded-md border bg-popover p-1 shadow-md",
-                      submenuFlip ? "right-full mr-1" : "left-full ml-1",
+                      "absolute top-0 z-20",
+                      submenuFlip ? "right-full pr-1" : "left-full pl-1",
                     )}
+                    onMouseEnter={cancelClose}
+                    onMouseLeave={scheduleClose}
                   >
+                  <div className="w-64 rounded-md border bg-popover p-1 shadow-md">
                     {PROFILE_OPTIONS.map((profileOption) => {
                       const ProfileIcon = profileOption.icon;
                       return (
@@ -159,6 +190,7 @@ export function OutputModeSelect({
                         </button>
                       );
                     })}
+                  </div>
                   </div>
                 )}
               </div>

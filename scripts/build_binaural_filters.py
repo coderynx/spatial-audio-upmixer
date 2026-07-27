@@ -39,6 +39,12 @@ WEB_OUT_DIR = ROOT / "web" / "public" / "hrir"
 
 DIRECT_TAPS = 128
 
+# Bright-tail reference lowpass. A profile's room tail is energy-normalized to
+# this cutoff (see `synth_room_tail`) so a darker per-profile `lp_hz` changes
+# only the tail's timbre, not its reverberant amount. `studio` uses this cutoff
+# directly, so its tail is unaffected by the normalization.
+REF_TAIL_LP_HZ = 3500.0
+
 # The pinv decode matrix (`build_filter_set`) and per-direction BRIRs are fit
 # to exactly this direction set — not to arbitrary points on the sphere. That
 # set should therefore be exactly the directions the renderer ever actually
@@ -133,10 +139,10 @@ def synth_hrir(azimuth: float, elevation: float, sr: int, n_taps: int) -> tuple[
     return left, right
 
 
-def synth_room_tail(sr: int, rt60_s: float, pre_delay_s: float, seed: int) -> np.ndarray:
+def synth_room_tail(sr: int, rt60_s: float, pre_delay_s: float, seed: int, lp_hz: float = 3500.0) -> np.ndarray:
     """Exponentially-decaying band-passed noise burst approximating a room tail.
 
-    Highpassed at 200 Hz on top of the existing 3500 Hz lowpass: with no low
+    Highpassed at 200 Hz on top of a per-profile lowpass (`lp_hz`): with no low
     end removed, bass content got a sustained, smeared low-frequency tail
     riding under the direct hit — reverberant *decay* on the bass, not extra
     level, which is what read as "boomy" (a bass note ringing via the tail
@@ -146,14 +152,31 @@ def synth_room_tail(sr: int, rt60_s: float, pre_delay_s: float, seed: int) -> np
     identical — see `build_filter_set`'s stage-1 normalization) is untouched
     by this: only the tail's ambience loses its low end, not the bass hit
     itself.
+
+    `lp_hz` sets the tail's high-frequency rolloff, the main lever that gives
+    two profiles with the *same* decay time (RT60/pre-delay/level) a different
+    room *character*: a treated near-field monitor room keeps a bright tail
+    (`REF_TAIL_LP_HZ` = 3500 Hz), while a larger cinema space loses more highs
+    over its longer air paths and plush absorption, giving a warmer, darker
+    tail (2500 Hz). To keep this a purely tonal change — same reverberant
+    *amount*, not less room — the darkened tail is renormalized to the energy
+    the bright reference tail would have had for the same noise realization, so
+    `lp_hz` shifts the tail's spectral tilt without lowering its total energy
+    (and leaves the reference-bright `studio` tail bit-identical: its scale is
+    exactly 1).
     """
     n = int(rt60_s * sr)
     rng = np.random.default_rng(seed)
-    noise = rng.standard_normal(n)
-    sos_lp = butter(2, 3500.0 / (sr / 2.0), btype="low", output="sos")
+    raw = rng.standard_normal(n)
     sos_hp = butter(2, 200.0 / (sr / 2.0), btype="high", output="sos")
-    noise = sosfilt(sos_lp, noise)
-    noise = sosfilt(sos_hp, noise)
+    sos_lp = butter(2, lp_hz / (sr / 2.0), btype="low", output="sos")
+    noise = sosfilt(sos_hp, sosfilt(sos_lp, raw))
+    if lp_hz != REF_TAIL_LP_HZ:
+        sos_ref = butter(2, REF_TAIL_LP_HZ / (sr / 2.0), btype="low", output="sos")
+        ref = sosfilt(sos_hp, sosfilt(sos_ref, raw))
+        noise_rms = float(np.sqrt(np.mean(noise ** 2)))
+        if noise_rms > 0:
+            noise *= float(np.sqrt(np.mean(ref ** 2))) / noise_rms
     decay = np.exp(-6.91 * np.arange(n) / (rt60_s * sr))  # -60 dB at rt60
     tail = noise * decay
     pre_delay_n = int(pre_delay_s * sr)
@@ -165,6 +188,7 @@ def build_filter_set(
     room_rt60_s: float | None,
     room_pre_delay_s: float = 0.005,
     target_energy: float | None = None,
+    room_tail_lp_hz: float = 3500.0,
 ) -> np.ndarray:
     """Return the (n_taps, 32) decode filter matrix for one profile.
 
@@ -229,11 +253,11 @@ def build_filter_set(
     # centered.
     num_pairs = max(PAIR_ID) + 1
     room_near_by_pair = (
-        [synth_room_tail(SAMPLE_RATE, room_rt60_s, room_pre_delay_s, seed=2 * i + 1) for i in range(num_pairs)]
+        [synth_room_tail(SAMPLE_RATE, room_rt60_s, room_pre_delay_s, seed=2 * i + 1, lp_hz=room_tail_lp_hz) for i in range(num_pairs)]
         if room_rt60_s else None
     )
     room_far_by_pair = (
-        [synth_room_tail(SAMPLE_RATE, room_rt60_s, room_pre_delay_s, seed=2 * i + 2) for i in range(num_pairs)]
+        [synth_room_tail(SAMPLE_RATE, room_rt60_s, room_pre_delay_s, seed=2 * i + 2, lp_hz=room_tail_lp_hz) for i in range(num_pairs)]
         if room_rt60_s else None
     )
     if room_rt60_s is not None:
@@ -284,10 +308,16 @@ def write_filter_set(name: str, matrix: np.ndarray, out_dir: Path) -> None:
 
 
 def main() -> None:
-    profiles = {
-        "flat_o3_decode": None,
-        "studio_o3_decode": 0.12,
-        "listening_o3_decode": 0.15,
+    # (rt60_s, pre_delay_s, tail_lp_hz) per room-tail profile. `studio` and
+    # `listening` share the *same* room amount (identical RT60, pre-delay, and
+    # tail level) — the difference is timbre: `studio` keeps a bright, neutral
+    # near-field monitor tail (3500 Hz), while `listening` darkens the tail
+    # (2500 Hz) to read as a larger, warmer reference cinema room without
+    # adding any extra reverberation. The hi-fi polish voicing (VOICING_PARAMS
+    # in upmixer/binaural/profiles.py) is layered on top of `listening` only.
+    room_profiles = {
+        "studio_o3_decode": (0.12, 0.005, 3500.0),
+        "listening_o3_decode": (0.12, 0.005, 2500.0),
     }
     print("Building flat_o3_decode (rt60=None)...")
     flat_matrix = build_filter_set("flat_o3_decode", None)
@@ -295,11 +325,11 @@ def main() -> None:
     # Overall-loudness reference every room-tail profile is matched to —
     # see `build_filter_set`'s docstring, stage 2.
     target_energy = float(np.sum(flat_matrix ** 2))
-    for name, rt60 in profiles.items():
-        if rt60 is None:
-            continue
-        print(f"Building {name} (rt60={rt60})...")
-        matrix = build_filter_set(name, rt60, target_energy=target_energy)
+    for name, (rt60, pre_delay, tail_lp) in room_profiles.items():
+        print(f"Building {name} (rt60={rt60}, pre_delay={pre_delay}, tail_lp={tail_lp})...")
+        matrix = build_filter_set(
+            name, rt60, room_pre_delay_s=pre_delay, target_energy=target_energy, room_tail_lp_hz=tail_lp
+        )
         write_filter_set(name, matrix, CORE_OUT_DIR)
 
     WEB_OUT_DIR.mkdir(parents=True, exist_ok=True)

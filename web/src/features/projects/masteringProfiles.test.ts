@@ -40,13 +40,14 @@ describe("VOICING_PARAMS.listening", () => {
   it("matches the backend upmixer/binaural/profiles.py values exactly", () => {
     // Pins the values docs/standards/spatial_audio_engine.md §5 and
     // upmixer/binaural/profiles.py specify — a prior hand-sync drift
-    // doubled these on the web side (bass/air 2.0, presence 1.0, widen
-    // 0.15) with nothing catching it.
+    // doubled analogous values on the web side with nothing catching it.
     const listening = VOICING_PARAMS.listening;
-    expect(listening.bassShelfGainDb).toBeCloseTo(1.0);
-    expect(listening.airShelfGainDb).toBeCloseTo(1.0);
-    expect(listening.presenceGainDb).toBeCloseTo(0.5);
-    expect(listening.stereoWiden).toBeCloseTo(0.10);
+    expect(listening.crossfeedAmount).toBeCloseTo(0.10);
+    expect(listening.bassShelfGainDb).toBeCloseTo(2.0);
+    expect(listening.airShelfGainDb).toBeCloseTo(3.0);
+    expect(listening.presenceGainDb).toBeCloseTo(1.5);
+    expect(listening.stereoWiden).toBeCloseTo(0.15);
+    expect(listening.loudnessTargetLkfs).toBeNull();
   });
 });
 

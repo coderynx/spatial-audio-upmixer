@@ -1152,9 +1152,11 @@ export function useStemPreview(
 
   const apply = React.useCallback(() => {
     const ctx = context.current;
-    // The active Spatial Audio Engine profile's own loudness target (e.g.
-    // Listening's consumer -16 LKFS) overrides the mastering block's target
-    // when rendering binaural — see VOICING_PARAMS.loudnessTargetLkfs.
+    // The active Spatial Audio Engine profile's own loudness target (if any)
+    // overrides the mastering block's target when rendering binaural — see
+    // VOICING_PARAMS.loudnessTargetLkfs. All profiles currently leave it null
+    // (listening is level-matched to studio/flat), so this falls back to the
+    // mastering block's target; the override stays wired for future use.
     const profileLoudnessTarget = outputModeRef.current === "binaural"
       ? VOICING_PARAMS[spatialProfileRef.current].loudnessTargetLkfs
       : null;
