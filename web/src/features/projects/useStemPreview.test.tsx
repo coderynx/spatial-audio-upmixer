@@ -2,7 +2,7 @@ import * as React from "react";
 import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectStem } from "@/api";
-import { applyTruePeakCeiling, useStemPreview, type OutputMode } from "./useStemPreview";
+import { applyTruePeakCeiling, useStemPreview, type OutputMode, type SpatialProfile } from "./useStemPreview";
 
 class FakeAudioParam {
   value = 0;
@@ -214,14 +214,23 @@ function Harness({
   mastering,
   layoutChannels,
   outputMode,
+  spatialProfile,
 }: {
   mix?: MixArg;
   mastering?: MasterArg;
   layoutChannels?: string[];
   outputMode?: OutputMode;
+  spatialProfile?: SpatialProfile;
 }) {
-  preview = useStemPreview(stems, {}, mix, null, mastering, layoutChannels, outputMode);
+  preview = useStemPreview(stems, {}, mix, null, mastering, layoutChannels, outputMode, spatialProfile);
   return null;
+}
+
+function hrirUrls(): string[] {
+  const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+  return fetchMock.mock.calls
+    .map((args: unknown[]) => args[0] as string)
+    .filter((url) => url.startsWith("/hrir/"));
 }
 
 function installAudio() {
@@ -485,6 +494,44 @@ describe("useStemPreview mixing alignment", () => {
     // Reach into the hook's internal node map indirectly via play behavior:
     // both sources should still be created and started regardless of gain.
     expect(preview.playing).toBe(true);
+  });
+});
+
+describe("decode filter set loading (HRIR)", () => {
+  // Regression: an ordinary parameter edit (volume, mute, stem routing,
+  // mastering) used to re-fire 4 `/hrir/*.wav` fetches because the profile
+  // effect depended on `apply`'s identity, which changes on every one of
+  // those edits — see useStemPreview.ts's decode-filter-set effect.
+  it("does not refetch the decode filter set when volume/mix/mastering change, only on a profile switch", async () => {
+    installAudio();
+    const { rerender } = render(<Harness mix={{}} mastering={{}} />);
+    await act(async () => { await preview.playPause(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // initialize() loads the default ("studio") profile's 4-part set once.
+    expect(hrirUrls()).toHaveLength(4);
+    expect(hrirUrls().every((url) => url.startsWith("/hrir/studio_o3_decode_"))).toBe(true);
+
+    // Volume/mute changes and new mix/mastering object identities (as a
+    // manifest edit produces) must not re-trigger a fetch.
+    act(() => { preview.setVolume(0.4); });
+    act(() => { preview.toggleMute(); });
+    rerender(<Harness mix={{ stem_rebalance: { Vocals: 3 } }} mastering={{ loudness: { target: -16 } }} />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(hrirUrls()).toHaveLength(4);
+
+    // A genuine profile switch fetches the new profile's 4 parts...
+    rerender(<Harness mix={{}} mastering={{}} spatialProfile="listening" />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(hrirUrls()).toHaveLength(8);
+    expect(hrirUrls().slice(4).every((url) => url.startsWith("/hrir/listening_o3_decode_"))).toBe(true);
+
+    // ...and switching back to an already-loaded profile is a cache hit,
+    // not a new fetch.
+    rerender(<Harness mix={{}} mastering={{}} spatialProfile="studio" />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(hrirUrls()).toHaveLength(8);
   });
 });
 

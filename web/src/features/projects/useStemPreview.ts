@@ -32,9 +32,9 @@ import {
   buildBinauralGraph,
   buildMasteringGraph,
   createPositionalEncoder,
+  loadCachedDecodeFilterChannels,
   loadCachedEqBuffer,
   loadCachedRefMatchBuffers,
-  loadDecodeFilterChannels,
   type MasterPreview,
 } from "./previewGraph";
 
@@ -441,6 +441,15 @@ export function useStemPreview(
   // `fir_url` instead of a profile name (see `loadCachedRefMatchBuffers`) —
   // a server recompute changes the URL, which naturally busts this cache.
   const refMatchBufferCache = React.useRef<Map<string, Promise<Map<string, AudioBuffer>>>>(new Map());
+  // Same per-context cache lifetime, keyed by decode filter set name — see
+  // loadCachedDecodeFilterChannels. Not cleared in reset(): the profile's
+  // decoded Float32Arrays stay valid across a graph rebuild within the same
+  // AudioContext.
+  const decodeFilterCache = React.useRef<Map<string, Promise<Float32Array[]>>>(new Map());
+  // Profile currently assigned onto the live convolvers, so loadDecodeFilterSet
+  // can skip a redundant assignDecodeFilterBuffers call (32 buffer copies +
+  // reassignments) when re-invoked with the profile already in place.
+  const assignedDecodeProfile = React.useRef<SpatialProfile | null>(null);
   const resolvedBass = React.useRef<{ active: boolean; lfeGainDb: number }>({ active: false, lfeGainDb: 0 });
   // Lets `measureOutputLoudness` (defined before `apply`, called from `tick`)
   // invoke the always-current `apply` without needing it in a dependency
@@ -826,6 +835,7 @@ export function useStemPreview(
       preGain?.disconnect();
     });
     decodeConvolvers.current = [];
+    assignedDecodeProfile.current = null;
     binauralGraphNodes.current.forEach((node) => node.disconnect());
     binauralGraphNodes.current = [];
     voicingChain.current?.nodes.forEach((node) => node.disconnect());
@@ -1121,9 +1131,17 @@ export function useStemPreview(
     const ctx = context.current;
     const convolvers = decodeConvolvers.current;
     if (!ctx || convolvers.length !== N_ACN_CHANNELS) return false;
+    if (assignedDecodeProfile.current === profile) return true;
     try {
-      const channels = await loadDecodeFilterChannels(ctx, DECODE_FILTER_SET[profile], fetchDecodeFilterPart);
+      const channels = await loadCachedDecodeFilterChannels(
+        decodeFilterCache.current, ctx, DECODE_FILTER_SET[profile], fetchDecodeFilterPart,
+      );
+      // Convolvers may have been rebuilt (or the profile reassigned again)
+      // while this fetch/decode was in flight — re-check both before assigning.
+      if (context.current !== ctx || decodeConvolvers.current !== convolvers) return false;
+      if (assignedDecodeProfile.current === profile) return true;
       assignDecodeFilterBuffers(ctx, convolvers, channels);
+      assignedDecodeProfile.current = profile;
       return true;
     } catch {
       return false;
@@ -1248,9 +1266,14 @@ export function useStemPreview(
   // profile's decode filter set in the background.
   React.useEffect(() => {
     if (voicingChain.current) applyVoicingParams(voicingChain.current, VOICING_PARAMS[spatialProfile]);
-    apply();
+    applyRef.current();
     void loadDecodeFilterSet(spatialProfile);
-  }, [spatialProfile, loadDecodeFilterSet, apply, ready]);
+    // apply() is intentionally invoked via applyRef, not as a dependency:
+    // apply's own identity changes on every mix/volume/mastering edit
+    // (see its deps below), none of which should re-trigger a decode
+    // filter set load — only a genuine profile switch or graph-ready flip
+    // should. See applyRef's own comment for the same pattern.
+  }, [spatialProfile, loadDecodeFilterSet, ready]);
 
   const initialize = React.useCallback(() => {
     if (!supported) return Promise.resolve();

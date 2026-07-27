@@ -731,6 +731,24 @@ export async function loadDecodeFilterChannels(
   return channels;
 }
 
+/** Dedupes concurrent/repeat fetches of the same profile's decode filter set
+ * by `name` — only three possible keys (`DECODE_FILTER_SET`'s values), so
+ * this makes an A->B->A profile switch free after the first load. Same
+ * cache-by-key pattern as `loadCachedEqBuffer`. */
+export function loadCachedDecodeFilterChannels(
+  cache: Map<string, Promise<Float32Array[]>>,
+  ctx: BaseAudioContext,
+  name: string,
+  partLoader: (ctx: BaseAudioContext, partName: string) => Promise<AudioBuffer>,
+): Promise<Float32Array[]> {
+  let pending = cache.get(name);
+  if (!pending) {
+    pending = loadDecodeFilterChannels(ctx, name, partLoader);
+    cache.set(name, pending);
+  }
+  return pending;
+}
+
 /** Assigns a loaded decode filter set's 32 flat channels onto a
  * `buildBinauralGraph` handle's `convolverPairs`, two per ACN index (L, R) —
  * the non-blocking buffer-assignment half of the pattern `buildFirEqNode`
