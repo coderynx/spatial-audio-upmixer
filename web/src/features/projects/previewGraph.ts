@@ -12,21 +12,58 @@
 // bass control) on the discrete channel bed — see that module's docstring
 // and docs/contracts/preview_export_parity.md §1 for the pipeline map this
 // implements.
+//
+// Also carries `buildBinauralGraph`, the equivalent extraction of the
+// ambisonic-encode -> HOA-decode -> voicing stage from `useStemPreview.ts`'s
+// `initialize()` (see that function's per-speaker-bus loop, which owns the
+// per-channel `AmbiMonoEncoder`s and connects their outputs into this
+// graph's `hoaBus`) — mirrors `upmixer/binaural/renderer.py::render_binaural`.
+import numericLib from "numeric";
+// `ambi-monoEncoder`'s shared SH util calls the `numeric` library as a bare
+// global instead of importing it (see useStemPreview.ts's identical setup
+// comment) — set once here too so this module works standalone under the
+// Node golden-diff harness, which bundles only this file.
+(globalThis as typeof globalThis & { numeric?: unknown }).numeric ??= numericLib;
+import AmbiMonoEncoderImport from "ambisonics/dist/ambi-monoEncoder";
+
+// Vite (the live app) unwraps this package's Babel-style `exports.default`
+// down to the class itself, but esbuild's Node-platform CJS interop (used
+// by the golden-diff harness's standalone bundle, see
+// web/scripts/render-preview-golden.mjs) treats the whole CJS `exports`
+// object as `.default` without re-unwrapping its own nested `.default`,
+// leaving a `{ __esModule, default: monoEncoder }` wrapper instead of the
+// class. This runtime check makes the same import work under both bundlers
+// rather than needing two different import forms.
+const AmbiMonoEncoder = (
+  typeof AmbiMonoEncoderImport === "function"
+    ? AmbiMonoEncoderImport
+    : (AmbiMonoEncoderImport as unknown as { default: typeof AmbiMonoEncoderImport }).default
+);
 import {
+  ACN12_INDEX,
+  ACN12_N3D_CORRECTION,
+  AMBISONIC_ORDER,
   BASS_PROFILES,
   buildExciteCurve,
   buildFirEqNode,
+  buildVoicingChain,
+  applyVoicingParams,
   BUTTERWORTH_Q,
   COMP_PROFILES,
+  DECODE_FILTER_SPLITS,
   EQ_FIR_ASSETS,
   EXCITE_BLEND,
   fetchEqFirBuffer,
   MID_CUTOFF_HZ,
   MONO_MAKER_STEREO_PAIRS,
+  N_ACN_CHANNELS,
   SUB_CUTOFF_HZ,
+  VOICING_PARAMS,
   type BassProfileName,
   type CompProfileName,
   type EqProfileName,
+  type SpatialProfile,
+  type VoicingChain,
 } from "./masteringProfiles";
 
 /** Per-processing-parameter mastering config — mirrors the shape the
@@ -436,4 +473,165 @@ export function buildMasteringGraph(
     bassLfeGainDb: bassActive ? lfeGainDb : 0,
     applyCompressorReduction,
   };
+}
+
+// --- Binaural collapse graph (ambisonic encode -> HOA decode -> voicing) --
+//
+// `buildBinauralGraph` extracts everything downstream of the per-speaker
+// encoders in `useStemPreview.ts`'s `initialize()`: the shared 16-channel
+// HOA bus, the per-ACN decode convolver bank (with the ACN12 N3D
+// correction), and the post-decode voicing chain. It does **not** create the
+// per-speaker `AmbiMonoEncoder`s themselves — those stay owned by the
+// caller (one per positional channel, alongside that channel's mute/master
+// gain wiring in the live hook's `SpeakerBus`), each connecting its own
+// `.out` into this graph's returned `hoaBus`. This mirrors
+// `upmixer/binaural/renderer.py::render_binaural`'s signal graph: bed
+// channels -> per-speaker order-3 SH encode -> sum to 16ch HOA bus ->
+// convolve with profile decode filters -> stereo -> voicing.
+//
+// LFE is deliberately **not** handled here — the live preview adds it at
+// `mergePoint`, after this graph's `output` (post-voicing), whereas the
+// backend's `render_binaural` adds it to left/right *before* voicing. At
+// the Studio/Flat profiles (the only ones with an all-zero/identity voicing
+// chain) that ordering is numerically inert, so this is safe for now but is
+// a real, open discrepancy for the Listening profile — see Ledger D11 in
+// docs/contracts/preview_export_parity.md.
+export type BinauralGraphHandle = {
+  /** Feed each positional channel's `AmbiMonoEncoder.out` into this. */
+  hoaBus: GainNode;
+  /** Post-voicing stereo output (2 discrete channels via a ChannelMerger) —
+   * connect onward to the loudness-gain stage. A caller may also connect an
+   * LFE send directly into this same node's input 0 and 1 (a
+   * ChannelMergerNode sums multiple sources landing on the same input
+   * index), reproducing the live preview's `mergePoint` semantics without
+   * this function needing to know about LFE at all. */
+  output: AudioNode;
+  voicing: VoicingChain;
+  convolverPairs: { left: ConvolverNode; right: ConvolverNode; preGain: GainNode | null }[];
+  /** Every node this call created besides `hoaBus`/`output`/`voicing`'s own
+   * nodes (already covered by `voicing.nodes`) — for teardown. */
+  nodes: AudioNode[];
+};
+
+export function buildBinauralGraph(ctx: BaseAudioContext, profile: SpatialProfile): BinauralGraphHandle {
+  const nodes: AudioNode[] = [];
+
+  const hoaBus = ctx.createGain();
+  hoaBus.channelCount = N_ACN_CHANNELS;
+  hoaBus.channelCountMode = "explicit";
+  hoaBus.channelInterpretation = "discrete";
+  const hoaSplitter = ctx.createChannelSplitter(N_ACN_CHANNELS);
+  hoaBus.connect(hoaSplitter);
+  nodes.push(hoaSplitter);
+
+  const decodeSumLeft = ctx.createGain();
+  const decodeSumRight = ctx.createGain();
+  nodes.push(decodeSumLeft, decodeSumRight);
+  const convolverPairs: BinauralGraphHandle["convolverPairs"] = [];
+  for (let acn = 0; acn < N_ACN_CHANNELS; acn++) {
+    const left = ctx.createConvolver();
+    const right = ctx.createConvolver();
+    left.normalize = false;
+    right.normalize = false;
+    let preGain: GainNode | null = null;
+    if (acn === ACN12_INDEX) {
+      preGain = ctx.createGain();
+      preGain.gain.value = ACN12_N3D_CORRECTION;
+      hoaSplitter.connect(preGain, acn);
+      preGain.connect(left);
+      preGain.connect(right);
+      nodes.push(preGain);
+    } else {
+      hoaSplitter.connect(left, acn);
+      hoaSplitter.connect(right, acn);
+    }
+    left.connect(decodeSumLeft);
+    right.connect(decodeSumRight);
+    convolverPairs.push({ left, right, preGain });
+    nodes.push(left, right);
+  }
+  const decodeMerger = ctx.createChannelMerger(2);
+  decodeSumLeft.connect(decodeMerger, 0, 0);
+  decodeSumRight.connect(decodeMerger, 0, 1);
+  nodes.push(decodeMerger);
+
+  const voicingSplitter = ctx.createChannelSplitter(2);
+  decodeMerger.connect(voicingSplitter);
+  const voicingLeftTap = ctx.createGain();
+  const voicingRightTap = ctx.createGain();
+  voicingSplitter.connect(voicingLeftTap, 0);
+  voicingSplitter.connect(voicingRightTap, 1);
+  nodes.push(voicingSplitter, voicingLeftTap, voicingRightTap);
+
+  const voicing = buildVoicingChain(ctx, voicingLeftTap, voicingRightTap);
+  applyVoicingParams(voicing, VOICING_PARAMS[profile]);
+  const voicingMerger = ctx.createChannelMerger(2);
+  voicing.left.connect(voicingMerger, 0, 0);
+  voicing.right.connect(voicingMerger, 0, 1);
+  nodes.push(voicingMerger);
+
+  return { hoaBus, output: voicingMerger, voicing, convolverPairs, nodes };
+}
+
+/** One positional channel's fixed direction, in the same
+ * (azimuth-degrees, elevation-degrees) convention `AmbiMonoEncoder.azim`/
+ * `.elev` expect — see `web/src/lib/spatial.ts::positionToAzimuthElevation`.
+ * Passed in by the caller (rather than imported from `spatial.ts` here) so
+ * this module stays decoupled from that file's own dependency surface;
+ * `useStemPreview.ts` already computes this per channel for its
+ * `SpeakerBus` construction and can pass the same values through. */
+export function createPositionalEncoder(
+  ctx: BaseAudioContext,
+  azimuthDeg: number,
+  elevationDeg: number,
+): InstanceType<typeof AmbiMonoEncoder> {
+  const encoder = new AmbiMonoEncoder(ctx, AMBISONIC_ORDER);
+  encoder.azim = azimuthDeg;
+  encoder.elev = elevationDeg;
+  encoder.updateGains();
+  return encoder;
+}
+
+/** Fetches and decodes a profile's 4-part decode filter set (see
+ * `DECODE_FILTER_SPLITS`) into the flat 32-channel `[ACN0_L, ACN0_R, ...,
+ * ACN15_L, ACN15_R]` layout `assignDecodeFilterBuffers` expects.
+ * `partLoader` decouples the browser `fetch`-based default
+ * (`useStemPreview.ts`'s `fetchDecodeFilterChannels`) from the golden-diff
+ * harness's disk read, mirroring the `firLoader` pattern above. */
+export async function loadDecodeFilterChannels(
+  ctx: BaseAudioContext,
+  name: string,
+  partLoader: (ctx: BaseAudioContext, partName: string) => Promise<AudioBuffer>,
+): Promise<Float32Array[]> {
+  const parts = await Promise.all(
+    DECODE_FILTER_SPLITS.map((suffix) => partLoader(ctx, `${name}_${suffix}`)),
+  );
+  const channels: Float32Array[] = [];
+  for (const buffer of parts) {
+    for (let ch = 0; ch < buffer.numberOfChannels; ch++) channels.push(buffer.getChannelData(ch));
+  }
+  if (channels.length !== 2 * N_ACN_CHANNELS) {
+    throw new Error(`Decode filter set '${name}' has ${channels.length} channels, expected ${2 * N_ACN_CHANNELS}`);
+  }
+  return channels;
+}
+
+/** Assigns a loaded decode filter set's 32 flat channels onto a
+ * `buildBinauralGraph` handle's `convolverPairs`, two per ACN index (L, R) —
+ * the non-blocking buffer-assignment half of the pattern `buildFirEqNode`
+ * above also uses: the graph is already wired and silent until this runs. */
+export function assignDecodeFilterBuffers(
+  ctx: BaseAudioContext,
+  convolverPairs: BinauralGraphHandle["convolverPairs"],
+  channels: Float32Array[],
+): void {
+  const length = channels[0].length;
+  convolverPairs.forEach((pair, acn) => {
+    const leftBuffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    leftBuffer.copyToChannel(channels[2 * acn], 0);
+    const rightBuffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    rightBuffer.copyToChannel(channels[2 * acn + 1], 0);
+    pair.left.buffer = leftBuffer;
+    pair.right.buffer = rightBuffer;
+  });
 }

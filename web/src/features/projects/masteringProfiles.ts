@@ -393,6 +393,27 @@ export const VOICING_PARAMS: Record<SpatialProfile, VoicingParams> = {
   },
 };
 
+// Ambisonic order for the virtual-loudspeaker renderer shared by the live
+// preview (useStemPreview.ts) and the golden-diff harness's extracted
+// buildBinauralGraph below — see docs/standards/spatial_audio_engine.md.
+// Higher order = tighter localization, more encoder channels ((order+1)^2).
+export const AMBISONIC_ORDER = 3;
+export const N_ACN_CHANNELS = (AMBISONIC_ORDER + 1) * (AMBISONIC_ORDER + 1);
+
+// upmixer/binaural/ambisonics.py::encode_gains's ACN 12 (Y3^0, the order-3
+// vertical harmonic) omits the standard N3D sqrt(7) normalization factor. The
+// decode filter bank (docs/standards/spatial_audio_engine.md §4) was fit as
+// the pseudo-inverse of that unscaled encoder, so this preview's
+// standard-N3D real-SH encoder output for ACN 12 must be scaled down to
+// match what the filters were designed against. See that doc's §3.
+export const ACN12_INDEX = 12;
+export const ACN12_N3D_CORRECTION = 1 / Math.sqrt(7);
+
+// Decode filter set contract (docs/standards/spatial_audio_engine.md §4):
+// 16 ACN channels x {L, R} FIR filters, shipped as four 8-channel WAVs so
+// the browser's per-file multichannel decode stays under its 8ch cap.
+export const DECODE_FILTER_SPLITS = ["01-08ch", "09-16ch", "17-24ch", "25-32ch"] as const;
+
 export type VoicingChain = {
   left: AudioNode;
   right: AudioNode;
@@ -421,7 +442,7 @@ export type VoicingChain = {
  * `applyVoicingParams` to retune existing AudioParams, never a graph
  * rebuild. Returns the two output nodes to connect onward (left, right),
  * every node created (for teardown), and the tunable nodes themselves. */
-export function buildVoicingChain(ctx: AudioContext, left: AudioNode, right: AudioNode): VoicingChain {
+export function buildVoicingChain(ctx: BaseAudioContext, left: AudioNode, right: AudioNode): VoicingChain {
   const lowL = ctx.createBiquadFilter();
   lowL.type = "lowpass";
   const lowR = ctx.createBiquadFilter();

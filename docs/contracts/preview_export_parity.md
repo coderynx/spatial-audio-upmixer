@@ -18,14 +18,14 @@ and is cross-referenced, not repeated, below.
 | Per-stem EQ (pre-routing) | `upmixer/separation/stem_eq.py::StemEQ` | `STEM_EQ_FIR_ASSETS` + `buildFirEqNode` in `masteringProfiles.ts`, wired in `useStemPreview.ts` |
 | Stem → speaker-bed routing | `upmixer/separation/stem_router.py::StemRouter.route` | `createStemSends` in `useStemPreview.ts`, using `channelGroupGain`/`buildSurroundSend`/`buildHeightSend`/`buildDiffuseSend` from `masteringProfiles.ts` |
 | Multichannel channel derivation (non-stem path) | `upmixer/upmix/multichannel.py::MultichannelUpmixer` | Not previewed — multichannel pass-through input has no stem-preview path |
-| Ambisonic encode (order-3 ACN/N3D) | `upmixer/binaural/ambisonics.py::encode_gains` | `AmbiMonoEncoder` (JSAmbisonics) + `ACN12_N3D_CORRECTION` in `useStemPreview.ts` — see `spatial_audio_engine.md` §3 |
+| Ambisonic encode (order-3 ACN/N3D) | `upmixer/binaural/ambisonics.py::encode_gains` | `createPositionalEncoder` (wraps `AmbiMonoEncoder`/JSAmbisonics) + `ACN12_N3D_CORRECTION` in `previewGraph.ts`, called per speaker from `useStemPreview.ts` — see `spatial_audio_engine.md` §3 |
 | Virtual-loudspeaker geometry | `upmixer/binaural/geometry.py` | `web/src/lib/spatial.ts::speakerCoordinates` — see `spatial_audio_engine.md` §2 |
-| HOA decode → binaural | `upmixer/binaural/decoder.py` | Per-ACN `ConvolverNode` bank, `initialize()` in `useStemPreview.ts` — see `spatial_audio_engine.md` §4 |
-| Binaural voicing chain | `upmixer/binaural/voicing.py::apply_voicing` | `buildVoicingChain`/`applyVoicingParams` in `masteringProfiles.ts` — see `spatial_audio_engine.md` §5 |
+| HOA decode → binaural | `upmixer/binaural/decoder.py` | Per-ACN `ConvolverNode` bank in `buildBinauralGraph` (`previewGraph.ts`), called from `initialize()` in `useStemPreview.ts` — see `spatial_audio_engine.md` §4 and **Ledger D10** |
+| Binaural voicing chain | `upmixer/binaural/voicing.py::apply_voicing` | `buildVoicingChain`/`applyVoicingParams` in `masteringProfiles.ts`, wired inside `buildBinauralGraph` (`previewGraph.ts`) — see `spatial_audio_engine.md` §5 |
 | Spectral (mastering) EQ | `upmixer/mastering/eq.py::SpectralShaper` | `EQ_FIR_ASSETS` + `buildFirEqNode` in `masteringProfiles.ts` (same asset scheme as stem EQ, applied post-routing) |
 | Bus compression | `upmixer/mastering/compressor.py::BusCompressor` | Linked `DynamicsCompressorNode` detector + polled `.reduction` in `buildMasteringTopology` (`useStemPreview.ts`) |
 | Bass control | `upmixer/mastering/bass.py::BassController` | Bass shelves/exciter/mono-maker in `buildMasteringTopology` (**Ledger D5**) |
-| BS.1770 loudness normalization | `upmixer/loudness.py::normalize_loudness` | `measureApproxLkfs`/`loudnessGainFor` (`useStemPreview.ts`) — approximate, see **Tier 3** |
+| BS.1770 loudness normalization | `upmixer/loudness.py::normalize_loudness` (bed) / `render_binaural_delivery`'s own pass (collapse) | `measureOutputLoudness`/`loudnessGainFor` (`useStemPreview.ts`) — approximate, see **Tier 3**; the collapse-stage pass is now golden-diff-covered, see **Ledger D10** |
 | Soft limiting (last) | `upmixer/utils.py::soft_limit` | `buildSoftLimitCurve` (`masteringProfiles.ts`), applied last in `buildMasteringTopology` |
 | ITU-R BS.775 stereo downmix | `upmixer/utils.py::itu_downmix_stereo` | `STEREO_DOWNMIX_GAINS` + `applyOutputMode` (`useStemPreview.ts`) |
 
@@ -142,10 +142,11 @@ DSP-realization gap already accepted for the rest of this chain (§2 Tier 2).
 | Absolute / relative gate | −70 LKFS / −10 LU | 3 |
 | True-peak oversample | 4× (≤48 kHz), 2× (96 kHz) | 3 (not ported to preview) |
 
-The preview's `measureApproxLkfs` (`useStemPreview.ts`) has no K-weighting
-or gating — see **Tier 3 tolerance** in §5. This is the largest bounded gap
-in the contract; tightening it (full BS.1770 in-browser) would move these
-rows to Tier 1/2.
+The preview's `measureOutputLoudness` (`useStemPreview.ts`) has no
+K-weighting or gating, and measures a single ~1s window near playback start
+rather than the whole track — see **Tier 3 tolerance** in §5. This is the
+largest bounded gap in the contract; tightening it (full BS.1770 in-browser,
+whole-file measurement) would move these rows to Tier 1/2.
 
 ### Binaural — see `spatial_audio_engine.md` for the full geometry/SH/decode-filter/voicing table. Cross-cutting constant repeated here because it also gates delivery gain-staging:
 
@@ -204,9 +205,10 @@ layout/profile and compares:
 | Metric | Threshold | Rationale |
 |---|---|---|
 | Per-channel RMS delta (mastered, non-binaural bed) | ≤ 3 dB per channel | Tier-2 filter realization differences (IIR/`sosfilt(filt)` vs. biquad) should stay well below audibility |
-| Integrated LKFS delta | ≤ 1.0 LU | Bounds the Tier-3 approximate-loudness gap (§3); tighten as the web measurer improves |
-| True-peak delta | ≤ 1.0 dBTP | Web measurer is an approximate oversampled peak, not the standard's exact kernel; bounds that gap |
-| Binaural spectral difference (1/3-octave bands, 100 Hz–10 kHz) | ≤ 3 dB per band | Not yet exercised — the golden diff currently covers the EQ/comp/bass mastering-chain stage only, not the binaural collapse (see Implementation status) |
+| Integrated LKFS delta (bed and binaural collapse) | ≤ 1.0 LU | Bounds the Tier-3 approximate-loudness gap (§3); tighten as the web measurer improves |
+| True-peak delta (bed and binaural collapse) | ≤ 1.0 dBTP | Web measurer is an approximate oversampled peak, not the standard's exact kernel; bounds that gap |
+| Per-ear RMS delta (binaural collapse, FL/FR) | ≤ 3 dB per ear | Same rationale as the bed's per-channel check, applied to the collapsed stereo output — see `test_cross_engine_binaural_golden_diff` |
+| Binaural spectral difference (1/3-octave bands, 100 Hz–10 kHz) | ≤ 3 dB per band | Not yet exercised — the binaural golden diff (Ledger D10) covers integrated LKFS/true-peak/per-ear RMS but not a per-band spectral comparison; see Implementation status |
 
 Fixtures and golden metrics are regenerated via `REGENERATE_GOLDEN=1`
 (Python side) / `npm run golden:render` (web side), mirroring
@@ -247,17 +249,44 @@ acceptable, revise the threshold here explicitly — never silently).
   tolerances above. Run `npm run golden:render` (from `web/`) to regenerate
   it, then `python3 -m pytest tests/test_preview_export_golden.py -m perf`.
 
-**Scope note:** the golden diff currently covers the channel-bed mastering
-chain (EQ → compressor → bass/mono-maker) — exactly what `previewGraph.ts`
-implements — not BS.1770 loudness normalization, the final soft-limit, or
-the binaural/ambisonic collapse, which remain a separate, not-yet-extracted
-stage in `useStemPreview.ts` (applied downstream of the spatial render).
-`_mastering_config()`'s `loudness_normalize=False` is deliberate for this
-reason, not an oversight — see that function's docstring. Extending the
-harness to cover those stages is tracked as Ledger item **D10**.
+**Scope note (bed stage):** `test_cross_engine_golden_diff` covers the
+channel-bed mastering chain (EQ → compressor → bass/mono-maker) —
+exactly what `buildMasteringGraph` implements. `_mastering_config()`'s
+`loudness_normalize=False` is deliberate — bed-level BS.1770 loudness and the
+bed-level soft-limit stay out of scope for *this* test, since neither is
+implemented in the preview at the bed level, and enabling it here would
+compare a Python stage the web harness doesn't render at all.
+
+**Binaural collapse stage (Ledger D10, now covered):**
+`web/src/features/projects/previewGraph.ts` also exports `buildBinauralGraph`
+— the framework-free extraction of `useStemPreview.ts`'s `initialize()`
+ambisonic-encode → HOA-decode → voicing plumbing (the per-speaker
+`AmbiMonoEncoder`s stay owned by the caller, same division as
+`buildMasteringGraph`'s `channelPorts`). `render-preview-golden.mjs`'s
+binaural stage feeds the same mastered bed through it (Studio profile),
+adds LFE, measures the one-shot pre-gain LKFS the same way
+`measureOutputLoudness` does, applies `loudnessGainFor`'s capped gain, and
+runs a real `WaveShaperNode` (`oversample: "4x"`) soft-limit — mirroring
+`render_binaural_delivery` stage-for-stage — writing
+`tests/fixtures/preview_export_golden/web_binaural_metrics.json`.
+`test_python_binaural_metrics_golden` pins the Python side's equivalent
+`render_binaural_delivery` call (`loudness_normalize=True` this time — this
+*is* the stage under test); `test_cross_engine_binaural_golden_diff` diffs
+the two against the LKFS/true-peak/per-ear-RMS thresholds above. The Studio
+profile's voicing chain is all-zero/identity, which is why this diff doesn't
+surface Ledger D11 (LFE added before vs. after voicing) — see that entry.
+
+**Still open:** the 1/3-octave spectral-difference check has no test behind
+it yet — the LKFS/true-peak/RMS metrics above are scalar summaries, not a
+per-band comparison, so a spectral-shape mismatch that happens to preserve
+overall loudness and peak could still slip through. Extending
+`measureIntegratedLkfs`'s sibling functions (both sides) to also emit
+per-band energy is the natural next step.
 
 Building this harness surfaced two real bugs, both fixed (Ledger **D8**,
-**D9**) — the harness did exactly what it was built for.
+**D9**), and one open discrepancy discovered while extending it to the
+binaural stage (Ledger **D11**) — the harness keeps doing exactly what it
+was built for.
 
 ---
 
@@ -268,13 +297,14 @@ Building this harness surfaced two real bugs, both fixed (Ledger **D8**,
 | D1 | `spatial_audio_engine.md` §6 claimed a cross-engine reference-render acceptance test existed; it did not. | Fixed — §6 now points here and at `test_preview_export_golden.py`. |
 | D2 | Shared constants were hand-duplicated with no automated cross-check beyond `VOICING_PARAMS.listening` + the ACN-12 factor. | Fixed by the signature mechanism (§4) covering the full Tier-1 set above. |
 | D3 | `estimateRouteScale` approximates the backend's energy-based `route_scale` from the route table alone, not the actual decoded-buffer energy. | Open — Tier 3, no numeric threshold assigned yet pending golden-diff data; tighten if `test_preview_export_golden.py` shows audible drift. |
-| D4 | Preview loudness (`measureApproxLkfs`) omits K-weighting and gating. | Open — Tier 3, bounded by the 1.0 LU threshold in §5. |
+| D4 | Preview loudness (`measureOutputLoudness`) omits K-weighting and gating, and measures only a single ~1s window near the start of playback rather than the whole file. | Open — Tier 3, bounded by the 1.0 LU threshold in §5. The whole-track-vs-window gap was confirmed non-trivial on a real mixed track (manual export/preview A/B, not this suite): the same window measured directly in the delivered export file was ~0.3 LU off its own whole-track target from natural song dynamics alone, leaving a further ~0.4-0.6 LU unexplained by windowing — likely the Tier-2/3 realization gaps below stacking up. |
 | D5 | Bass mono-maker (`mono_cutoff_hz`) was not implemented in the preview graph — `mono`/`enhance` bass profiles behaved differently in preview vs. export. | Fixed — `buildMasteringTopology` (`useStemPreview.ts`) now cross-couples each `MONO_MAKER_STEREO_PAIRS` pair through paired lowpass filters and swaps each side's low band for the shared mono band, matching `BassController.process`'s mono-maker identity. DSP realization (biquad vs. `sosfiltfilt`) is Tier 2, same gap as the rest of this chain. |
 | D6 | `upmixer/utils.py::itu_downmix_stereo`'s center-channel coefficient and back→side fold are always the exact `_ITU_C_COEFF = 1/√2 ≈ 0.70710678`, independent of the user-configurable `surround_coeff`. The web's `STEREO_DOWNMIX_GAINS` (`useStemPreview.ts`) used the same truncated `0.7071` for both roles, conflating the fixed center coefficient with the configurable surround coefficient (magnitude ≈1e-5, ~−98 dB relative — inaudible, but a real bit-for-bit Tier-1 mismatch). | Fixed — `masteringProfiles.ts` now exports `ITU_CENTER_COEFF = 1/Math.sqrt(2)` (exact) separately from `SURROUND_DOWNMIX_COEFF = 0.7071` (the configurable one); `useStemPreview.ts`'s `STEREO_DOWNMIX_GAINS` uses each in its correct role. |
-| D7 | The golden cross-engine render diff (§5) that would actually *prove* preview/export equivalence at the signal level did not exist — only its Python half did. | Fixed for the mastering-chain scope — `previewGraph.ts` (extracted graph builder) + `web/scripts/render-preview-golden.mjs` (Node/`node-web-audio-api` headless harness) + `test_cross_engine_golden_diff` now render both engines and compare real measured metrics; the test passes on real numbers, not a loosened/faked assertion. Loudness normalization and the binaural collapse remain out of scope — see **D10**. |
+| D7 | The golden cross-engine render diff (§5) that would actually *prove* preview/export equivalence at the signal level did not exist — only its Python half did. | Fixed for the mastering-chain scope — `previewGraph.ts` (extracted graph builder) + `web/scripts/render-preview-golden.mjs` (Node/`node-web-audio-api` headless harness) + `test_cross_engine_golden_diff` now render both engines and compare real measured metrics; the test passes on real numbers, not a loosened/faked assertion. Extended to the binaural-collapse loudness stage — see **D10**. |
 | D8 | `node-web-audio-api`'s `DynamicsCompressorNode.reduction` returned small **positive** values for a sub-threshold signal instead of the spec-mandated `<= 0`, which the linked-compressor gain math (`10**(reduction/20)`) turned into unwanted amplification — found via the golden-diff harness (compressor-only bisection showed RMS *increasing* above the unprocessed baseline, which a spec-compliant attenuator can never do). | Fixed — `previewGraph.ts::applyCompressorReduction` now clamps to `Math.min(0, reduction)` before applying it. This is a defensive fix in the shipped preview code itself (not harness-only): real browsers are expected to already return `<= 0`, but clamping costs nothing and guards against any implementation that doesn't. |
 | D9 | The bass mono-maker's paired lowpass filters used a single `BiquadFilterNode` (default `Q`, single-pass) to stand in for the backend's `butter(2, ...)` applied via `sosfiltfilt` (zero-phase — forward+backward, i.e. a squared/steeper magnitude response) — found via the golden-diff harness: on decorrelated per-channel test content, the extra energy the single-pass filter leaked near the cutoff was enough to flip the mono-maker's net level effect from a slight cut (backend) to a slight boost (preview). The bass sub/mid stage separately used native `BiquadFilterNode` "lowshelf"/"peaking" types instead of the backend's additive-lowpass-band identity (`(ch - band) + band*gain_lin`), a different frequency-response shape than what `elevation_eq`/height-send filters elsewhere in this same file already correctly use. | Fixed — added `BUTTERWORTH_Q = 1/√2` (`masteringProfiles.ts`), applied to the mono-maker's now-cascaded (two-stage, approximating the zero-phase magnitude response) lowpass pair and to the surround/height send highpass filters; rewrote the bass sub/mid stage as `buildAdditiveBandGain` (`previewGraph.ts`), matching `_apply_band_gain`'s topology exactly instead of using native shelf/peak filter types. Cross-engine per-channel RMS delta on the golden bed dropped from over 5 dB to within the 3 dB threshold. |
-| D10 | The golden diff (§5) covers only the EQ/compressor/bass mastering-chain stage. BS.1770 loudness normalization, the final soft-limit, and the binaural/ambisonic collapse are not yet exercised by a cross-engine render comparison. | Open — extending `previewGraph.ts` and the harness to those stages (they live downstream in `useStemPreview.ts`, past the spatial/binaural render) is the natural next step; the binaural spectral-difference threshold in §5 has no test behind it yet. |
+| D10 | The golden diff (§5) covered only the EQ/compressor/bass mastering-chain stage. BS.1770 loudness normalization, the final soft-limit, and the binaural/ambisonic collapse were not exercised by any cross-engine render comparison — confirmed as a real, non-trivial gap by a manual export/preview A/B on a real track (not automated, see D4), which found deltas well outside this contract's tolerances. | Fixed for the binaural-collapse loudness/soft-limit stage — `buildBinauralGraph` (`previewGraph.ts`, extracted from `useStemPreview.ts`'s `initialize()`) + the binaural stage `render-preview-golden.mjs` adds (ambisonic encode → HOA decode → voicing → one-shot loudness gain → real oversampled soft-limit) + `test_python_binaural_metrics_golden`/`test_cross_engine_binaural_golden_diff` (mirroring `render_binaural_delivery`) now cover this at the Studio profile, passing on real measured LKFS/true-peak/per-ear-RMS numbers. Still open: (1) the bed-level loudness/soft-limit stage (before binaural collapse) remains untested, since the preview doesn't implement it at the bed level at all; (2) the 1/3-octave spectral-difference check has no test yet — see the Implementation status note above; (3) only the Studio profile is exercised, so Listening's non-identity voicing chain (and Ledger D11) isn't. |
+| D11 | The live preview adds LFE to the binaural mix *after* the voicing chain (at `mergePoint`, alongside the gated binaural/stereo signal), but the backend's `render_binaural` adds LFE to left/right *before* `apply_voicing` runs. At the Studio/Flat profiles this is numerically inert (voicing is all-zero/identity there), which is why building the D10 harness at Studio profile didn't surface it — but at the Listening profile (the only one with a non-identity voicing chain: crossfeed, shelves, presence, widen), LFE would be crossfed/shelved/widened in the backend and would not be in the preview, a real signal difference for any content with LFE energy. Separately, the web's `mergePoint` LFE addition also applies uniformly to the *stereo* (BS.775 downmix) output mode, whereas BS.775 excludes LFE from the downmix entirely — a second, related gap for that mode. | Open — found while extracting `buildBinauralGraph` for D10; not fixed here to keep that extraction's diff minimal and low-risk (it's a live-hook refactor, not just new test code). Fixing means either moving the live hook's LFE add to before `buildBinauralGraph`'s voicing stage for binaural mode, or excluding it entirely for stereo mode — no golden-diff coverage exists for the Listening profile or stereo-downmix LFE handling yet to verify a fix against. |
 
 Add new rows here when a discrepancy is found; do not delete resolved rows,
 mark them fixed so the history of what was found and corrected stays

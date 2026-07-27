@@ -193,9 +193,8 @@ function rms(x) {
   return Math.sqrt(sum / x.length);
 }
 
-// --- Bundle previewGraph.ts with esbuild so it runs under plain Node ----
-async function loadPreviewGraphModule() {
-  const entry = path.join(webRoot, "src/features/projects/previewGraph.ts");
+// --- Bundle a source module with esbuild so it runs under plain Node ----
+async function loadBundledModule(entry, tag) {
   const result = await esbuild.build({
     entryPoints: [entry],
     bundle: true,
@@ -205,7 +204,7 @@ async function loadPreviewGraphModule() {
     target: "node22",
   });
   const code = result.outputFiles[0].text;
-  const tmpFile = path.join(webRoot, "scripts", `.previewGraph.bundle.${process.pid}.mjs`);
+  const tmpFile = path.join(webRoot, "scripts", `.${tag}.bundle.${process.pid}.mjs`);
   fs.writeFileSync(tmpFile, code);
   try {
     return await import(`file://${tmpFile}`);
@@ -214,12 +213,59 @@ async function loadPreviewGraphModule() {
   }
 }
 
+async function loadPreviewGraphModule() {
+  return loadBundledModule(path.join(webRoot, "src/features/projects/previewGraph.ts"), "previewGraph");
+}
+
+async function loadSpatialModule() {
+  return loadBundledModule(path.join(webRoot, "src/lib/spatial.ts"), "spatial");
+}
+
+async function loadMasteringProfilesModule() {
+  return loadBundledModule(path.join(webRoot, "src/features/projects/masteringProfiles.ts"), "masteringProfiles");
+}
+
 // --- Disk-based EQ FIR loader (harness has no browser `fetch`) ---------
 async function loadFirFromDisk(ctx, assetName) {
   const filePath = path.join(webRoot, "public/eq_fir", `${assetName}.wav`);
   const bytes = fs.readFileSync(filePath);
   const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
   return ctx.decodeAudioData(arrayBuffer);
+}
+
+// --- Disk-based decode-filter-set part loader (same pattern as EQ) -----
+async function loadDecodeFilterPartFromDisk(ctx, partName) {
+  const filePath = path.join(webRoot, "public/hrir", `${partName}.wav`);
+  const bytes = fs.readFileSync(filePath);
+  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  return ctx.decodeAudioData(arrayBuffer);
+}
+
+// upmixer/binaural/renderer.py BINAURAL_LOUDNESS_MAX_GAIN_DB — the binaural
+// collapse's own loudness correction is capped small since the bed is
+// already loudness-matched before collapse (see masteringProfiles.ts).
+const BINAURAL_LOUDNESS_MAX_GAIN_DB = 6.0;
+// upmixer/config.py loudness_target_lkfs default — the Studio/Flat profiles'
+// own VOICING_PARAMS.loudnessTargetLkfs is null, so `apply()` in
+// useStemPreview.ts falls back to this same default in the live preview.
+const LOUDNESS_TARGET_LKFS = -18.0;
+// upmixer/config.py lfe_gain default (-10 dB) — see masteringProfiles.ts LFE_GAIN.
+const LFE_GAIN = 0.31622776601683794;
+const LFE_LOWPASS_HZ = 120;
+const BINAURAL_PROFILE = "studio";
+// masteringProfiles.ts DECODE_FILTER_SET[BINAURAL_PROFILE] — only the
+// "studio" entry is needed since this harness is fixed to that profile.
+const DECODE_FILTER_SET_NAME = "studio_o3_decode";
+
+// Mirrors useStemPreview.ts's `loudnessGainFor` exactly — this is the one
+// number the live preview actually computes and applies (a single measured
+// pre-gain, no true-peak safety net, unlike the backend's `normalize_loudness`
+// — see this stage's comment in `main()` for why the harness deliberately
+// does not add that safety net either).
+function loudnessGainFor(measuredLkfs, targetLkfs, maxGainDb) {
+  if (measuredLkfs <= -70) return 1;
+  const gainDb = Math.min(targetLkfs - measuredLkfs, maxGainDb);
+  return 10 ** (gainDb / 20);
 }
 
 async function main() {
@@ -304,6 +350,113 @@ async function main() {
   fs.writeFileSync(outPath, JSON.stringify(metrics, null, 2));
   console.log(`Wrote ${outPath}`);
   console.log(JSON.stringify(metrics, null, 2));
+
+  // --- Stage 2: binaural collapse + loudness + soft-limit -----------------
+  // Feeds the same mastered bed (`outputChannels` above) through the
+  // ambisonic-encode -> HOA-decode -> voicing graph `buildBinauralGraph`
+  // extracts from useStemPreview.ts's `initialize()`, then reproduces the
+  // live preview's own downstream stages exactly: `measureOutputLoudness`'s
+  // one-shot LKFS read -> `loudnessGainFor`'s capped gain -> the soft-limit
+  // WaveShaper. Mirrors upmixer/binaural/renderer.py::render_binaural_delivery
+  // on the Python side (see tests/test_preview_export_golden.py). See Ledger
+  // D10/D11 in docs/contracts/preview_export_parity.md.
+  const { buildBinauralGraph, createPositionalEncoder, loadDecodeFilterChannels, assignDecodeFilterBuffers } =
+    await loadPreviewGraphModule();
+  const { speakerCoordinates, positionToAzimuthElevation } = await loadSpatialModule();
+  const { buildSoftLimitCurve } = await loadMasteringProfilesModule();
+
+  const positionalChannels = CHANNELS.filter((name) => name !== "LFE");
+  // Generous tail margin for the decode filters' convolution ringout
+  // (~6.1k taps / 0.13s at 48kHz as of this writing) — trimmed back to
+  // exactly `n` samples before measurement anyway, matching
+  // `decode_to_binaural`'s own truncation to the bed's original length.
+  const tailMargin = SR;
+  const stageBCtx = new OfflineAudioContext(2, n + tailMargin, SR);
+
+  const binaural = buildBinauralGraph(stageBCtx, BINAURAL_PROFILE);
+  positionalChannels.forEach((name) => {
+    const buffer = stageBCtx.createBuffer(1, n, SR);
+    buffer.copyToChannel(outputChannels[name], 0);
+    const source = stageBCtx.createBufferSource();
+    source.buffer = buffer;
+    const { azim, elev } = positionToAzimuthElevation(speakerCoordinates[name]);
+    const encoder = createPositionalEncoder(stageBCtx, azim, elev);
+    source.connect(encoder.in);
+    encoder.out.connect(binaural.hoaBus);
+    source.start(0);
+  });
+
+  // LFE: lowpass + gain, summed directly into both of `binaural.output`'s
+  // channels — a ChannelMergerNode sums multiple sources landing on the
+  // same input index, reproducing the live preview's `mergePoint` addition
+  // without `buildBinauralGraph` needing to know about LFE at all (see that
+  // function's docstring on the Studio-profile-only safety of this).
+  const lfeBuffer = stageBCtx.createBuffer(1, n, SR);
+  lfeBuffer.copyToChannel(outputChannels.LFE, 0);
+  const lfeSource = stageBCtx.createBufferSource();
+  lfeSource.buffer = lfeBuffer;
+  const lfeLowpass = stageBCtx.createBiquadFilter();
+  lfeLowpass.type = "lowpass";
+  lfeLowpass.frequency.value = LFE_LOWPASS_HZ;
+  const lfeGainNode = stageBCtx.createGain();
+  lfeGainNode.gain.value = LFE_GAIN;
+  lfeSource.connect(lfeLowpass).connect(lfeGainNode);
+  lfeGainNode.connect(binaural.output, 0, 0);
+  lfeGainNode.connect(binaural.output, 0, 1);
+  lfeSource.start(0);
+
+  binaural.output.connect(stageBCtx.destination);
+
+  const decodeChannels = await loadDecodeFilterChannels(
+    stageBCtx, DECODE_FILTER_SET_NAME, loadDecodeFilterPartFromDisk,
+  );
+  assignDecodeFilterBuffers(stageBCtx, binaural.convolverPairs, decodeChannels);
+
+  const stageBRendered = await stageBCtx.startRendering();
+  // Truncate to `n` samples — matches Python's `decode_to_binaural`
+  // returning `left[:n_samples], right[:n_samples]` rather than keeping the
+  // convolution's ringout tail.
+  const rawLeft = stageBRendered.getChannelData(0).slice(0, n);
+  const rawRight = stageBRendered.getChannelData(1).slice(0, n);
+
+  const preGainLkfs = measureIntegratedLkfs({ FL: rawLeft, FR: rawRight }, SR);
+  const gain = loudnessGainFor(preGainLkfs, LOUDNESS_TARGET_LKFS, BINAURAL_LOUDNESS_MAX_GAIN_DB);
+
+  // Stage 3: gain -> soft-limit, in that order (see the "Limiting the raw
+  // pre-gain sum would bake in saturation..." comment on this same ordering
+  // in useStemPreview.ts) — a real WaveShaperNode with 4x oversampling, not
+  // a naive per-sample tanh eval, to match what the browser's native node
+  // actually does.
+  const stageCCtx = new OfflineAudioContext(2, rawLeft.length, SR);
+  const stageCBuffer = stageCCtx.createBuffer(2, rawLeft.length, SR);
+  stageCBuffer.copyToChannel(rawLeft, 0);
+  stageCBuffer.copyToChannel(rawRight, 1);
+  const stageCSource = stageCCtx.createBufferSource();
+  stageCSource.buffer = stageCBuffer;
+  const gainNode = stageCCtx.createGain();
+  gainNode.gain.value = gain;
+  const softLimitNode = stageCCtx.createWaveShaper();
+  softLimitNode.curve = buildSoftLimitCurve();
+  softLimitNode.oversample = "4x";
+  stageCSource.connect(gainNode).connect(softLimitNode).connect(stageCCtx.destination);
+  stageCSource.start(0);
+  const stageCRendered = await stageCCtx.startRendering();
+
+  const finalChannels = {
+    FL: stageCRendered.getChannelData(0).slice(0, n),
+    FR: stageCRendered.getChannelData(1).slice(0, n),
+  };
+
+  const binauralMetrics = {
+    measured_lkfs: measureIntegratedLkfs(finalChannels, SR),
+    measured_tp_dbtp: measureTruePeakDbtp(finalChannels),
+    channel_rms: { FL: rms(finalChannels.FL), FR: rms(finalChannels.FR) },
+  };
+
+  const binauralOutPath = path.join(outDir, "web_binaural_metrics.json");
+  fs.writeFileSync(binauralOutPath, JSON.stringify(binauralMetrics, null, 2));
+  console.log(`Wrote ${binauralOutPath}`);
+  console.log(JSON.stringify(binauralMetrics, null, 2));
 }
 
 main().catch((err) => {
