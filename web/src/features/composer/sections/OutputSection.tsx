@@ -9,7 +9,7 @@ export function OutputSection({
   const choices = configuration?.choices;
   const separation = configuration?.capabilities.stem_separation;
   return (
-    <div className="grid gap-4 rounded-md border p-4 sm:grid-cols-2">
+    <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
       <SelectField
         label="Processing engine"
         value={manifest.engine.mode}

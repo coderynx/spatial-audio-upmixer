@@ -23,6 +23,8 @@ Do not change `upmixer/` for web feature unless small, independently justified p
 
 Stem inference is provided by `audio-separator`. Web code must not directly import or control Torch, ONNX Runtime, CUDA, MPS, CoreML, model classes, or other inference-framework internals. Let `audio-separator` choose accelerator and use its Python API only for web capability reporting; actual jobs continue through `StemUpmixPipeline`.
 
+`web/` follows a fixed visual specification. Read [Web UI design specification](docs/web_ui_design.md) before adding a page, control, or visual state, and follow its tokens, layout primitives, and control sizes rather than introducing new ones. Colours come from the `index.css` tokens in both light and dark; the only sanctioned literal colours are in `web/src/lib/canvasTheme.ts`.
+
 ## Commands
 
 - `python3 -m pip install -e ".[dev]"` installs the package, CLI, pytest, and development extras.

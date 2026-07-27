@@ -20,15 +20,15 @@ function LcdDisplay({ currentTime, duration, mode, onToggleMode }: { currentTime
       onClick={onToggleMode}
       aria-label={`Time display, showing ${mode === "elapsed" ? "elapsed" : "remaining"} time. Click to toggle.`}
       title="Click to toggle elapsed / remaining"
-      className="group flex w-28 shrink-0 flex-col items-center gap-0.5 rounded-md border border-black/60 bg-[#0b1410] px-3 py-1.5 shadow-[inset_0_2px_4px_rgba(0,0,0,0.6)]"
+      className="group flex w-[104px] shrink-0 flex-col items-center rounded-md border border-black/70 bg-[#050807] px-2.5 py-1 shadow-[inset_0_2px_5px_rgba(0,0,0,0.7)]"
     >
       <span
-        className="w-full whitespace-nowrap text-center font-mono text-lg font-medium tabular-nums tracking-wider text-emerald-400"
-        style={{ textShadow: "0 0 6px rgba(52,211,153,0.65), 0 0 1px rgba(52,211,153,0.9)" }}
+        className="w-full whitespace-nowrap text-center font-mono text-base font-medium leading-tight tabular-nums tracking-wider text-[#30D158]"
+        style={{ textShadow: "0 0 7px rgba(48,209,88,0.6), 0 0 1px rgba(48,209,88,0.9)" }}
       >
         {value}
       </span>
-      <span className="w-full whitespace-nowrap text-center text-[9px] font-semibold uppercase tracking-[0.2em] text-emerald-700 group-hover:text-emerald-500">
+      <span className="w-full whitespace-nowrap text-center text-[8px] font-semibold uppercase leading-tight tracking-[0.2em] text-[#30D158]/45 group-hover:text-[#30D158]/75">
         {mode === "elapsed" ? "Elapsed" : "Remaining"}
       </span>
     </button>
@@ -93,29 +93,29 @@ function TransportImpl({
   }, [playing, currentTimeRef]);
   const displayTime = playing ? liveTime : currentTime;
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border p-2.5">
+    <div className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-2">
       <div className="flex items-center gap-1">
-        <Button variant="outline" size="icon" aria-label="Stop" disabled={disabled} onClick={onStop}>
-          <Square className="h-4 w-4" />
+        <Button variant="secondary" size="icon" aria-label="Stop" disabled={disabled} onClick={onStop}>
+          <Square />
         </Button>
-        <Button size="icon" aria-label={playing ? "Pause" : "Play"} disabled={disabled} onClick={onPlayPause}>
-          {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+        <Button variant="success" size="icon" aria-label={playing ? "Pause" : "Play"} disabled={disabled} onClick={onPlayPause}>
+          {playing ? <Pause /> : <Play />}
         </Button>
         <Button
-          variant={loop ? "default" : "outline"}
+          variant={loop ? "warning" : "secondary"}
           size="icon"
           aria-label="Toggle repeat"
           aria-pressed={loop}
           disabled={disabled}
           onClick={onToggleLoop}
         >
-          <Repeat className="h-4 w-4" />
+          <Repeat />
         </Button>
       </div>
       <LcdDisplay currentTime={displayTime} duration={duration} mode={mode} onToggleMode={() => setMode((current) => (current === "elapsed" ? "remaining" : "elapsed"))} />
       <input
         aria-label="Preview position"
-        className={cn("h-1.5 min-w-32 flex-1 accent-primary", disabled && "opacity-50")}
+        className={cn("h-1 min-w-32 flex-1 accent-primary", disabled && "opacity-40")}
         type="range"
         min={0}
         max={Math.max(duration, 0)}
@@ -135,11 +135,11 @@ function TransportImpl({
           disabled={disabled}
           onClick={onToggleMute}
         >
-          {muted ? <VolumeX className="h-4 w-4 text-destructive" /> : <Volume2 className="h-4 w-4 text-muted-foreground" />}
+          {muted ? <VolumeX className="text-destructive" /> : <Volume2 />}
         </Button>
         <input
           aria-label="Preview volume"
-          className="h-1.5 w-20 accent-primary"
+          className="h-1 w-20 accent-primary"
           type="range"
           min={0}
           max={1}

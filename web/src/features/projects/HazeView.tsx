@@ -1,6 +1,8 @@
 import * as React from "react";
 import type { StemRouting } from "@/api";
-import { heightFraction, speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo, vecAngle, type Vec3 } from "@/lib/spatial";
+import { canvasTheme } from "@/lib/canvasTheme";
+import { drawSpeakerPoint } from "./speakerMarker";
+import { heightFraction, speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo, vecAngle } from "@/lib/spatial";
 
 // NUGEN Halo Upmix-style "Haze View": a 2D radar where radius encodes
 // spectral centroid (bass at the center, treble at the edge) and angle
@@ -133,43 +135,64 @@ function HazeViewImpl({
     const draw = (time: number) => {
       const delta = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
-      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled } = propsRef.current;
+      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled } = propsRef.current;
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
       const center = { x: width / 2, y: height / 2 };
       const radius = Math.min(width, height) / 2 * 0.62;
       const heightRingRadius = radius * 1.18;
 
-      if (!initializedSize.current) {
-        ctx.fillStyle = "#020617";
-        ctx.fillRect(0, 0, width, height);
-        initializedSize.current = true;
-      } else {
-        ctx.fillStyle = "rgba(2, 6, 23, 0.3)";
-        ctx.fillRect(0, 0, width, height);
-      }
+      // Deep-navy plot field with a systemBlue wash pooled toward the
+      // listener position, echoing the shaded region Logic paints under a
+      // Channel EQ curve. Painting it through globalAlpha (rather than as a
+      // flat translucent colour) keeps the motion-trail fade from flattening
+      // the gradient out over successive frames.
+      const field = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, heightRingRadius * 1.35);
+      field.addColorStop(0, canvasTheme.plotFieldCore);
+      field.addColorStop(1, canvasTheme.plotField);
+      ctx.save();
+      ctx.globalAlpha = initializedSize.current ? 0.3 : 1;
+      ctx.fillStyle = field;
+      ctx.fillRect(0, 0, width, height);
+      const shade = ctx.createRadialGradient(center.x, center.y, radius * 0.1, center.x, center.y, heightRingRadius);
+      shade.addColorStop(0, canvasTheme.plotShade);
+      shade.addColorStop(1, "rgba(10, 132, 255, 0)");
+      ctx.fillStyle = shade;
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
+      initializedSize.current = true;
 
-      // Radar guide rings (frequency axis) + crosshair.
-      ctx.strokeStyle = "#1e293b";
+      // Radar guide rings (frequency axis). Inner guides sit back in
+      // `gridSoft` and only the outer speaker ring is drawn at full strength,
+      // so the substrate reads as depth rather than competing with the stem
+      // haze painted over it.
       ctx.lineWidth = 1;
-      for (const fraction of [0.33, 0.66, 1]) {
+      ctx.strokeStyle = canvasTheme.gridSoft;
+      for (const fraction of [0.33, 0.66]) {
         ctx.beginPath();
         ctx.arc(center.x, center.y, radius * fraction, 0, TAU);
         ctx.stroke();
       }
+      ctx.strokeStyle = canvasTheme.grid;
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, radius, 0, TAU);
+      ctx.stroke();
       ctx.save();
       ctx.setLineDash([2, 4]);
-      ctx.strokeStyle = "#334155";
+      ctx.strokeStyle = canvasTheme.gridSoft;
       ctx.beginPath();
       ctx.arc(center.x, center.y, heightRingRadius, 0, TAU);
       ctx.stroke();
       ctx.restore();
 
       ctx.textAlign = "center";
-      ctx.font = "600 10px system-ui, sans-serif";
-      ctx.fillStyle = "#94a3b8";
+      ctx.save();
+      ctx.font = "600 9px system-ui, sans-serif";
+      ctx.letterSpacing = "0.08em";
+      ctx.fillStyle = canvasTheme.label;
       ctx.fillText("FRONT", center.x, center.y - heightRingRadius - 18);
       ctx.fillText("BACK", center.x, center.y + heightRingRadius + 22);
+      ctx.restore();
 
       // Speaker labels: floor channels on the main ring, height channels on
       // the dashed outer ring so the two dimensions don't overlap visually.
@@ -177,32 +200,26 @@ function HazeViewImpl({
       const topChannels = currentChannels.filter((channel) => channel !== "LFE" && speakerCoordinates[channel] && speakerCoordinates[channel].y > 0);
 
       const nextSpeakerHits: SpeakerHitTarget[] = [];
-      ctx.font = "600 11px system-ui, sans-serif";
+      ctx.font = "500 11px system-ui, sans-serif";
       for (const channel of floorChannels) {
         const angle = vecAngle(speakerCoordinates[channel]);
         const point = polar(center, radius, angle);
         const muted = currentSpeakerEnabled[channel] === false;
-        ctx.fillStyle = muted ? "#ef4444" : "#334155";
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, muted ? 4 : 5, 0, TAU);
-        ctx.fill();
+        drawSpeakerPoint(ctx, point.x, point.y, 4, muted);
         const labelPoint = polar(center, radius + 14, angle);
-        ctx.fillStyle = muted ? "#f87171" : "#cbd5e1";
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.labelStrong;
         ctx.textAlign = "center";
         ctx.fillText(speakerDisplayLabel(channel, currentChannels), labelPoint.x, labelPoint.y + 4);
         nextSpeakerHits.push({ channel, x: point.x, y: point.y, radius: 12 });
       }
-      ctx.font = "600 9px system-ui, sans-serif";
+      ctx.font = "500 9px system-ui, sans-serif";
       for (const channel of topChannels) {
         const angle = vecAngle(speakerCoordinates[channel]);
         const point = polar(center, heightRingRadius, angle);
         const muted = currentSpeakerEnabled[channel] === false;
-        ctx.fillStyle = muted ? "#ef4444" : "#475569";
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, muted ? 3.5 : 4, 0, TAU);
-        ctx.fill();
+        drawSpeakerPoint(ctx, point.x, point.y, 3.25, muted);
         const labelPoint = polar(center, heightRingRadius + 12, angle);
-        ctx.fillStyle = muted ? "#f87171" : "#94a3b8";
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.label;
         ctx.fillText(speakerDisplayLabel(channel, currentChannels), labelPoint.x, labelPoint.y + 3);
         nextSpeakerHits.push({ channel, x: point.x, y: point.y, radius: 11 });
       }
@@ -211,12 +228,9 @@ function HazeViewImpl({
       // on the ring.
       if (currentChannels.includes("LFE")) {
         const lfeMuted = currentSpeakerEnabled.LFE === false;
-        ctx.fillStyle = lfeMuted ? "#ef4444" : "#334155";
-        ctx.beginPath();
-        ctx.arc(center.x, center.y, lfeMuted ? 4 : 5, 0, TAU);
-        ctx.fill();
-        ctx.font = "600 9px system-ui, sans-serif";
-        ctx.fillStyle = lfeMuted ? "#f87171" : "#94a3b8";
+        drawSpeakerPoint(ctx, center.x, center.y, 4, lfeMuted);
+        ctx.font = "500 9px system-ui, sans-serif";
+        ctx.fillStyle = lfeMuted ? canvasTheme.muteLabel : canvasTheme.label;
         ctx.textAlign = "center";
         ctx.fillText("LFE", center.x, center.y + 16);
         nextSpeakerHits.push({ channel: "LFE", x: center.x, y: center.y, radius: 12 });
@@ -280,7 +294,7 @@ function HazeViewImpl({
         // already reflects mute/solo (see useStemPreview.ts's appliedGain).
         const audible = Math.min(1, next.level * 8);
 
-        const color = propsRef.current.colors[voice.stem] || "#60a5fa";
+        const color = propsRef.current.colors[voice.stem] || canvasTheme.stemFallback;
         const [r, g, b] = hexToRgb(color);
         const dimmed = Boolean(currentSelected) && currentSelected !== voice.stem;
         const emphasis = (currentSelected === voice.stem ? 1 : dimmed ? 0.35 : 0.8) * audible;
@@ -406,14 +420,23 @@ function HazeViewImpl({
     onSelectStem(closest ? (closest.stem === selectedStem ? null : closest.stem) : null);
   };
 
-  return <div className={`relative flex flex-col overflow-hidden rounded-lg border bg-slate-950 text-slate-100 ${className || ""}`}>
-    <div className="pointer-events-none relative z-10 flex items-center justify-between px-3 pt-3 text-xs text-slate-300">
-      <span>Haze view</span>
-      <button className="pointer-events-auto hover:text-white" onClick={() => onSelectStem(null)}>{selectedStem || "Aggregate output"}</button>
-    </div>
+  // The wrapper takes the canvas's own background so the panel and the
+  // painted surface are seamless — these displays read as one instrument
+  // face, the way Logic's do, rather than a card with artwork inside it.
+  return <div
+    className={`relative flex flex-col overflow-hidden rounded-lg border ${className || ""}`}
+    style={{ backgroundColor: canvasTheme.plotField }}
+  >
     <div ref={containerRef} className="min-h-0 flex-1">
       <canvas ref={canvasRef} className="h-full w-full cursor-pointer" onPointerDown={handlePointerDown} />
     </div>
+    <button
+      type="button"
+      onClick={() => onSelectStem(null)}
+      className="absolute right-2 top-2 z-10 rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[11px] text-white/70 backdrop-blur-sm transition-colors hover:bg-white/10 hover:text-white"
+    >
+      {selectedStem || "Aggregate output"}
+    </button>
   </div>;
 }
 

@@ -198,12 +198,12 @@ export function JobComposer({
   };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
+      <DialogContent className="h-[min(760px,88vh)]">
+        <DialogHeader className="flex h-11 shrink-0 flex-row items-center gap-2.5 border-b px-3 pr-10">
+          <DialogTitle className="text-[13px] font-semibold">
             {remix ? "Create cached remix" : "Create upmix job"}
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="min-w-0 truncate text-[11px] text-muted-foreground">
             {remix
               ? "Reuse compatible separated stems while changing mixing or mastering settings."
               : step === "upload"
@@ -212,7 +212,7 @@ export function JobComposer({
           </DialogDescription>
         </DialogHeader>
         {step === "upload" ? (
-          <div className="space-y-4">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
             <div
               onDragOver={(event) => event.preventDefault()}
               onDrop={async (event) => {
@@ -223,23 +223,23 @@ export function JobComposer({
                   setError((nextError as Error).message);
                 }
               }}
-              className="flex min-h-56 flex-col items-center justify-center rounded-md border border-dashed p-6 text-center"
+              className="flex min-h-64 flex-col items-center justify-center rounded-lg border border-dashed p-6 text-center"
             >
-              <div className="mb-4 rounded-md bg-muted p-3">
+              <div className="mb-3 rounded-md bg-muted p-2.5 text-muted-foreground">
                 {busy ? (
-                  <RefreshCw className="h-7 w-7 animate-spin" />
+                  <RefreshCw className="h-6 w-6 animate-spin" />
                 ) : (
-                  <UploadCloud className="h-7 w-7" />
+                  <UploadCloud className="h-6 w-6" />
                 )}
               </div>
-              <h3 className="font-semibold">
+              <h3 className="text-[13px] font-semibold">
                 {busy ? "Importing audio" : "Drop audio, album folder, or ZIP"}
               </h3>
-              <p className="mt-1 max-w-md text-sm text-muted-foreground">
+              <p className="mt-1 max-w-md text-[11px] leading-relaxed text-muted-foreground">
                 WAV and FLAC files upload immediately. Album metadata and
                 artwork are detected automatically.
               </p>
-              <div className="mt-5 flex flex-wrap justify-center gap-2">
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <Button
                   variant="outline"
                   disabled={busy}
@@ -280,12 +280,12 @@ export function JobComposer({
               />
             </div>
             {items.length > 0 && (
-              <div className="flex items-center justify-between rounded-md border bg-muted/30 p-3">
+              <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/40 p-2.5">
                 <div>
-                  <p className="text-sm font-medium">
+                  <p className="text-[13px] font-medium">
                     {items.length} item{items.length === 1 ? "" : "s"}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-[11px] tabular-nums text-muted-foreground">
                     {formatBytes(
                       items.reduce((total, item) => total + item.file.size, 0),
                     )}
@@ -294,6 +294,7 @@ export function JobComposer({
                 {error && (
                   <Button
                     variant="outline"
+                    size="sm"
                     disabled={busy}
                     onClick={() => void importFiles(items)}
                   >
@@ -304,45 +305,36 @@ export function JobComposer({
               </div>
             )}
             {error && (
-              <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-[11px] text-destructive">
                 {error}
               </p>
             )}
           </div>
         ) : (
-          <div className="space-y-4">
-            <section className="space-y-3">
-              <div>
-                <h3 className="text-base font-semibold">Source</h3>
-                <p className="text-xs text-muted-foreground">
-                  Metadata and source audio preview.
-                </p>
-              </div>
+          <>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+            <section className="space-y-2">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[.08em] text-muted-foreground">Source</h3>
               {preview ? (
                 <AlbumOverview preview={preview} />
               ) : (
-                <div className="h-48 animate-pulse rounded-md border bg-muted/40" />
+                <div className="h-40 animate-pulse rounded-lg border bg-muted/40" />
               )}
             </section>
             {remix && (
-              <div className="flex items-center gap-3 rounded-md border bg-muted/30 p-3">
-                <Layers3 className="text-muted-foreground" />
-                <div>
-                  <p className="text-sm font-medium">Stem cache connected</p>
-                  <p className="text-xs text-muted-foreground">
+              <div className="flex items-center gap-2.5 rounded-md border bg-muted/40 p-2.5">
+                <Layers3 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0">
+                  <p className="text-[13px] font-medium">Stem cache connected</p>
+                  <p className="truncate text-[11px] text-muted-foreground">
                     Compatible stems from “{remix.name}” will be reused.
                   </p>
                 </div>
               </div>
             )}
-            <section className="space-y-3">
-              <div>
-                <h3 className="text-base font-semibold">Job configuration</h3>
-                <p className="text-xs text-muted-foreground">
-                  User-controlled manifest settings.
-                </p>
-              </div>
-              <div className="space-y-2">
+            <section className="space-y-2">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[.08em] text-muted-foreground">Job configuration</h3>
+              <div className="space-y-1.5">
                 <Label htmlFor="job-name">Job name</Label>
                 <Input
                   id="job-name"
@@ -368,16 +360,17 @@ export function JobComposer({
               }}
             />
             {stemUnavailable && (
-              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+              <p className="rounded-md border border-warning/30 bg-warning/10 p-2.5 text-[11px] leading-relaxed text-warning">
                 {separation?.install_message}
               </p>
             )}
             {error && (
-              <p className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2.5 text-[11px] text-destructive">
                 {error}
               </p>
             )}
-            <div className="sticky -bottom-5 -mb-5 z-20 isolate flex flex-wrap justify-end gap-2 border-t bg-background pb-4 pt-3">
+            </div>
+            <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t p-2">
               <Button
                 variant="outline"
                 disabled={busy || referenceUploading || Boolean(rawError)}
@@ -398,7 +391,7 @@ export function JobComposer({
                 upmix
               </Button>
             </div>
-          </div>
+          </>
         )}
       </DialogContent>
     </Dialog>

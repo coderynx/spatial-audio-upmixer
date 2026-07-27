@@ -42,7 +42,7 @@ export function ManifestEditor({
           onRawChange(JSON.stringify(manifest, null, 2));
       }}
     >
-      <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">
+      <TabsList className="grid h-auto w-full grid-cols-3 lg:grid-cols-6">
         <TabsTrigger value="output">Output</TabsTrigger>
         <TabsTrigger value="spatial">Spatial</TabsTrigger>
         <TabsTrigger value="stems">Stems</TabsTrigger>

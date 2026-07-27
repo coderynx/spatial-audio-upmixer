@@ -1,41 +1,53 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Job } from "@/api";
+import { HeaderSlotProvider } from "@/app/HeaderSlot";
 import { JobsPage } from "./JobsPage";
 
-const job: Job = {
-  id: "job-1",
-  import_id: "import-1",
-  source_job_id: null,
-  name: "Album master",
-  status: "running",
-  progress: 0.5,
-  status_message: "Rendering",
-  manifest: { mixing: { channel_layout: "7.1.4" }, engine: { mode: "stem" } },
-  error: null,
-  created_at: "2026-01-01T12:00:00Z",
-  started_at: null,
-  finished_at: null,
-  updated_at: "2026-01-01T12:01:00Z",
-  tracks: [],
-  artifacts: [],
-  mastering_reference: null,
-};
+function makeJob(overrides: Partial<Job> = {}): Job {
+  return {
+    id: "job-1",
+    import_id: "import-1",
+    source_job_id: null,
+    name: "Album master",
+    status: "running",
+    progress: 0.5,
+    status_message: "Rendering",
+    manifest: { mixing: { channel_layout: "7.1.4" }, engine: { mode: "stem" } },
+    error: null,
+    created_at: "2026-01-01T12:00:00Z",
+    started_at: null,
+    finished_at: null,
+    updated_at: "2026-01-01T12:01:00Z",
+    tracks: [],
+    artifacts: [],
+    mastering_reference: null,
+    ...overrides,
+  };
+}
 
-describe("JobsPage", () => {
-  it("shows an actionable operational queue", () => {
-    const onAction = vi.fn();
-    render(
+function renderPage(jobs: Job[]) {
+  const onAction = vi.fn();
+  const onCreate = vi.fn();
+  render(
+    <HeaderSlotProvider>
       <JobsPage
-        jobs={[job]}
+        jobs={jobs}
         loading={false}
         error={null}
         onAction={onAction}
         onRemix={vi.fn()}
-        onCreate={vi.fn()}
-        onRefresh={vi.fn()}
-      />,
-    );
+        onCreate={onCreate}
+      />
+    </HeaderSlotProvider>,
+  );
+  return { onAction, onCreate };
+}
+
+describe("JobsPage", () => {
+  it("shows an actionable operational queue", () => {
+    const job = makeJob();
+    const { onAction } = renderPage([job]);
     expect(screen.getAllByText("Album master").length).toBeGreaterThan(0);
     expect(screen.getAllByText("7.1.4").length).toBeGreaterThan(0);
     fireEvent.click(screen.getAllByLabelText("Pause job")[0]);
@@ -43,36 +55,18 @@ describe("JobsPage", () => {
   });
 
   it("shows an empty-state job action", () => {
-    const onCreate = vi.fn();
-    render(
-      <JobsPage
-        jobs={[]}
-        loading={false}
-        error={null}
-        onAction={vi.fn()}
-        onRemix={vi.fn()}
-        onCreate={onCreate}
-        onRefresh={vi.fn()}
-      />,
-    );
+    const { onCreate } = renderPage([]);
     fireEvent.click(screen.getByRole("button", { name: "Create job" }));
     expect(onCreate).toHaveBeenCalledOnce();
   });
 
-  it("triggers a manual refresh", () => {
-    const onRefresh = vi.fn();
-    render(
-      <JobsPage
-        jobs={[job]}
-        loading={false}
-        error={null}
-        onAction={vi.fn()}
-        onRemix={vi.fn()}
-        onCreate={vi.fn()}
-        onRefresh={onRefresh}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
-    expect(onRefresh).toHaveBeenCalledOnce();
+  it("filters the queue by status facet", () => {
+    renderPage([makeJob(), makeJob({ id: "job-2", name: "Single master", status: "completed" })]);
+
+    expect(screen.getAllByText("Single master").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Status: running (1)" }));
+
+    expect(screen.queryByText("Single master")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Album master").length).toBeGreaterThan(0);
   });
 });

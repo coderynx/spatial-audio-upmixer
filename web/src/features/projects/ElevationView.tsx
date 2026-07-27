@@ -1,5 +1,7 @@
 import * as React from "react";
 import type { StemRouting } from "@/api";
+import { canvasTheme } from "@/lib/canvasTheme";
+import { drawSpeakerPoint } from "./speakerMarker";
 import { speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo } from "@/lib/spatial";
 
 // Secondary "elevation" view: a front-on cross-section showing the vertical
@@ -121,64 +123,86 @@ function ElevationViewImpl({
       const toX = (x: number) => padX + ((x + 1) / 2) * plotWidth;
       const toY = (y: number) => floorY - Math.min(1, y / MAX_HEIGHT) * plotHeight;
 
-      if (!initializedSize.current) {
-        ctx.fillStyle = "#020617";
-        ctx.fillRect(0, 0, width, height);
-        initializedSize.current = true;
-      } else {
-        ctx.fillStyle = "rgba(2, 6, 23, 0.3)";
-        ctx.fillRect(0, 0, width, height);
-      }
+      // Deep-navy plot field with a systemBlue wash rising off the floor —
+      // the same shaded-region treatment Logic gives the area under a Channel
+      // EQ curve, oriented to this plot's floor-to-height axis. Painted
+      // through globalAlpha so the motion-trail fade doesn't flatten the
+      // gradient out over successive frames.
+      //
+      // Both gradients span the full canvas rather than the padded plot rect:
+      // a gradient clamped to the plot bounds leaves flat bands above and
+      // below it, and the wash confined to a rect draws its own hard edges.
+      // Full-bleed, with a mid stop easing the wash out, keeps the falloff
+      // continuous from floor to top.
+      const field = ctx.createLinearGradient(0, 0, 0, height);
+      field.addColorStop(0, canvasTheme.plotField);
+      field.addColorStop(1, canvasTheme.plotFieldCore);
+      ctx.save();
+      ctx.globalAlpha = initializedSize.current ? 0.3 : 1;
+      ctx.fillStyle = field;
+      ctx.fillRect(0, 0, width, height);
+      const shade = ctx.createLinearGradient(0, height, 0, 0);
+      shade.addColorStop(0, canvasTheme.plotShadeStrong);
+      shade.addColorStop(0.45, canvasTheme.plotShade);
+      shade.addColorStop(1, "rgba(10, 132, 255, 0)");
+      ctx.fillStyle = shade;
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
+      initializedSize.current = true;
 
-      // Floor / mid / top guide lines and center pan gridline.
-      ctx.strokeStyle = "#1e293b";
+      // Floor / mid / top guide lines and the center pan gridline. Half-pixel
+      // offsets keep these hairlines crisp instead of smearing across two
+      // rows; the mid guide and centre line sit back in `gridSoft` so only
+      // the floor and top bounds read as hard edges.
       ctx.lineWidth = 1;
-      for (const fraction of [0, 0.5, 1]) {
-        const y = floorY - fraction * plotHeight;
+      const guide = (fraction: number, color: string) => {
+        const y = Math.round(floorY - fraction * plotHeight) + 0.5;
+        ctx.strokeStyle = color;
         ctx.beginPath();
         ctx.moveTo(padX, y);
         ctx.lineTo(width - padX, y);
         ctx.stroke();
-      }
+      };
+      guide(0, canvasTheme.grid);
+      guide(0.5, canvasTheme.gridSoft);
+      guide(1, canvasTheme.grid);
+      ctx.strokeStyle = canvasTheme.gridSoft;
       ctx.beginPath();
-      ctx.moveTo(toX(0), padTop);
-      ctx.lineTo(toX(0), floorY);
+      ctx.moveTo(Math.round(toX(0)) + 0.5, padTop);
+      ctx.lineTo(Math.round(toX(0)) + 0.5, floorY);
       ctx.stroke();
 
+      ctx.save();
       ctx.font = "600 9px system-ui, sans-serif";
-      ctx.fillStyle = "#475569";
+      ctx.letterSpacing = "0.08em";
+      ctx.fillStyle = canvasTheme.label;
       ctx.textAlign = "left";
       ctx.fillText("TOP", 4, padTop + 8);
       ctx.fillText("FLOOR", 4, floorY + 3);
+      ctx.restore();
 
       // Speaker labels: floor channels along the bottom edge, height
       // channels along the top edge, both positioned by real left/right x.
       const floorChannels = currentChannels.filter((channel) => channel !== "LFE" && speakerCoordinates[channel] && speakerCoordinates[channel].y === 0);
       const topChannels = currentChannels.filter((channel) => channel !== "LFE" && speakerCoordinates[channel] && speakerCoordinates[channel].y > 0);
       const nextSpeakerHits: SpeakerHitTarget[] = [];
-      ctx.font = "600 10px system-ui, sans-serif";
+      ctx.font = "500 10px system-ui, sans-serif";
       ctx.textAlign = "center";
       for (const channel of floorChannels) {
         const x = toX(speakerCoordinates[channel].x);
         const muted = currentSpeakerEnabled[channel] === false;
-        ctx.fillStyle = muted ? "#f87171" : "#cbd5e1";
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.labelStrong;
         ctx.fillText(speakerDisplayLabel(channel, currentChannels), x, floorY + 15);
-        ctx.fillStyle = muted ? "#ef4444" : "#334155";
-        ctx.beginPath();
-        ctx.arc(x, floorY, muted ? 3.5 : 2.5, 0, Math.PI * 2);
-        ctx.fill();
+        drawSpeakerPoint(ctx, x, floorY, 3.5, muted);
         nextSpeakerHits.push({ channel, x, y: floorY, radius: 12 });
       }
-      ctx.font = "600 9px system-ui, sans-serif";
+      ctx.font = "500 9px system-ui, sans-serif";
       for (const channel of topChannels) {
         const x = toX(speakerCoordinates[channel].x);
         const muted = currentSpeakerEnabled[channel] === false;
-        ctx.fillStyle = muted ? "#f87171" : "#94a3b8";
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.label;
         ctx.fillText(speakerDisplayLabel(channel, currentChannels), x, padTop - 8);
-        ctx.fillStyle = muted ? "#ef4444" : "#475569";
-        ctx.beginPath();
-        ctx.arc(x, padTop, muted ? 3.5 : 2.5, 0, Math.PI * 2);
-        ctx.fill();
+        drawSpeakerPoint(ctx, x, padTop, 3.5, muted);
         nextSpeakerHits.push({ channel, x, y: padTop, radius: 11 });
       }
       // LFE has no left/right position (non-positional bass bus), so its
@@ -187,12 +211,9 @@ function ElevationViewImpl({
       if (currentChannels.includes("LFE")) {
         const lfeMuted = currentSpeakerEnabled.LFE === false;
         const lfePoint = { x: width - padX + 20, y: floorY };
-        ctx.fillStyle = lfeMuted ? "#ef4444" : "#334155";
-        ctx.beginPath();
-        ctx.arc(lfePoint.x, lfePoint.y, lfeMuted ? 4 : 3, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.font = "600 9px system-ui, sans-serif";
-        ctx.fillStyle = lfeMuted ? "#f87171" : "#94a3b8";
+        drawSpeakerPoint(ctx, lfePoint.x, lfePoint.y, 3.5, lfeMuted);
+        ctx.font = "500 9px system-ui, sans-serif";
+        ctx.fillStyle = lfeMuted ? canvasTheme.muteLabel : canvasTheme.label;
         ctx.textAlign = "center";
         ctx.fillText("LFE", lfePoint.x, floorY + 15);
         nextSpeakerHits.push({ channel: "LFE", x: lfePoint.x, y: lfePoint.y, radius: 12 });
@@ -241,7 +262,7 @@ function ElevationViewImpl({
         const audible = Math.min(1, next.level * 8);
         if (audible <= 0.005) continue;
 
-        const color = currentColors[voice.stem] || "#60a5fa";
+        const color = currentColors[voice.stem] || canvasTheme.stemFallback;
         const [r, g, b] = hexToRgb(color);
         const dimmed = Boolean(currentSelected) && currentSelected !== voice.stem;
         const emphasis = (currentSelected === voice.stem ? 1 : dimmed ? 0.35 : 0.8) * audible;
@@ -335,8 +356,10 @@ function ElevationViewImpl({
     if (closestSpeaker) onToggleSpeaker(closestSpeaker.channel);
   };
 
-  return <div className={`relative flex flex-col overflow-hidden rounded-lg border bg-slate-950 text-slate-100 ${className || ""}`}>
-    <div className="pointer-events-none relative z-10 px-3 pt-2 text-xs text-slate-300">Elevation view</div>
+  return <div
+    className={`relative flex flex-col overflow-hidden rounded-lg border ${className || ""}`}
+    style={{ backgroundColor: canvasTheme.plotField }}
+  >
     <div ref={containerRef} className="min-h-0 flex-1">
       <canvas ref={canvasRef} className="h-full w-full cursor-pointer" onPointerDown={handlePointerDown} />
     </div>

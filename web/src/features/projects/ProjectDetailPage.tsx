@@ -4,7 +4,6 @@ import {
   ArrowUpDown,
   AudioWaveform,
   ChevronLeft,
-  ChevronRight,
   Code2,
   Download,
   GripVertical,
@@ -17,6 +16,10 @@ import {
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Configuration, type Project, type StemRouting } from "@/api";
 import { useHeaderTitle } from "@/app/HeaderSlot";
+import { InspectorGroup } from "@/app/InspectorRow";
+import { SegmentedControl } from "@/app/SegmentedControl";
+import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
+import { Toolbar, ToolbarGroup, ToolbarSpacer } from "@/app/Toolbar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
@@ -36,6 +39,14 @@ import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import { Transport } from "./Transport";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
 
+type Stage = "mixing" | "mastering" | "delivery";
+
+const STAGES = [
+  { value: "mixing" as const, label: "Mixing", icon: SlidersHorizontal },
+  { value: "mastering" as const, label: "Mastering", icon: AudioWaveform },
+  { value: "delivery" as const, label: "Delivery", icon: Package },
+];
+
 export function ProjectDetailPage({ configuration }: { configuration: Configuration | null }) {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -46,7 +57,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const [stemOrder, setStemOrder] = React.useState<string[]>([]);
   const [draggedStem, setDraggedStem] = React.useState<string | null>(null);
   const [editScope, setEditScope] = React.useState<"project" | "track">("project");
-  const [activeTab, setActiveTab] = React.useState<"mixing" | "mastering" | "delivery">("mixing");
+  const [activeTab, setActiveTab] = React.useState<Stage>("mixing");
   const [manifestView, setManifestView] = React.useState(false);
   const [settingsView, setSettingsView] = React.useState(false);
   const [rawManifest, setRawManifest] = React.useState("");
@@ -296,91 +307,51 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // effect keys on it, so a fresh JSX element every render (e.g. inline
   // here) would re-fire the effect every render, which updates provider
   // state, which re-renders this component, forever.
-  const headerTitle = React.useMemo(() => project ? <div className="flex min-w-0 items-center gap-2"><Link to="/projects" className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"><ChevronLeft className="h-3.5 w-3.5" />Projects</Link><span className="text-muted-foreground">/</span><span className="truncate text-sm font-semibold">{project.name}</span></div> : null, [project?.name]);
+  const headerTitle = React.useMemo(() => project ? <div className="flex min-w-0 items-center gap-1.5"><Link to="/projects" className="flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"><ChevronLeft className="h-3.5 w-3.5" />Projects</Link><span className="text-muted-foreground">/</span><span className="truncate text-[13px] font-semibold">{project.name}</span></div> : null, [project?.name]);
   useHeaderTitle(headerTitle);
-  if (!project) return <main className="p-5">{error || "Loading project…"}</main>;
+  if (!project) return <main className="grid h-full place-items-center p-5 text-sm text-muted-foreground">{error || "Loading project…"}</main>;
   if (!ready) return <PreparationView project={project} onRetry={() => void retry()} />;
-  return <main className="flex h-[calc(100vh-3.5rem)] w-full flex-col overflow-hidden p-3 sm:px-6 sm:py-4">
-    {error && <p className="mb-3 flex-none rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
-    <div className="flex flex-none items-center justify-between gap-3">
-      <ol className="flex items-center">
-        {([
-          { value: "mixing", label: "Mixing", icon: SlidersHorizontal },
-          { value: "mastering", label: "Mastering", icon: AudioWaveform },
-          { value: "delivery", label: "Delivery", icon: Package },
-        ] as const).map((step, index) => {
-          const Icon = step.icon;
-          const active = activeTab === step.value && !settingsView && !manifestView;
-          return (
-            <li key={step.value} className="flex items-center">
-              {index > 0 && <ChevronRight className="mx-1 h-4 w-4 shrink-0 text-muted-foreground" />}
-              <button
-                type="button"
-                aria-current={active ? "step" : undefined}
-                onClick={() => {
-                  setActiveTab(step.value);
-                  setSettingsView(false);
-                  setManifestView(false);
-                }}
-                className={cn(
-                  "flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-medium transition-colors",
-                  active
-                    ? "border-primary bg-primary text-primary-foreground shadow"
-                    : "border-transparent bg-muted text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <span
-                  className={cn(
-                    "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs",
-                    active ? "bg-primary-foreground/20" : "bg-background",
-                  )}
-                >
-                  {index + 1}
-                </span>
-                <Icon className="h-4 w-4 shrink-0" />
-                {step.label}
-              </button>
-            </li>
-          );
-        })}
-      </ol>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
+  return <main className="flex h-[calc(100vh-var(--topbar-h))] w-full flex-col overflow-hidden">
+    <Toolbar>
+      <SegmentedControl
+        aria-label="Project stage"
+        segments={STAGES}
+        value={settingsView || manifestView ? ("" as Stage) : activeTab}
+        onChange={(value) => {
+          setActiveTab(value);
+          setSettingsView(false);
+          setManifestView(false);
+        }}
+      />
+      <ToolbarSpacer />
+      <ToolbarGroup>
+        <Button
+          variant={settingsView ? "secondary" : "ghost"}
+          size="sm"
           aria-pressed={settingsView}
           onClick={() => { setManifestView(false); setSettingsView(true); }}
-          className={cn(
-            "flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-medium transition-colors",
-            settingsView
-              ? "border-primary bg-primary text-primary-foreground shadow"
-              : "border-transparent bg-muted text-muted-foreground hover:text-foreground",
-          )}
         >
-          <Settings className="h-4 w-4 shrink-0" />
+          <Settings />
           Project settings
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant={manifestView ? "secondary" : "ghost"}
+          size="sm"
           aria-pressed={manifestView}
           onClick={() => {
             if (!manifestView && effectiveManifest) setRawManifest(JSON.stringify(effectiveManifest, null, 2));
             setSettingsView(false);
             setManifestView(true);
           }}
-          className={cn(
-            "flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-medium transition-colors",
-            manifestView
-              ? "border-primary bg-primary text-primary-foreground shadow"
-              : "border-transparent bg-muted text-muted-foreground hover:text-foreground",
-          )}
         >
-          <Code2 className="h-4 w-4 shrink-0" />
+          <Code2 />
           Manifest JSON
-        </button>
-      </div>
-    </div>
+        </Button>
+      </ToolbarGroup>
+    </Toolbar>
+    {error && <p className="flex-none border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
     {settingsView && manifest ? (
-      <section className="mt-4 min-h-0 flex-1 overflow-auto rounded-lg border p-4">
+      <section className="min-h-0 flex-1 overflow-auto p-3">
         <ProjectSettingsSection
           project={project}
           manifest={effectiveManifest || manifest}
@@ -391,7 +362,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         />
       </section>
     ) : manifestView ? (
-      <section className="mt-4 min-h-0 flex-1 overflow-auto rounded-lg border p-4">
+      <section className="min-h-0 flex-1 overflow-auto p-3">
         <AdvancedSection rawManifest={rawManifest} rawError={rawError} onChange={(value) => {
           setRawManifest(value);
           try {
@@ -402,7 +373,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         }} />
       </section>
     ) : (() => {
-      const previewPanel = <section className="flex min-h-0 flex-col gap-3">
+      // Transport is chrome, not one of the displays: it sits flush at the
+      // top of the preview column as a full-bleed bar, so the only things
+      // reading as floating panels here are the metering surfaces.
+      const previewPanel = <section className="flex min-h-0 flex-col">
         <Transport
           playing={preview.playing}
           currentTime={preview.currentTime}
@@ -432,9 +406,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             onSpatialProfileChange={setSpatialProfile}
           />
         </Transport>
-        {preview.error && <p className="text-xs text-destructive">{preview.error}</p>}
+        <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
+        {preview.error && <p className="shrink-0 text-[11px] text-destructive">{preview.error}</p>}
         {!preview.error && preview.supported && !preview.ready && previewStems.length > 0 && (
-          <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs text-muted-foreground">
+          <div className="flex shrink-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
             <span className="flex-1">Preparing preview — decoding stems…</span>
             <Progress value={preview.loadProgress * 100} className="w-24" />
@@ -448,7 +423,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             row's styling so it reads as the same kind of "getting ready"
             status rather than an unresponsive transport. */}
         {!preview.error && preview.ready && preview.measuring && (
-          <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs text-muted-foreground">
+          <div className="flex shrink-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
             <span className="flex-1">Preparing preview — calibrating loudness…</span>
           </div>
@@ -461,7 +436,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             the original EQ, not the match. Surface that instead of letting
             the match snap on silently once the SSE event lands. */}
         {!preview.error && project?.reference_match_pending && (
-          <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs text-muted-foreground">
+          <div className="flex shrink-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
             <span className="flex-1">Preparing reference EQ match — preview using original EQ until ready…</span>
           </div>
@@ -473,22 +448,23 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             renderer. ChannelMeters mirrors the same layout-scoped `channels`
             array and mute state, and stays mounted alongside HazeView across
             Mixing/Mastering/Delivery since both live in this shared panel. */}
-        <div className="flex min-h-0 flex-[3] gap-3">
+        <div className="flex min-h-0 flex-[3] gap-2">
           <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="min-h-0 min-w-0 flex-[2]" />
           <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} outputMode={outputMode} active={preview.playing} />
         </div>
         <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="h-40 shrink-0" />
+        </div>
       </section>;
       // Preview stays mounted across all three tabs (same center/left column
       // position) so playback and the routing graphs never stop just because
       // the user switched to Mastering or Delivery.
-      if (activeTab === "mixing") return <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[230px_minmax(0,1fr)_330px]">
-        <aside className="min-h-0 overflow-y-auto rounded-lg border p-3">
+      if (activeTab === "mixing") return <div className="grid min-h-0 flex-1 xl:grid-cols-[248px_minmax(0,1fr)_320px]">
+        <aside className="min-h-0 overflow-y-auto border-r bg-card p-2">
           {project.tracks.length > 1 && <>
-            <p className="mb-3 px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Tracks</p>
-            {project.tracks.map((track) => <button key={track.id} onClick={() => setSelectedTrack(track.id)} className={`mb-1 w-full rounded-md px-3 py-2 text-left text-sm ${selectedTrack === track.id ? "bg-accent font-medium" : "hover:bg-muted"}`}>{track.asset.title || track.asset.filename}</button>)}
+            <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground">Tracks</p>
+            {project.tracks.map((track) => <button key={track.id} onClick={() => setSelectedTrack(track.id)} className={cn("mb-0.5 flex h-7 w-full items-center rounded-md px-2 text-left text-[13px] transition-colors", selectedTrack === track.id ? "bg-primary/15 font-medium text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground")}><span className="truncate">{track.asset.title || track.asset.filename}</span></button>)}
           </>}
-          <p className={cn("px-2 text-xs font-medium uppercase tracking-wide text-muted-foreground", project.tracks.length > 1 && "mt-5")}>Stems</p>
+          <p className={cn("px-2 pb-1 text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground", project.tracks.length > 1 && "mt-3")}>Stems</p>
           {orderedStems.map((stem) => <StemRow
             key={stem}
             stem={stem}
@@ -505,13 +481,34 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           />)}
         </aside>
         {previewPanel}
-        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">{effectiveManifest && <aside className="rounded-lg border p-4"><div className="flex items-center justify-between"><p className="text-sm font-semibold">Routing preset</p><select aria-label="Edit scope" className="h-8 rounded border bg-background px-1 text-xs" value={editScope} onChange={(event) => setEditScope(event.target.value as "project" | "track")}><option value="project">Project</option><option value="track" disabled={!selected}>Track</option></select></div><p className="mt-1 text-xs text-muted-foreground">{editScope === "project" ? "Default for every track" : `Override: ${selected?.asset.title || selected?.asset.filename}`}</p><select className="mt-2 flex h-9 w-full rounded-md border bg-background px-2 text-sm" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets || ["balanced", "intimate", "rhythmic", "spacious", "live", "detailed"]).map((name) => <option key={name}>{name}</option>)}</select><label className="mt-3 block text-xs text-muted-foreground">Intensity <span className="float-right">{presetIntensity.toFixed(2)}</span><Slider className="mt-2" min={0} max={1} step={0.01} value={[presetIntensity]} onValueChange={([value]) => setPresetIntensity(value)} /></label><Button className="mt-3 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 className="h-4 w-4" />Apply preset</Button></aside>}{effectiveManifest && <aside className="rounded-lg border p-4"><div>{selectedStem ? <StemControls stem={selectedStem} route={routing[selectedStem] || {}} channels={channels} enabled={effectiveManifest.mixing.stem_enabled[selectedStem] !== false} gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onGain={(gain) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [selectedStem]: gain } } })} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: (() => { const next = { ...effectiveManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
-            stemEqProfiles={configuration?.choices.stem_eq_profiles}
-          /> : <p className="text-sm text-muted-foreground">Select stem to edit sends.</p>}</div></aside>}{effectiveManifest && <aside className="min-h-0 flex-1 overflow-y-auto rounded-lg border p-4"><div className="flex items-center justify-between text-sm"><span className="font-medium">Source anchor</span><span className="text-muted-foreground">{Math.round(effectiveManifest.mixing.stem_source_anchor_strength * 100)}%</span></div><Slider aria-label="Source anchor" className="mt-3" min={0} max={1} step={0.01} value={[effectiveManifest.mixing.stem_source_anchor_strength]} onValueChange={([stem_source_anchor_strength]) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } })} /><p className="mt-2 text-xs text-muted-foreground">Blends original channel pairs back into the mix.</p></aside>}</div>
+        {effectiveManifest && <div className="flex min-h-0 flex-col overflow-y-auto border-l bg-card">
+          <InspectorGroup
+            title="Routing preset"
+            actions={<select aria-label="Edit scope" className="h-6 rounded-md border bg-secondary px-1 text-[11px]" value={editScope} onChange={(event) => setEditScope(event.target.value as "project" | "track")}><option value="project">Project</option><option value="track" disabled={!selected}>Track</option></select>}
+          >
+            <p className="mb-2 text-[11px] text-muted-foreground">{editScope === "project" ? "Default for every track" : `Override: ${selected?.asset.title || selected?.asset.filename}`}</p>
+            <select className="flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px]" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets || ["balanced", "intimate", "rhythmic", "spacious", "live", "detailed"]).map((name) => <option key={name}>{name}</option>)}</select>
+            <label className="mt-2.5 block text-[11px] text-muted-foreground">Intensity <span className="float-right tabular-nums">{presetIntensity.toFixed(2)}</span><Slider className="mt-2" min={0} max={1} step={0.01} value={[presetIntensity]} onValueChange={([value]) => setPresetIntensity(value)} /></label>
+            <Button className="mt-2.5 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 />Apply preset</Button>
+          </InspectorGroup>
+          <InspectorGroup title="Stem">
+            {selectedStem ? <StemControls stem={selectedStem} route={routing[selectedStem] || {}} channels={channels} enabled={effectiveManifest.mixing.stem_enabled[selectedStem] !== false} gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onGain={(gain) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [selectedStem]: gain } } })} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: (() => { const next = { ...effectiveManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
+              stemEqProfiles={configuration?.choices.stem_eq_profiles}
+            /> : <p className="text-[11px] text-muted-foreground">Select a stem to edit its sends.</p>}
+          </InspectorGroup>
+          <InspectorGroup title="Source anchor">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-muted-foreground">Blend</span>
+              <span className="font-medium tabular-nums">{Math.round(effectiveManifest.mixing.stem_source_anchor_strength * 100)}%</span>
+            </div>
+            <Slider aria-label="Source anchor" className="mt-2" min={0} max={1} step={0.01} value={[effectiveManifest.mixing.stem_source_anchor_strength]} onValueChange={([stem_source_anchor_strength]) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } })} />
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">Blends original channel pairs back into the mix.</p>
+          </InspectorGroup>
+        </div>}
       </div>;
-      if (activeTab === "mastering") return manifest && <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_480px]">
+      if (activeTab === "mastering") return manifest && <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_460px]">
         {previewPanel}
-        <section className="min-h-0 overflow-auto">
+        <section className="min-h-0 overflow-auto border-l bg-card p-3">
           <MasteringSection
             manifest={manifest}
             setManifest={(update) => updateProjectManifest(typeof update === "function" ? update(manifest) : update)}
@@ -529,14 +526,29 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           />
         </section>
       </div>;
-      return manifest && <div className="mt-4 grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_480px]">
+      return manifest && <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_460px]">
         {previewPanel}
-        <section className="min-h-0 space-y-4 overflow-auto">
-          <ProjectDeliverySection manifest={manifest} configuration={configuration} onChange={updateProjectManifest} />
-          <Button disabled={exporting} onClick={() => void exportProject()}><Download />{exporting ? "Queueing" : "Export project"}</Button>
+        <section className="flex min-h-0 flex-col border-l bg-card">
+          <div className="min-h-0 flex-1 overflow-auto p-3">
+            <ProjectDeliverySection manifest={manifest} configuration={configuration} onChange={updateProjectManifest} />
+          </div>
+          <div className="shrink-0 border-t p-2">
+            <Button className="w-full" disabled={exporting} onClick={() => void exportProject()}><Download />{exporting ? "Queueing" : "Export project"}</Button>
+          </div>
         </section>
       </div>;
     })()}
+    <StatusBar>
+      <StatusCell label="Layout" value={routingLayout} />
+      <StatusSeparator />
+      <StatusCell label="Channels" value={channels.length} />
+      <StatusSeparator />
+      <StatusCell label="Stems" value={`${stemNames.filter((stem) => effectiveManifest?.mixing.stem_enabled[stem] !== false).length}/${stemNames.length}`} />
+      <StatusSeparator />
+      <StatusCell label="Monitor" value={outputMode === "binaural" ? `Binaural · ${spatialProfile}` : "Speakers"} />
+      <StatusSpacer />
+      <StatusCell label="Transport" value={preview.playing ? "Playing" : preview.ready ? "Ready" : "Loading"} />
+    </StatusBar>
   </main>;
 }
 
@@ -574,23 +586,23 @@ const StemRow = React.memo(function StemRow({
     onDrop={(event) => { event.preventDefault(); onDropOn(stem); }}
     onClick={() => onSelect(stem)}
     className={cn(
-      "mt-1 flex cursor-pointer items-center gap-1 rounded-md border-l-4 py-2 pl-1.5 pr-1 transition-colors",
-      selected ? "bg-accent" : "hover:bg-muted/60",
+      "mb-0.5 flex cursor-pointer items-center gap-1 rounded-md border-l-[3px] py-1.5 pl-1.5 pr-1 transition-colors",
+      selected ? "bg-primary/15" : "hover:bg-accent/60",
       dragging && "opacity-40",
     )}
     style={{ borderLeftColor: getStemColor(stem) }}
   >
     <GripVertical className="h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/60" aria-hidden="true" />
-    <StemIcon className={cn("h-4 w-4 shrink-0", muted && "opacity-30")} style={{ color: getStemColor(stem) }} aria-hidden="true" />
-    <span className={cn("min-w-0 flex-1 truncate text-left text-sm", muted && "text-muted-foreground line-through")}>{stem}</span>
+    <StemIcon className={cn("h-3.5 w-3.5 shrink-0", muted && "opacity-30")} style={{ color: getStemColor(stem) }} aria-hidden="true" />
+    <span className={cn("min-w-0 flex-1 truncate text-left text-[13px]", muted && "text-muted-foreground line-through")}>{stem}</span>
     <button
       type="button"
       aria-pressed={muted}
       aria-label={`${muted ? "Enable" : "Mute"} ${stem}`}
       onClick={(event) => { event.stopPropagation(); onToggleMute(stem); }}
       className={cn(
-        "flex h-6 w-6 shrink-0 items-center justify-center rounded text-[11px] font-bold",
-        muted ? "bg-red-500 text-white" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+        "flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-bold transition-colors",
+        muted ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
       M
@@ -601,8 +613,8 @@ const StemRow = React.memo(function StemRow({
       aria-label={`${soloed ? "Clear solo" : "Solo"} ${stem}`}
       onClick={(event) => { event.stopPropagation(); onToggleSolo(stem); }}
       className={cn(
-        "flex h-6 w-6 shrink-0 items-center justify-center rounded text-[11px] font-bold",
-        soloed ? "bg-amber-400 text-black" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+        "flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-bold transition-colors",
+        soloed ? "bg-warning text-warning-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
       S
@@ -615,7 +627,7 @@ const StemControls = React.memo(function StemControls({ stem, route, channels, e
   const setPosition = (patch: Partial<typeof position>) => onRoute(routeForPosition(channels, { ...position, ...patch }, route.LFE || 0));
   const StemIcon = getStemIcon(stem);
   const hasHeight = channels.includes("TFL") || channels.includes("TFR") || channels.includes("TBL") || channels.includes("TBR");
-  return <div className="space-y-4"><p className="flex items-center gap-2 text-sm font-semibold"><StemIcon className="h-4 w-4 shrink-0" style={{ color: getStemColor(stem) }} /><span className="min-w-0 flex-1 truncate">{stem}</span><span className="text-xs font-normal text-muted-foreground">{enabled ? "enabled" : "muted"}</span></p><label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><ArrowLeftRight className="h-3.5 w-3.5" />Front <span className="ml-auto">Back</span></span><Slider aria-label="Front to back" className="mt-2" min={0} max={1} step={0.01} value={[position.depth]} onValueChange={([depth]) => setPosition({ depth })} /></label>{hasHeight && <label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><ArrowUpDown className="h-3.5 w-3.5" />Floor <span className="ml-auto">Height</span></span><Slider aria-label="Floor to height" className="mt-2" min={0} max={1} step={0.01} value={[position.height]} onValueChange={([height]) => setPosition({ height })} /></label>}<label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><SlidersHorizontal className="h-3.5 w-3.5" />Gain <span className="ml-auto">{gain.toFixed(1)} dB</span></span><Slider className="mt-2" min={-12} max={6} step={0.1} value={[gain]} onValueChange={([value]) => onGain(value)} /></label><label className="block text-xs text-muted-foreground"><span className="flex items-center gap-1"><AudioWaveform className="h-3.5 w-3.5" />EQ</span><select className="mt-2 flex h-8 w-full rounded border bg-background px-2" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option>{(stemEqProfiles || ["vocal-presence", "vocal-warmth", "bass-warmth", "bass-cut", "drums-punch", "other-air"]).filter((name) => name !== "flat").map((name) => <option key={name} value={name}>{name}</option>)}</select></label></div>;
+  return <div className="space-y-3"><p className="flex items-center gap-1.5 text-[13px] font-semibold"><StemIcon className="h-3.5 w-3.5 shrink-0" style={{ color: getStemColor(stem) }} /><span className="min-w-0 flex-1 truncate">{stem}</span><span className="text-[11px] font-normal text-muted-foreground">{enabled ? "enabled" : "muted"}</span></p><label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowLeftRight className="h-3 w-3" />Front <span className="ml-auto">Back</span></span><Slider aria-label="Front to back" className="mt-1.5" min={0} max={1} step={0.01} value={[position.depth]} onValueChange={([depth]) => setPosition({ depth })} /></label>{hasHeight && <label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowUpDown className="h-3 w-3" />Floor <span className="ml-auto">Height</span></span><Slider aria-label="Floor to height" className="mt-1.5" min={0} max={1} step={0.01} value={[position.height]} onValueChange={([height]) => setPosition({ height })} /></label>}<label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><SlidersHorizontal className="h-3 w-3" />Gain <span className="ml-auto tabular-nums">{gain.toFixed(1)} dB</span></span><Slider className="mt-1.5" min={-12} max={6} step={0.1} value={[gain]} onValueChange={([value]) => onGain(value)} /></label><label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><AudioWaveform className="h-3 w-3" />EQ</span><select className="mt-1.5 flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px] text-foreground" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option>{(stemEqProfiles || ["vocal-presence", "vocal-warmth", "bass-warmth", "bass-cut", "drums-punch", "other-air"]).filter((name) => name !== "flat").map((name) => <option key={name} value={name}>{name}</option>)}</select></label></div>;
 });
 
 function routePosition(route: Record<string, number>, channels: string[]) {

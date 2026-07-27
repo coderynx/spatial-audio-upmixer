@@ -1,4 +1,5 @@
 import * as React from "react";
+import { canvasTheme } from "@/lib/canvasTheme";
 import { speakerDisplayLabel } from "@/lib/spatial";
 import type { OutputMode } from "./useStemPreview";
 
@@ -106,7 +107,20 @@ function drawHeadphoneIcon(ctx: CanvasRenderingContext2D, centerX: number, topY:
   ctx.fill();
 }
 
-function drawZoneBar(
+/** Colour a lit bar takes at a given dB — green below the yellow zone,
+ * yellow through it, red above the red zone. */
+function zoneColor(db: number) {
+  if (db >= RED_ZONE_DB) return canvasTheme.meterHot;
+  if (db >= YELLOW_ZONE_DB) return canvasTheme.meterWarn;
+  return canvasTheme.meterSafe;
+}
+
+/** Logic Level Meter bar: a flat square-ended column painted straight onto
+ * the field, changing colour as it crosses each zone, plus a held peak tick.
+ * An active channel has no track — an unlit meter is simply background, and
+ * the dB gridlines behind carry the structure. A muted channel keeps a slot
+ * so it reads as switched off rather than merely silent. */
+function drawMeterBar(
   ctx: CanvasRenderingContext2D,
   barX: number,
   barWidth: number,
@@ -119,36 +133,33 @@ function drawZoneBar(
   muted: boolean,
 ) {
   if (muted) {
-    ctx.fillStyle = "#111827";
+    ctx.fillStyle = canvasTheme.well;
     ctx.fillRect(barX, meterTop, barWidth, meterBottom - meterTop);
-    ctx.strokeStyle = "#ef4444";
+    ctx.strokeStyle = canvasTheme.mute;
     ctx.lineWidth = 1;
-    ctx.strokeRect(barX + 0.5, meterTop + 0.5, Math.max(0, barWidth - 1), meterBottom - meterTop - 1);
+    ctx.strokeRect(barX + 0.5, meterTop + 0.5, barWidth - 1, meterBottom - meterTop - 1);
     return;
   }
 
-  // Full zone-colored track, always drawn — the "unlit" overlay below is
-  // what makes the current level visible as a fill line within it.
-  ctx.fillStyle = "#7c2d12";
-  ctx.fillRect(barX, meterTop, barWidth, redBottomY - meterTop);
-  ctx.fillStyle = "#854d0e";
-  ctx.fillRect(barX, redBottomY, barWidth, yellowBottomY - redBottomY);
-  ctx.fillStyle = "#14532d";
-  ctx.fillRect(barX, yellowBottomY, barWidth, meterBottom - yellowBottomY);
-
   const fillTopY = dbToY(currentDb, meterTop, meterBottom);
-  ctx.fillStyle = "rgba(2, 6, 23, 0.88)";
-  ctx.fillRect(barX, meterTop, barWidth, Math.max(0, fillTopY - meterTop));
+  const segments: [number, number, string][] = [
+    [Math.max(fillTopY, yellowBottomY), meterBottom, canvasTheme.meterSafe],
+    [Math.max(fillTopY, redBottomY), yellowBottomY, canvasTheme.meterWarn],
+    [fillTopY, redBottomY, canvasTheme.meterHot],
+  ];
+  for (const [top, bottom, color] of segments) {
+    if (bottom - top <= 0) continue;
+    ctx.fillStyle = color;
+    ctx.fillRect(barX, top, barWidth, bottom - top);
+  }
 
-  ctx.strokeStyle = "#1e293b";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(barX + 0.5, meterTop + 0.5, Math.max(0, barWidth - 1), meterBottom - meterTop - 1);
-
-  // Peak-hold indicator above the bar: dim by default, bright red once the
-  // held peak is within a hair of clipping.
-  const clipping = peakDb >= CLIP_DB;
-  ctx.fillStyle = clipping ? "#ef4444" : "#7f1d1d";
-  ctx.fillRect(barX, meterTop - 9, barWidth, 5);
+  // Held peak, drawn as a tick centred on the level it is holding — red once
+  // within a hair of clipping, otherwise the colour of the zone it sits in.
+  if (peakDb > -60) {
+    const peakY = dbToY(peakDb, meterTop, meterBottom);
+    ctx.fillStyle = peakDb >= CLIP_DB ? canvasTheme.mute : zoneColor(peakDb);
+    ctx.fillRect(barX, Math.max(meterTop, peakY - 1), barWidth, 2);
+  }
 }
 
 function ChannelMetersImpl({
@@ -228,7 +239,20 @@ function ChannelMetersImpl({
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
       ctx.clearRect(0, 0, width, height);
-      ctx.fillStyle = "#020617";
+      // Same deep-navy field and systemBlue wash as the Haze and Elevation
+      // displays, so the three panels read as one instrument surface rather
+      // than a black box sitting beside two lit graphs. The wash rises from
+      // the bottom, matching the direction the bars themselves fill.
+      const field = ctx.createLinearGradient(0, 0, 0, height);
+      field.addColorStop(0, canvasTheme.plotField);
+      field.addColorStop(1, canvasTheme.plotFieldCore);
+      ctx.fillStyle = field;
+      ctx.fillRect(0, 0, width, height);
+      const shade = ctx.createLinearGradient(0, height, 0, 0);
+      shade.addColorStop(0, canvasTheme.plotShadeStrong);
+      shade.addColorStop(0.45, canvasTheme.plotShade);
+      shade.addColorStop(1, "rgba(10, 132, 255, 0)");
+      ctx.fillStyle = shade;
       ctx.fillRect(0, 0, width, height);
 
       const padLeft = 26;
@@ -239,20 +263,23 @@ function ChannelMetersImpl({
       const meterBottom = height - labelHeight;
       const plotWidth = Math.max(1, width - padLeft - padRight);
 
-      // dB scale: gridlines + labels shared down the left edge.
-      ctx.font = "600 9px system-ui, sans-serif";
+      // dB scale: numeral in the left gutter plus a hairline ruled across the
+      // whole field, as Logic's Level Meter draws it. Painted before the bars
+      // — which are opaque — so the rules read only through the gaps between
+      // columns and never cut across a lit bar. 0dB sits forward of the rest.
+      ctx.font = "500 9px system-ui, sans-serif";
       ctx.textAlign = "right";
       ctx.textBaseline = "middle";
-      ctx.strokeStyle = "rgba(148, 163, 184, 0.15)";
       ctx.lineWidth = 1;
       for (const tick of DB_TICKS) {
         const y = dbToY(tick, meterTop, meterBottom);
+        ctx.strokeStyle = tick === 0 ? canvasTheme.grid : canvasTheme.gridSoft;
         ctx.beginPath();
-        ctx.moveTo(padLeft, y);
-        ctx.lineTo(width - padRight, y);
+        ctx.moveTo(padLeft, Math.round(y) + 0.5);
+        ctx.lineTo(width - padRight, Math.round(y) + 0.5);
         ctx.stroke();
-        ctx.fillStyle = "#64748b";
-        ctx.fillText(String(tick), padLeft - 4, y);
+        ctx.fillStyle = canvasTheme.label;
+        ctx.fillText(String(tick), padLeft - 5, y);
       }
 
       const order = [
@@ -265,7 +292,7 @@ function ChannelMetersImpl({
       // two bars.
       const slots = currentMode === "native" ? order.length : order.length + 1 + 2;
       const pitch = plotWidth / slots;
-      const barWidth = Math.max(6, pitch * 0.6);
+      const barWidth = Math.max(6, pitch * 0.7);
       const nextHits: HitTarget[] = [];
       // Tracks whether every bar's peak marker has caught up to its current
       // fill level this frame — see the `active`-gating comment above.
@@ -282,10 +309,10 @@ function ChannelMetersImpl({
         const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
         const yellowBottomY = dbToY(YELLOW_ZONE_DB, meterTop, meterBottom);
 
-        drawZoneBar(ctx, barX, barWidth, meterTop, meterBottom, redBottomY, yellowBottomY, currentDb, peakDb, muted);
+        drawMeterBar(ctx, barX, barWidth, meterTop, meterBottom, redBottomY, yellowBottomY, currentDb, peakDb, muted);
 
         const label = channel === "LFE" ? "LFE" : speakerDisplayLabel(channel, currentChannels);
-        drawLabel(ctx, label, centerX, meterBottom + 3, muted ? "#f87171" : "#cbd5e1", pitch);
+        drawLabel(ctx, label, centerX, meterBottom + 3, muted ? canvasTheme.muteLabel : canvasTheme.labelStrong, pitch);
         nextHits.push({ channel, x: barX, width: barWidth });
       });
       hitTargets.current = nextHits;
@@ -296,7 +323,7 @@ function ChannelMetersImpl({
       // bars above already are the discrete output.
       if (currentMode !== "native") {
         const dividerX = padLeft + (order.length + 0.5) * pitch;
-        ctx.strokeStyle = "#1e293b";
+        ctx.strokeStyle = canvasTheme.grid;
         ctx.beginPath();
         ctx.moveTo(dividerX, meterTop);
         ctx.lineTo(dividerX, meterBottom);
@@ -317,12 +344,12 @@ function ChannelMetersImpl({
           const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
           const yellowBottomY = dbToY(YELLOW_ZONE_DB, meterTop, meterBottom);
 
-          drawZoneBar(ctx, barX, barWidth, meterTop, meterBottom, redBottomY, yellowBottomY, currentDb, peakDb, false);
-          if (currentMode === "stereo") drawLabel(ctx, label, centerX, meterBottom + 3, "#7dd3fc", pitch);
+          drawMeterBar(ctx, barX, barWidth, meterTop, meterBottom, redBottomY, yellowBottomY, currentDb, peakDb, false);
+          if (currentMode === "stereo") drawLabel(ctx, label, centerX, meterBottom + 3, canvasTheme.headphone, pitch);
         });
         if (currentMode === "binaural") {
           const groupCenterX = (barCenters[0] + barCenters[1]) / 2;
-          drawHeadphoneIcon(ctx, groupCenterX, meterBottom + 3, "#7dd3fc");
+          drawHeadphoneIcon(ctx, groupCenterX, meterBottom + 3, canvasTheme.headphone);
         }
       }
 
@@ -360,8 +387,10 @@ function ChannelMetersImpl({
   };
 
   return (
-    <div className={`relative flex min-w-[180px] max-w-[480px] flex-1 flex-col overflow-hidden rounded-lg border bg-slate-950 text-slate-100 ${className || ""}`}>
-      <div className="pointer-events-none px-2 pt-2 text-xs text-slate-400">Levels</div>
+    <div
+      className={`relative flex min-w-[180px] max-w-[480px] flex-1 flex-col overflow-hidden rounded-lg border ${className || ""}`}
+      style={{ backgroundColor: canvasTheme.plotField }}
+    >
       <div ref={containerRef} className="min-h-0 flex-1">
         <canvas ref={canvasRef} className="h-full w-full cursor-pointer" onPointerDown={handlePointerDown} />
       </div>

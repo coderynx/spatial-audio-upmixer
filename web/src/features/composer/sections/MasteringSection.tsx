@@ -47,7 +47,7 @@ export function MasteringSection({
   return (
     <div className="space-y-4">
       {!hideReferenceMatch && (
-      <section className="space-y-3 rounded-md border bg-muted/20 p-4">
+      <section className="space-y-2.5 rounded-lg border bg-muted/30 p-3">
         <div>
           <div className="flex items-center gap-2">
             <p className="text-sm font-semibold">Reference EQ match</p>
@@ -64,7 +64,7 @@ export function MasteringSection({
           </p>
         </div>
         {masteringReference ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-background p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-md border bg-card p-2.5">
             <div className="flex min-w-0 items-center gap-2">
               <FileAudio className="h-4 w-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
@@ -123,7 +123,7 @@ export function MasteringSection({
         {referenceError && (
           <p className="text-xs text-destructive">{referenceError}</p>
         )}
-        <div className="grid gap-4 pt-1 sm:grid-cols-2">
+        <div className="grid gap-3 pt-1 sm:grid-cols-2">
           <SliderField
             label="Spectral match strength"
             value={match.strength}
@@ -193,9 +193,9 @@ export function MasteringSection({
       </section>
       )}
 
-      <section className="space-y-3 rounded-md border p-4">
+      <section className="space-y-2.5 rounded-lg border p-3">
         <p className="text-sm font-semibold">Loudness</p>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2">
           <ToggleField
             label="Loudness normalization"
             description="BS.1770 integrated loudness normalization."
@@ -248,9 +248,9 @@ export function MasteringSection({
         </div>
       </section>
 
-      <section className="space-y-3 rounded-md border p-4">
+      <section className="space-y-2.5 rounded-lg border p-3">
         <p className="text-sm font-semibold">Spectral EQ</p>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2">
           <SelectField
             label="Profile"
             value={manifest.mastering.eq.profile || "none"}
@@ -294,7 +294,7 @@ export function MasteringSection({
         </div>
       </section>
 
-      <section className="space-y-3 rounded-md border p-4">
+      <section className="space-y-2.5 rounded-lg border p-3">
         <p className="text-sm font-semibold">Bus compressor</p>
         <SelectField
           label="Profile"
@@ -318,7 +318,7 @@ export function MasteringSection({
             }),
           )}
         />
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2">
           {(
             [
               ["threshold_db", "Threshold", "dB", 0.5, -40, 0, -18],
@@ -353,9 +353,9 @@ export function MasteringSection({
         </div>
       </section>
 
-      <section className="space-y-3 rounded-md border p-4">
+      <section className="space-y-2.5 rounded-lg border p-3">
         <p className="text-sm font-semibold">Bass control</p>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2">
           <SelectField
             label="Profile"
             value={manifest.mastering.bass.profile || "none"}

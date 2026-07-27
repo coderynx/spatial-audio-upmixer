@@ -4,87 +4,79 @@ import { Progress } from "@/components/ui/progress";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { JobActions } from "./JobActions";
-import { jobDetails, statusStyle } from "./status";
+import { jobDetails, statusLabel, statusVariant } from "./status";
 import type { JobAction } from "./useJobs";
 
 export function JobTable({
   jobs,
+  selectedId,
+  onSelect,
   onAction,
   onRemix,
 }: {
   jobs: Job[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
   onAction: (action: JobAction, job: Job) => void;
   onRemix: (job: Job) => void;
 }) {
   return (
-    <div className="hidden overflow-x-auto rounded-md border md:block">
-      <table className="w-full min-w-[850px] text-left text-sm">
-        <thead className="border-b bg-muted/50 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          <tr>
-            <th className="px-4 py-2">Job</th>
-            <th className="px-4 py-2">Render</th>
-            <th className="px-4 py-2">Status</th>
-            <th className="min-w-44 px-4 py-2">Progress</th>
-            <th className="px-4 py-2">Updated</th>
-            <th className="px-4 py-2 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {jobs.map((job) => {
-            const { layout, mode } = jobDetails(job);
-            return (
-              <tr
-                key={job.id}
-                className="border-b last:border-0 hover:bg-muted/30"
-              >
-                <td className="max-w-xs px-4 py-2.5">
-                  <p className="truncate font-medium">{job.name}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {job.tracks.length} track
-                    {job.tracks.length === 1 ? "" : "s"}
-                  </p>
-                </td>
-                <td className="px-4 py-2.5">
-                  <p>{layout}</p>
-                  <p className="mt-1 text-xs capitalize text-muted-foreground">
-                    {mode}
-                  </p>
-                </td>
-                <td className="px-4 py-2.5">
-                  <Badge
-                    variant="outline"
-                    className={cn("capitalize", statusStyle[job.status])}
-                  >
-                    {job.status.replace("_", " ")}
-                  </Badge>
-                </td>
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-3">
-                    <Progress value={job.progress * 100} />
-                    <span className="w-9 font-mono text-xs tabular-nums">
-                      {Math.round(job.progress * 100)}%
-                    </span>
-                  </div>
-                  <p className="mt-1 truncate text-xs text-muted-foreground">
-                    {job.status_message}
-                  </p>
-                </td>
-                <td className="whitespace-nowrap px-4 py-2.5 text-xs text-muted-foreground">
-                  {formatDate(job.updated_at)}
-                </td>
-                <td className="px-4 py-2.5">
-                  <JobActions
-                    job={job}
-                    onAction={onAction}
-                    onRemix={onRemix}
-                    compact
-                  />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+    <table className="w-full min-w-[760px] text-left text-[13px]">
+      <thead className="sticky top-0 z-10 border-b bg-card text-[11px] font-semibold uppercase tracking-[.06em] text-muted-foreground">
+        <tr>
+          <th className="px-3 py-1.5 font-semibold">Job</th>
+          <th className="px-3 py-1.5 font-semibold">Render</th>
+          <th className="px-3 py-1.5 font-semibold">Status</th>
+          <th className="min-w-40 px-3 py-1.5 font-semibold">Progress</th>
+          <th className="px-3 py-1.5 font-semibold">Updated</th>
+          <th className="px-3 py-1.5 text-right font-semibold">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {jobs.map((job) => {
+          const { layout, mode } = jobDetails(job);
+          return (
+            <tr
+              key={job.id}
+              onClick={() => onSelect(job.id)}
+              className={cn(
+                "cursor-pointer border-b last:border-0",
+                job.id === selectedId ? "bg-primary/10" : "hover:bg-accent/50",
+              )}
+            >
+              <td className="max-w-xs px-3 py-1.5">
+                <p className="truncate font-medium">{job.name}</p>
+                <p className="truncate text-[11px] text-muted-foreground">
+                  {job.tracks.length} track{job.tracks.length === 1 ? "" : "s"} · {job.status_message}
+                </p>
+              </td>
+              <td className="px-3 py-1.5">
+                <p className="tabular-nums">{layout}</p>
+                <p className="text-[11px] capitalize text-muted-foreground">{mode}</p>
+              </td>
+              <td className="px-3 py-1.5">
+                <Badge variant={statusVariant(job.status)} className="capitalize">
+                  {statusLabel(job.status)}
+                </Badge>
+              </td>
+              <td className="px-3 py-1.5">
+                <div className="flex items-center gap-2">
+                  <Progress value={job.progress * 100} />
+                  <span className="w-8 shrink-0 text-right text-[11px] tabular-nums">
+                    {Math.round(job.progress * 100)}%
+                  </span>
+                </div>
+              </td>
+              <td className="whitespace-nowrap px-3 py-1.5 text-[11px] text-muted-foreground">
+                {formatDate(job.updated_at)}
+              </td>
+              <td className="px-3 py-1.5">
+                <JobActions job={job} onAction={onAction} onRemix={onRemix} compact />
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }

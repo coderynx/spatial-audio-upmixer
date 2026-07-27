@@ -33,14 +33,14 @@ export function AlbumOverview({ preview }: { preview: ImportPreview }) {
     }
   };
   return (
-    <div className="rounded-md border bg-card p-4 sm:p-5">
+    <div className="rounded-lg border bg-card p-3">
       <audio
         ref={audio}
         className="hidden"
         onEnded={() => setPlaying(null)}
         onPause={() => setPlaying(null)}
       />
-      <div className="grid gap-5 lg:grid-cols-[160px_1fr]">
+      <div className="grid gap-3 lg:grid-cols-[132px_1fr]">
         <div className="aspect-square overflow-hidden rounded-md border bg-muted">
           {preview.cover_url ? (
             <img
@@ -50,18 +50,18 @@ export function AlbumOverview({ preview }: { preview: ImportPreview }) {
             />
           ) : (
             <div className="flex h-full items-center justify-center">
-              <Album className="h-12 w-12 text-muted-foreground" />
+              <Album className="h-10 w-10 text-muted-foreground" />
             </div>
           )}
         </div>
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground">
             {preview.kind}
           </p>
-          <h3 className="mt-1 truncate text-xl font-semibold">
+          <h3 className="mt-0.5 truncate text-base font-semibold">
             {preview.title || "Untitled import"}
           </h3>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
             {[
               preview.artist,
               preview.release_date?.slice(0, 4),
@@ -70,13 +70,13 @@ export function AlbumOverview({ preview }: { preview: ImportPreview }) {
               .filter(Boolean)
               .join(" · ")}
           </p>
-          <div className="mt-4 max-h-56 overflow-y-auto rounded-md border">
+          <div className="mt-2.5 max-h-52 overflow-y-auto rounded-md border">
             {preview.assets.map((asset, index) => (
               <div
                 key={asset.id}
-                className="grid grid-cols-[2rem_2rem_1fr_auto] items-center gap-2 border-b px-3 py-2 last:border-0"
+                className="grid grid-cols-[1.75rem_1.75rem_1fr_auto] items-center gap-1.5 border-b px-2 py-1 last:border-0"
               >
-                <span className="font-mono text-xs text-muted-foreground">
+                <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
                   {String(asset.track_number || index + 1).padStart(2, "0")}
                 </span>
                 <Button
@@ -90,10 +90,10 @@ export function AlbumOverview({ preview }: { preview: ImportPreview }) {
                   {playing === asset.id ? <Pause /> : <Play />}
                 </Button>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">
+                  <p className="truncate text-[13px] font-medium">
                     {asset.title || asset.filename}
                   </p>
-                  <p className="truncate text-xs text-muted-foreground">
+                  <p className="truncate text-[11px] text-muted-foreground">
                     {[
                       asset.artist || asset.relative_path,
                       asset.sample_rate
@@ -106,14 +106,14 @@ export function AlbumOverview({ preview }: { preview: ImportPreview }) {
                       .join(" · ")}
                   </p>
                 </div>
-                <span className="text-xs tabular-nums text-muted-foreground">
+                <span className="text-[11px] tabular-nums text-muted-foreground">
                   {formatDuration(asset.duration_seconds)}
                 </span>
               </div>
             ))}
           </div>
           {playbackError && (
-            <p className="mt-2 text-xs text-destructive">{playbackError}</p>
+            <p className="mt-2 text-[11px] text-destructive">{playbackError}</p>
           )}
         </div>
       </div>

@@ -67,7 +67,7 @@ describe("ProjectDetailPage tabs", () => {
     renderPage();
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
 
-    expect(screen.getByRole("button", { name: /Mixing/ })).toHaveAttribute("aria-current", "step");
+    expect(screen.getByRole("button", { name: /Mixing/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Routing preset")).toBeInTheDocument();
     // Preview transport and speaker graph render regardless of tab.
     expect(screen.getByRole("button", { name: /^(Play|Pause)$/i })).toBeInTheDocument();
