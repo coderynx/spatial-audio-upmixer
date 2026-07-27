@@ -2,10 +2,15 @@ import * as React from "react";
 import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectStem } from "@/api";
-import { applyTruePeakCeiling, useStemPreview } from "./useStemPreview";
+import { applyTruePeakCeiling, useStemPreview, type OutputMode } from "./useStemPreview";
 
 class FakeAudioParam {
   value = 0;
+  // Ramped writes (see rampGainTo in useStemPreview.ts) settle immediately
+  // in this fake — tests assert the resulting gain value, not ramp timing.
+  setTargetAtTime(target: number) {
+    this.value = target;
+  }
 }
 
 class FakeNode {
@@ -204,8 +209,18 @@ function lastContext(): FakeAudioContext {
 type MixArg = Parameters<typeof useStemPreview>[2];
 type MasterArg = Parameters<typeof useStemPreview>[4];
 
-function Harness({ mix, mastering }: { mix?: MixArg; mastering?: MasterArg }) {
-  preview = useStemPreview(stems, {}, mix, null, mastering);
+function Harness({
+  mix,
+  mastering,
+  layoutChannels,
+  outputMode,
+}: {
+  mix?: MixArg;
+  mastering?: MasterArg;
+  layoutChannels?: string[];
+  outputMode?: OutputMode;
+}) {
+  preview = useStemPreview(stems, {}, mix, null, mastering, layoutChannels, outputMode);
   return null;
 }
 
@@ -365,6 +380,44 @@ describe("per-stem EQ (mix.stem_eq)", () => {
 
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
     expect(lastContext().convolvers.some((c) => c.buffer !== null)).toBe(true);
+  });
+});
+
+describe("output-path hearing safety", () => {
+  it("gives the native discrete path its own soft-limit ceiling, not just the volume gain", async () => {
+    installAudio();
+    render(<Harness />);
+    await act(async () => { await preview.playPause(); });
+
+    // One tanh soft-limiter for binaural/stereo (pre-existing) plus one for
+    // native (nativeSoftLimitNode in useStemPreview.ts) — built unconditionally
+    // in `initialize()` regardless of which mode is actually selected, so
+    // native can never reach `ctx.destination` through the bare volume gain
+    // unlimited.
+    expect(lastContext().waveShapers.length).toBe(2);
+  });
+
+  it("routes native output mode to ctx.destination through the native soft-limiter", async () => {
+    installAudio();
+    render(<Harness layoutChannels={["FL", "FR"]} outputMode="native" />);
+    await act(async () => { await preview.playPause(); });
+
+    const ctx = lastContext();
+    // Creation order in `initialize()`: nativeSoftLimitNode (native bus) is
+    // built before softLimitNode (stereo/binaural bus), so it's first.
+    const nativeLimiter = ctx.waveShapers[0];
+    expect(nativeLimiter.connections).toContain(ctx.destination);
+  });
+
+  it("ramps volume/mute changes instead of snapping the gain, so a change never reaches headphones as a step", async () => {
+    installAudio();
+    const spy = vi.spyOn(FakeAudioParam.prototype, "setTargetAtTime");
+    render(<Harness />);
+    await act(async () => { await preview.playPause(); });
+    spy.mockClear();
+
+    act(() => { preview.setVolume(0.3); });
+    expect(spy).toHaveBeenCalled();
   });
 });
 

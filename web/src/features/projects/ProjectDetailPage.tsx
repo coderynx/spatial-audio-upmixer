@@ -453,6 +453,19 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             <span className="flex-1">Preparing preview — calibrating loudness…</span>
           </div>
         )}
+        {/* The reference-match FIR is computed asynchronously on the server
+            (WorkerManager.prepare_reference_match) and can take real time on
+            a full song. previewMastering correctly falls back to the plain
+            manifest mastering while project.reference_match is still null,
+            so playback keeps going — but nothing told the user it's hearing
+            the original EQ, not the match. Surface that instead of letting
+            the match snap on silently once the SSE event lands. */}
+        {!preview.error && project?.reference_match_pending && (
+          <div className="flex items-center gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            <span className="flex-1">Preparing reference EQ match — preview using original EQ until ready…</span>
+          </div>
+        )}
         {/* Per-speaker mute is clickable directly on HazeView's speaker
             points — the preview renders the channel bed (see
             useStemPreview.ts), so a speaker can be silenced independently of
@@ -506,6 +519,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             masteringReference={project.mastering_reference || null}
             referenceUploading={false}
             referenceError={null}
+            referencePending={Boolean(project.reference_match_pending)}
             onReferenceUpload={(file) => {
               void api.uploadMasteringReference(project.import_id, file)
                 .then((reference) => saveReference(reference.id))

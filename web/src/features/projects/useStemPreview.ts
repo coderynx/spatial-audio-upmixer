@@ -170,6 +170,16 @@ type MixPreview = {
 // AudioBufferSourceNode.start() calls before that instant arrives.
 const START_LOOKAHEAD_SECONDS = 0.08;
 
+// Short click/startle-free glide for user-facing gain changes (volume, mute,
+// output-mode switch, speaker mute) instead of an instant `.gain.value` snap
+// straight to headphones. `setTargetAtTime` ramps from whatever the param's
+// current value already is, so no cancel/anchor bookkeeping is needed and no
+// discontinuity is introduced mid-ramp.
+const GAIN_RAMP_TIME_CONSTANT = 0.008;
+function rampGainTo(param: AudioParam, target: number, ctx: BaseAudioContext) {
+  param.setTargetAtTime(target, ctx.currentTime, GAIN_RAMP_TIME_CONSTANT);
+}
+
 // Builds the shaped-signal set (raw L/R, mono downmix, surround send,
 // height send) a stem needs to feed the channel bed, and one gain node per
 // positional channel wiring the appropriate shaped signal into that
@@ -407,6 +417,10 @@ export function useStemPreview(
   const binauralGate = React.useRef<GainNode | null>(null);
   const stereoGate = React.useRef<GainNode | null>(null);
   const nativeOutputGain = React.useRef<GainNode | null>(null);
+  // Safety ceiling on the native discrete path, mirroring `softLimit` on the
+  // binaural/stereo paths — native otherwise bypasses `master`/`softLimit`
+  // entirely and would reach `ctx.destination` with no limiting at all.
+  const nativeSoftLimit = React.useRef<WaveShaperNode | null>(null);
   const nativeChannelCount = React.useRef(0);
   const [maxChannels, setMaxChannels] = React.useState(2);
   const [outputDevices, setOutputDevices] = React.useState<MediaDeviceInfo[]>([]);
@@ -801,6 +815,8 @@ export function useStemPreview(
     stereoGate.current = null;
     nativeOutputGain.current?.disconnect();
     nativeOutputGain.current = null;
+    nativeSoftLimit.current?.disconnect();
+    nativeSoftLimit.current = null;
     nativeChannelCount.current = 0;
     hoaBus.current?.disconnect();
     hoaBus.current = null;
@@ -999,10 +1015,17 @@ export function useStemPreview(
   }, [stemEqKey, buildStemEqChains]);
 
   const applySpeakerMute = React.useCallback(() => {
+    const ctx = context.current;
     speakerBuses.current.forEach((bus, channel) => {
-      bus.muteGain.gain.value = speakerEnabled[channel] === false ? 0 : 1;
+      const target = speakerEnabled[channel] === false ? 0 : 1;
+      if (ctx) rampGainTo(bus.muteGain.gain, target, ctx);
+      else bus.muteGain.gain.value = target;
     });
-    if (lfeMuteGain.current) lfeMuteGain.current.gain.value = speakerEnabled.LFE === false ? 0 : 1;
+    if (lfeMuteGain.current) {
+      const target = speakerEnabled.LFE === false ? 0 : 1;
+      if (ctx) rampGainTo(lfeMuteGain.current.gain, target, ctx);
+      else lfeMuteGain.current.gain.value = target;
+    }
   }, [speakerEnabled]);
 
   React.useEffect(() => {
@@ -1023,11 +1046,12 @@ export function useStemPreview(
     const ctx = context.current;
     if (!ctx) return;
     const destination = ctx.destination;
-    // Route from the soft-limiter, not the raw `master` gain node — the
-    // limiter now runs after the loudness/volume gain (see buildMasteringTopology),
-    // so it is the actual last stage before headphones/speakers.
+    // Route from the soft-limiter, not the raw volume gain node — the
+    // limiter runs after the loudness/volume gain on both paths (see
+    // buildMasteringTopology and nativeSoftLimitNode above), so it is the
+    // actual last stage before headphones/speakers on either one.
     const stereoOut = softLimit.current;
-    const nativeOut = nativeOutputGain.current;
+    const nativeOut = nativeSoftLimit.current;
     try { stereoOut?.disconnect(destination); } catch { /* not connected */ }
     try { nativeOut?.disconnect(destination); } catch { /* not connected */ }
     const nCh = nativeChannelCount.current;
@@ -1045,8 +1069,11 @@ export function useStemPreview(
       stereoOut?.connect(destination);
     }
     const effectiveMode: OutputMode = canNative ? "native" : mode === "native" ? "binaural" : mode;
-    if (binauralGate.current) binauralGate.current.gain.value = effectiveMode === "binaural" ? 1 : 0;
-    if (stereoGate.current) stereoGate.current.gain.value = effectiveMode === "stereo" ? 1 : 0;
+    // Crossfade between binaural/stereo instead of a hard cut — the two
+    // gates are mutually exclusive today, so a short glide is enough to
+    // avoid a click on mode switch without audible bleed.
+    if (binauralGate.current) rampGainTo(binauralGate.current.gain, effectiveMode === "binaural" ? 1 : 0, ctx);
+    if (stereoGate.current) rampGainTo(stereoGate.current.gain, effectiveMode === "stereo" ? 1 : 0, ctx);
   }, []);
 
   React.useEffect(() => {
@@ -1104,6 +1131,7 @@ export function useStemPreview(
   }, []);
 
   const apply = React.useCallback(() => {
+    const ctx = context.current;
     // The active Spatial Audio Engine profile's own loudness target (e.g.
     // Listening's consumer -16 LKFS) overrides the mastering block's target
     // when rendering binaural — see VOICING_PARAMS.loudnessTargetLkfs.
@@ -1130,12 +1158,24 @@ export function useStemPreview(
       ? applyTruePeakCeiling(preGainTpDbtp.current, loudnessGain, maxTpDbtp)
       : loudnessGain;
     const effectiveVolume = muted ? 0 : volume;
-    if (master.current) master.current.gain.value = warmupMuted.current ? 0 : effectiveVolume * tpSafeGain;
+    if (master.current) {
+      // Warmup silence must land instantly — a ramped mute would leak a
+      // sliver of pre-correction level through the glide. The audible
+      // (post-warmup) branch ramps to avoid a click/startle on every
+      // volume/mute/loudness change.
+      if (warmupMuted.current) master.current.gain.value = 0;
+      else if (ctx) rampGainTo(master.current.gain, effectiveVolume * tpSafeGain, ctx);
+      else master.current.gain.value = effectiveVolume * tpSafeGain;
+    }
     // Native bypasses the stereo mastering chain (no loudness-normalize gain
     // to apply there), but the Transport volume slider and mute should still work.
     // Still forced silent during the warm-up, same as `master`, since native
     // reaches `ctx.destination` on its own path instead of through `master`.
-    if (nativeOutputGain.current) nativeOutputGain.current.gain.value = warmupMuted.current ? 0 : effectiveVolume;
+    if (nativeOutputGain.current) {
+      if (warmupMuted.current) nativeOutputGain.current.gain.value = 0;
+      else if (ctx) rampGainTo(nativeOutputGain.current.gain, effectiveVolume, ctx);
+      else nativeOutputGain.current.gain.value = effectiveVolume;
+    }
     const anchor = mix?.stem_source_anchor_strength || 0;
     const source = nodes.current.get("__source_anchor__");
     if (source) {
@@ -1259,6 +1299,13 @@ export function useStemPreview(
     const nativeMergerNode = ctx.createChannelMerger(Math.max(1, layoutChannelList.length));
     const nativeOutputGainNode = ctx.createGain();
     nativeMergerNode.connect(nativeOutputGainNode);
+    // Same tanh safety ceiling as the binaural/stereo `softLimit`, applied
+    // after the volume gain so it only ever engages as a true-peak safety
+    // net — native would otherwise reach `ctx.destination` unlimited.
+    const nativeSoftLimitNode = ctx.createWaveShaper();
+    nativeSoftLimitNode.curve = buildSoftLimitCurve();
+    nativeSoftLimitNode.oversample = "4x";
+    nativeOutputGainNode.connect(nativeSoftLimitNode);
 
     const busesMap = new Map<string, SpeakerBus>();
     const channelAnalysersMap = new Map<string, AnalyserNode>();
@@ -1390,6 +1437,7 @@ export function useStemPreview(
     binauralGate.current = binauralGateNode;
     stereoGate.current = stereoGateNode;
     nativeOutputGain.current = nativeOutputGainNode;
+    nativeSoftLimit.current = nativeSoftLimitNode;
     nativeChannelCount.current = layoutChannelList.length;
     setMaxChannels(ctx.destination.maxChannelCount || 2);
     buildMasteringTopology();

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { FileAudio, Upload, X } from "lucide-react";
+import { FileAudio, Loader2, Upload, X } from "lucide-react";
 import {
   NullableSliderField,
   SelectField,
@@ -21,6 +21,11 @@ type MasteringSectionProps = ManifestSectionProps & {
    * association to attach it to (e.g. projects, which don't support a
    * mastering reference the way one-off jobs do). */
   hideReferenceMatch?: boolean;
+  /** True while the backend is (re)computing the reference-match FIR asset
+   * (`project.reference_match_pending`). The sliders below stay live — they
+   * only edit the manifest — but the audible match itself isn't ready yet,
+   * so surface that instead of letting the attached reference imply it is. */
+  referencePending?: boolean;
 };
 
 export function MasteringSection({
@@ -33,6 +38,7 @@ export function MasteringSection({
   onReferenceUpload,
   onReferenceClear,
   hideReferenceMatch = false,
+  referencePending = false,
 }: MasteringSectionProps) {
   const choices = configuration?.choices;
   const referenceInput = React.useRef<HTMLInputElement>(null);
@@ -43,7 +49,15 @@ export function MasteringSection({
       {!hideReferenceMatch && (
       <section className="space-y-3 rounded-md border bg-muted/20 p-4">
         <div>
-          <p className="text-sm font-semibold">Reference EQ match</p>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold">Reference EQ match</p>
+            {hasReference && referencePending && (
+              <span className="flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Preparing match
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-xs text-muted-foreground">
             Match this job to one WAV or FLAC reference before preset EQ. One
             reference applies to every album track.
