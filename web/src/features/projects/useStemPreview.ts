@@ -249,6 +249,17 @@ async function loadBuffer(ctx: AudioContext, url: string): Promise<AudioBuffer> 
 // `measureOutputLoudness`.
 const LOUDNESS_MEASURE_DELAY_FRAMES = 55;
 
+// Safety cap for `runLoudnessWarmup`, in case a silent or very short stem
+// never fills `mergePointAnalyser` with signal loud enough for
+// `measureOutputLoudness` to settle — bounds the muted warm-up so play can
+// never hang, at the cost of falling back to `measuredLkfs`'s unity-gain
+// default (today's behavior) for that one play.
+const LOUDNESS_WARMUP_MAX_FRAMES = LOUDNESS_MEASURE_DELAY_FRAMES + 30;
+
+// ~60fps, matching the cadence LOUDNESS_MEASURE_DELAY_FRAMES/
+// LOUDNESS_WARMUP_MAX_FRAMES were tuned against — see `runLoudnessWarmup`.
+const WARMUP_STEP_MS = 16;
+
 function loudnessGainFor(measuredLkfs: number, targetLkfs: number, maxGainDb: number = LOUDNESS_MAX_GAIN_DB): number {
   if (measuredLkfs <= -70) return 1;
   const gainDb = Math.min(targetLkfs - measuredLkfs, maxGainDb);
@@ -436,6 +447,12 @@ export function useStemPreview(
   const mergePointAnalyser = React.useRef<AnalyserNode | null>(null);
   const loudnessMeasureBuf = React.useRef<Float32Array | null>(null);
   const loudnessMeasureState = React.useRef({ framesElapsed: 0, done: false });
+  // Forces every audible output path to silence during the first-play
+  // loudness warm-up (see `runLoudnessWarmup`) regardless of what `apply()`
+  // would otherwise compute — covers both `master` (binaural/stereo) and
+  // `nativeOutputGain` (native bypasses `master` entirely, see
+  // `applyOutputMode`), so no output mode can leak the pre-correction level.
+  const warmupMuted = React.useRef(false);
   const nodes = React.useRef<Map<string, AudioNodeSet>>(new Map());
   // Live per-stem spectrum (base stem name -> level/centroid) for the Haze
   // view's glowing per-stem clouds. A ref, not state — updated every
@@ -475,6 +492,10 @@ export function useStemPreview(
   const [error, setError] = React.useState<string | null>(null);
   const [ready, setReady] = React.useState(false);
   const [loadProgress, setLoadProgress] = React.useState(0);
+  // True only for the brief first-play loudness warm-up (see
+  // `runLoudnessWarmup`) — surfaced so the UI can show a "calibrating" status
+  // in place of the transport during that window instead of looking stalled.
+  const [measuring, setMeasuring] = React.useState(false);
   const [supported] = React.useState(() => Boolean(window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext));
   // Per-speaker mute state — independent of stem mute/solo, since the
   // renderer input is the channel bed, not the stems (see `SpeakerBus`).
@@ -539,6 +560,37 @@ export function useStemPreview(
     // still decay normally.
     channelLevels.current.clear();
     headphoneLevels.current = { left: 0, right: 0 };
+  }, []);
+
+  // Schedules every stem/anchor buffer source to start at `target`, shared by
+  // the audible start in `playFrom` and the muted warm-up in
+  // `runLoudnessWarmup` — identical scheduling either way, so the warm-up's
+  // measurement sees the same signal an audible start would produce. Returns
+  // the `AudioContext` time sources were scheduled to start at, or `null` if
+  // there's no context to schedule against.
+  const startSourcesAt = React.useCallback((target: number) => {
+    const ctx = context.current;
+    if (!ctx) return null;
+    const startAt = ctx.currentTime + START_LOOKAHEAD_SECONDS;
+    nodes.current.forEach((node) => {
+      const source = ctx.createBufferSource();
+      source.buffer = node.buffer;
+      if (loopRef.current && durationRef.current > 0) {
+        source.loop = true;
+        source.loopStart = 0;
+        source.loopEnd = durationRef.current;
+      }
+      // `ownNodes[0]` is always the stem/anchor's input gain (`stemGain`
+      // for stems, a dedicated dry input for the anchor) — see
+      // `createStemSends`'s caller above.
+      const input = node.ownNodes[0];
+      if (input) source.connect(input);
+      if (node.lfeGain) source.connect(node.lfeGain);
+      if (node.analyser) source.connect(node.analyser);
+      source.start(startAt, target);
+      node.source = source;
+    });
+    return startAt;
   }, []);
 
   const measureLevels = React.useCallback(() => {
@@ -1078,10 +1130,12 @@ export function useStemPreview(
       ? applyTruePeakCeiling(preGainTpDbtp.current, loudnessGain, maxTpDbtp)
       : loudnessGain;
     const effectiveVolume = muted ? 0 : volume;
-    if (master.current) master.current.gain.value = effectiveVolume * tpSafeGain;
+    if (master.current) master.current.gain.value = warmupMuted.current ? 0 : effectiveVolume * tpSafeGain;
     // Native bypasses the stereo mastering chain (no loudness-normalize gain
     // to apply there), but the Transport volume slider and mute should still work.
-    if (nativeOutputGain.current) nativeOutputGain.current.gain.value = effectiveVolume;
+    // Still forced silent during the warm-up, same as `master`, since native
+    // reaches `ctx.destination` on its own path instead of through `master`.
+    if (nativeOutputGain.current) nativeOutputGain.current.gain.value = warmupMuted.current ? 0 : effectiveVolume;
     const anchor = mix?.stem_source_anchor_strength || 0;
     const source = nodes.current.get("__source_anchor__");
     if (source) {
@@ -1452,6 +1506,45 @@ export function useStemPreview(
     return target;
   }, []);
 
+  // Runs the real output exactly as an audible start would (same
+  // `startSourcesAt` scheduling), but muted (`warmupMuted`), purely so
+  // `measureOutputLoudness` sees genuine post-mastering signal instead of the
+  // graph's initial silence — without ever letting the pre-correction level
+  // reach the listener. Only needed once per hook lifetime: after
+  // `loudnessMeasureState.current.done` flips true, `playFrom` skips this
+  // entirely and starts audible playback immediately, same as before this
+  // warm-up existed.
+  //
+  // Paced with `setTimeout` rather than the main `tick()` loop's
+  // `requestAnimationFrame`: this has no UI frame to draw, only real
+  // AudioContext time to wait out while the post-mastering signal fills
+  // `mergePointAnalyser`'s ring buffer, and rAF throttles/suspends in
+  // backgrounded tabs — which would stall the very first play indefinitely
+  // if the user switched tabs right after pressing it.
+  const runLoudnessWarmup = React.useCallback((target: number) => {
+    return new Promise<void>((resolve) => {
+      warmupMuted.current = true;
+      if (master.current) master.current.gain.value = 0;
+      if (nativeOutputGain.current) nativeOutputGain.current.gain.value = 0;
+      setMeasuring(true);
+      startSourcesAt(target);
+      let frame = 0;
+      const step = () => {
+        frame += 1;
+        measureOutputLoudness();
+        if (loudnessMeasureState.current.done || frame >= LOUDNESS_WARMUP_MAX_FRAMES) {
+          stopSources();
+          warmupMuted.current = false;
+          setMeasuring(false);
+          resolve();
+          return;
+        }
+        window.setTimeout(step, WARMUP_STEP_MS);
+      };
+      window.setTimeout(step, WARMUP_STEP_MS);
+    });
+  }, [measureOutputLoudness, startSourcesAt, stopSources]);
+
   const playFrom = React.useCallback(async (time = currentTimeRef.current) => {
     try {
       await initialize();
@@ -1463,25 +1556,16 @@ export function useStemPreview(
       const target = durationRef.current > 0 && time >= durationRef.current ? 0 : time;
       stopSources();
       await ctx.resume();
-      const startAt = ctx.currentTime + START_LOOKAHEAD_SECONDS;
-      nodes.current.forEach((node) => {
-        const source = ctx.createBufferSource();
-        source.buffer = node.buffer;
-        if (loopRef.current && durationRef.current > 0) {
-          source.loop = true;
-          source.loopStart = 0;
-          source.loopEnd = durationRef.current;
-        }
-        // `ownNodes[0]` is always the stem/anchor's input gain (`stemGain`
-        // for stems, a dedicated dry input for the anchor) — see
-        // `createStemSends`'s caller above.
-        const input = node.ownNodes[0];
-        if (input) source.connect(input);
-        if (node.lfeGain) source.connect(node.lfeGain);
-        if (node.analyser) source.connect(node.analyser);
-        source.start(startAt, target);
-        node.source = source;
-      });
+      // First play only: measure real post-mastering loudness while muted,
+      // so the very first audible sample already carries the corrected
+      // gain instead of ~55 frames (≈0.9s) of unity/uncorrected level — see
+      // `runLoudnessWarmup`.
+      if (!loudnessMeasureState.current.done) {
+        await runLoudnessWarmup(target);
+        apply();
+      }
+      const startAt = startSourcesAt(target);
+      if (startAt === null) return false;
       timeline.current = { offset: target, contextTime: startAt };
       currentTimeRef.current = target;
       playingRef.current = true;
@@ -1489,6 +1573,8 @@ export function useStemPreview(
       startTicker();
       return true;
     } catch (nextError) {
+      warmupMuted.current = false;
+      setMeasuring(false);
       stopSources();
       timeline.current = null;
       playingRef.current = false;
@@ -1498,7 +1584,7 @@ export function useStemPreview(
         : `Unable to play every preview stem${nextError instanceof Error && nextError.message ? `: ${nextError.message}` : "."}`);
       return false;
     }
-  }, [apply, initialize, requireReady, startTicker, stopSources]);
+  }, [apply, initialize, requireReady, runLoudnessWarmup, startSourcesAt, startTicker, stopSources]);
 
   const playPause = React.useCallback(async () => {
     if (playingRef.current) {
@@ -1566,6 +1652,7 @@ export function useStemPreview(
     supported,
     ready,
     loadProgress,
+    measuring,
     playing,
     currentTime,
     duration,

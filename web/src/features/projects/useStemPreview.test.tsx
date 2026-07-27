@@ -100,6 +100,14 @@ class FakeAnalyser extends FakeNode {
   getByteFrequencyData(array: Uint8Array) {
     array.fill(0);
   }
+  // Read by the first-play loudness warm-up (`runLoudnessWarmup` /
+  // `measureOutputLoudness` in useStemPreview.ts) on `mergePointAnalyser`.
+  // Silence here is fine — these tests assert graph wiring, not the
+  // measured loudness value; `measuredLkfs` just falls back to its -70
+  // (unity-gain) default, same as before this analyser existed.
+  getFloatTimeDomainData(array: Float32Array) {
+    array.fill(0);
+  }
 }
 
 class FakeBufferSource extends FakeNode {
@@ -395,8 +403,13 @@ describe("useStemPreview mixing alignment", () => {
     await act(async () => { await preview.playPause(); });
 
     const ctx = lastContext();
-    expect(ctx.bufferSources).toHaveLength(2);
-    const [vocalsSource, bassSource] = ctx.bufferSources;
+    // First play triggers the muted loudness warm-up (runLoudnessWarmup in
+    // useStemPreview.ts), which schedules and stops its own throwaway
+    // buffer sources before the real, audible ones — so the two sources
+    // that matter here are the *last* two `ctx.bufferSources` created, not
+    // necessarily the only two.
+    expect(ctx.bufferSources.length).toBeGreaterThanOrEqual(2);
+    const [vocalsSource, bassSource] = ctx.bufferSources.slice(-2);
     // First connection out of each source must be a gain node (the stem
     // gain) whose value reflects that stem's mute state.
     expect(vocalsSource.connections[0]).toBeInstanceOf(FakeGain);
