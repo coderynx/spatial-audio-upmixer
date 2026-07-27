@@ -1,7 +1,37 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { defaultManifest } from "@/lib/manifest";
+import type { Configuration } from "@/api";
 import { MasteringSection } from "./MasteringSection";
+
+const configuration: Configuration = {
+  defaults: {},
+  manifest_keys: {},
+  choices: {
+    channel_layouts: [],
+    output_types: [],
+    output_subtypes: [],
+    sample_rates: [],
+    modes: [],
+    spatial_profiles: [],
+    eq_profiles: ["neutral"],
+    compressor_profiles: ["transparent", "glue"],
+    bass_profiles: ["tight"],
+    stem_eq_profiles: [],
+    stems: [],
+  },
+  capabilities: {
+    stem_separation: {
+      available: true,
+      backend: "cpu",
+      accelerated: false,
+      accelerator_detected: false,
+      accelerator_issue: null,
+      platform: "test",
+      install_message: null,
+    },
+  },
+};
 
 describe("MasteringSection", () => {
   it("uploads a reference and exposes match controls", () => {
@@ -74,11 +104,71 @@ describe("MasteringSection", () => {
     );
 
     expect(screen.queryByText("Reference EQ match")).not.toBeInTheDocument();
-    expect(screen.queryByText("Match spectrum")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Reference EQ match" })).not.toBeInTheDocument();
     expect(screen.queryByText("Match RMS level")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Reference audio track")).not.toBeInTheDocument();
     // Unrelated mastering controls still render.
-    expect(screen.getByText("Loudness normalization")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Loudness" })).toBeInTheDocument();
     expect(screen.getByText("Spectral EQ")).toBeInTheDocument();
+  });
+
+  it("uses the header switch as the effect's power button", () => {
+    const setManifest = vi.fn();
+    render(
+      <MasteringSection
+        manifest={defaultManifest}
+        setManifest={setManifest}
+        configuration={null}
+        masteringReference={null}
+        referenceUploading={false}
+        referenceError={null}
+        onReferenceUpload={vi.fn()}
+        onReferenceClear={vi.fn()}
+      />,
+    );
+
+    // The compressor ships with a profile, so its switch reads as on.
+    const compressor = screen.getByRole("switch", { name: "Bus compressor" });
+    expect(compressor).toBeChecked();
+    fireEvent.click(compressor);
+    const [patch] = setManifest.mock.calls.at(-1)!;
+    expect(patch.mastering.compressor.profile).toBeNull();
+  });
+
+  it("restores the previous profile when an effect is switched back on", () => {
+    const setManifest = vi.fn();
+    const { rerender } = render(
+      <MasteringSection
+        manifest={defaultManifest}
+        setManifest={setManifest}
+        configuration={configuration}
+        masteringReference={null}
+        referenceUploading={false}
+        referenceError={null}
+        onReferenceUpload={vi.fn()}
+        onReferenceClear={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("switch", { name: "Bus compressor" }));
+    const off = setManifest.mock.calls.at(-1)![0];
+    rerender(
+      <MasteringSection
+        manifest={off}
+        setManifest={setManifest}
+        configuration={configuration}
+        masteringReference={null}
+        referenceUploading={false}
+        referenceError={null}
+        onReferenceUpload={vi.fn()}
+        onReferenceClear={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("switch", { name: "Bus compressor" }));
+    const back = setManifest.mock.calls.at(-1)![0];
+    expect(back.mastering.compressor.profile).toBe(
+      defaultManifest.mastering.compressor.profile,
+    );
   });
 });

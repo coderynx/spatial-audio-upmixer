@@ -169,12 +169,112 @@ and DOM shape — `ToggleField`'s nesting in particular is depended on.
 - **Switch** — `h-[22px] w-[38px]`, white thumb, checked `bg-success`.
   Apple toggles are green, not accent-coloured.
 - **Slider** — `h-1` track, `h-3.5 w-3.5` white thumb with a soft shadow.
+- **Pot** — rotary knob for effect parameters; see §6.1.
 - **Progress** — `h-1.5`, `bg-secondary` track, `rounded-full`.
 - **Dialog** — `rounded-[14px]`, `w-[min(1100px,92vw)]`, overlay
   `bg-black/40 backdrop-blur-sm`. Content owns its own toolbar and pinned
   footer; do not use sticky-offset hacks for dialog actions.
 - **Focus** — `focus-visible:ring-2 ring-ring/60 ring-offset-1`, applied
   through the primitive. Never remove a focus ring without replacing it.
+
+### 6.1 Pot vs slider
+
+`Pot` (`components/ui/pot.tsx`) is the rotary knob Logic Pro uses for
+compressor and tone controls. The split is by what the number *means*, not by
+where it sits:
+
+- **Slider** for levels, targets and blends — anything read off a scale
+  against a known unit. Loudness target, true-peak ceiling, EQ strength,
+  match strength, per-stem gain.
+- **Pot** for effect parameters tweaked by feel — compressor threshold /
+  ratio / attack / release / knee / makeup, bass sub and mid gain, mono
+  cutoff, LFE trim.
+
+Rules for any new pot:
+
+- **Sweep** is 270°, gap at the bottom: `-135° + t·270°` from 12 o'clock.
+- **Origin** is inferred — a range spanning zero fills from 12 o'clock so cut
+  and boost read differently; every other range fills from the left end. Pass
+  `origin` explicitly only to override that.
+- **Layout** is dial, value (13px `tabular-nums`), label (11px
+  `muted-foreground`, sentence case, truncated with a `title`). Lay pots out
+  in `grid-cols-[repeat(auto-fit,minmax(76px,1fr))]` so a knob bank reflows
+  instead of wrapping raggedly. Do not put selects or toggles in that grid —
+  give them their own row above it.
+- **Interaction** is vertical drag (full range over 160px, Shift for quarter
+  speed), arrow/page/Home/End keys, and double-click to reset. Wheel adjusts
+  **only when the pot has focus**, checked against `document.activeElement`
+  rather than React state, so a panel scroll is never swallowed.
+- **The value arc is always `primary`**, at full stroke, in every state. A pot
+  is coloured at rest the way Apple's are; colour must never be something the
+  control earns by being touched.
+- **Inherited values** (a profile default not yet overridden) are only
+  slightly softened; the first edit takes the override and double-click
+  restores the profile. State this in `aria-valuetext` too — opacity alone
+  conveys nothing to assistive tech.
+- **Semantics** are `role="slider"` with the full `aria-value*` set and
+  `aria-orientation="vertical"`. A pot is a slider to assistive tech and to
+  tests; `getAllByRole("slider")` will match both, so query by name.
+
+### 6.2 Scrollbars
+
+Styled globally in `index.css`, so every scroll region inherits them — never
+restyle a scrollbar per component.
+
+The macOS model: no arrows, no track chrome, just a translucent pill in a
+transparent gutter. 12px gutter, 6px thumb (a 3px transparent border with
+`background-clip: padding-box` insets it), fully rounded, `min-height: 28px`
+so a long document never yields an unclickable sliver.
+
+The thumb colour is `hsl(var(--foreground) / 0.22)`, rising to `0.38` on hover
+and `0.55` while dragging. Deriving it from `--foreground` rather than giving
+it a colour of its own means it is automatically dark-on-light and
+light-on-dark, which is exactly what macOS does — do not add a dedicated
+scrollbar token. `scrollbar-width: thin` and `scrollbar-color` cover Firefox;
+`scrollbar-width` does not inherit, so it is set on `*`.
+
+Scroll regions inside the always-dark canvas displays would need their own
+rule, since a light-theme thumb would vanish there. None currently scroll.
+
+### 6.3 Effect panels and control text
+
+A group of parameters that can be switched off as a unit is a `Panel` whose
+`PanelHeader` carries a `Switch` in its `actions` slot — the effect's power
+button, on the **trailing edge**, matching Apple's settings rows and the
+`Switch` position in `ToggleField`. `MasteringSection` is the reference
+implementation.
+
+- **The header switch replaces every other way of expressing "off".** A
+  profile picker must not also carry a "None" entry, and an effect must not
+  also have a standalone enable toggle in its body. One control per idea.
+- Switching **off** must always be possible; only switching **on** may be
+  blocked (e.g. when the profile list has not loaded). Never disable a power
+  switch that is currently on.
+- Off clears the underlying value, so remember the last one and restore it
+  when the effect is switched back on rather than silently resetting.
+- A parameter that genuinely stays live while the effect is off — true-peak
+  limiting runs regardless of loudness normalization — stays enabled. Do not
+  dim a control to look tidy when it is still doing something.
+
+**A primary parameter that others depend on** gets its own full-width row
+above them, not a cell in a grid alongside its dependants. Give it the rich
+`Select` (`components/ui/select.tsx`, Radix) so each option can carry a mark
+and a short note; title the panel beneath it after the current choice, and
+render only the parameters that choice actually has.
+`ProjectDeliverySection` is the reference implementation: picking Binaural
+drops the stereo-downmix row, because a binaural render is already
+two-channel.
+
+Plain text pickers stay on `SelectField`'s native `<select>` — the platform
+renders those better and for free. Reach for the Radix `Select` only when an
+option needs more than a label. Format marks are neutral icons, never a
+vendor's logo.
+
+**Control text.** The label is the documentation. Do not add a sentence
+explaining what "Match spectrum" or "Bass exciter" means. Keep prose only
+where it carries information the label cannot — a constraint, a unit, or a
+scope ("One WAV or FLAC, matched across every track") — and keep it to one
+short line at `text-[11px] text-muted-foreground`.
 
 ### Semantic colour mapping
 

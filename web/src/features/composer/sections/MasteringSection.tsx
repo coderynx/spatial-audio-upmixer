@@ -1,12 +1,15 @@
 import * as React from "react";
 import { FileAudio, Loader2, Upload, X } from "lucide-react";
+import { Panel, PanelBody, PanelHeader } from "@/app/Panel";
 import {
-  NullableSliderField,
+  FIELD_GRID,
+  NullablePotField,
   SelectField,
   SliderField,
-  ToggleField,
+  SwitchRow,
 } from "@/components/forms/fields";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { formatBytes } from "@/lib/format";
 import type { MasteringReference } from "@/api";
 import type { ManifestSectionProps } from "./types";
@@ -22,11 +25,61 @@ type MasteringSectionProps = ManifestSectionProps & {
    * mastering reference the way one-off jobs do). */
   hideReferenceMatch?: boolean;
   /** True while the backend is (re)computing the reference-match FIR asset
-   * (`project.reference_match_pending`). The sliders below stay live — they
+   * (`project.reference_match_pending`). The controls below stay live — they
    * only edit the manifest — but the audible match itself isn't ready yet,
    * so surface that instead of letting the attached reference imply it is. */
   referencePending?: boolean;
 };
+
+/** One mastering effect. The header switch is the effect's power button, the
+ * way a plug-in bypasses: it replaces the "None" entry every profile picker
+ * used to carry and the standalone enable toggles that used to sit in the
+ * body. Placed on the trailing edge, matching Apple's settings rows and the
+ * `Switch` position in `ToggleField`. */
+function EffectPanel({
+  title,
+  enabled,
+  onEnabledChange,
+  toggleDisabled = false,
+  status,
+  children,
+}: {
+  title: string;
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => void;
+  toggleDisabled?: boolean;
+  status?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Panel>
+      <PanelHeader
+        title={title}
+        actions={
+          <>
+            {status}
+            <Switch
+              aria-label={title}
+              checked={enabled}
+              disabled={toggleDisabled}
+              onCheckedChange={onEnabledChange}
+            />
+          </>
+        }
+      />
+      <PanelBody className="space-y-2.5 overflow-visible">{children}</PanelBody>
+    </Panel>
+  );
+}
+
+const POT_GRID = "grid grid-cols-[repeat(auto-fit,minmax(76px,1fr))] gap-3";
+
+function titleCase(value: string) {
+  return value
+    .split("-")
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(" ");
+}
 
 export function MasteringSection({
   manifest,
@@ -44,281 +97,232 @@ export function MasteringSection({
   const referenceInput = React.useRef<HTMLInputElement>(null);
   const match = manifest.mastering.match_reference;
   const hasReference = masteringReference !== null;
+  const { eq, compressor, bass, loudness } = manifest.mastering;
+
+  // Switching an effect off clears its profile, which is what the manifest
+  // means by "off". Remembering the last profile means switching back on
+  // restores the choice instead of silently resetting it.
+  const lastEq = React.useRef(eq.profile);
+  const lastCompressor = React.useRef(compressor.profile);
+  const lastBass = React.useRef(bass.profile);
+
+  const setMastering = (patch: Partial<typeof manifest.mastering>) =>
+    setManifest({ ...manifest, mastering: { ...manifest.mastering, ...patch } });
+
+  const profileToggle = (
+    current: string | null,
+    remembered: React.MutableRefObject<string | null>,
+    available: string[] | undefined,
+    apply: (profile: string | null) => void,
+  ) => (enabled: boolean) => {
+    if (!enabled) {
+      if (current) remembered.current = current;
+      apply(null);
+      return;
+    }
+    apply(remembered.current || available?.[0] || null);
+  };
+
+  /** Switching an effect off never needs the profile list; switching it on
+   * does, so only that direction is blocked while the list is unavailable. */
+  const cannotEnable = (current: string | null, available: string[] | undefined) =>
+    current === null && !available?.length;
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {!hideReferenceMatch && (
-      <section className="space-y-2.5 rounded-lg border bg-muted/30 p-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-semibold">Reference EQ match</p>
-            {hasReference && referencePending && (
-              <span className="flex items-center gap-1 rounded-full border bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+        <EffectPanel
+          title="Reference EQ match"
+          enabled={match.spectrum}
+          toggleDisabled={!hasReference}
+          onEnabledChange={(spectrum) =>
+            setMastering({ match_reference: { ...match, spectrum } })
+          }
+          status={
+            hasReference && referencePending ? (
+              <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Preparing match
+                Preparing
               </span>
-            )}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Match this job to one WAV or FLAC reference before preset EQ. One
-            reference applies to every album track.
-          </p>
-        </div>
-        {masteringReference ? (
-          <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-md border bg-card p-2.5">
-            <div className="flex min-w-0 items-center gap-2">
-              <FileAudio className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium">
-                  {masteringReference.filename}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {formatBytes(masteringReference.size_bytes)}
-                </p>
+            ) : null
+          }
+        >
+          {masteringReference ? (
+            <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 p-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <FileAudio className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-medium">{masteringReference.filename}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {formatBytes(masteringReference.size_bytes)}
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 gap-1">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={referenceUploading}
+                  onClick={() => referenceInput.current?.click()}
+                >
+                  <Upload /> Replace
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={referenceUploading}
+                  onClick={onReferenceClear}
+                >
+                  <X /> Remove
+                </Button>
               </div>
             </div>
-            <div className="flex gap-2">
+          ) : (
+            <div className="space-y-1.5">
               <Button
                 type="button"
-                variant="outline"
-                size="sm"
+                variant="secondary"
                 disabled={referenceUploading}
                 onClick={() => referenceInput.current?.click()}
               >
-                <Upload /> Replace
+                <Upload />
+                {referenceUploading ? "Uploading" : "Choose reference track"}
               </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={referenceUploading}
-                onClick={onReferenceClear}
-              >
-                <X /> Remove
-              </Button>
+              <p className="text-[11px] text-muted-foreground">
+                One WAV or FLAC, matched across every track.
+              </p>
             </div>
+          )}
+          <input
+            ref={referenceInput}
+            className="hidden"
+            type="file"
+            aria-label="Reference audio track"
+            accept="audio/wav,audio/flac,.wav,.flac"
+            onChange={(event) => {
+              const [file] = Array.from(event.target.files || []);
+              if (file) onReferenceUpload(file);
+              event.currentTarget.value = "";
+            }}
+          />
+          {referenceError && <p className="text-[11px] text-destructive">{referenceError}</p>}
+          <div className={FIELD_GRID}>
+            <SliderField
+              label="Strength"
+              value={match.strength}
+              min={0}
+              max={1}
+              step={0.01}
+              disabled={!hasReference || !match.spectrum}
+              onChange={(strength) => setMastering({ match_reference: { ...match, strength } })}
+            />
+            <SliderField
+              label="Max correction"
+              value={match.max_db}
+              min={0}
+              max={24}
+              step={0.5}
+              suffix=" dB"
+              disabled={!hasReference || !match.spectrum}
+              onChange={(max_db) => setMastering({ match_reference: { ...match, max_db } })}
+            />
           </div>
-        ) : (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={referenceUploading}
-            onClick={() => referenceInput.current?.click()}
-          >
-            <Upload />
-            {referenceUploading ? "Uploading reference" : "Choose reference track"}
-          </Button>
-        )}
-        <input
-          ref={referenceInput}
-          className="hidden"
-          type="file"
-          aria-label="Reference audio track"
-          accept="audio/wav,audio/flac,.wav,.flac"
-          onChange={(event) => {
-            const [file] = Array.from(event.target.files || []);
-            if (file) onReferenceUpload(file);
-            event.currentTarget.value = "";
-          }}
-        />
-        {referenceError && (
-          <p className="text-xs text-destructive">{referenceError}</p>
-        )}
-        <div className="grid gap-3 pt-1 sm:grid-cols-2">
-          <SliderField
-            label="Spectral match strength"
-            value={match.strength}
-            min={0}
-            max={1}
-            step={0.01}
-            disabled={!hasReference || !match.spectrum}
-            onChange={(strength) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  match_reference: { ...match, strength },
-                },
-              })
-            }
-          />
-          <SliderField
-            label="Maximum spectral correction"
-            value={match.max_db}
-            min={0}
-            max={24}
-            step={0.5}
-            suffix=" dB"
-            disabled={!hasReference || !match.spectrum}
-            onChange={(max_db) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  match_reference: { ...match, max_db },
-                },
-              })
-            }
-          />
-          <ToggleField
-            label="Match spectrum"
-            description="Apply per-channel spectral envelope correction."
-            checked={match.spectrum}
-            disabled={!hasReference}
-            onChange={(spectrum) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  match_reference: { ...match, spectrum },
-                },
-              })
-            }
-          />
-          <ToggleField
+          <SwitchRow
             label="Match RMS level"
-            description="Match overall reference loudness before final mastering."
             checked={match.rms}
             disabled={!hasReference}
-            onChange={(rms) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  match_reference: { ...match, rms },
-                },
-              })
-            }
+            onChange={(rms) => setMastering({ match_reference: { ...match, rms } })}
           />
-        </div>
-      </section>
+        </EffectPanel>
       )}
 
-      <section className="space-y-2.5 rounded-lg border p-3">
-        <p className="text-sm font-semibold">Loudness</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <ToggleField
-            label="Loudness normalization"
-            description="BS.1770 integrated loudness normalization."
-            checked={manifest.mastering.loudness.normalize}
-            onChange={(normalize) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  loudness: { ...manifest.mastering.loudness, normalize },
-                },
-              })
-            }
-          />
+      <EffectPanel
+        title="Loudness"
+        enabled={loudness.normalize}
+        onEnabledChange={(normalize) =>
+          setMastering({ loudness: { ...loudness, normalize } })
+        }
+      >
+        <div className={FIELD_GRID}>
           <SliderField
-            label="Loudness target"
-            value={manifest.mastering.loudness.target}
+            label="Target"
+            value={loudness.target}
             min={-30}
             max={-10}
             step={0.5}
             suffix=" LKFS"
-            disabled={!manifest.mastering.loudness.normalize}
-            onChange={(target) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  loudness: { ...manifest.mastering.loudness, target },
-                },
-              })
-            }
+            disabled={!loudness.normalize}
+            onChange={(target) => setMastering({ loudness: { ...loudness, target } })}
           />
+          {/* True-peak limiting runs whether or not loudness is normalized, so
+              this one stays live when the switch is off. */}
           <SliderField
             label="True-peak ceiling"
-            value={manifest.mastering.loudness.max_tp}
+            value={loudness.max_tp}
             min={-6}
             max={0}
             step={0.1}
             suffix=" dBTP"
-            onChange={(max_tp) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  loudness: { ...manifest.mastering.loudness, max_tp },
-                },
-              })
-            }
+            onChange={(max_tp) => setMastering({ loudness: { ...loudness, max_tp } })}
           />
         </div>
-      </section>
+      </EffectPanel>
 
-      <section className="space-y-2.5 rounded-lg border p-3">
-        <p className="text-sm font-semibold">Spectral EQ</p>
-        <div className="grid gap-3 sm:grid-cols-2">
+      <EffectPanel
+        title="Spectral EQ"
+        enabled={eq.profile !== null}
+        toggleDisabled={cannotEnable(eq.profile, choices?.eq_profiles)}
+        onEnabledChange={profileToggle(eq.profile, lastEq, choices?.eq_profiles, (profile) =>
+          setMastering({ eq: { ...eq, profile } }),
+        )}
+      >
+        <div className={FIELD_GRID}>
           <SelectField
             label="Profile"
-            value={manifest.mastering.eq.profile || "none"}
-            onChange={(profile) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  eq: {
-                    ...manifest.mastering.eq,
-                    profile: profile === "none" ? null : profile,
-                  },
-                },
-              })
-            }
-            options={["none", ...(choices?.eq_profiles || [])].map((value) => ({
+            value={eq.profile || ""}
+            disabled={!eq.profile}
+            onChange={(profile) => setMastering({ eq: { ...eq, profile } })}
+            options={(choices?.eq_profiles || []).map((value) => ({
               value,
-              label: value
-                .split("-")
-                .map((part) => part[0].toUpperCase() + part.slice(1))
-                .join(" "),
+              label: titleCase(value),
             }))}
           />
           <SliderField
-            label="EQ strength"
-            value={manifest.mastering.eq.strength}
+            label="Strength"
+            value={eq.strength}
             min={0}
             max={1}
             step={0.01}
-            disabled={!manifest.mastering.eq.profile}
-            onChange={(strength) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  eq: { ...manifest.mastering.eq, strength },
-                },
-              })
-            }
+            disabled={!eq.profile}
+            onChange={(strength) => setMastering({ eq: { ...eq, strength } })}
           />
         </div>
-      </section>
+      </EffectPanel>
 
-      <section className="space-y-2.5 rounded-lg border p-3">
-        <p className="text-sm font-semibold">Bus compressor</p>
+      <EffectPanel
+        title="Bus compressor"
+        enabled={compressor.profile !== null}
+        toggleDisabled={cannotEnable(compressor.profile, choices?.compressor_profiles)}
+        onEnabledChange={profileToggle(
+          compressor.profile,
+          lastCompressor,
+          choices?.compressor_profiles,
+          (profile) => setMastering({ compressor: { ...compressor, profile } }),
+        )}
+      >
         <SelectField
           label="Profile"
-          value={manifest.mastering.compressor.profile || "none"}
-          onChange={(profile) =>
-            setManifest({
-              ...manifest,
-              mastering: {
-                ...manifest.mastering,
-                compressor: {
-                  ...manifest.mastering.compressor,
-                  profile: profile === "none" ? null : profile,
-                },
-              },
-            })
-          }
-          options={["none", ...(choices?.compressor_profiles || [])].map(
-            (value) => ({
-              value,
-              label: value[0].toUpperCase() + value.slice(1),
-            }),
-          )}
+          value={compressor.profile || ""}
+          disabled={!compressor.profile}
+          onChange={(profile) => setMastering({ compressor: { ...compressor, profile } })}
+          options={(choices?.compressor_profiles || []).map((value) => ({
+            value,
+            label: titleCase(value),
+          }))}
         />
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className={POT_GRID}>
           {(
             [
               ["threshold_db", "Threshold", "dB", 0.5, -40, 0, -18],
@@ -329,98 +333,70 @@ export function MasteringSection({
               ["makeup_db", "Makeup gain", "dB", 0.5, 0, 12, 0],
             ] as const
           ).map(([key, label, suffix, step, min, max, defaultValue]) => (
-            <NullableSliderField
+            <NullablePotField
               key={key}
               label={label}
-              value={manifest.mastering.compressor[key]}
+              value={compressor[key]}
               defaultValue={defaultValue}
               min={min}
               max={max}
               step={step}
               suffix={suffix ? ` ${suffix}` : undefined}
-              disabled={!manifest.mastering.compressor.profile}
-              onChange={(value) =>
-                setManifest({
-                  ...manifest,
-                  mastering: {
-                    ...manifest.mastering,
-                    compressor: { ...manifest.mastering.compressor, [key]: value },
-                  },
-                })
-              }
+              disabled={!compressor.profile}
+              onChange={(value) => setMastering({ compressor: { ...compressor, [key]: value } })}
             />
           ))}
         </div>
-      </section>
+      </EffectPanel>
 
-      <section className="space-y-2.5 rounded-lg border p-3">
-        <p className="text-sm font-semibold">Bass control</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <SelectField
-            label="Profile"
-            value={manifest.mastering.bass.profile || "none"}
-            onChange={(profile) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  bass: {
-                    ...manifest.mastering.bass,
-                    profile: profile === "none" ? null : profile,
-                  },
-                },
-              })
-            }
-            options={["none", ...(choices?.bass_profiles || [])].map((value) => ({
-              value,
-              label: value[0].toUpperCase() + value.slice(1),
-            }))}
-          />
-          <ToggleField
-            label="Bass exciter"
-            description="Add low-frequency harmonics before loudness normalization."
-            checked={manifest.mastering.bass.excite}
-            onChange={(excite) =>
-              setManifest({
-                ...manifest,
-                mastering: {
-                  ...manifest.mastering,
-                  bass: { ...manifest.mastering.bass, excite },
-                },
-              })
-            }
-          />
+      <EffectPanel
+        title="Bass control"
+        enabled={bass.profile !== null}
+        toggleDisabled={cannotEnable(bass.profile, choices?.bass_profiles)}
+        onEnabledChange={profileToggle(bass.profile, lastBass, choices?.bass_profiles, (profile) =>
+          setMastering({ bass: { ...bass, profile } }),
+        )}
+      >
+        <SelectField
+          label="Profile"
+          value={bass.profile || ""}
+          disabled={!bass.profile}
+          onChange={(profile) => setMastering({ bass: { ...bass, profile } })}
+          options={(choices?.bass_profiles || []).map((value) => ({
+            value,
+            label: titleCase(value),
+          }))}
+        />
+        <SwitchRow
+          label="Bass exciter"
+          checked={bass.excite}
+          disabled={!bass.profile}
+          onChange={(excite) => setMastering({ bass: { ...bass, excite } })}
+        />
+        <div className={POT_GRID}>
           {(
             [
               ["sub_gain_db", "Sub gain", "dB", 0.1, -12, 12, 0],
               ["mid_gain_db", "Mid-bass gain", "dB", 0.1, -12, 12, 0],
               ["mono_cutoff_hz", "Mono cutoff", "Hz", 1, 40, 250, 100],
-              ["lfe_gain_db", "Mastering LFE trim", "dB", 0.1, -12, 12, 0],
+              ["lfe_gain_db", "LFE trim", "dB", 0.1, -12, 12, 0],
             ] as const
           ).map(([key, label, suffix, step, min, max, defaultValue]) => (
-            <NullableSliderField
+            <NullablePotField
               key={key}
               label={label}
-              value={manifest.mastering.bass[key]}
+              value={bass[key]}
               defaultValue={defaultValue}
               min={min}
               max={max}
               step={step}
               suffix={suffix ? ` ${suffix}` : undefined}
-              disabled={!manifest.mastering.bass.profile}
-              onChange={(value) =>
-                setManifest({
-                  ...manifest,
-                  mastering: {
-                    ...manifest.mastering,
-                    bass: { ...manifest.mastering.bass, [key]: value },
-                  },
-                })
-              }
+              disabled={!bass.profile}
+              onChange={(value) => setMastering({ bass: { ...bass, [key]: value } })}
             />
           ))}
         </div>
-      </section>
+      </EffectPanel>
     </div>
   );
 }

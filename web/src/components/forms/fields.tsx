@@ -1,10 +1,42 @@
 import * as React from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Pot } from "@/components/ui/pot";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 
 type Option = { value: string; label: string; disabled?: boolean };
+
+/** Field pairs reflow on available width rather than viewport width, so a
+ * narrow inspector pane gets one column and a wide dialog gets several. */
+export const FIELD_GRID = "grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-3";
+
+/** Compact label/switch row for a parameter that happens to be boolean — no
+ * description block, because the label already says it. Use `ToggleField`
+ * only where the description carries something the label cannot. */
+export function SwitchRow({
+  label,
+  hint,
+  checked,
+  onChange,
+  disabled = false,
+}: {
+  label: string;
+  hint?: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex min-h-7 items-center justify-between gap-3">
+      <span className="min-w-0">
+        <span className="block text-[13px]">{label}</span>
+        {hint && <span className="block text-[11px] text-muted-foreground">{hint}</span>}
+      </span>
+      <Switch aria-label={label} checked={checked} onCheckedChange={onChange} disabled={disabled} />
+    </div>
+  );
+}
 
 export function SelectField({
   label,
@@ -85,7 +117,7 @@ export function SliderField({
   );
 }
 
-export function NullableSliderField({
+export function NullablePotField({
   label,
   value,
   defaultValue,
@@ -93,7 +125,6 @@ export function NullableSliderField({
   max,
   step,
   suffix = "",
-  hint,
   disabled = false,
   onChange,
 }: {
@@ -104,42 +135,23 @@ export function NullableSliderField({
   max: number;
   step: number;
   suffix?: string;
-  hint?: string;
   disabled?: boolean;
   onChange: (value: number | null) => void;
 }) {
-  const active = value != null;
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between">
-        <Label>{label}</Label>
-        <div className="flex items-center gap-2">
-          {active && (
-            <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[11px] tabular-nums">
-              {value.toFixed(step < 0.1 ? 2 : 1)}
-              {suffix}
-            </span>
-          )}
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => onChange(active ? null : defaultValue)}
-            className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-          >
-            {active ? "Use profile" : "Override"}
-          </button>
-        </div>
-      </div>
-      <Slider
-        value={[value ?? defaultValue]}
-        min={min}
-        max={max}
-        step={step}
-        disabled={disabled || !active}
-        onValueChange={([next]) => onChange(next)}
-      />
-      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-    </div>
+    <Pot
+      label={label}
+      value={value ?? defaultValue}
+      min={min}
+      max={max}
+      step={step}
+      suffix={suffix}
+      disabled={disabled}
+      inherited={value == null}
+      inheritedHint="from profile, double-click to restore"
+      onChange={onChange}
+      onReset={() => onChange(null)}
+    />
   );
 }
 

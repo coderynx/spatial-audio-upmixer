@@ -81,7 +81,7 @@ describe("ProjectDetailPage tabs", () => {
     await user.click(screen.getByRole("button", { name: /Mastering/ }));
 
     expect(screen.getByText("Spectral EQ")).toBeInTheDocument();
-    expect(screen.getByText("Loudness normalization")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Loudness" })).toBeInTheDocument();
     expect(screen.getByText("Reference EQ match")).toBeInTheDocument();
     // Preview transport and speaker graph stay mounted on the Mastering tab.
     expect(screen.getByRole("button", { name: /^(Play|Pause)$/i })).toBeInTheDocument();
@@ -110,9 +110,7 @@ describe("ProjectDetailPage tabs", () => {
     fireEvent.change(screen.getByLabelText("Edit scope"), { target: { value: "track" } });
 
     await user.click(screen.getByRole("button", { name: /Mastering/ }));
-    const loudnessToggle = screen.getByText("Loudness normalization")
-      .closest("div")!.parentElement!.querySelector("button")!;
-    fireEvent.click(loudnessToggle);
+    fireEvent.click(screen.getByRole("switch", { name: "Loudness" }));
 
     await waitFor(() => expect(api.saveProject).toHaveBeenCalled());
     const [, payload] = vi.mocked(api.saveProject).mock.calls.at(-1)!;

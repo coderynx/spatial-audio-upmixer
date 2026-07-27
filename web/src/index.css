@@ -66,6 +66,38 @@
   * {
     @apply border-border;
   }
+  /* macOS-style scrollbars: no arrows, no track chrome, just a translucent
+     pill floating in a transparent gutter. The thumb is derived from
+     `--foreground` rather than a colour of its own, so it is dark-on-light
+     and light-on-dark automatically — the same neutral overlay macOS draws in
+     either appearance. `scrollbar-width` does not inherit, hence `*`. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--foreground) / 0.22) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    min-height: 28px;
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-color: hsl(var(--foreground) / 0.22);
+    /* Clip to the padding box so the transparent border insets the pill,
+       leaving a 6px thumb centred in a 12px gutter. */
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--foreground) / 0.38);
+  }
+  ::-webkit-scrollbar-thumb:active {
+    background-color: hsl(var(--foreground) / 0.55);
+  }
   body {
     @apply bg-background text-foreground antialiased;
     font-family:
