@@ -1,7 +1,6 @@
 import * as React from "react";
 import type { ReactNode } from "react";
 import {
-  AudioLines,
   Database,
   Gauge,
   HardDrive,
@@ -13,6 +12,7 @@ import {
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import type { Configuration } from "@/api";
+import logoMark from "@/assets/logo-mark.svg";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { HeaderSlotProvider, useHeaderSlot } from "./HeaderSlot";
@@ -116,9 +116,8 @@ function AppShellLayout({
         )}
       >
         <div className={cn("flex h-[var(--topbar-h)] shrink-0 items-center gap-2.5 border-b", collapsed ? "justify-center px-1" : "px-3")}>
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <AudioLines className="h-4 w-4" />
-          </div>
+          <img src={logoMark} alt="" className="h-7 w-7 shrink-0" />
+
           {!collapsed && (
             <div className="min-w-0">
               <p className="truncate text-[13px] font-semibold leading-tight tracking-tight">Upmixer</p>
@@ -174,7 +173,7 @@ function AppShellLayout({
         <header className="flex h-[var(--topbar-h)] shrink-0 items-center justify-between gap-3 border-b bg-card px-3">
           <div className="flex min-w-0 items-center gap-2.5">
             <div className="lg:hidden">
-              <AudioLines className="h-4 w-4 text-primary" />
+              <img src={logoMark} alt="" className="h-5 w-5" />
             </div>
             <div className="min-w-0">{headerNode}</div>
           </div>

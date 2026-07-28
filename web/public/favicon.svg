@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Upmixer Pro favicon</title>
+  <desc id="desc">A luminous spatial soundfield surrounding a centered listening position on a white tile, for high-contrast browser tabs.</desc>
+  <defs>
+    <linearGradient id="outer" x1="10" y1="51" x2="54" y2="13" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2FA8E0"/>
+      <stop offset=".48" stop-color="#0B5FC2"/>
+      <stop offset="1" stop-color="#8B3FD1"/>
+    </linearGradient>
+    <linearGradient id="inner" x1="20" y1="45" x2="45" y2="19" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2FA8E0"/>
+      <stop offset="1" stop-color="#4038B0"/>
+    </linearGradient>
+    <radialGradient id="listener">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset=".7" stop-color="#C7E8F5"/>
+      <stop offset="1" stop-color="#2FA8E0"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#FFFFFF"/>
+  <circle cx="32" cy="32" r="23" fill="none" stroke="url(#outer)" stroke-opacity=".22" stroke-width="7"/>
+  <g fill="none" stroke="url(#outer)" stroke-width="3.25" stroke-linecap="round">
+    <path d="M32 9a23 23 0 0 1 23 23"/>
+    <path d="M55 32a23 23 0 0 1-23 23"/>
+    <path d="M32 55A23 23 0 0 1 9 32"/>
+    <path d="M9 32A23 23 0 0 1 32 9"/>
+  </g>
+  <circle cx="32" cy="32" r="13" fill="none" stroke="url(#inner)" stroke-opacity=".2" stroke-width="7"/>
+  <path d="M32 19a13 13 0 1 1-9.2 3.8" fill="none" stroke="url(#inner)" stroke-width="3.5" stroke-linecap="round"/>
+  <g>
+    <circle cx="32" cy="9" r="2.6" fill="#8B3FD1"/>
+    <circle cx="48.3" cy="15.7" r="2.6" fill="#6B4ED1"/>
+    <circle cx="55" cy="32" r="2.6" fill="#2E77D6"/>
+    <circle cx="48.3" cy="48.3" r="2.6" fill="#1690D6"/>
+    <circle cx="32" cy="55" r="2.6" fill="#2FA8E0"/>
+    <circle cx="15.7" cy="48.3" r="2.6" fill="#2FA8E0"/>
+    <circle cx="9" cy="32" r="2.6" fill="#1C97D6"/>
+    <circle cx="15.7" cy="15.7" r="2.6" fill="#3A6FD6"/>
+    <circle cx="32" cy="32" r="5" fill="#0B5FC2" opacity=".12"/>
+    <circle cx="32" cy="32" r="3.5" fill="url(#listener)"/>
+  </g>
+</svg>
