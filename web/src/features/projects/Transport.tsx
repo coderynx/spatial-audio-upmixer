@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Pause, Play, Repeat, Square, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { canvasTheme } from "@/lib/canvasTheme";
 import { formatFaderDb } from "@/lib/fader";
 import { cn } from "@/lib/utils";
 
@@ -12,27 +13,51 @@ function digits(seconds: number) {
   return `${String(minutes).padStart(2, "0")}:${String(whole).padStart(2, "0")}.${tenths}`;
 }
 
+function shortDigits(seconds: number) {
+  const clamped = Math.max(0, seconds || 0);
+  const minutes = Math.floor(clamped / 60);
+  const whole = Math.floor(clamped % 60);
+  return `${String(minutes).padStart(2, "0")}:${String(whole).padStart(2, "0")}`;
+}
+
 function LcdDisplay({ currentTime, duration, mode, onToggleMode }: { currentTime: number; duration: number; mode: "elapsed" | "remaining"; onToggleMode: () => void }) {
   const remaining = Math.max(0, duration - currentTime);
   const value = mode === "elapsed" ? digits(currentTime) : `-${digits(remaining)}`;
   return (
-    <button
-      type="button"
-      onClick={onToggleMode}
-      aria-label={`Time display, showing ${mode === "elapsed" ? "elapsed" : "remaining"} time. Click to toggle.`}
-      title="Click to toggle elapsed / remaining"
-      className="group flex w-[104px] shrink-0 flex-col items-center rounded-md border border-black/70 bg-[#050807] px-2.5 py-1 shadow-[inset_0_2px_5px_rgba(0,0,0,0.7)]"
+    <div
+      className="flex h-9 shrink-0 items-stretch rounded-md border shadow-[inset_0_2px_5px_rgba(0,0,0,0.7)]"
+      style={{ backgroundColor: canvasTheme.plotField, borderColor: canvasTheme.gridSoft }}
     >
-      <span
-        className="w-full whitespace-nowrap text-center font-mono text-base font-medium leading-tight tabular-nums tracking-wider text-[#30D158]"
-        style={{ textShadow: "0 0 7px rgba(48,209,88,0.6), 0 0 1px rgba(48,209,88,0.9)" }}
+      <button
+        type="button"
+        onClick={onToggleMode}
+        aria-label={`Time display, showing ${mode === "elapsed" ? "elapsed" : "remaining"} time. Click to toggle.`}
+        title="Click to toggle elapsed / remaining"
+        className="group flex w-[88px] shrink-0 flex-col items-center justify-center px-1"
       >
-        {value}
-      </span>
-      <span className="w-full whitespace-nowrap text-center text-[8px] font-semibold uppercase leading-tight tracking-[0.2em] text-[#30D158]/45 group-hover:text-[#30D158]/75">
-        {mode === "elapsed" ? "Elapsed" : "Remaining"}
-      </span>
-    </button>
+        <span
+          className="w-full whitespace-nowrap text-center font-mono text-base font-medium leading-tight tabular-nums"
+          style={{ color: canvasTheme.labelStrong }}
+        >
+          {value}
+        </span>
+        <span
+          className="w-full whitespace-nowrap text-center text-[8px] font-semibold uppercase leading-tight tracking-[0.2em] opacity-70 group-hover:opacity-100"
+          style={{ color: canvasTheme.label }}
+        >
+          {mode === "elapsed" ? "Elapsed" : "Remaining"}
+        </span>
+      </button>
+      <div className="w-px shrink-0 self-stretch" style={{ backgroundColor: canvasTheme.gridSoft }} />
+      <div className="flex shrink-0 items-center px-1" title="Total duration">
+        <span
+          className="whitespace-nowrap text-center font-mono text-[10px] font-medium leading-none tabular-nums"
+          style={{ color: canvasTheme.label }}
+        >
+          {shortDigits(duration)}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -95,16 +120,31 @@ function TransportImpl({
   const displayTime = playing ? liveTime : currentTime;
   return (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-2">
-      <div className="flex items-center gap-1">
-        <Button variant="secondary" size="icon" aria-label="Stop" disabled={disabled} onClick={onStop}>
-          <Square />
-        </Button>
-        <Button variant="success" size="icon" aria-label={playing ? "Pause" : "Play"} disabled={disabled} onClick={onPlayPause}>
-          {playing ? <Pause /> : <Play />}
+      <div className="flex items-center gap-1.5 rounded-lg bg-muted p-1">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-foreground hover:bg-accent hover:text-foreground"
+          aria-label="Stop"
+          disabled={disabled}
+          onClick={onStop}
+        >
+          <Square className="fill-current" />
         </Button>
         <Button
-          variant={loop ? "warning" : "secondary"}
+          variant={playing ? "success" : "secondary"}
           size="icon"
+          aria-label={playing ? "Pause" : "Play"}
+          aria-pressed={playing}
+          disabled={disabled}
+          onClick={onPlayPause}
+        >
+          {playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
+        </Button>
+        <Button
+          variant={loop ? "warning" : "ghost"}
+          size="icon"
+          className={cn(!loop && "text-foreground hover:bg-accent hover:text-foreground")}
           aria-label="Toggle repeat"
           aria-pressed={loop}
           disabled={disabled}
@@ -127,7 +167,7 @@ function TransportImpl({
         onPointerUp={(event) => onCommitScrub(Number(event.currentTarget.value))}
         onChange={(event) => onScrubTo(Number(event.target.value))}
       />
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1.5">
         <Button
           variant="ghost"
           size="icon"
@@ -141,7 +181,7 @@ function TransportImpl({
         <input
           aria-label="Preview monitor volume"
           aria-valuetext={formatFaderDb(volume)}
-          className="h-1 w-20 accent-primary"
+          className="h-1 w-14 accent-primary"
           type="range"
           min={0}
           max={1}
@@ -152,7 +192,7 @@ function TransportImpl({
         {/* dB-tapered monitor gain readout (lib/fader.ts) — unity (0.0 dB) at
             max is the render itself; there is no gain above it to give up
             reading. See useStemPreview.ts's PROGRAM/MONITOR gain split. */}
-        <span className="w-14 shrink-0 text-right text-[11px] font-medium tabular-nums text-muted-foreground" aria-hidden="true">
+        <span className="w-11 shrink-0 text-right text-[10px] font-medium tabular-nums text-muted-foreground" aria-hidden="true">
           {formatFaderDb(volume)}
         </span>
       </div>
