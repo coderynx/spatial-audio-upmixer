@@ -232,8 +232,9 @@ def normalize_loudness(
     target_lkfs: float = -18.0,
     max_tp_dbtp: float = -1.0,
     max_gain_db: float = 30.0,
+    apply_tp_gain: bool = True,
 ) -> tuple[dict[str, np.ndarray], dict]:
-    """Apply a single linear gain for BS.1770-4 loudness + True Peak compliance.
+    """Apply a single linear gain for BS.1770-4 loudness (+ optional True Peak) compliance.
 
     Non-destructive: a scalar multiplier only — no compression, no clipping.
     If content would exceed max_tp_dbtp after loudness normalization, gain is
@@ -246,6 +247,13 @@ def normalize_loudness(
         target_lkfs: integrated loudness target in LKFS.
         max_tp_dbtp: True Peak ceiling in dBTP.
         max_gain_db: maximum upward gain to prevent noise amplification.
+        apply_tp_gain: if ``False``, skip the scalar True-Peak gain reduction
+            below and only apply the loudness gain — for callers that hand
+            True-Peak compliance to a downstream limiter instead (see
+            :class:`~upmixer.mastering.limiter.LookAheadLimiter`, used by
+            :class:`~upmixer.mastering.chain.MasteringChain`). Callers
+            without such a limiter (e.g. the binaural renderer) must leave
+            this ``True``.
 
     Returns:
         (adjusted_channels, info) where info dict has keys:
@@ -262,7 +270,7 @@ def normalize_loudness(
     measured_tp = measure_true_peak(adjusted, sample_rate)
     tp_limited = False
 
-    if measured_tp > max_tp_dbtp:
+    if apply_tp_gain and measured_tp > max_tp_dbtp:
         tp_excess_db = measured_tp - max_tp_dbtp
         tp_gain = 10.0 ** (-tp_excess_db / 20.0)
         for v in adjusted.values():

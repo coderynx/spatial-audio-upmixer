@@ -25,19 +25,23 @@ Processing order
    params.  Disabled when both profile and all individual params are unset.
 3. **ITU-R BS.1770-5 loudness normalization** (if
    ``config.loudness_normalize`` is ``True``).  A scalar linear gain is applied
-   to all channels simultaneously — no dynamic processing, no clipping.
-4. **Dolby Atmos True Peak ceiling** — if the post-LN peak exceeds
-   ``config.loudness_max_tp`` dBTP, a second linear gain reduction is applied.
-5. **Soft limiting** — final analogue-style protection, run *last* so it
-   only ever engages as a true-peak safety net on the loudness-corrected
-   signal.  Running this before loudness normalization would bake in tanh
-   saturation from whatever peaks the pre-gain bed happens to have — a
-   scalar gain applied afterward can't undo already-baked distortion.  (The
-   same bug class was previously found and fixed in
-   ``upmixer.binaural.renderer.render_binaural_delivery``; this ordering
-   brings the main chain in line with that fix.)  Loudness/True-Peak are
-   re-measured after this step so ``MasteringResult`` always reflects the
-   truly-final delivered waveform.
+   to all channels simultaneously — no dynamic processing, no clipping.  The
+   scalar True-Peak gain step ``normalize_loudness`` otherwise applies is
+   skipped here (``apply_tp_gain=False``) since step 4 below now owns
+   True-Peak compliance for this chain.
+4. **Look-ahead true-peak limiter** — a linked, look-ahead brickwall
+   limiter (:class:`~upmixer.mastering.limiter.LookAheadLimiter`) reduces
+   gain ahead of any inter-sample peak so the delivered signal never
+   exceeds ``config.loudness_max_tp`` dBTP.  Runs *last*, after loudness
+   normalization, so it only ever engages as a true-peak safety net on the
+   already loudness-corrected signal — running it earlier would bake its
+   gain reduction in ahead of whatever peaks the pre-gain bed happens to
+   have, and a later scalar gain couldn't undo that.  (The same
+   process-order bug class was previously found and fixed in
+   ``upmixer.binaural.renderer.render_binaural_delivery``; this chain
+   follows the same discipline.)  Loudness/True-Peak are re-measured after
+   this step so ``MasteringResult`` always reflects the truly-final
+   delivered waveform.
 
 Standards compliance (``atmos-music`` profile)
 -----------------------------------------------
@@ -56,7 +60,8 @@ import numpy as np
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import OutputFormat
-from upmixer.utils import soft_limit
+
+from .limiter import LookAheadLimiter
 
 _log = logging.getLogger("upmixer")
 
@@ -228,6 +233,7 @@ class MasteringChain:
                 target_lkfs=cfg.loudness_target_lkfs,
                 max_tp_dbtp=cfg.loudness_max_tp,
                 max_gain_db=cfg.loudness_max_gain_db,
+                apply_tp_gain=False,
             )
             _log.info(
                 "  Loudness: %.1f LKFS → %.1f LKFS  gain %+.1f dB  TP %.1f dBTP%s",
@@ -238,16 +244,19 @@ class MasteringChain:
                 "  [TP limited]" if ln_info["tp_limited"] else "",
             )
 
-        # Soft limiting runs last, after loudness/true-peak correction, so it
-        # only ever engages as a safety net on the already-corrected signal —
-        # limiting first would bake in tanh saturation from whatever peaks
-        # the pre-gain bed happens to have, which no later scalar gain can
-        # undo (the same bug class fixed in
-        # render_binaural_delivery; see that module's docstring).
-        channels = {
-            name: soft_limit(ch, cfg.peak_limit_threshold)
-            for name, ch in channels.items()
-        }
+        # The look-ahead limiter runs last, after loudness/true-peak
+        # correction, so it only ever engages as a safety net on the
+        # already-corrected signal — limiting first would bake its gain
+        # reduction in ahead of whatever peaks the pre-gain bed happens to
+        # have, which no later scalar gain can undo (the same bug class
+        # fixed in render_binaural_delivery; see that module's docstring).
+        limiter = LookAheadLimiter(
+            ceiling_dbtp=cfg.loudness_max_tp,
+            lookahead_ms=cfg.limiter_lookahead_ms,
+            release_ms=cfg.limiter_release_ms,
+            sample_rate=sample_rate,
+        )
+        channels = limiter.process(channels)
 
         if cfg.loudness_normalize:
             from upmixer.loudness import measure_integrated_loudness, measure_true_peak

@@ -7,6 +7,8 @@ import {
   ITU_CENTER_COEFF,
   LFE_GAIN,
   LFE_LOWPASS_HZ,
+  LIMITER_LOOKAHEAD_MS,
+  LIMITER_RELEASE_MS,
   LOUDNESS_MAX_GAIN_DB,
   N_ACN_CHANNELS,
   STEM_EQ_FIR_ASSETS,
@@ -351,6 +353,12 @@ export function useStemPreview(
   outputModeRef.current = outputMode;
   const spatialProfileRef = React.useRef(spatialProfile);
   spatialProfileRef.current = spatialProfile;
+  // Read-only inside `initialize()` for the native limiter worklet's ceiling
+  // (not a live-editable manifest field today, see that construction site) —
+  // a ref so reading it doesn't force `initialize` to depend on `mastering`
+  // and rebuild the whole graph on every unrelated mastering-panel edit.
+  const masteringRef = React.useRef(mastering);
+  masteringRef.current = mastering;
   // Stable-identity, layout-scoped speaker list: this is what actually
   // drives the ambisonic speaker-bus construction below, replacing the old
   // hardcoded `POSITIONAL_CHANNELS` so switching e.g. 7.1.4 -> 5.1 tears
@@ -470,10 +478,14 @@ export function useStemPreview(
   // loudness correction of its own to apply, see that function), same role
   // as `master` above.
   const nativeOutputGain = React.useRef<GainNode | null>(null);
-  // Safety ceiling on the native discrete path, mirroring `softLimit` on the
-  // binaural/stereo paths — native otherwise bypasses `master`/`softLimit`
-  // entirely and would reach `ctx.destination` with no limiting at all.
-  const nativeSoftLimit = React.useRef<WaveShaperNode | null>(null);
+  // Look-ahead true-peak limiter on the native discrete path — mirrors
+  // upmixer/mastering/limiter.py::LookAheadLimiter (the bed-level limiter
+  // `MasteringChain` now runs), via the "limiter-processor" AudioWorklet
+  // (`web/public/limiter.worklet.js`); native otherwise bypasses
+  // `master`/`softLimit` entirely and would reach `ctx.destination` with no
+  // limiting at all. Falls back to the plain tanh `WaveShaperNode` (same as
+  // `softLimit`) if the worklet module fails to load — see `initialize()`.
+  const nativeSoftLimit = React.useRef<AudioWorkletNode | WaveShaperNode | null>(null);
   // MONITOR domain, native path — mirrors `monitorGain` above. Explicit
   // channelCount/channelCountMode/channelInterpretation (set at creation,
   // see `initialize()`) because a bare GainNode defaults to "max"/"speakers"
@@ -1432,6 +1444,27 @@ export function useStemPreview(
     const ctx = context.current;
     if (!ctx) return Promise.resolve();
 
+    // Everything below (including the stem-decode tail that used to be the
+    // only async part) now lives in one IIFE, so `initPromise.current` below
+    // is set synchronously, before any `await` yields control back to the
+    // caller — a second concurrent `initialize()` call must see the guard
+    // already in place instead of racing past it and building the graph
+    // twice. (Splitting this into an `async` outer callback instead would
+    // delay that assignment until after the first `await`, exactly the bug
+    // this comment is here to prevent from being reintroduced.)
+    const promise = (async () => {
+    // Must resolve before the native limiter node below can be constructed.
+    // Falls back to the plain tanh WaveShaper (nativeLimiterWorkletReady =
+    // false) if the module fails to load — some embedding contexts disable
+    // AudioWorklet (e.g. insecure/non-HTTPS origins), and a broken preview
+    // is worse than a slightly-less-accurate safety net.
+    let nativeLimiterWorkletReady = true;
+    try {
+      await ctx.audioWorklet.addModule("/limiter.worklet.js");
+    } catch {
+      nativeLimiterWorkletReady = false;
+    }
+
     const preMasterBusNode = ctx.createGain();
     const lfeBusNode = ctx.createGain();
     const mergePointNode = ctx.createGain();
@@ -1471,12 +1504,35 @@ export function useStemPreview(
     const nativeMergerNode = ctx.createChannelMerger(Math.max(1, layoutChannelList.length));
     const nativeOutputGainNode = ctx.createGain();
     nativeMergerNode.connect(nativeOutputGainNode);
-    // Same tanh safety ceiling as the binaural/stereo `softLimit`, applied
-    // after the volume gain so it only ever engages as a true-peak safety
-    // net — native would otherwise reach `ctx.destination` unlimited.
-    const nativeSoftLimitNode = ctx.createWaveShaper();
-    nativeSoftLimitNode.curve = buildSoftLimitCurve();
-    nativeSoftLimitNode.oversample = "4x";
+    // Look-ahead true-peak limiter, applied after the volume gain so it
+    // only ever engages as a safety net — native would otherwise reach
+    // `ctx.destination` unlimited. Mirrors upmixer/mastering/limiter.py's
+    // LookAheadLimiter (see masteringProfiles.ts's LIMITER_LOOKAHEAD_MS/
+    // LIMITER_RELEASE_MS comment); `ceilingDb` is not a live-editable
+    // manifest field today, so baking it in at construction (like the
+    // worklet's other parameters) matches this graph's existing pattern of
+    // rebuilding structural nodes on `initialize()`, not live-retuning them.
+    // Falls back to the plain tanh WaveShaper if the worklet failed to load.
+    const nativeSoftLimitNode: AudioWorkletNode | WaveShaperNode = nativeLimiterWorkletReady
+      ? new AudioWorkletNode(ctx, "limiter-processor", {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          channelCount: Math.max(1, layoutChannelList.length),
+          channelCountMode: "explicit",
+          channelInterpretation: "discrete",
+          processorOptions: {
+            ceilingDb: masteringRef.current?.loudness?.max_tp ?? -1,
+            lookaheadMs: LIMITER_LOOKAHEAD_MS,
+            releaseMs: LIMITER_RELEASE_MS,
+            numberOfChannels: Math.max(1, layoutChannelList.length),
+          },
+        })
+      : (() => {
+          const fallback = ctx.createWaveShaper();
+          fallback.curve = buildSoftLimitCurve();
+          fallback.oversample = "4x";
+          return fallback;
+        })();
     nativeOutputGainNode.connect(nativeSoftLimitNode);
     // MONITOR domain, native path — see `nativeMonitorGain`'s declaration.
     // Explicit discrete channelCount so this node passes every layout
@@ -1652,92 +1708,91 @@ export function useStemPreview(
     }
     if (sourcePreviewUrl) entries.push({ id: "__source_anchor__", url: sourcePreviewUrl, anchor: true });
 
-    const promise = (async () => {
-      try {
-        let decoded = 0;
-        // Stems finish decoding in tight clusters, not evenly spaced —
-        // flushing `setLoadProgress` straight from each `Promise.all` branch
-        // would fire a full page re-render per stem in that cluster, right
-        // when the main thread is busiest with decode work. Coalesce same-
-        // frame completions into a single state update instead.
-        let progressFlushScheduled = false;
-        const scheduleProgressFlush = () => {
-          if (progressFlushScheduled) return;
-          progressFlushScheduled = true;
-          window.requestAnimationFrame(() => {
-            progressFlushScheduled = false;
-            setLoadProgress(entries.length ? decoded / entries.length : 1);
-          });
-        };
-        await Promise.all(entries.map(async (entry) => {
-          const buffer = await loadBuffer(ctx, entry.url);
-          decoded += 1;
-          scheduleProgressFlush();
+    try {
+      let decoded = 0;
+      // Stems finish decoding in tight clusters, not evenly spaced —
+      // flushing `setLoadProgress` straight from each `Promise.all` branch
+      // would fire a full page re-render per stem in that cluster, right
+      // when the main thread is busiest with decode work. Coalesce same-
+      // frame completions into a single state update instead.
+      let progressFlushScheduled = false;
+      const scheduleProgressFlush = () => {
+        if (progressFlushScheduled) return;
+        progressFlushScheduled = true;
+        window.requestAnimationFrame(() => {
+          progressFlushScheduled = false;
+          setLoadProgress(entries.length ? decoded / entries.length : 1);
+        });
+      };
+      await Promise.all(entries.map(async (entry) => {
+        const buffer = await loadBuffer(ctx, entry.url);
+        decoded += 1;
+        scheduleProgressFlush();
 
-          if (entry.anchor) {
-            const stemInput = ctx.createGain();
-            const built = createStemSends(ctx, stemInput, busesMap, positionalChannelsRef.current);
-            nodes.current.set(entry.id, {
-              buffer, source: null, stemGain: null, postEqGain: null, sends: built.sends,
-              ownNodes: [stemInput, ...built.ownNodes],
-              lfeGain: null, lfeFilters: null, analyser: null,
-              meterSplitter: null, meterAnalysers: [],
-            });
-          } else {
-            const stemGain = ctx.createGain();
-            // `createStemSends` reads from `postEqGain`, not `stemGain`
-            // directly — `buildStemEqChains` wires the (rebuildable)
-            // stem_eq filter chain between them, initially as a bypass.
-            const postEqGain = ctx.createGain();
-            const built = createStemSends(ctx, postEqGain, busesMap, positionalChannelsRef.current);
-            const lfeGain = ctx.createGain();
-            const lfeFilter1 = ctx.createBiquadFilter();
-            const lfeFilter2 = ctx.createBiquadFilter();
-            lfeFilter1.type = "lowpass";
-            lfeFilter1.frequency.value = LFE_LOWPASS_HZ;
-            lfeFilter2.type = "lowpass";
-            lfeFilter2.frequency.value = LFE_LOWPASS_HZ;
-            lfeGain.connect(lfeFilter1).connect(lfeFilter2).connect(lfeBusNode);
-            // No output connection — a pure tap for the 3D scene's halos,
-            // cannot affect the audible signal.
-            const analyser = ctx.createAnalyser();
-            analyser.fftSize = 256;
-            analyser.smoothingTimeConstant = 0.7;
-            // One meter tap per source channel (capped at stereo — the mixer
-            // strip shows at most two bars, and a >2ch stem's extra channels
-            // have no strip to appear in). Also output-less, same as
-            // `analyser`: splitting a source that feeds nothing audible
-            // cannot alter the mix.
-            const meterChannels = Math.min(2, Math.max(1, buffer.numberOfChannels));
-            const meterSplitter = ctx.createChannelSplitter(meterChannels);
-            const meterAnalysers = Array.from({ length: meterChannels }, (_, channel) => {
-              const channelAnalyser = ctx.createAnalyser();
-              channelAnalyser.fftSize = 256;
-              meterSplitter.connect(channelAnalyser, channel);
-              return channelAnalyser;
-            });
-            nodes.current.set(entry.id, {
-              buffer, source: null, stemGain, postEqGain, sends: built.sends,
-              ownNodes: [stemGain, postEqGain, ...built.ownNodes],
-              lfeGain, lfeFilters: [lfeFilter1, lfeFilter2], analyser,
-              meterSplitter, meterAnalysers,
-            });
-          }
-        }));
-        const durations = Array.from(nodes.current.values())
-          .map((node) => node.buffer.duration)
-          .filter((value) => Number.isFinite(value) && value > 0);
-        if (durations.length) {
-          durationRef.current = Math.min(...durations);
-          setDuration(durationRef.current);
+        if (entry.anchor) {
+          const stemInput = ctx.createGain();
+          const built = createStemSends(ctx, stemInput, busesMap, positionalChannelsRef.current);
+          nodes.current.set(entry.id, {
+            buffer, source: null, stemGain: null, postEqGain: null, sends: built.sends,
+            ownNodes: [stemInput, ...built.ownNodes],
+            lfeGain: null, lfeFilters: null, analyser: null,
+            meterSplitter: null, meterAnalysers: [],
+          });
+        } else {
+          const stemGain = ctx.createGain();
+          // `createStemSends` reads from `postEqGain`, not `stemGain`
+          // directly — `buildStemEqChains` wires the (rebuildable)
+          // stem_eq filter chain between them, initially as a bypass.
+          const postEqGain = ctx.createGain();
+          const built = createStemSends(ctx, postEqGain, busesMap, positionalChannelsRef.current);
+          const lfeGain = ctx.createGain();
+          const lfeFilter1 = ctx.createBiquadFilter();
+          const lfeFilter2 = ctx.createBiquadFilter();
+          lfeFilter1.type = "lowpass";
+          lfeFilter1.frequency.value = LFE_LOWPASS_HZ;
+          lfeFilter2.type = "lowpass";
+          lfeFilter2.frequency.value = LFE_LOWPASS_HZ;
+          lfeGain.connect(lfeFilter1).connect(lfeFilter2).connect(lfeBusNode);
+          // No output connection — a pure tap for the 3D scene's halos,
+          // cannot affect the audible signal.
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 256;
+          analyser.smoothingTimeConstant = 0.7;
+          // One meter tap per source channel (capped at stereo — the mixer
+          // strip shows at most two bars, and a >2ch stem's extra channels
+          // have no strip to appear in). Also output-less, same as
+          // `analyser`: splitting a source that feeds nothing audible
+          // cannot alter the mix.
+          const meterChannels = Math.min(2, Math.max(1, buffer.numberOfChannels));
+          const meterSplitter = ctx.createChannelSplitter(meterChannels);
+          const meterAnalysers = Array.from({ length: meterChannels }, (_, channel) => {
+            const channelAnalyser = ctx.createAnalyser();
+            channelAnalyser.fftSize = 256;
+            meterSplitter.connect(channelAnalyser, channel);
+            return channelAnalyser;
+          });
+          nodes.current.set(entry.id, {
+            buffer, source: null, stemGain, postEqGain, sends: built.sends,
+            ownNodes: [stemGain, postEqGain, ...built.ownNodes],
+            lfeGain, lfeFilters: [lfeFilter1, lfeFilter2], analyser,
+            meterSplitter, meterAnalysers,
+          });
         }
-        buildStemEqChains();
-        setReady(nodes.current.size > 0);
-        apply();
-      } catch {
-        setError("Unable to load every preview stem.");
-        throw new Error("Preview stems are still loading");
+      }));
+      const durations = Array.from(nodes.current.values())
+        .map((node) => node.buffer.duration)
+        .filter((value) => Number.isFinite(value) && value > 0);
+      if (durations.length) {
+        durationRef.current = Math.min(...durations);
+        setDuration(durationRef.current);
       }
+      buildStemEqChains();
+      setReady(nodes.current.size > 0);
+      apply();
+    } catch {
+      setError("Unable to load every preview stem.");
+      throw new Error("Preview stems are still loading");
+    }
     })();
     initPromise.current = promise;
     return promise;

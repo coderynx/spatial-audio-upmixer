@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from upmixer.contract import canonical_constants, contract_signature
 
-_PINNED_SIGNATURE = "d2f9e35ab9fa080f4c6b74130980d837279f7baeaf62d8c73dfbbc06678893c8"
+_PINNED_SIGNATURE = "8819f516a674d8fc9ce9be72e7733cc9cdba1b0febfa13a01097bad96811e218"
 
 
 def test_contract_signature_matches_pinned_doc_value():

@@ -11,6 +11,7 @@ Sub-modules:
     eq               — SpectralShaper + EQ_PROFILES
     compressor       — BusCompressor + COMP_PROFILES
     bass             — BassController + BASS_PROFILES
+    limiter          — LookAheadLimiter (look-ahead true-peak brickwall limiter)
 """
 from .chain import MasteringChain, MasteringResult
 from .match_reference import ReferenceMatchProcessor

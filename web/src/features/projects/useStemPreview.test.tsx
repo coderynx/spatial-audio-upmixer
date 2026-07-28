@@ -95,6 +95,26 @@ class FakeConvolver extends FakeNode {
   normalize = true;
 }
 
+// Fake for the native path's look-ahead limiter (limiter.worklet.js,
+// "limiter-processor") — see the "native limiter worklet" describe block
+// below. `installAudio` stubs both `AudioWorkletNode` (this class) and
+// `FakeAudioContext.audioWorklet.addModule` so tests can choose whether the
+// module "loads" successfully (real worklet path) or not (fallback tanh
+// WaveShaper path — see useStemPreview.ts's `initialize()`).
+class FakeAudioWorkletNode extends FakeNode {
+  static instances: FakeAudioWorkletNode[] = [];
+  port = { postMessage: vi.fn() };
+  parameters = new Map();
+  name: string;
+  options: unknown;
+  constructor(_context: unknown, name: string, options: unknown) {
+    super();
+    this.name = name;
+    this.options = options;
+    FakeAudioWorkletNode.instances.push(this);
+  }
+}
+
 class FakeAnalyser extends FakeNode {
   fftSize = 2048;
   frequencyBinCount = 1024;
@@ -135,9 +155,15 @@ class FakeAudioBuffer {
 
 class FakeAudioContext {
   static instances: FakeAudioContext[] = [];
+  static workletShouldFail = false;
   currentTime = 0;
   closed = false;
   destination = new FakeNode();
+  audioWorklet = {
+    addModule: vi.fn(async () => {
+      if (FakeAudioContext.workletShouldFail) throw new Error("worklet module failed to load");
+    }),
+  };
 
   constructor() {
     FakeAudioContext.instances.push(this);
@@ -235,6 +261,7 @@ function hrirUrls(): string[] {
 
 function installAudio() {
   vi.stubGlobal("AudioContext", FakeAudioContext);
+  vi.stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
   vi.stubGlobal("fetch", vi.fn(async () => ({
     ok: true,
     arrayBuffer: async () => new ArrayBuffer(8),
@@ -247,6 +274,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   FakeAudioContext.instances = [];
+  FakeAudioContext.workletShouldFail = false;
+  FakeAudioWorkletNode.instances = [];
 });
 
 describe("useStemPreview mastering chain", () => {
@@ -393,28 +422,42 @@ describe("per-stem EQ (mix.stem_eq)", () => {
 });
 
 describe("output-path hearing safety", () => {
-  it("gives the native discrete path its own soft-limit ceiling, not just the volume gain", async () => {
+  it("gives the native discrete path its own look-ahead limiter worklet, not just the volume gain", async () => {
     installAudio();
     render(<Harness />);
     await act(async () => { await preview.playPause(); });
 
-    // One tanh soft-limiter for binaural/stereo (pre-existing) plus one for
-    // native (nativeSoftLimitNode in useStemPreview.ts) — built unconditionally
-    // in `initialize()` regardless of which mode is actually selected, so
+    // One tanh soft-limiter for binaural/stereo (pre-existing, unchanged)
+    // plus one "limiter-processor" AudioWorkletNode for native
+    // (nativeSoftLimitNode in useStemPreview.ts) — built unconditionally in
+    // `initialize()` regardless of which mode is actually selected, so
     // native can never reach `ctx.destination` through the bare volume gain
-    // unlimited.
+    // unlimited. See the next test for the fallback-path equivalent.
+    expect(lastContext().waveShapers.length).toBe(1);
+    expect(FakeAudioWorkletNode.instances.length).toBe(1);
+    expect(FakeAudioWorkletNode.instances[0].name).toBe("limiter-processor");
+  });
+
+  it("falls back to a tanh soft-limit WaveShaper on the native path if the limiter worklet module fails to load", async () => {
+    installAudio();
+    FakeAudioContext.workletShouldFail = true;
+    render(<Harness />);
+    await act(async () => { await preview.playPause(); });
+
+    expect(FakeAudioWorkletNode.instances.length).toBe(0);
+    // Binaural/stereo's tanh soft-limiter plus the native fallback tanh
+    // soft-limiter — see initialize()'s `nativeLimiterWorkletReady` branch.
     expect(lastContext().waveShapers.length).toBe(2);
   });
 
-  it("routes native output mode to ctx.destination through the native soft-limiter and its monitor gain", async () => {
+  it("routes native output mode to ctx.destination through the native limiter worklet and its monitor gain", async () => {
     installAudio();
     render(<Harness layoutChannels={["FL", "FR"]} outputMode="native" />);
     await act(async () => { await preview.playPause(); });
 
     const ctx = lastContext();
-    // Creation order in `initialize()`: nativeSoftLimitNode (native bus) is
-    // built before softLimitNode (stereo/binaural bus), so it's first.
-    const nativeLimiter = ctx.waveShapers[0];
+    const nativeLimiter = FakeAudioWorkletNode.instances[0];
+    expect(nativeLimiter).toBeDefined();
     // The limiter feeds `nativeMonitorGain` (the Transport volume/mute
     // stage, strictly downstream of the safety limiter — see
     // useStemPreview.ts's PROGRAM/MONITOR split), which is what actually

@@ -111,8 +111,25 @@ export const MONO_MAKER_STEREO_PAIRS: ReadonlyArray<readonly [string, string]> =
   ["TBL", "TBR"],
 ];
 
-// upmixer/config.py peak_limit_threshold — not manifest-editable, fixed default.
+// upmixer/config.py peak_limit_threshold — not manifest-editable, fixed
+// default. Still live for the binaural/stereo-downmix monitoring path's
+// tanh safety net (`softLimitNode` in useStemPreview.ts) and the native
+// path's own safety net — see LIMITER_LOOKAHEAD_MS below for the bed-level
+// look-ahead limiter that replaced this on the native monitoring path.
 export const SOFT_LIMIT_THRESHOLD = 0.95;
+
+// upmixer/config.py limiter_lookahead_ms / limiter_release_ms —
+// upmixer/mastering/limiter.py::LookAheadLimiter, the bed-level look-ahead
+// true-peak limiter. Mirrored by web/public/limiter.worklet.js
+// ("limiter-processor"), wired in place of the native monitoring path's
+// `nativeSoftLimitNode` (useStemPreview.ts) — the binaural/stereo-downmix
+// path keeps the plain tanh `softLimitNode` above, matching
+// `render_binaural_delivery`'s own unchanged soft_limit call on the Python
+// side. Tier 1 (these two constants); the worklet's DSP realization
+// (causal streaming vs. the backend's whole-buffer batch processing) is
+// Tier 2 — see docs/contracts/preview_export_parity.md.
+export const LIMITER_LOOKAHEAD_MS = 5.0;
+export const LIMITER_RELEASE_MS = 50.0;
 
 // upmixer/config.py lfe_gain (-10 dB) and stem_router LFE lowpass.
 export const LFE_GAIN = 0.31622776601683794;

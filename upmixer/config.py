@@ -89,6 +89,9 @@ class UpmixConfig:
     loudness_max_tp: float = -1.0
     loudness_max_gain_db: float = 30.0
 
+    limiter_lookahead_ms: float = 5.0
+    limiter_release_ms: float = 50.0
+
     downmix_output_path: str | None = None
 
     preview: bool = False

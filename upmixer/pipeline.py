@@ -4,7 +4,7 @@ import time
 from typing import Callable
 
 import numpy as np
-from scipy.signal import resample_poly
+from scipy.signal import lfilter, resample_poly
 
 from upmixer.analysis.coherence import CoherenceEstimator
 from upmixer.analysis.spatial import SpatialPlan, analyze_spatial_plan
@@ -64,30 +64,24 @@ class _LinkedEnergyController:
 
 
 class _AllPassDecorrelator:
-    """First-order all-pass decorrelator for rear auxiliary sends."""
+    """First-order all-pass decorrelator for rear auxiliary sends.
+
+    Implements y[n] = -a*x[n] + x[n-1] + a*y[n-1], i.e.
+    H(z) = (-a + z^-1) / (1 - a*z^-1), via ``scipy.signal.lfilter``'s
+    Direct-Form-II-transposed state instead of a per-sample Python loop.
+    """
 
     def __init__(self, coefficient: float = 0.7):
-        self._coefficient = coefficient
-        self._previous_input = 0.0
-        self._previous_output = 0.0
+        self._b = np.array([-coefficient, 1.0])
+        self._a = np.array([1.0, -coefficient])
+        self._zi = np.zeros(1)
 
     def process(self, samples: np.ndarray) -> np.ndarray:
-        output = np.empty_like(samples)
-        a = self._coefficient
-        x_prev = self._previous_input
-        y_prev = self._previous_output
-        for i, sample in enumerate(samples):
-            value = -a * sample + x_prev + a * y_prev
-            output[i] = value
-            x_prev = sample
-            y_prev = value
-        self._previous_input = x_prev
-        self._previous_output = y_prev
+        output, self._zi = lfilter(self._b, self._a, samples, zi=self._zi)
         return output
 
     def reset(self) -> None:
-        self._previous_input = 0.0
-        self._previous_output = 0.0
+        self._zi = np.zeros(1)
 
 
 class StreamingProcessor:

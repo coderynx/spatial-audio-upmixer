@@ -5,7 +5,7 @@ import numpy as np
 import soundfile as sf
 
 from upmixer.config import UpmixConfig
-from upmixer.pipeline import StreamingProcessor, UpmixPipeline
+from upmixer.pipeline import StreamingProcessor, UpmixPipeline, _AllPassDecorrelator
 
 
 def _create_test_wav(path: str, left: np.ndarray, right: np.ndarray, sr: int):
@@ -149,6 +149,59 @@ def test_energy_conservation(stereo_mix, sample_rate):
 
         ratio = output_energy / (input_energy + 1e-10)
         assert 0.3 < ratio < 3.0, f"Energy ratio out of range: {ratio}"
+
+
+def _reference_all_pass(samples: np.ndarray, coefficient: float = 0.7) -> np.ndarray:
+    """Direct per-sample reference for _AllPassDecorrelator's difference equation."""
+    output = np.empty_like(samples)
+    x_prev = 0.0
+    y_prev = 0.0
+    for i, sample in enumerate(samples):
+        value = -coefficient * sample + x_prev + coefficient * y_prev
+        output[i] = value
+        x_prev = sample
+        y_prev = value
+    return output
+
+
+def test_all_pass_decorrelator_matches_reference_single_shot():
+    """Vectorized lfilter implementation must match the difference equation exactly."""
+    rng = np.random.default_rng(42)
+    samples = rng.standard_normal(4000)
+
+    decorrelator = _AllPassDecorrelator()
+    output = decorrelator.process(samples)
+    expected = _reference_all_pass(samples)
+
+    np.testing.assert_allclose(output, expected, atol=1e-12)
+
+
+def test_all_pass_decorrelator_state_continuity_across_blocks():
+    """Splitting input across arbitrary block boundaries must not change output."""
+    rng = np.random.default_rng(7)
+    samples = rng.standard_normal(2531)
+    expected = _reference_all_pass(samples)
+
+    decorrelator = _AllPassDecorrelator()
+    chunks = []
+    for start in range(0, len(samples), 173):
+        chunks.append(decorrelator.process(samples[start:start + 173]))
+    output = np.concatenate(chunks)
+
+    np.testing.assert_allclose(output, expected, atol=1e-12)
+
+
+def test_all_pass_decorrelator_reset_clears_state():
+    rng = np.random.default_rng(99)
+    samples = rng.standard_normal(500)
+
+    decorrelator = _AllPassDecorrelator()
+    decorrelator.process(samples)
+    decorrelator.reset()
+    output_after_reset = decorrelator.process(samples)
+    expected = _reference_all_pass(samples)
+
+    np.testing.assert_allclose(output_after_reset, expected, atol=1e-12)
 
 
 def test_streaming_processor_flushes_delayed_tail(sample_rate):

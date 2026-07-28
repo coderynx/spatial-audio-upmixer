@@ -71,6 +71,8 @@ def canonical_constants() -> dict:
         "height_crossover_hz": cfg.height_crossover_hz,
         "height_high_shelf_gain": cfg.height_high_shelf_gain,
         "soft_limit_threshold": cfg.peak_limit_threshold,
+        "limiter_lookahead_ms": cfg.limiter_lookahead_ms,
+        "limiter_release_ms": cfg.limiter_release_ms,
         "loudness_max_gain_db": cfg.loudness_max_gain_db,
         "surround_downmix_coeff": cfg.surround_downmix_coeff,
         "itu_center_coeff": ITU_CENTER_COEFF,

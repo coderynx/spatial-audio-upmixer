@@ -111,6 +111,10 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.loudness_normalize = False
     if args.loudness_target is not None:
         config.loudness_target_lkfs = args.loudness_target
+    if args.limiter_lookahead is not None:
+        config.limiter_lookahead_ms = args.limiter_lookahead
+    if args.limiter_release is not None:
+        config.limiter_release_ms = args.limiter_release
     if args.output_type is not None:
         config.output_type = args.output_type
     elif not args.manifest:
@@ -603,6 +607,20 @@ def main() -> None:
         default=None,
         metavar="LKFS",
         help="Target integrated loudness in LKFS (default: -18.0)",
+    )
+    parser.add_argument(
+        "--limiter-lookahead",
+        type=float,
+        default=None,
+        metavar="MS",
+        help="Look-ahead limiter window in ms — how far ahead it sees oncoming peaks (default: 5.0)",
+    )
+    parser.add_argument(
+        "--limiter-release",
+        type=float,
+        default=None,
+        metavar="MS",
+        help="Look-ahead limiter release time in ms — how fast gain recovers after a peak (default: 50.0)",
     )
     parser.add_argument(
         "--output-type",

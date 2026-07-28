@@ -257,6 +257,8 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "loudness_normalize":         ("loudness_normalize",       bool),
     "loudness_target":            ("loudness_target_lkfs",     float),
     "loudness_max_tp":            ("loudness_max_tp",          float),
+    "limiter_lookahead_ms":       ("limiter_lookahead_ms",     float),
+    "limiter_release_ms":         ("limiter_release_ms",       float),
     "mastering_eq_profile":       ("mastering_eq_profile",     str),
     "mastering_eq_strength":      ("mastering_eq_strength",    float),
     "mastering_comp_profile":     ("mastering_comp_profile",      str),

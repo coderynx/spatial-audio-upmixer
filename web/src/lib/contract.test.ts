@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 import { canonicalConstants, contractSignature } from "./contract";
 
-const PINNED_SIGNATURE = "d2f9e35ab9fa080f4c6b74130980d837279f7baeaf62d8c73dfbbc06678893c8";
+const PINNED_SIGNATURE = "8819f516a674d8fc9ce9be72e7733cc9cdba1b0febfa13a01097bad96811e218";
 
 describe("contractSignature", () => {
   it("matches the signature pinned in docs/contracts/preview_export_parity.md", () => {
