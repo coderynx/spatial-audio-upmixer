@@ -11,7 +11,14 @@ pytest.importorskip("sqlalchemy")
 
 from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
 from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectTrack
-from upmixer_web.project_storage import _PREVIEW_VORBIS_COMPRESSION_LEVEL, PREVIEW_SAMPLE_RATE, ProjectStemStorage, _write_preview
+from upmixer_web.project_storage import (
+    _PREVIEW_VORBIS_COMPRESSION_LEVEL,
+    PEAK_BINS,
+    PREVIEW_SAMPLE_RATE,
+    ProjectStemStorage,
+    _compute_peaks,
+    _write_preview,
+)
 
 
 @pytest.fixture
@@ -81,6 +88,98 @@ def test_catalogue_track_writes_low_rate_preview_alongside_full_stem(tmp_path):
     assert preview_audio.shape[0] > 0
 
     engine.dispose()
+
+
+def _seed_stem_cache(storage, project, track, stem_keys, sample_rate=48_000, seconds=1):
+    samples = np.arange(sample_rate * seconds) / sample_rate
+    entry = storage.track_root(project.id, track.id) / "abc123"
+    entry.mkdir(parents=True)
+    for index, stem_key in enumerate(stem_keys):
+        tone = 0.5 * np.sin(2 * np.pi * (220 * (index + 1)) * samples)
+        sf.write(str(entry / f"{stem_key}.wav"), np.column_stack([tone, tone]), sample_rate, subtype="PCM_16")
+    (entry / "metadata.json").write_text(
+        json.dumps({"sep_sr": sample_rate, "stem_keys": list(stem_keys)}), encoding="utf-8"
+    )
+    return entry
+
+
+def test_catalogue_track_writes_track_peaks_for_every_stem(tmp_path):
+    engine_url = f"sqlite:///{tmp_path / 'peaks.db'}"
+    upgrade_database(engine_url)
+    engine = create_database_engine(engine_url)
+    factory = create_session_factory(engine)
+    storage = ProjectStemStorage(tmp_path / "project-stems")
+
+    with factory() as session:
+        project, track = _seed_project_track(session)
+        _seed_stem_cache(storage, project, track, ["Vocals", "Drums"])
+        storage.catalogue_track(session, project, track, generation=3)
+        session.commit()
+        project_id, track_id = project.id, track.id
+        assert track.peaks_relative_path is not None
+        assert track.peaks_duration_seconds == pytest.approx(1.0, abs=0.05)
+
+    meta = storage.read_track_peaks_meta(project_id, track_id)
+    assert meta["stems"] == ["Vocals", "Drums"]
+    assert meta["bins"] == PEAK_BINS
+    assert meta["generation"] == 3
+
+    path = storage.track_peaks_path(project_id, track_id)
+    assert path.stat().st_size == 2 * PEAK_BINS * 2
+
+    envelope = np.frombuffer(path.read_bytes(), dtype=np.int8).reshape(-1, PEAK_BINS, 2)
+    assert envelope.shape[0] == 2
+    # A half-scale tone: the negative column stays below zero, the positive
+    # column above it, and neither reaches the int8 rail.
+    assert envelope[:, :, 0].min() < 0 < envelope[:, :, 1].max()
+    assert np.abs(envelope).max() < 127
+
+    engine.dispose()
+
+
+def test_rebuild_track_peaks_backfills_from_existing_previews(tmp_path):
+    engine_url = f"sqlite:///{tmp_path / 'backfill.db'}"
+    upgrade_database(engine_url)
+    engine = create_database_engine(engine_url)
+    factory = create_session_factory(engine)
+    storage = ProjectStemStorage(tmp_path / "project-stems")
+
+    with factory() as session:
+        project, track = _seed_project_track(session)
+        _seed_stem_cache(storage, project, track, ["Vocals", "Drums"])
+        rows = storage.catalogue_track(session, project, track, generation=1)
+        session.commit()
+        project_id, track_id = project.id, track.id
+
+        storage.track_peaks_path(project_id, track_id).unlink()
+        (storage.root / project_id / track_id / "peaks.json").unlink()
+        assert storage.read_track_peaks_meta(project_id, track_id) is None
+
+        storage.rebuild_track_peaks(track, rows, generation=1)
+        session.commit()
+
+    meta = storage.read_track_peaks_meta(project_id, track_id)
+    assert meta["stems"] == ["Vocals", "Drums"]
+    assert storage.track_peaks_path(project_id, track_id).stat().st_size == 2 * PEAK_BINS * 2
+
+    engine.dispose()
+
+
+def test_compute_peaks_handles_silence_and_clips_shorter_than_the_bin_grid():
+    silent = _compute_peaks(np.zeros((1000, 2)))
+    assert silent.shape == (PEAK_BINS, 2)
+    assert not silent.any()
+
+    short = _compute_peaks(np.full((3, 1), 0.5))
+    assert short.shape == (PEAK_BINS, 2)
+    assert short[:, 1].max() == 64
+
+    empty = _compute_peaks(np.zeros((0, 2)))
+    assert empty.shape == (PEAK_BINS, 2)
+
+    loud = _compute_peaks(np.column_stack([np.tile([2.0, -2.0], 8192)]))
+    assert loud[:, 1].max() == 127
+    assert loud[:, 0].min() == -127
 
 
 def test_delete_project_removes_directory_but_keeps_other_projects(tmp_path):

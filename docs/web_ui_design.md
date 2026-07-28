@@ -36,8 +36,17 @@ web visual concern.
 
 All colours come from CSS custom properties in `web/src/index.css`, consumed
 through the Tailwind mappings in `web/tailwind.config.ts`. Never write a
-literal colour in a component — the only sanctioned literals live in
-`web/src/lib/canvasTheme.ts` (§7).
+literal colour in a component — the only sanctioned literals live in two
+modules:
+
+- `web/src/lib/canvasTheme.ts` (§7) — the instrument-display palette.
+- `web/src/lib/stems.ts` — `stemColors`, the per-stem identity hues. §1.6
+  permits stem identity as decorative colour, and these are consumed through
+  `getStemColor` by both canvas surfaces (Haze, Elevation, Timeline lanes) and
+  DOM chrome (stem rows, mixer nameplates). They are Tailwind-palette hues
+  rather than Apple system colours on purpose: they must stay mutually
+  distinguishable across a dozen stems, which the small system palette cannot
+  do. Add a new stem's colour there, never inline.
 
 | Token | Light | Dark | Use |
 | --- | --- | --- | --- |
@@ -130,6 +139,39 @@ Every routed page composes `Workspace` from `web/src/app/Workspace.tsx`:
 Page titles live in the top bar via `useHeaderTitle`, not as an `<h1>` in the
 content. Do not reintroduce page heroes — a title plus descriptive paragraph
 above a card grid is the pattern this redesign removed.
+
+### 4.1 Bottom pane
+
+A canvas region may carry one **bottom pane** — a full-width region pinned
+below its other content, holding one of a small set of mutually exclusive
+working surfaces. `ProjectDetailPage`'s Timeline/Mixer pane is the reference
+implementation.
+
+- Header is `h-8` with a `border-t`, `bg-card`: a `SegmentedControl size="sm"`
+  on the leading edge naming the available surfaces, a spacer, and a
+  chevron `Button size="icon" h-6 w-6` on the trailing edge that collapses
+  and restores the pane. The chevron carries `aria-expanded`.
+- Collapsed is a real state, not a third segment: with the pane shut, no
+  segment is pressed, and clicking any segment opens it on that surface.
+- The choice — including collapsed — persists in `localStorage`, keyed per
+  entity (`upmixer.project.{id}.pane`, height at `.pane.height`). Storage
+  being unavailable costs the preference, never the view.
+- **The pane is resizable.** A 2px `role="separator"` grip sits directly above
+  the header: `cursor-row-resize`, a centred 8px handle bar that brightens on
+  hover, pointer drag, arrow/page keys, and double-click to restore the
+  default height. A pane the user cannot size is a pane that is always the
+  wrong size for the track they are working on.
+- **Its height is clamped against the live column height, not a constant.**
+  The pane keeps a `140px` floor and always leaves `220px` of headroom for the
+  displays above, so no drag can squeeze them out of existence or make the
+  page scroll (§1.2). Clamp on every drag frame, not only on release — the
+  window can be resized while the pane is open.
+- **The pane takes its space from the displays above it, and they say which.**
+  It does not add height. Name the display that yields and why. On the project
+  page the spatial block drops from `flex-[3]` to `flex-1 min-h-[180px]` and
+  `ElevationView` hides entirely, because its floor/height axis is already
+  carried by `HazeView`'s dashed height ring — that redundancy is what makes
+  it the right thing to drop.
 
 ## 5. Layout primitives
 
@@ -276,6 +318,172 @@ where it carries information the label cannot — a constraint, a unit, or a
 scope ("One WAV or FLAC, matched across every track") — and keep it to one
 short line at `text-[11px] text-muted-foreground`.
 
+### 6.4 Fader and channel strip
+
+`Fader` (`components/ui/fader.tsx`) is the vertical channel fader. The split
+against `Slider` is by **layout purpose**, not by what the number means:
+`Slider` is a level read off a horizontal scale in a panel or inspector;
+`Fader` is the same kind of value laid out the way a console lays it out, so a
+rack of them can be compared and balanced at a glance.
+
+Per-stem gain has **two homes, one control**: the mixer rack's strip and the
+inspector's always-accessible copy of the selected stem's strip (below) are
+the literal same `StemChannelStrip` component (`ChannelStrip.tsx`), not a
+parallel re-implementation — the inspector never falls back to a `Slider` for
+this value. That is what "one idea, two viewports" (§6.3) means taken
+seriously: the two homes cannot drift apart because they are one piece of
+code rendered twice.
+
+The inspector's "Stem" group orders its content **title, then position and
+EQ, then the fader** — not the fader first. The section already has exactly
+one place to say which stem this is (a title row: icon, name, enabled/muted),
+so the strip renders with `showNameplate={false}` rather than repeating the
+name a second time a few pixels below it; the fader sits last, under the
+controls the mixer's own rack doesn't carry (position, EQ), because it is the
+value those other controls don't need read alongside — it already has its own
+home in the rack above.
+
+- **Geometry.** 148px travel; a 22×34px cap over a 3px recessed slot, with a
+  10px tick gutter down the left edge. The cap's *centre* travels the slot, so
+  scale marks are offset by half a cap at both ends — a tick and a cap resting
+  on it must read as the same value.
+- **The slot and ticks are an instrument, not chrome.** They stay fixed
+  `canvasTheme` values (`faderTick`/`stripWell`), not theme tokens, and stay
+  identical in both appearances — a console's travel groove is a physical
+  finish, and Logic renders it the same way in light and dark. This is the
+  §7.1 exception applied to a DOM control: the *rack* around it is themed,
+  the *groove* on it is not.
+- **The cap is a flat plate, not a skeuomorphic knob.** No gradient, no drop
+  shadow, no indent line — `rounded-[4px] border border-border bg-secondary`
+  with a single `bg-foreground` grip line across its centre, the same
+  `fill-secondary stroke-border` language `Pot` draws for its own knob (§6.1).
+  A fader and a pot are one visual family of grip, not two: a rotary control
+  drawn flat next to a vertical one drawn like hardware read as mismatched
+  controls doing the same job.
+- **Detent and ticks.** Pass `detent` for the rest value (0 dB unity); its tick
+  runs the full gutter width in `labelStrong` while ordinary `ticks` are
+  shorter and dimmer. Double-click resets to rest.
+- **The tick ladder is unlabelled.** Logic prints the dB numerals once, beside
+  the meter, not on both controls. A fader that repeats them is noise.
+- **Interaction** matches `Pot` (§6.1): pointer drag, arrow/page/Home/End keys,
+  and wheel **only when focused**, checked against `document.activeElement`
+  so a strip-rack scroll is never swallowed.
+- **Semantics** are `role="slider"` with `aria-orientation="vertical"` and the
+  full `aria-value*` set. Pass the formatted readout as `valueText` — a raw
+  number without its unit is not a readout.
+
+A **channel strip** stacks, top to bottom: nameplate (colour-carrying stem icon
++ truncated name over a 2px stem-hue underline, click selects), the two
+readouts, fader beside its meter, M/S buttons, state line. Nothing else.
+Position and stem EQ stay in the inspector; putting them on the strip too would
+give one idea two homes with no viewport justification.
+
+- **Width follows the meter, not a constant.** A strip is `fader + meter +
+  padding` wide, so a stereo stem's two-bar meter makes its strip exactly one
+  bar wider than a mono stem's. Use `stripMeterWidth(channels)`; never hardcode
+  a strip width.
+- **Two readouts, side by side, above the fader.** Left is the fader's own
+  value in `labelStrong`; right is the meter's held peak in `meterWarn` yellow.
+  Both sit in `stripWell` slots in 10px `tabular-nums`. The peak readout
+  updates at ~10Hz, not per frame — a 60Hz number is unreadable, and it is
+  React state, so refreshing it per frame would re-render the whole rack that
+  the canvas meters exist to avoid.
+- **The rack is chrome** (§7.1): `bg-card`, strips divided by `border-r`,
+  selected strip `bg-primary/10`, master strip `bg-muted/40` behind a 2px
+  leading rule. Stem identity appears as hue on the icon and underline only —
+  a fully tinted strip would fight the meter it contains. M/S sit in
+  `stripWell` slots until lit, matching the readouts above them.
+- **One meter bar per source channel.** A stereo stem gets two bars, a mono
+  stem one, capped at two — a console shows a stereo channel's sides
+  separately, and summing them would hide a one-sided image. The count comes
+  from the stem's real channel count (`ProjectStem.channels`), and the audio
+  hook taps each channel through its own analyser
+  (`AudioNodeSet.meterAnalysers`), so the bars are independent measurements,
+  not one measurement drawn twice.
+- **Strip meters are canvas**, in two layers: the dB numeral column repaints
+  only on resize, the bars every frame. Rasterizing text 60 times a second for
+  a scale that never moves is the expensive mistake to avoid here.
+- **The strip meter has its own scale and hue, and that is faithful, not
+  drift.** `STRIP_DB_TICKS` prints Logic's channel-strip stops (3 dB steps to
+  −18, then coarsening) against `DB_TICKS`' coarser field scale, and
+  `STRIP_METER_PALETTE` runs green where the Level Meter runs blue — Logic
+  ships both, one per host. What stays shared is everything that could
+  *disagree*: the dB mapping algorithm, the zone thresholds, and the peak-hold
+  behaviour. Hue and tick density are per-host presentation; a threshold is not.
+- §7's "an active channel has no track" rule is a *field* rule: a meter hosted
+  in chrome passes a `stripWell` slot to `drawMeterBar`, because with no dark
+  field behind it an unlit bar would otherwise be invisible on a light panel.
+- **Peak-hold tracks the smoothed RMS bar, never the raw sample peak.** Both
+  come from `createMeterState()`; a meter that derives its own will disagree
+  with every other meter, and feeding it the instantaneous peak pins the tick
+  to the top of the bar on real music's crest factor.
+- **Every strip owns its meter loop**, via the `useStripMeterLoop` hook
+  (`useStripMeterLoop.ts`) — its own rAF callback, its own `createMeterState`,
+  its own canvas. This is what makes the strip portable: a rack of 15 needs no
+  shared registration mechanism to paint correctly, and neither does a single
+  copy of one strip living alone in the inspector. Meters driven by React
+  state, or a bespoke draw loop that doesn't go through this hook, are a
+  defect — see the peak-hold rule above for why re-deriving the math forks it.
+- **The inspector's copy is the same component, given a different
+  `subjectName`.** The mixer strip and the inspector strip can be on screen
+  at once (mixer pane open, a stem selected) and both write and read the same
+  field, so without a distinct name their fader and M/S buttons would share
+  one accessible name — exactly the ambiguity §8 forbids. `subjectName`
+  (default: the stem's own name, correct for the rack) overrides the words
+  the fader and M/S use, without touching the DSP-facing props at all; the
+  inspector passes `"Selected stem"`. Any other place this component gets a
+  second simultaneous instance needs the same treatment.
+- **The source anchor gets a strip of its own kind, not a stem's.** It sits
+  between the stem rack and the master strip, blends the pre-separation
+  track back into the render rather than adjusting one stem's send, and reads
+  as a mix-wide correction, not a channel — so it is visually a different
+  species: an accented border and background wash instead of chrome, a
+  0–100% blend readout instead of dB, no meter (there is no independent
+  per-anchor audio tap to show) and no M/S (there is nothing on it to mute or
+  solo). The fader hardware itself stays the ordinary fixed `canvasTheme`
+  instrument — only the strip *around* it marks it as special, the same
+  "rack is chrome, hardware isn't" split the rest of §6.4 already draws.
+  The accent is `success`, not `primary` — `primary` is already the rack's
+  selection colour (the selected stem's strip is `bg-primary/10`), and a
+  second, unrelated use of the same hue immediately next to it read as the
+  same state rather than a different one. Any future special-purpose strip
+  needs a colour not already spoken for elsewhere in the same rack; check
+  what the rack already means by a hue before picking one.
+- **Every strip resizes independently**, from its own trailing border — the
+  line already separating it from its neighbour (`StripResizeHandle`,
+  `ChannelStrip.tsx`) — the way dragging a column border in a spreadsheet
+  only moves that column, not one handle that widens the whole rack
+  together. No separate grip is drawn on top of the border and no hover/
+  focus highlight is shown; the border itself is the drag target — hovering
+  it just swaps the cursor to `col-resize`. A strip's width is
+  `stripWidth(channels) + extraWidth`, where `extraWidth` is that strip's
+  own state; never share it across strips. The handle is `position:
+  absolute; right: 0` inside the strip's (`relative`) root, `role="slider"`
+  with `aria-orientation="horizontal"`, drag + arrow/page keys +
+  double-click-to-reset — the same interaction contract as `Fader` and
+  `Pot`, just on the horizontal axis; it stops click/pointerdown
+  propagation so a resize never also selects the strip beneath it. Widths
+  for every strip kind (stem, anchor, master) persist under one
+  `localStorage` map keyed by strip id, written on drag-end/key-commit, not
+  on every drag-move frame.
+- **The whole strip is the select target**, not just its nameplate — a
+  click anywhere on a stem strip (`StemChannelStrip`'s root) selects it,
+  same as clicking the nameplate button inside it. The nameplate stays a
+  `<button>` for keyboard/screen-reader access; the root `onClick` is the
+  mouse convenience layered on top, matching how clicking anywhere on a
+  channel strip in a hardware console or DAW selects it.
+- **M is `destructive`, S is `warning`** (§ semantic colour mapping), both
+  `h-5` with `aria-pressed`. A strip silenced by *someone else's* solo is a
+  third state and gets its own word ("Silent" vs. "Muted") — §8 forbids
+  carrying that distinction in dimming alone.
+- **The master strip is separated by a 2px rule**, not a gap, and is labelled
+  with what its fader actually controls. In this app that is monitor gain
+  (`lib/fader.ts`'s −60 dB…unity taper), which never reaches the exported
+  render — so it is labelled "Monitor" and shares one value with the Transport
+  volume control. A strip whose fader *did* affect the render would be a DSP
+  change bound by `docs/contracts/preview_export_parity.md`, not a UI one.
+- The rack scrolls horizontally when strips overflow; strips never shrink.
+
 ### Semantic colour mapping
 
 | Meaning | Token | Examples |
@@ -290,11 +498,13 @@ not swap them.
 
 ## 7. Canvas displays
 
-`HazeView`, `ElevationView`, and `ChannelMeters` render to `<canvas>` and
-read `web/src/lib/canvasTheme.ts`. These surfaces stay dark in **both** app
-themes, the way Logic keeps its instrument displays dark regardless of
-appearance. They are the one place literal hex values are correct; add new
-ones to `canvasTheme.ts` rather than inline.
+`HazeView`, `ElevationView`, and `ChannelMeters` render to `<canvas>` and read
+`web/src/lib/canvasTheme.ts`. These surfaces stay dark in **both** app themes,
+the way Logic keeps its instrument displays dark regardless of appearance.
+They are the one place literal hex values are correct (alongside `stems.ts`,
+§2); add new ones to `canvasTheme.ts` rather than inline. `TimelineView` and
+the mixer's strip meters also draw with a canvas but are **not** instrument
+displays — see §7.1.
 
 **Field.** All three share one surface: a vertical (elevation, meters) or
 radial (haze) gradient from `plotField` `#070E17` to `plotFieldCore`
@@ -314,17 +524,92 @@ Rules learned from getting this wrong:
 - Views with a motion-trail fade paint the field through `globalAlpha` so
   successive frames do not flatten the gradient.
 
-**Meters** follow Logic's Level Meter: blue `meterSafe` `#3E9BC7` up to
-−20 dB, `meterWarn` past it, `meterHot` above −5 dB, square-ended columns
-painted straight onto the field. An active channel has **no track** — an
-unlit meter is background, and the dB hairlines carry the structure. A muted
+**Meters** on the field follow Logic's Level Meter: blue `meterSafe` `#3E9BC7`
+up to −20 dB, `meterWarn` past it, `meterHot` above −5 dB, square-ended
+columns painted straight onto the field. An active channel has **no track** —
+an unlit meter is background, and the dB hairlines carry the structure. A muted
 channel keeps a `well` slot inside a `destructive` frame so "off" reads
 differently from "silent". Peak ticks are centred on the dB they hold.
 
+**Meter scale.** `levelToDb`, `dbToY`, `drawMeterBar`, the zone thresholds and
+`createMeterState` live in `web/src/lib/meterScale.ts`, not in any one display.
+Every meter in the app imports them. Re-deriving a dB scale beside a second
+meter is how two meters end up disagreeing about what −20 dB looks like.
+
+**What a host may vary, and what it may not.** `dbToY` takes a tick set and
+`drawMeterBar` takes a `MeterPalette`, because Logic itself draws two different
+meters: the Level Meter (blue, `DB_TICKS`) and the mixer channel strip (green,
+`STRIP_DB_TICKS` — see §6.4). Tick density and hue are presentation and belong
+to the host. The **zone thresholds, the dB mapping, and the peak-hold rule are
+not** — those are shared, and a host that overrides one has introduced a bug,
+not a style.
+
+### 7.1 Canvas in chrome
+
+Not every canvas is an instrument display. **A canvas belongs on the dark
+field only when it is an analysis readout** — Haze, Elevation, ChannelMeters,
+the transport LCD. A canvas that is really a working surface — the timeline's
+lanes, a mixer strip's meter — is an ordinary panel that happens to draw with
+a canvas, and it must follow the app theme in both light and dark like the
+panel next to it. Putting a working surface on the blue instrument field
+reads as a hole in the page rather than as depth.
+
+Canvas has no access to CSS variables, so those surfaces read the resolved
+tokens through `useThemeTokens` (`web/src/lib/themeTokens.ts`), which re-reads
+when the theme class on `<html>` changes. Never duplicate a token as a literal
+to get it into a canvas, and never add a chrome colour to `canvasTheme.ts`.
+
+The exception inside the exception: the **Logic Level Meter zone colours**
+(`meterSafe`/`meterWarn`/`meterHot`) stay fixed in both themes wherever a meter
+is drawn, chrome or field. A meter's colour means a level; it cannot change
+meaning with the appearance setting.
+
+### 7.2 Timeline
+
+Chrome (§7.1): the lane field is `background`, the ruler `muted`, the header
+column `card`, separators `border`.
+
+- **Metrics.** Lane `44px`, ruler `22px`, header column `128px`. The header
+  column is `sticky left-0` so lane names stay put while lanes scroll, and
+  each row carries a 3px stem-colour left border, matching the stem rail.
+- **Ruler.** Tick step is the first of 1/2/5/10/15/30/60/120/300/600 seconds
+  that keeps ticks at least 68px apart, so density holds from a 90-second demo
+  to a 40-minute set. Gridlines run the full height at `border` / 0.7.
+- **Regions, not bare traces.** Each lane holds one rounded region inset 3px,
+  filled with the stem hue at ~22% over `card`, outlined at ~60%, with a
+  tinted 11px caption bar carrying the stem name — Logic draws the arrangement
+  as colour-coded blocks, and the block is what makes a dozen stacked lanes
+  scannable. The waveform is the same hue at full strength inside it.
+- **Waveform.** Mirrored min/max envelope about the region midline. A muted
+  stem drops the whole region to 0.3 alpha rather than vanishing; a
+  non-selected lane drops to 0.55 when some other stem is selected. Each
+  output column takes the extremes of **every** envelope bin inside it —
+  point-sampling a downsampled envelope drops exactly the transients a
+  waveform exists to show.
+- **Playhead** is `foreground` — deliberately neither `primary` (selection)
+  nor `destructive`, because a transport position is neither. 1px line plus a
+  small triangular cap in the ruler.
+- **Two canvases, one of which is cheap.** Lanes redraw only when peaks, mute
+  state, selection, theme or size change; the playhead has its own overlay
+  canvas and is the only thing touched per frame. Position is read from
+  `currentTimeRef` in the view's own rAF loop — never from `currentTime` state.
+- **Envelopes are server-precomputed**, fetched once per track as one binary
+  (`upmixer_web/project_storage.py`). Do not compute peaks in the browser from
+  decoded buffers: that adds main-thread work at exactly the moment decode is
+  already saturating it. The payload also carries the track duration, so the
+  ruler draws before playback has finished loading.
+- **Missing envelopes are stated, not silent.** A project prepared before
+  peaks existed is backfilled in the background; while that is pending the
+  lanes say so, and if the asset genuinely cannot be served they say that
+  instead. An empty lane with no explanation reads as a broken feature.
+- **No horizontal zoom.** The whole track always fits the pane width, which is
+  why the header column can be sticky and no virtualization is needed. Adding
+  zoom means revisiting both.
+
 Render loops, DSP, memoization, and `previewGraph.ts` are out of scope for
-visual work. `HazeView`, `ElevationView`, `ChannelMeters`, and `Transport`
-are `React.memo`'d to keep 60fps playback from re-rendering the page: do not
-pass them inline object or callback props.
+visual work. `HazeView`, `ElevationView`, `ChannelMeters`, `TimelineView`,
+`MixerView`, and `Transport` are `React.memo`'d to keep 60fps playback from
+re-rendering the page: do not pass them inline object or callback props.
 
 ## 8. Accessibility
 

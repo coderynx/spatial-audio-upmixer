@@ -1,5 +1,15 @@
 import * as React from "react";
 import { canvasTheme } from "@/lib/canvasTheme";
+import {
+  DB_TICKS,
+  RED_ZONE_DB,
+  SETTLE_EPSILON_DB,
+  YELLOW_ZONE_DB,
+  createMeterState,
+  dbToY,
+  drawMeterBar,
+  levelToDb,
+} from "@/lib/meterScale";
 import { speakerDisplayLabel } from "@/lib/spatial";
 import type { MeterLevel, OutputMode } from "./useStemPreview";
 
@@ -37,48 +47,8 @@ export type ChannelMetersProps = {
 // stops scheduling itself. Not time-critical — just enough to let the peak
 // decay animation visibly settle rather than freeze mid-motion.
 const SETTLE_FRAMES = 20;
-const SETTLE_EPSILON_DB = 0.05;
-// Same exponential rate HazeView/ElevationView smooth their per-stem level
-// toward (see those files' `previous.level + (level - previous.level) *
-// Math.min(1, delta * 8)`) — keeps the meters' play/stop ramp visually in
-// sync with the haze blobs' and elevation dots' dissolve in/out.
-const LEVEL_SMOOTHING_RATE = 8;
 
 type HitTarget = { channel: string; x: number; width: number };
-
-// Non-linear scale (equal pixel spacing per tick regardless of dB gap) —
-// compresses the quiet end so a meter's day-to-day range (roughly -20..0dB)
-// gets most of the vertical resolution, matching common DAW meter scales.
-const DB_TICKS = [0, -5, -10, -15, -20, -30, -45, -60];
-const RED_ZONE_DB = -5;
-const YELLOW_ZONE_DB = -20;
-const CLIP_DB = -1;
-const PEAK_DECAY_DB_PER_SEC = 14;
-
-// Only floors at -60 — deliberately not clamped at 0dB on top, so a true
-// over (peak amplitude > 1.0) is still distinguishable from a peak that
-// merely touched 0dBFS exactly. `dbToY` (screen position) and `zoneColor`
-// (both already >= checks) handle values above 0 correctly on their own;
-// only the clip latch (`clipped`, computed in useStemPreview.ts from the
-// raw un-clamped sample amplitude) is the authoritative "did this clip"
-// signal — this function is for display placement, not detection.
-function levelToDb(level: number): number {
-  return level > 0.0001 ? Math.max(-60, 20 * Math.log10(level)) : -60;
-}
-
-function dbToY(db: number, top: number, bottom: number): number {
-  const clamped = Math.max(-60, Math.min(0, db));
-  for (let i = 0; i < DB_TICKS.length - 1; i++) {
-    const hi = DB_TICKS[i];
-    const lo = DB_TICKS[i + 1];
-    if (clamped <= hi && clamped >= lo) {
-      const t = (hi - clamped) / (hi - lo);
-      const segmentFraction = (i + t) / (DB_TICKS.length - 1);
-      return top + segmentFraction * (bottom - top);
-    }
-  }
-  return bottom;
-}
 
 function drawLabel(ctx: CanvasRenderingContext2D, text: string, centerX: number, topY: number, color: string, maxWidth: number) {
   ctx.fillStyle = color;
@@ -113,72 +83,6 @@ function drawHeadphoneIcon(ctx: CanvasRenderingContext2D, centerX: number, topY:
   ctx.fill();
 }
 
-/** Colour a lit bar takes at a given dB — green below the yellow zone,
- * yellow through it, red above the red zone. */
-function zoneColor(db: number) {
-  if (db >= RED_ZONE_DB) return canvasTheme.meterHot;
-  if (db >= YELLOW_ZONE_DB) return canvasTheme.meterWarn;
-  return canvasTheme.meterSafe;
-}
-
-/** Logic Level Meter bar: a flat square-ended column painted straight onto
- * the field, changing colour as it crosses each zone, plus a held peak tick.
- * An active channel has no track — an unlit meter is simply background, and
- * the dB gridlines behind carry the structure. A muted channel keeps a slot
- * so it reads as switched off rather than merely silent. */
-function drawMeterBar(
-  ctx: CanvasRenderingContext2D,
-  barX: number,
-  barWidth: number,
-  meterTop: number,
-  meterBottom: number,
-  redBottomY: number,
-  yellowBottomY: number,
-  currentDb: number,
-  peakDb: number,
-  muted: boolean,
-  clipped: boolean,
-) {
-  if (muted) {
-    ctx.fillStyle = canvasTheme.well;
-    ctx.fillRect(barX, meterTop, barWidth, meterBottom - meterTop);
-    ctx.strokeStyle = canvasTheme.mute;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(barX + 0.5, meterTop + 0.5, barWidth - 1, meterBottom - meterTop - 1);
-    return;
-  }
-
-  const fillTopY = dbToY(currentDb, meterTop, meterBottom);
-  const segments: [number, number, string][] = [
-    [Math.max(fillTopY, yellowBottomY), meterBottom, canvasTheme.meterSafe],
-    [Math.max(fillTopY, redBottomY), yellowBottomY, canvasTheme.meterWarn],
-    [fillTopY, redBottomY, canvasTheme.meterHot],
-  ];
-  for (const [top, bottom, color] of segments) {
-    if (bottom - top <= 0) continue;
-    ctx.fillStyle = color;
-    ctx.fillRect(barX, top, barWidth, bottom - top);
-  }
-
-  // Held peak, drawn as a tick centred on the level it is holding — red once
-  // within a hair of clipping, otherwise the colour of the zone it sits in.
-  if (peakDb > -60) {
-    const peakY = dbToY(peakDb, meterTop, meterBottom);
-    ctx.fillStyle = peakDb >= CLIP_DB ? canvasTheme.mute : zoneColor(peakDb);
-    ctx.fillRect(barX, Math.max(meterTop, peakY - 1), barWidth, 2);
-  }
-
-  // Latched 0dBFS clip indicator: a fixed cap pinned to the very top of the
-  // bar the instant any sample reaches full scale, and held there (see
-  // useStemPreview.ts's `clipped` latch) instead of decaying with the peak
-  // tick above — a genuine over must stay visible even once playback has
-  // moved past it.
-  if (clipped) {
-    ctx.fillStyle = canvasTheme.mute;
-    ctx.fillRect(barX, meterTop, barWidth, 3);
-  }
-}
-
 function ChannelMetersImpl({
   channels,
   channelLevels,
@@ -193,12 +97,9 @@ function ChannelMetersImpl({
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const frame = React.useRef<number | null>(null);
   const hitTargets = React.useRef<HitTarget[]>([]);
-  const peaks = React.useRef<Map<string, number>>(new Map());
-  // Eased-toward-target level per bar (keyed same as `peaks`), so a fill
-  // ramps up/down over the same visible duration as the haze/elevation
-  // dissolve instead of jumping straight to the raw (possibly just-cleared)
-  // `channelLevels`/`headphoneLevels` value.
-  const displayLevels = React.useRef<Map<string, number>>(new Map());
+  // Eased level + decay-held peak per bar, from the shared meter state so
+  // this display and the mixer's strip meters cannot drift apart.
+  const meterState = React.useRef(createMeterState());
   const lastTime = React.useRef<number | null>(null);
   const propsRef = React.useRef({ channels, speakerEnabled, outputMode });
   propsRef.current = { channels, speakerEnabled, outputMode };
@@ -206,21 +107,6 @@ function ChannelMetersImpl({
   activeRef.current = active;
   const idleFrames = React.useRef(0);
   const wakeRef = React.useRef<() => void>(() => {});
-
-  const smoothLevel = React.useCallback((key: string, target: number, deltaSec: number) => {
-    const previous = displayLevels.current.get(key) ?? 0;
-    const next = previous + (target - previous) * Math.min(1, deltaSec * LEVEL_SMOOTHING_RATE);
-    displayLevels.current.set(key, next);
-    return next;
-  }, []);
-
-  const updatePeak = React.useCallback((key: string, currentDb: number, deltaSec: number) => {
-    const previous = peaks.current.get(key) ?? -60;
-    const decayed = previous - PEAK_DECAY_DB_PER_SEC * deltaSec;
-    const next = Math.max(currentDb, decayed);
-    peaks.current.set(key, next);
-    return next;
-  }, []);
 
   React.useEffect(() => {
     const canvas = canvasRef.current;
@@ -319,7 +205,7 @@ function ChannelMetersImpl({
         const barX = centerX - barWidth / 2;
         const muted = currentEnabled[channel] === false;
         const meterLevel = channelLevels.current.get(channel);
-        const level = smoothLevel(channel, meterLevel?.rms ?? 0, deltaSec);
+        const level = meterState.current.smoothLevel(channel, meterLevel?.rms ?? 0, deltaSec);
         const currentDb = muted ? -60 : levelToDb(level);
         // Peak-hold tracks the smoothed RMS bar itself (decay-held), not the
         // raw instantaneous sample peak — real music's crest factor put the
@@ -327,7 +213,7 @@ function ChannelMetersImpl({
         // floating well off the bar instead of riding just above its fill.
         // The true instantaneous peak still drives the separate 0dBFS clip
         // latch below, which is a different, fixed indicator, not this tick.
-        const peakDb = updatePeak(channel, currentDb, deltaSec);
+        const peakDb = meterState.current.updatePeak(channel, currentDb, deltaSec);
         if (peakDb - currentDb > SETTLE_EPSILON_DB) settled = false;
         const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
         const yellowBottomY = dbToY(YELLOW_ZONE_DB, meterTop, meterBottom);
@@ -363,11 +249,11 @@ function ChannelMetersImpl({
           barCenters.push(centerX);
           const barX = centerX - barWidth / 2;
           const meterLevel = label === "L" ? headphones.left : headphones.right;
-          const level = smoothLevel(`hp:${label}`, meterLevel.rms, deltaSec);
+          const level = meterState.current.smoothLevel(`hp:${label}`, meterLevel.rms, deltaSec);
           const currentDb = levelToDb(level);
           // Peak-hold tracks the RMS bar (decay-held), same as the channel
           // bars above — see that comment.
-          const peakDb = updatePeak(`hp:${label}`, currentDb, deltaSec);
+          const peakDb = meterState.current.updatePeak(`hp:${label}`, currentDb, deltaSec);
           if (peakDb - currentDb > SETTLE_EPSILON_DB) settled = false;
           const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
           const yellowBottomY = dbToY(YELLOW_ZONE_DB, meterTop, meterBottom);
@@ -403,7 +289,7 @@ function ChannelMetersImpl({
       observer.disconnect();
       if (frame.current !== null) window.cancelAnimationFrame(frame.current);
     };
-  }, [channelLevels, headphoneLevels, updatePeak]);
+  }, [channelLevels, headphoneLevels]);
 
   React.useEffect(() => {
     wakeRef.current();

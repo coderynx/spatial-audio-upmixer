@@ -3,10 +3,11 @@ import {
   ArrowLeftRight,
   ArrowUpDown,
   AudioWaveform,
+  ChevronDown,
   ChevronLeft,
+  ChevronUp,
   Code2,
   Download,
-  GripVertical,
   Loader2,
   Package,
   Settings,
@@ -19,7 +20,7 @@ import { useHeaderTitle } from "@/app/HeaderSlot";
 import { InspectorGroup } from "@/app/InspectorRow";
 import { SegmentedControl } from "@/app/SegmentedControl";
 import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
-import { Toolbar, ToolbarGroup, ToolbarSpacer } from "@/app/Toolbar";
+import { Toolbar, ToolbarGroup, ToolbarSeparator, ToolbarSpacer } from "@/app/Toolbar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
@@ -32,14 +33,58 @@ import HazeView from "./HazeView";
 import ChannelMeters from "./ChannelMeters";
 import ElevationView from "./ElevationView";
 import type { SpatialProfile } from "./masteringProfiles";
+import { StemChannelStrip } from "./ChannelStrip";
+import { MixerView } from "./MixerView";
 import { OutputModeSelect } from "./OutputModeSelect";
 import { PreparationView } from "./PreparationView";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
+import { TimelineView } from "./TimelineView";
 import { Transport } from "./Transport";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
+import { useTrackPeaks } from "./useTrackPeaks";
 
 type Stage = "mixing" | "mastering" | "delivery";
+
+/** The bottom pane's two views, or `null` for collapsed. Persisted per
+ * project so a session comes back to the surface the user was working in. */
+type PaneView = "timeline" | "mixer" | null;
+
+const PANE_SEGMENTS = [
+  { value: "timeline" as const, label: "Timeline", icon: AudioWaveform },
+  { value: "mixer" as const, label: "Mixer", icon: SlidersHorizontal },
+];
+
+const PANE_MIN_HEIGHT = 140;
+const PANE_DEFAULT_HEIGHT = 260;
+/** Left for the spatial displays above the pane, so dragging the divider to
+ * the top of its travel can never squeeze them out of existence. */
+const PANE_HEADROOM = 220;
+
+function paneStorageKey(projectId: string | undefined) {
+  return `upmixer.project.${projectId || "unknown"}.pane`;
+}
+
+function readStoredPane(projectId: string | undefined): PaneView {
+  try {
+    const stored = window.localStorage.getItem(paneStorageKey(projectId));
+    if (stored === "mixer" || stored === "timeline") return stored;
+    if (stored === "off") return null;
+  } catch {
+    // Private-mode or blocked storage: fall through to the default.
+  }
+  return "timeline";
+}
+
+function readStoredPaneHeight(projectId: string | undefined): number {
+  try {
+    const stored = Number(window.localStorage.getItem(`${paneStorageKey(projectId)}.height`));
+    if (Number.isFinite(stored) && stored >= PANE_MIN_HEIGHT) return stored;
+  } catch {
+    // Same fallback as `readStoredPane`.
+  }
+  return PANE_DEFAULT_HEIGHT;
+}
 
 const STAGES = [
   { value: "mixing" as const, label: "Mixing", icon: SlidersHorizontal },
@@ -85,23 +130,25 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // Polling stops once the project reaches a terminal status — the SSE
   // stream below covers live progress while preparing, and once ready there
   // is nothing server-side left to pick up on this page (saves/exports all
-  // come back through their own API responses) — except a reference-match
-  // recompute, which runs asynchronously after a settings save (see
-  // upmixer_web/worker.py::WorkerManager.schedule_reference_match); keep
-  // polling while one is pending so `reference_match` refreshes once it
-  // lands. Re-subscribes on `status`/`reference_match_pending` so a retry or
-  // a pending recompute resumes polling.
+  // come back through their own API responses) — except two asynchronous
+  // precomputes: a reference-match recompute after a settings save (see
+  // upmixer_web/worker.py::WorkerManager.schedule_reference_match) and a
+  // waveform-peaks backfill for a project catalogued before peaks existed
+  // (`schedule_peaks`). Keep polling while either is pending so the asset
+  // refreshes once it lands. Re-subscribes on `status` and both pending
+  // flags so a retry or a pending precompute resumes polling.
   React.useEffect(() => {
     void load();
     if (
       project
       && ["ready", "failed", "expansion_failed"].includes(project.status)
       && !project.reference_match_pending
+      && !project.peaks_pending
     ) return;
     const timer = window.setInterval(() => void load(), 2000);
     return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status/reference_match_pending only, same as the SSE effect below: a mid-poll `project` update (content changes, same status) shouldn't tear down and restart the interval
-  }, [load, project?.status, project?.reference_match_pending]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status/reference_match_pending/peaks_pending only, same as the SSE effect below: a mid-poll `project` update (content changes, same status) shouldn't tear down and restart the interval
+  }, [load, project?.status, project?.reference_match_pending, project?.peaks_pending]);
   // While the project is preparing (or a reference-match recompute is
   // pending), layer a realtime SSE stream on top of the 2s poll above so the
   // log/percentage/asset update live instead of in 2s steps. The 2s poll
@@ -112,6 +159,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     if (
       ["ready", "failed", "expansion_failed"].includes(project.status)
       && !project.reference_match_pending
+      && !project.peaks_pending
     ) return;
     const source = new EventSource(api.projectEventsUrl(projectId));
     source.onmessage = (event) => {
@@ -119,8 +167,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     };
     source.onerror = () => source.close();
     return () => source.close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status/reference_match_pending only, so a mid-stream progress update (also named `project`) doesn't tear down and reopen the connection
-  }, [projectId, project?.status, project?.reference_match_pending]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status and the pending flags only, so a mid-stream progress update (also named `project`) doesn't tear down and reopen the connection
+  }, [projectId, project?.status, project?.reference_match_pending, project?.peaks_pending]);
   React.useEffect(() => () => { if (saveTimer.current) window.clearTimeout(saveTimer.current); }, []);
   const queueSave = React.useCallback((next: Manifest) => {
     if (!projectId || !project) return;
@@ -220,6 +268,56 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // always starts back on binaural/studio.
   const [outputMode, setOutputMode] = React.useState<OutputMode>("binaural");
   const [spatialProfile, setSpatialProfile] = React.useState<SpatialProfile>("studio");
+  const [paneView, setPaneView] = React.useState<PaneView>(() => readStoredPane(projectId));
+  const [paneHeight, setPaneHeight] = React.useState(() => readStoredPaneHeight(projectId));
+  const previewColumn = React.useRef<HTMLElement>(null);
+  const paneDrag = React.useRef<{ startY: number; startHeight: number } | null>(null);
+  React.useEffect(() => {
+    setPaneView(readStoredPane(projectId));
+    setPaneHeight(readStoredPaneHeight(projectId));
+  }, [projectId]);
+  const changePane = React.useCallback((next: PaneView) => {
+    setPaneView(next);
+    try {
+      window.localStorage.setItem(paneStorageKey(projectId), next ?? "off");
+    } catch {
+      // Storage being unavailable only costs the preference, not the view.
+    }
+  }, [projectId]);
+  // Divider drag. Height is clamped against the live column height so the
+  // spatial displays above always keep `PANE_HEADROOM`, which is what stops a
+  // drag to the top from collapsing them and forcing the page to scroll.
+  const resizePaneTo = React.useCallback((height: number) => {
+    const available = previewColumn.current?.clientHeight ?? 0;
+    const ceiling = Math.max(PANE_MIN_HEIGHT, available - PANE_HEADROOM);
+    setPaneHeight(Math.round(Math.min(ceiling, Math.max(PANE_MIN_HEIGHT, height))));
+  }, []);
+  const beginPaneResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    paneDrag.current = { startY: event.clientY, startHeight: paneHeight };
+  };
+  const movePaneResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = paneDrag.current;
+    if (!drag) return;
+    resizePaneTo(drag.startHeight + (drag.startY - event.clientY));
+  };
+  const endPaneResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!paneDrag.current) return;
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    paneDrag.current = null;
+    try {
+      window.localStorage.setItem(`${paneStorageKey(projectId)}.height`, String(paneHeight));
+    } catch {
+      // See `changePane`.
+    }
+  };
+  const paneResizeKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const moves: Record<string, number> = { ArrowUp: 16, ArrowDown: -16, PageUp: 64, PageDown: -64 };
+    if (!(event.key in moves)) return;
+    event.preventDefault();
+    resizePaneTo(paneHeight + moves[event.key]);
+  };
   // Live strength/spectrum/rms toggles come from the manifest (instant, no
   // server round-trip needed — they're just a wet/dry blend and an RMS gate,
   // same as the named-EQ `strength` slider); the FIR itself and the
@@ -246,6 +344,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     };
   }, [effectiveManifest?.mastering, project?.reference_match]);
   const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, previewMastering, channels, outputMode, spatialProfile);
+  // One cached fetch per track, independent of stem decode — the envelope and
+  // the track's duration arrive together, so the timeline can draw its ruler
+  // and lanes while playback is still loading.
+  const { peaks, loading: peaksLoading } = useTrackPeaks(selected);
   const ready = Boolean(project?.prepared_stems.length);
   const stemNames = project?.prepared_stems || [];
   // Reorder is a display-only preference (no backend field for it): kept in
@@ -265,9 +367,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     next.splice(targetIndex, 0, source);
     setStemOrder(next);
   }, [orderedStems]);
-  // Stable callbacks for the memoized `StemRow` list — recreated only when
-  // their few real dependencies change, not on every render (e.g. every
-  // playback frame), so `React.memo` on `StemRow` actually holds.
+  // Stable callbacks for the memoized `TimelineView` lane list — recreated
+  // only when their few real dependencies change, not on every render (e.g.
+  // every playback frame), so `React.memo` on `TimelineView` actually holds.
   const clearDraggedStem = React.useCallback(() => setDraggedStem(null), []);
   const handleDropOn = React.useCallback((target: string) => {
     setDraggedStem((current) => {
@@ -297,6 +399,29 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     const solo = effectiveManifest.mixing.stem_solo;
     updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_solo: solo.includes(stem) ? solo.filter((item) => item !== stem) : [...solo, stem] } });
   }, [effectiveManifest, updateManifest]);
+  // Stable identities for the memoized TimelineView/MixerView — an inline
+  // arrow here would defeat the memo the design spec requires these canvas
+  // surfaces to keep.
+  const previewCommitScrub = preview.commitScrub;
+  const commitScrub = React.useCallback((value: number) => { void previewCommitScrub(value); }, [previewCommitScrub]);
+  const setStemGain = React.useCallback((stem: string, gain: number) => {
+    if (!effectiveManifest) return;
+    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [stem]: gain } } });
+  }, [effectiveManifest, updateManifest]);
+  const setAnchorStrength = React.useCallback((stem_source_anchor_strength: number) => {
+    if (!effectiveManifest) return;
+    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } });
+  }, [effectiveManifest, updateManifest]);
+  // Stems that produce no sound right now — muted outright, or silenced
+  // because something else is soloed. The timeline dims their lanes and the
+  // mixer labels the difference, since colour alone can't carry it.
+  const silentStems = React.useMemo(() => {
+    const solo = effectiveManifest?.mixing.stem_solo || [];
+    return orderedStems.filter((stem) => (
+      effectiveManifest?.mixing.stem_enabled[stem] === false
+      || (solo.length > 0 && !solo.includes(stem))
+    ));
+  }, [effectiveManifest, orderedStems]);
   const exportProject = async () => {
     if (!projectId) return;
     setExporting(true);
@@ -323,6 +448,21 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           setManifestView(false);
         }}
       />
+      {activeTab === "mixing" && !settingsView && !manifestView && project.tracks.length > 1 && (
+        <>
+          <ToolbarSeparator />
+          <select
+            aria-label="Track"
+            className="h-6 rounded-md border bg-secondary px-1 text-[11px]"
+            value={selectedTrack ?? ""}
+            onChange={(event) => setSelectedTrack(event.target.value)}
+          >
+            {project.tracks.map((track) => (
+              <option key={track.id} value={track.id}>{track.asset.title || track.asset.filename}</option>
+            ))}
+          </select>
+        </>
+      )}
       <ToolbarSpacer />
       <ToolbarGroup>
         <Button
@@ -376,7 +516,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       // Transport is chrome, not one of the displays: it sits flush at the
       // top of the preview column as a full-bleed bar, so the only things
       // reading as floating panels here are the metering surfaces.
-      const previewPanel = <section className="flex min-h-0 flex-col">
+      const previewPanel = <section ref={previewColumn} className="flex min-h-0 flex-col">
         <Transport
           playing={preview.playing}
           currentTime={preview.currentTime}
@@ -391,9 +531,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           onToggleLoop={preview.toggleLoop}
           onSetVolume={preview.setVolume}
           onToggleMute={preview.toggleMute}
-          onBeginScrub={preview.beginScrub}
-          onScrubTo={preview.scrubTo}
-          onCommitScrub={(value) => void preview.commitScrub(value)}
         >
           <OutputModeSelect
             value={outputMode}
@@ -448,38 +585,120 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             renderer. ChannelMeters mirrors the same layout-scoped `channels`
             array and mute state, and stays mounted alongside HazeView across
             Mixing/Mastering/Delivery since both live in this shared panel. */}
-        <div className="flex min-h-0 flex-[3] gap-2">
+        <div className={cn("flex min-h-0 gap-2", paneView ? "min-h-[180px] flex-1" : "flex-[3]")}>
           <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="min-h-0 min-w-0 flex-[2]" />
           <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} outputMode={outputMode} active={preview.playing} />
         </div>
-        <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="h-40 shrink-0" />
+        {/* Elevation yields its 160px to the pane: its floor/height axis is
+            already carried by HazeView's dashed height ring, which makes it
+            the most redundant display when vertical space is contested. */}
+        {!paneView && <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="h-40 shrink-0" />}
         </div>
+        {paneView && (
+          <div
+            role="separator"
+            aria-label="Resize bottom pane"
+            aria-orientation="horizontal"
+            aria-valuenow={paneHeight}
+            aria-valuemin={PANE_MIN_HEIGHT}
+            tabIndex={0}
+            onPointerDown={beginPaneResize}
+            onPointerMove={movePaneResize}
+            onPointerUp={endPaneResize}
+            onPointerCancel={endPaneResize}
+            onKeyDown={paneResizeKeys}
+            onDoubleClick={() => resizePaneTo(PANE_DEFAULT_HEIGHT)}
+            className="group flex h-2 shrink-0 cursor-row-resize touch-none items-center justify-center border-t bg-muted/40 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60"
+          >
+            <span className="h-0.5 w-8 rounded-full bg-border transition-colors group-hover:bg-muted-foreground" aria-hidden="true" />
+          </div>
+        )}
+        <div className={cn("flex h-8 shrink-0 items-center gap-2 bg-card px-2", !paneView && "border-t")}>
+          <SegmentedControl
+            aria-label="Bottom pane"
+            size="sm"
+            segments={PANE_SEGMENTS}
+            value={(paneView ?? "") as "timeline" | "mixer"}
+            onChange={changePane}
+          />
+          <div className="min-w-0 flex-1" />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            aria-label={paneView ? "Collapse bottom pane" : "Show bottom pane"}
+            aria-expanded={Boolean(paneView)}
+            onClick={() => changePane(paneView ? null : "timeline")}
+          >
+            {paneView ? <ChevronDown /> : <ChevronUp />}
+          </Button>
+        </div>
+        {paneView && <div className="h-2 shrink-0 bg-muted/40" aria-hidden="true" />}
+        {paneView === "timeline" && (
+          <TimelineView
+            className="shrink-0 border-t"
+            style={{ height: paneHeight }}
+            stems={orderedStems}
+            peaks={peaks}
+            loading={peaksLoading}
+            pending={Boolean(project?.peaks_pending)}
+            mutedStems={silentStems}
+            enabled={effectiveManifest?.mixing.stem_enabled || {}}
+            solo={effectiveManifest?.mixing.stem_solo || []}
+            onToggleMute={toggleEnabled}
+            onToggleSolo={toggleSolo}
+            draggedStem={draggedStem}
+            onDragStart={setDraggedStem}
+            onDragEnd={clearDraggedStem}
+            onDropOn={handleDropOn}
+            selectedStem={selectedStem}
+            onSelectStem={setSelectedStem}
+            duration={preview.duration || selected?.peaks_duration_seconds || 0}
+            currentTime={preview.currentTime}
+            currentTimeRef={preview.currentTimeRef}
+            playing={preview.playing}
+            disabled={!preview.supported || !previewStems.length}
+            onBeginScrub={preview.beginScrub}
+            onScrubTo={preview.scrubTo}
+            onCommitScrub={commitScrub}
+          />
+        )}
+        {paneView === "mixer" && effectiveManifest && (
+          <MixerView
+            className="shrink-0 border-t"
+            style={{ height: paneHeight }}
+            stems={orderedStems}
+            stemChannels={stemChannelCounts}
+            selectedStem={selectedStem}
+            onSelectStem={setSelectedStem}
+            gains={effectiveManifest.mixing.stem_rebalance}
+            onGain={setStemGain}
+            enabled={effectiveManifest.mixing.stem_enabled}
+            solo={effectiveManifest.mixing.stem_solo}
+            onToggleMute={toggleEnabled}
+            onToggleSolo={toggleSolo}
+            stemLevels={preview.stemLevels}
+            anchorStrength={effectiveManifest.mixing.stem_source_anchor_strength}
+            onAnchorStrength={setAnchorStrength}
+            headphoneLevels={preview.headphoneLevels}
+            volume={preview.volume}
+            onVolume={preview.setVolume}
+            muted={preview.muted}
+            onToggleMasterMute={preview.toggleMute}
+            active={preview.playing}
+            disabled={!previewStems.length}
+          />
+        )}
       </section>;
       // Preview stays mounted across all three tabs (same center/left column
       // position) so playback and the routing graphs never stop just because
       // the user switched to Mastering or Delivery.
-      if (activeTab === "mixing") return <div className="grid min-h-0 flex-1 xl:grid-cols-[248px_minmax(0,1fr)_320px]">
-        <aside className="min-h-0 overflow-y-auto border-r bg-card p-2">
-          {project.tracks.length > 1 && <>
-            <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground">Tracks</p>
-            {project.tracks.map((track) => <button key={track.id} onClick={() => setSelectedTrack(track.id)} className={cn("mb-0.5 flex h-7 w-full items-center rounded-md px-2 text-left text-[13px] transition-colors", selectedTrack === track.id ? "bg-primary/15 font-medium text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground")}><span className="truncate">{track.asset.title || track.asset.filename}</span></button>)}
-          </>}
-          <p className={cn("px-2 pb-1 text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground", project.tracks.length > 1 && "mt-3")}>Stems</p>
-          {orderedStems.map((stem) => <StemRow
-            key={stem}
-            stem={stem}
-            selected={selectedStem === stem}
-            muted={effectiveManifest?.mixing.stem_enabled[stem] === false}
-            soloed={Boolean(effectiveManifest?.mixing.stem_solo.includes(stem))}
-            dragging={draggedStem === stem}
-            onSelect={setSelectedStem}
-            onToggleMute={toggleEnabled}
-            onToggleSolo={toggleSolo}
-            onDragStart={setDraggedStem}
-            onDragEnd={clearDraggedStem}
-            onDropOn={handleDropOn}
-          />)}
-        </aside>
+      // The stem rail was removed once the timeline pane's lanes took over
+      // its exact job (select/mute/solo/reorder, see TimelineView.tsx) — one
+      // list, shown wherever the bottom pane already is instead of a second
+      // copy beside it. Track switching moved into the toolbar (above),
+      // which the aside also used to carry.
+      if (activeTab === "mixing") return <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_320px]">
         {previewPanel}
         {effectiveManifest && <div className="flex min-h-0 flex-col overflow-y-auto border-l bg-card">
           <InspectorGroup
@@ -492,17 +711,47 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             <Button className="mt-2.5 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 />Apply preset</Button>
           </InspectorGroup>
           <InspectorGroup title="Stem">
-            {selectedStem ? <StemControls stem={selectedStem} route={routing[selectedStem] || {}} channels={channels} enabled={effectiveManifest.mixing.stem_enabled[selectedStem] !== false} gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onGain={(gain) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [selectedStem]: gain } } })} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: (() => { const next = { ...effectiveManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
-              stemEqProfiles={configuration?.choices.stem_eq_profiles}
-            /> : <p className="text-[11px] text-muted-foreground">Select a stem to edit its sends.</p>}
-          </InspectorGroup>
-          <InspectorGroup title="Source anchor">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="text-muted-foreground">Blend</span>
-              <span className="font-medium tabular-nums">{Math.round(effectiveManifest.mixing.stem_source_anchor_strength * 100)}%</span>
-            </div>
-            <Slider aria-label="Source anchor" className="mt-2" min={0} max={1} step={0.01} value={[effectiveManifest.mixing.stem_source_anchor_strength]} onValueChange={([stem_source_anchor_strength]) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } })} />
-            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">Blends original channel pairs back into the mix.</p>
+            {selectedStem ? (() => {
+              const SelectedStemIcon = getStemIcon(selectedStem);
+              const stemMuted = effectiveManifest.mixing.stem_enabled[selectedStem] === false;
+              return <>
+                {/* The section's one title, standing in for the fader's own
+                    nameplate below (`showNameplate={false}`) — repeating the
+                    stem name twice in one scroll-length panel is the kind of
+                    duplication §6.3 rejects, not a second, useful label. */}
+                <p className="mb-3 flex items-center gap-1.5 text-[13px] font-semibold">
+                  <SelectedStemIcon className="h-3.5 w-3.5 shrink-0" style={{ color: getStemColor(selectedStem) }} aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate">{selectedStem}</span>
+                  <span className="text-[11px] font-normal text-muted-foreground">{stemMuted ? "muted" : "enabled"}</span>
+                </p>
+                <StemControls route={routing[selectedStem] || {}} channels={channels} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: (() => { const next = { ...effectiveManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
+                  stemEqProfiles={configuration?.choices.stem_eq_profiles}
+                />
+                {/* The mixer pane can be collapsed or switched to the
+                    timeline, so the selected stem's fader lives here too —
+                    the exact same control (see ChannelStrip.tsx), adapted
+                    for a single centered strip instead of a rack, so it
+                    never goes away along with the mixer. */}
+                <div className="mt-3 flex justify-center border-t pt-3">
+                  <StemChannelStrip
+                    stem={selectedStem}
+                    subjectName="Selected stem"
+                    showNameplate={false}
+                    channels={stemChannelCounts[selectedStem] ?? 1}
+                    gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0}
+                    onGain={(gain) => setStemGain(selectedStem, gain)}
+                    muted={stemMuted}
+                    soloed={effectiveManifest.mixing.stem_solo.includes(selectedStem)}
+                    silent={silentStems.includes(selectedStem)}
+                    onToggleMute={() => toggleEnabled(selectedStem)}
+                    onToggleSolo={() => toggleSolo(selectedStem)}
+                    meterSource={() => preview.stemLevels.current.get(selectedStem) ?? []}
+                    active={preview.playing}
+                    disabled={!previewStems.length}
+                  />
+                </div>
+              </>;
+            })() : <p className="text-[11px] text-muted-foreground">Select a stem to edit its sends.</p>}
           </InspectorGroup>
         </div>}
       </div>;
@@ -552,82 +801,14 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   </main>;
 }
 
-const StemRow = React.memo(function StemRow({
-  stem,
-  selected,
-  muted,
-  soloed,
-  dragging,
-  onSelect,
-  onToggleMute,
-  onToggleSolo,
-  onDragStart,
-  onDragEnd,
-  onDropOn,
-}: {
-  stem: string;
-  selected: boolean;
-  muted: boolean;
-  soloed: boolean;
-  dragging: boolean;
-  onSelect: (stem: string) => void;
-  onToggleMute: (stem: string) => void;
-  onToggleSolo: (stem: string) => void;
-  onDragStart: (stem: string) => void;
-  onDragEnd: () => void;
-  onDropOn: (stem: string) => void;
-}) {
-  const StemIcon = getStemIcon(stem);
-  return <div
-    draggable
-    onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; onDragStart(stem); }}
-    onDragEnd={onDragEnd}
-    onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
-    onDrop={(event) => { event.preventDefault(); onDropOn(stem); }}
-    onClick={() => onSelect(stem)}
-    className={cn(
-      "mb-0.5 flex cursor-pointer items-center gap-1 rounded-md border-l-[3px] py-1.5 pl-1.5 pr-1 transition-colors",
-      selected ? "bg-primary/15" : "hover:bg-accent/60",
-      dragging && "opacity-40",
-    )}
-    style={{ borderLeftColor: getStemColor(stem) }}
-  >
-    <GripVertical className="h-3.5 w-3.5 shrink-0 cursor-grab text-muted-foreground/60" aria-hidden="true" />
-    <StemIcon className={cn("h-3.5 w-3.5 shrink-0", muted && "opacity-30")} style={{ color: getStemColor(stem) }} aria-hidden="true" />
-    <span className={cn("min-w-0 flex-1 truncate text-left text-[13px]", muted && "text-muted-foreground line-through")}>{stem}</span>
-    <button
-      type="button"
-      aria-pressed={muted}
-      aria-label={`${muted ? "Enable" : "Mute"} ${stem}`}
-      onClick={(event) => { event.stopPropagation(); onToggleMute(stem); }}
-      className={cn(
-        "flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-bold transition-colors",
-        muted ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
-      )}
-    >
-      M
-    </button>
-    <button
-      type="button"
-      aria-pressed={soloed}
-      aria-label={`${soloed ? "Clear solo" : "Solo"} ${stem}`}
-      onClick={(event) => { event.stopPropagation(); onToggleSolo(stem); }}
-      className={cn(
-        "flex h-5 w-5 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-bold transition-colors",
-        soloed ? "bg-warning text-warning-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
-      )}
-    >
-      S
-    </button>
-  </div>;
-});
-
-const StemControls = React.memo(function StemControls({ stem, route, channels, enabled, gain, eq, onRoute, onGain, onEq, stemEqProfiles }: { stem: string; route: Record<string, number>; channels: string[]; enabled: boolean; gain: number; eq: string; onRoute: (patch: Record<string, number>) => void; onGain: (gain: number) => void; onEq: (eq: string) => void; stemEqProfiles?: string[] }) {
+const StemControls = React.memo(function StemControls({ route, channels, eq, onRoute, onEq, stemEqProfiles }: { route: Record<string, number>; channels: string[]; eq: string; onRoute: (patch: Record<string, number>) => void; onEq: (eq: string) => void; stemEqProfiles?: string[] }) {
   const position = routePosition(route, channels);
   const setPosition = (patch: Partial<typeof position>) => onRoute(routeForPosition(channels, { ...position, ...patch }, route.LFE || 0));
-  const StemIcon = getStemIcon(stem);
   const hasHeight = channels.includes("TFL") || channels.includes("TFR") || channels.includes("TBL") || channels.includes("TBR");
-  return <div className="space-y-3"><p className="flex items-center gap-1.5 text-[13px] font-semibold"><StemIcon className="h-3.5 w-3.5 shrink-0" style={{ color: getStemColor(stem) }} /><span className="min-w-0 flex-1 truncate">{stem}</span><span className="text-[11px] font-normal text-muted-foreground">{enabled ? "enabled" : "muted"}</span></p><label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowLeftRight className="h-3 w-3" />Front <span className="ml-auto">Back</span></span><Slider aria-label="Front to back" className="mt-1.5" min={0} max={1} step={0.01} value={[position.depth]} onValueChange={([depth]) => setPosition({ depth })} /></label>{hasHeight && <label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowUpDown className="h-3 w-3" />Floor <span className="ml-auto">Height</span></span><Slider aria-label="Floor to height" className="mt-1.5" min={0} max={1} step={0.01} value={[position.height]} onValueChange={([height]) => setPosition({ height })} /></label>}<label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><SlidersHorizontal className="h-3 w-3" />Gain <span className="ml-auto tabular-nums">{gain.toFixed(1)} dB</span></span><Slider className="mt-1.5" min={-12} max={6} step={0.1} value={[gain]} onValueChange={([value]) => onGain(value)} /></label><label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><AudioWaveform className="h-3 w-3" />EQ</span><select className="mt-1.5 flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px] text-foreground" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option>{(stemEqProfiles || ["vocal-presence", "vocal-warmth", "bass-warmth", "bass-cut", "drums-punch", "other-air"]).filter((name) => name !== "flat").map((name) => <option key={name} value={name}>{name}</option>)}</select></label></div>;
+  // Gain has its own control now — the always-accessible fader above (see
+  // ProjectDetailPage's "Stem" InspectorGroup) — so this section only covers
+  // what the fader doesn't: spatial placement and EQ.
+  return <div className="space-y-3"><label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowLeftRight className="h-3 w-3" />Front <span className="ml-auto">Back</span></span><Slider aria-label="Front to back" className="mt-1.5" min={0} max={1} step={0.01} value={[position.depth]} onValueChange={([depth]) => setPosition({ depth })} /></label>{hasHeight && <label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowUpDown className="h-3 w-3" />Floor <span className="ml-auto">Height</span></span><Slider aria-label="Floor to height" className="mt-1.5" min={0} max={1} step={0.01} value={[position.height]} onValueChange={([height]) => setPosition({ height })} /></label>}<label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><AudioWaveform className="h-3 w-3" />EQ</span><select className="mt-1.5 flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px] text-foreground" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option>{(stemEqProfiles || ["vocal-presence", "vocal-warmth", "bass-warmth", "bass-cut", "drums-punch", "other-air"]).filter((name) => name !== "flat").map((name) => <option key={name} value={name}>{name}</option>)}</select></label></div>;
 });
 
 function routePosition(route: Record<string, number>, channels: string[]) {

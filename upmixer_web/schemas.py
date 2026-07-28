@@ -133,6 +133,13 @@ class ProjectTrackView(ApiModel):
     scene_overrides: dict[str, Any] = Field(default_factory=dict)
     source_preview_relative_path: str | None = None
     source_preview_url: str | None = None
+    # Waveform envelopes are served as their own binary asset rather than
+    # inlined here: this view is re-serialized on every SSE tick and every
+    # poll, so only the pointer and the shape metadata belong in it.
+    peaks_url: str | None = None
+    peaks_bins: int = 0
+    peaks_stem_keys: list[str] = Field(default_factory=list)
+    peaks_duration_seconds: float | None = None
     error: str | None
     asset: AssetView
     stems: list[StemView] = Field(default_factory=list)
@@ -175,6 +182,7 @@ class ProjectView(ApiModel):
     mastering_reference: MasteringReferenceView | None = None
     reference_match: ReferenceMatchAssetView | None = None
     reference_match_pending: bool = False
+    peaks_pending: bool = False
 
 
 class CreateProjectRequest(BaseModel):

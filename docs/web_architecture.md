@@ -16,6 +16,8 @@ Job states are `queued`, `running`, `pause_requested`, `paused`, `completed`, `f
 
 Source files live under `imports/{import_id}` and outputs under `jobs/{job_id}`. Ordinary jobs use one shared stem cache root. Projects instead own isolated stem storage under `project-stems/{project_id}/{track_id}`; the web worker catalogues the cache files after processing so the browser can audition only that project’s stems. Projects use defaults plus optional per-track overrides, can prepare additional stems in the background, and create normal linked jobs for exports. Project mastering references are trusted import-owned uploads and transfer to exported jobs. Stereo downmixes are server-managed output artifacts.
 
+Waveform envelopes for the editor timeline are precomputed server-side while stems are catalogued, from the samples the preview proxy encode already holds in memory, and stored as one `peaks.bin` plus a `peaks.json` sidecar per track. Projects catalogued before peaks existed are backfilled from their preview proxies on a dedicated single-thread executor that coalesces repeat requests, the same scheduling shape `prepare_reference_match` uses; `ProjectView.peaks_pending` reports that state so the browser polls only until the asset lands.
+
 The project editor uses the Web Audio API HRTF panner for an immediate stereo headphone preview and a live 3D source view. This is an approximate binaural audition, not a Dolby renderer or a substitute for the final pipeline export. Browser preview code is delivery-layer behavior; separation and exports continue through `StemUpmixPipeline`.
 
 Deleting a job removes its outputs and database records. Shared source imports and stem cache entries remain because other jobs may reference them. Future storage management can add reference-counted import and cache eviction without changing job deletion semantics.
@@ -38,6 +40,7 @@ Interactive docs are served at `/api/docs`; the OpenAPI document is `/api/v1/ope
 - `POST /api/v1/projects` creates a stem-backed editable project from an import.
 - `GET /api/v1/projects` and `/api/v1/projects/{id}` expose project state, tracks, stems, and export history.
 - `PUT /api/v1/projects/{id}/settings`, track settings, and `POST /stems` persist edits and queue stem expansion.
+- `GET /api/v1/projects/{id}/tracks/{track_id}/peaks` returns one binary waveform-envelope block per track for the editor timeline.
 - `POST /api/v1/projects/{id}/exports` creates a linked standard job from an immutable project snapshot.
 
 ## Extension boundaries

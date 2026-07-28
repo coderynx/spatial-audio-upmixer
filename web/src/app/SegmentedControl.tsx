@@ -46,13 +46,18 @@ export function SegmentedControl<T extends string>({
             className={cn(
               "flex h-full items-center gap-1.5 whitespace-nowrap rounded-[5px] px-2.5 font-medium transition-colors",
               size === "sm" ? "text-[11px]" : "text-[13px]",
+              // Must come after the text-size class: tailwind-merge groups
+              // arbitrary `text-[…]` font sizes with `leading-*` (real
+              // Tailwind's named sizes pair a default line-height), so
+              // whichever one is later in the argument list wins the merge.
+              "leading-none",
               active
                 ? "bg-card text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
             {Icon && <Icon className={cn("shrink-0", size === "sm" ? "h-3 w-3" : "h-3.5 w-3.5")} />}
-            {segment.label}
+            <span className="leading-none">{segment.label}</span>
           </button>
         );
       })}

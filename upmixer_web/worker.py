@@ -104,6 +104,22 @@ def _reference_match_needs_work(project: Project | None, project_stems: ProjectS
     return not existing or existing.get("signature") != target_signature
 
 
+def _peaks_needs_work(project: Project | None, project_stems: ProjectStemStorage) -> bool:
+    """Whether any of *project*'s tracks lacks a current waveform-peaks asset.
+
+    Peaks are written by `catalogue_track`, so this only opens for projects
+    catalogued before peaks existed, or whose stems were re-prepared at a
+    newer generation.
+    """
+    if not project or project.status != "ready" or not project.prepared_stems:
+        return False
+    for track in project.tracks:
+        meta = project_stems.read_track_peaks_meta(project.id, track.id)
+        if not meta or meta.get("generation") != project.stem_generation:
+            return True
+    return False
+
+
 def _append_progress_log(project: Project, message: str, fraction: float) -> None:
     """Append one entry to a project's realtime preparation log, capped in length."""
     entry = {
@@ -145,6 +161,9 @@ class WorkerManager:
         self._refmatch_executor: ThreadPoolExecutor | None = None
         self._refmatch_pending: set[str] = set()
         self._refmatch_running: set[str] = set()
+        self._peaks_executor: ThreadPoolExecutor | None = None
+        self._peaks_pending: set[str] = set()
+        self._peaks_running: set[str] = set()
 
     def start(self) -> None:
         with self.sessions() as session:
@@ -158,6 +177,7 @@ class WorkerManager:
             session.commit()
         self._executor = ThreadPoolExecutor(max_workers=self.worker_count, thread_name_prefix="upmixer-job")
         self._refmatch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="upmixer-refmatch")
+        self._peaks_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="upmixer-peaks")
         self._dispatcher = threading.Thread(target=self._dispatch_loop, name="upmixer-dispatch", daemon=True)
         self._dispatcher.start()
 
@@ -170,6 +190,8 @@ class WorkerManager:
             self._executor.shutdown(wait=True, cancel_futures=True)
         if self._refmatch_executor:
             self._refmatch_executor.shutdown(wait=False, cancel_futures=True)
+        if self._peaks_executor:
+            self._peaks_executor.shutdown(wait=False, cancel_futures=True)
 
     def notify(self) -> None:
         self._wake.set()
@@ -594,6 +616,7 @@ class WorkerManager:
                 session.commit()
 
             self.schedule_reference_match(project_id)
+            self.schedule_peaks(project_id)
         except JobDeleting:
             self._delete_project(project_id)
         except Exception as exc:
@@ -668,6 +691,64 @@ class WorkerManager:
                 _log.exception(
                     "Reference-match precompute failed for project %s", project_id
                 )
+
+    def schedule_peaks(self, project_id: str) -> None:
+        """Queue a waveform-peaks backfill for a project catalogued before
+        peaks existed, coalescing repeat calls into one trailing run.
+
+        Normal preparation writes peaks inside `catalogue_track`, so this only
+        fires for pre-existing projects. It is called from the project-read
+        endpoint, which the editor polls every 2s — the `_peaks_needs_work`
+        gate plus the pending/running sets are what keep that from launching a
+        run per poll.
+        """
+        if not self._peaks_executor:
+            return
+        with self.sessions() as session:
+            project = get_project(session, project_id)
+            if not _peaks_needs_work(project, self.project_stems):
+                return
+        with self._lock:
+            self._peaks_pending.add(project_id)
+            if project_id in self._peaks_running:
+                return
+            self._peaks_running.add(project_id)
+        self._peaks_executor.submit(self._run_peaks, project_id)
+
+    def _run_peaks(self, project_id: str) -> None:
+        while True:
+            with self._lock:
+                if project_id not in self._peaks_pending:
+                    self._peaks_running.discard(project_id)
+                    return
+                self._peaks_pending.discard(project_id)
+            try:
+                self.prepare_peaks(project_id)
+            except Exception:
+                # Non-fatal: a missing peaks asset only means the timeline has
+                # no waveform to draw; playback and every other surface work.
+                _log.exception("Waveform peak precompute failed for project %s", project_id)
+
+    def peaks_pending(self, project_id: str) -> bool:
+        """Whether a waveform-peaks backfill is queued or running."""
+        with self._lock:
+            return project_id in self._peaks_pending or project_id in self._peaks_running
+
+    def prepare_peaks(self, project_id: str) -> None:
+        """Rebuild every stale track's waveform envelopes from its previews."""
+        with self.sessions() as session:
+            project = get_project(session, project_id)
+            if not project or project.status != "ready":
+                return
+            for track in project.tracks:
+                meta = self.project_stems.read_track_peaks_meta(project.id, track.id)
+                if meta and meta.get("generation") == project.stem_generation:
+                    continue
+                stems = [stem for stem in track.stems if stem.generation == project.stem_generation]
+                if not stems:
+                    continue
+                self.project_stems.rebuild_track_peaks(track, stems, project.stem_generation)
+            session.commit()
 
     def reference_match_pending(self, project_id: str) -> bool:
         """Whether a reference-match recompute is queued or running for

@@ -153,6 +153,13 @@ type AudioNodeSet = {
   // output, so it cannot affect the audible signal. Absent for the dry
   // source anchor (it has no single "stem" to visualize).
   analyser: AnalyserNode | null;
+  // One passive analyser per source channel, for the mixer strip's meters: a
+  // stereo stem gets two independent bars the way a console shows them, so a
+  // one-sided image reads as one-sided instead of being summed away. Fed
+  // through `meterSplitter` from the same pre-gain source tap `analyser`
+  // uses; also output-less. Absent for the dry source anchor.
+  meterSplitter: ChannelSplitterNode | null;
+  meterAnalysers: AnalyserNode[];
 };
 
 type Timeline = { offset: number; contextTime: number };
@@ -546,6 +553,12 @@ export function useStemPreview(
   // the meter component reads these in its own rAF loop, same as
   // `stemSpectrum`.
   const channelLevels = React.useRef<Map<string, MeterLevel>>(new Map());
+  // Per-stem meter levels for the mixer strips, keyed by base stem name, one
+  // entry per source channel (1 for mono, 2 for stereo) so a strip can show
+  // the same number of bars a console would. Distinct from
+  // `stemSpectrum.level`, which is a clamped, display-scaled glow value: a
+  // fader's meter has to keep reading above unity.
+  const stemLevels = React.useRef<Map<string, MeterLevel[]>>(new Map());
   const headphoneLevels = React.useRef<{ left: MeterLevel; right: MeterLevel }>({
     left: SILENT_METER_LEVEL,
     right: SILENT_METER_LEVEL,
@@ -642,6 +655,7 @@ export function useStemPreview(
       node.source = null;
     });
     stemSpectrum.current.clear();
+    stemLevels.current.clear();
     // Bus-tap analysers stop receiving signal the instant sources are torn
     // down, but the smoothed level refs they feed (see `measureChannelLevels`)
     // don't decay on their own without a running tick — clear them here so
@@ -678,56 +692,17 @@ export function useStemPreview(
       if (input) source.connect(input);
       if (node.lfeGain) source.connect(node.lfeGain);
       if (node.analyser) source.connect(node.analyser);
+      if (node.meterSplitter) source.connect(node.meterSplitter);
       source.start(startAt, target);
       node.source = source;
     });
     return startAt;
   }, []);
 
-  const measureLevels = React.useCallback(() => {
-    for (const stem of stemsRef.current) {
-      const node = nodes.current.get(stem.id);
-      if (!node?.analyser) continue;
-      const size = node.analyser.fftSize;
-      if (!timeDomainBuffer.current || timeDomainBuffer.current.length !== size) {
-        timeDomainBuffer.current = new Uint8Array(size);
-      }
-      node.analyser.getByteTimeDomainData(timeDomainBuffer.current);
-      let sumSquares = 0;
-      for (let i = 0; i < size; i++) {
-        const deviation = (timeDomainBuffer.current[i] - 128) / 128;
-        sumSquares += deviation * deviation;
-      }
-      const rms = Math.sqrt(sumSquares / size);
-      const base = stem.stem_key.split("@", 1)[0];
-      const gain = appliedGain.current.get(base) ?? 1;
-      const level = Math.min(1, rms * gain * 2.5);
-
-      const binCount = node.analyser.frequencyBinCount;
-      if (!frequencyBuffer.current || frequencyBuffer.current.length !== binCount) {
-        frequencyBuffer.current = new Uint8Array(binCount);
-      }
-      node.analyser.getByteFrequencyData(frequencyBuffer.current);
-      let weightedBin = 0;
-      let totalAmplitude = 0;
-      for (let i = 0; i < binCount; i++) {
-        const amplitude = frequencyBuffer.current[i];
-        weightedBin += amplitude * i;
-        totalAmplitude += amplitude;
-      }
-      // Linear bin index is frequency-linear, which crams almost all musical
-      // energy into the first few bins; sqrt spreads the centroid out across
-      // the radar's radius instead of pinning everything near the center.
-      const centroidBin = totalAmplitude > 0 ? weightedBin / totalAmplitude : 0;
-      const centroid = binCount > 1 ? Math.sqrt(centroidBin / (binCount - 1)) : 0;
-      stemSpectrum.current.set(base, { level, centroid });
-    }
-  }, []);
-
   // Bus-tap RMS is unscaled by any applied gain (unlike `measureLevels`, the
   // stem path), so smooth it directly to keep meter bars from flickering.
   // Reads float time-domain data (not the 8-bit `getByteTimeDomainData`
-  // `measureLevels` above uses for the Haze view — that quantization floor
+  // `measureLevels` below uses for the Haze view — that quantization floor
   // sits around -48dBFS per sample, fine for a glow, not for a level meter
   // that needs to report a genuine clip), with no display-scale fudge, so
   // both `rms` and the raw instantaneous sample `peak` are true 0..1
@@ -750,6 +725,62 @@ export function useStemPreview(
     }
     return { rms: Math.sqrt(sumSquares / size), peak };
   }, []);
+
+  const measureLevels = React.useCallback(() => {
+    for (const stem of stemsRef.current) {
+      const node = nodes.current.get(stem.id);
+      if (!node?.analyser) continue;
+      const base = stem.stem_key.split("@", 1)[0];
+      // Mixer-strip meter: a genuine 0..1 amplitude from the float tap,
+      // scaled by the stem's applied gain so the bar tracks the fader. The
+      // byte read below stays as-is for the Haze glow — it is display-scaled
+      // and clamped, which a level meter cannot be. `clipped` is always false
+      // for the same reason `measureChannelLevels` never latches: this tap is
+      // pre-mastering, where exceeding 1.0 is ordinary headroom use.
+      const gainForMeter = appliedGain.current.get(base) ?? 1;
+      const previousLevels = stemLevels.current.get(base);
+      stemLevels.current.set(base, node.meterAnalysers.map((channelAnalyser, channel) => {
+        const measured = measureAnalyser(channelAnalyser);
+        return {
+          rms: (previousLevels?.[channel]?.rms ?? 0) * 0.7 + measured.rms * gainForMeter * 0.3,
+          peak: measured.peak * gainForMeter,
+          clipped: false,
+        };
+      }));
+      const size = node.analyser.fftSize;
+      if (!timeDomainBuffer.current || timeDomainBuffer.current.length !== size) {
+        timeDomainBuffer.current = new Uint8Array(size);
+      }
+      node.analyser.getByteTimeDomainData(timeDomainBuffer.current);
+      let sumSquares = 0;
+      for (let i = 0; i < size; i++) {
+        const deviation = (timeDomainBuffer.current[i] - 128) / 128;
+        sumSquares += deviation * deviation;
+      }
+      const rms = Math.sqrt(sumSquares / size);
+      const gain = appliedGain.current.get(base) ?? 1;
+      const level = Math.min(1, rms * gain * 2.5);
+
+      const binCount = node.analyser.frequencyBinCount;
+      if (!frequencyBuffer.current || frequencyBuffer.current.length !== binCount) {
+        frequencyBuffer.current = new Uint8Array(binCount);
+      }
+      node.analyser.getByteFrequencyData(frequencyBuffer.current);
+      let weightedBin = 0;
+      let totalAmplitude = 0;
+      for (let i = 0; i < binCount; i++) {
+        const amplitude = frequencyBuffer.current[i];
+        weightedBin += amplitude * i;
+        totalAmplitude += amplitude;
+      }
+      // Linear bin index is frequency-linear, which crams almost all musical
+      // energy into the first few bins; sqrt spreads the centroid out across
+      // the radar's radius instead of pinning everything near the center.
+      const centroidBin = totalAmplitude > 0 ? weightedBin / totalAmplitude : 0;
+      const centroid = binCount > 1 ? Math.sqrt(centroidBin / (binCount - 1)) : 0;
+      stemSpectrum.current.set(base, { level, centroid });
+    }
+  }, [measureAnalyser]);
 
   const measureChannelLevels = React.useCallback(() => {
     channelAnalysers.current.forEach((analyser, channel) => {
@@ -881,10 +912,13 @@ export function useStemPreview(
       node.lfeGain?.disconnect();
       node.lfeFilters?.forEach((filter) => filter.disconnect());
       node.analyser?.disconnect();
+      node.meterSplitter?.disconnect();
+      node.meterAnalysers.forEach((analyser) => analyser.disconnect());
     });
     nodes.current.clear();
     stemEqNodes.current.clear();
     stemSpectrum.current.clear();
+    stemLevels.current.clear();
     appliedGain.current.clear();
     masteringNodes.current.forEach((node) => node.disconnect());
     masteringNodes.current = [];
@@ -1647,6 +1681,7 @@ export function useStemPreview(
               buffer, source: null, stemGain: null, postEqGain: null, sends: built.sends,
               ownNodes: [stemInput, ...built.ownNodes],
               lfeGain: null, lfeFilters: null, analyser: null,
+              meterSplitter: null, meterAnalysers: [],
             });
           } else {
             const stemGain = ctx.createGain();
@@ -1668,10 +1703,24 @@ export function useStemPreview(
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
             analyser.smoothingTimeConstant = 0.7;
+            // One meter tap per source channel (capped at stereo — the mixer
+            // strip shows at most two bars, and a >2ch stem's extra channels
+            // have no strip to appear in). Also output-less, same as
+            // `analyser`: splitting a source that feeds nothing audible
+            // cannot alter the mix.
+            const meterChannels = Math.min(2, Math.max(1, buffer.numberOfChannels));
+            const meterSplitter = ctx.createChannelSplitter(meterChannels);
+            const meterAnalysers = Array.from({ length: meterChannels }, (_, channel) => {
+              const channelAnalyser = ctx.createAnalyser();
+              channelAnalyser.fftSize = 256;
+              meterSplitter.connect(channelAnalyser, channel);
+              return channelAnalyser;
+            });
             nodes.current.set(entry.id, {
               buffer, source: null, stemGain, postEqGain, sends: built.sends,
               ownNodes: [stemGain, postEqGain, ...built.ownNodes],
               lfeGain, lfeFilters: [lfeFilter1, lfeFilter2], analyser,
+              meterSplitter, meterAnalysers,
             });
           }
         }));
@@ -1884,6 +1933,7 @@ export function useStemPreview(
     commitScrub,
     toggleLoop,
     stemSpectrum,
+    stemLevels,
     channelLevels,
     headphoneLevels,
     currentTimeRef,

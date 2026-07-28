@@ -91,6 +91,7 @@ def _project_view(
     view = ProjectView.model_validate(project)
     if manager is not None:
         view.reference_match_pending = manager.reference_match_pending(project.id)
+        view.peaks_pending = manager.peaks_pending(project.id)
     stem_by_id = {stem.id: stem for stem in project.stems}
     for track in view.tracks:
         track.asset.audio_url = (
@@ -99,6 +100,18 @@ def _project_view(
         track.source_preview_url = (
             f"{root_path}/api/v1/projects/{project.id}/tracks/{track.id}/source-preview"
         )
+        peaks_meta = project_stems.read_track_peaks_meta(project.id, track.id) if project_stems else None
+        if peaks_meta:
+            # Versioned by the stem generation the envelopes were built from,
+            # same cache-busting convention as `fir_url` below — the route
+            # itself ignores the query param.
+            track.peaks_url = (
+                f"{root_path}/api/v1/projects/{project.id}/tracks/{track.id}/peaks"
+                f"?v={peaks_meta.get('generation', 0)}"
+            )
+            track.peaks_bins = peaks_meta.get("bins", 0)
+            track.peaks_stem_keys = peaks_meta.get("stems", [])
+            track.peaks_duration_seconds = peaks_meta.get("duration_seconds")
         for stem in track.stems:
             base_url = (
                 f"{root_path}/api/v1/projects/{project.id}/tracks/{track.id}/"
@@ -367,6 +380,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
+        # Backfills waveform envelopes for projects catalogued before peaks
+        # existed. Safe to call on every read: `schedule_peaks` gates on
+        # `_peaks_needs_work` and coalesces, so a steady-state poll is a
+        # cheap metadata check, not a run.
+        manager.schedule_peaks(project_id)
         return _project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.put("/api/v1/projects/{project_id}/settings", response_model=ProjectView, tags=["projects"])
@@ -501,6 +519,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Project stem file not found") from exc
         return FileResponse(path, media_type=media_type)
+
+    @app.get("/api/v1/projects/{project_id}/tracks/{track_id}/peaks", tags=["projects"])
+    def read_project_track_peaks(
+        project_id: str,
+        track_id: str,
+        session: Session = Depends(database_session),
+    ) -> FileResponse:
+        track = session.get(ProjectTrack, track_id)
+        if not track or track.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Project track not found")
+        path = app.state.project_stems.track_peaks_path(project_id, track_id)
+        if not path:
+            raise HTTPException(status_code=404, detail="Waveform peaks are not available")
+        return FileResponse(path, media_type="application/octet-stream")
 
     @app.get("/api/v1/projects/{project_id}/reference-match/fir", tags=["projects"])
     def read_project_reference_match_fir(

@@ -108,6 +108,13 @@ export type ProjectTrack = {
   manifest_overrides: Record<string, unknown>
   scene_overrides: Record<string, unknown>
   source_preview_url: string | null
+  // Server-precomputed waveform envelopes, served as their own binary asset
+  // rather than inlined here — see upmixer_web/project_storage.py's
+  // write_track_peaks. `peaks_stem_keys` gives the block order inside it.
+  peaks_url: string | null
+  peaks_bins: number
+  peaks_stem_keys: string[]
+  peaks_duration_seconds: number | null
   error: string | null
   asset: Asset
   stems: ProjectStem[]
@@ -148,6 +155,9 @@ export type Project = {
   // — the frontend keeps polling while this is set so `reference_match`
   // refreshes once the background pass lands.
   reference_match_pending?: boolean
+  // True while a waveform-peaks backfill is queued or running for a project
+  // catalogued before peaks existed (upmixer_web/worker.py::schedule_peaks).
+  peaks_pending?: boolean
 }
 
 export type Configuration = {

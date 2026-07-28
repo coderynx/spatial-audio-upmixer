@@ -16,8 +16,17 @@ vi.mock("@/api", async (importOriginal) => {
         choices: {
           channel_layouts: [], output_types: [], output_subtypes: [],
           sample_rates: [], modes: [], spatial_profiles: [],
+          stem_eq_profiles: [], stems: [],
+          eq_profiles: [], compressor_profiles: [], bass_profiles: [],
         },
-      } as Configuration)),
+        capabilities: {
+          stem_separation: {
+            available: false, backend: null, accelerated: false,
+            accelerator_detected: false, accelerator_issue: null,
+            platform: "test", install_message: null,
+          },
+        },
+      })),
     },
   };
 });

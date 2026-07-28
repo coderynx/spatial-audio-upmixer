@@ -18,6 +18,17 @@ from upmixer_web.models import Project, ProjectStem, ProjectTrack
 REFERENCE_MATCH_FILENAME = "reference_match.wav"
 REFERENCE_MATCH_META_FILENAME = "reference_match.json"
 
+PEAKS_FILENAME = "peaks.bin"
+PEAKS_META_FILENAME = "peaks.json"
+PEAKS_SCHEMA = 1
+
+PEAK_BINS = 4096
+"""Waveform envelope resolution per stem, fixed rather than per-second so every
+stem of a track shares one bin grid and the binary payload is a plain
+rectangular array the browser can slice without parsing a header. A timeline
+lane is at most ~1200 CSS px wide showing the whole track, so this covers a 2x
+device-pixel-ratio display with headroom."""
+
 PREVIEW_SAMPLE_RATE = 44100
 """Full audible bandwidth: the mix preview drives HRTF spatialization, and a
 sub-Nyquist rate here would audibly dull it below the final master's output.
@@ -43,8 +54,13 @@ DEFAULT_PREVIEW_QUALITY = "high"
 _PREVIEW_WRITE_CHUNK_SECONDS = 5
 
 
-def _write_preview(source: Path, destination: Path, *, sample_rate: int, compression_level: float) -> None:
-    """Encode an OGG Vorbis preview proxy at the given quality preset."""
+def _write_preview(source: Path, destination: Path, *, sample_rate: int, compression_level: float) -> np.ndarray:
+    """Encode an OGG Vorbis preview proxy at the given quality preset.
+
+    Returns the encoded (post-resample) audio so a caller that also needs the
+    samples — waveform peak generation — reuses this read instead of opening
+    the file a second time.
+    """
     audio, source_rate = sf.read(str(source), always_2d=True)
     if source_rate != sample_rate:
         divisor = math.gcd(source_rate, sample_rate)
@@ -62,6 +78,24 @@ def _write_preview(source: Path, destination: Path, *, sample_rate: int, compres
     ) as handle:
         for start in range(0, len(audio), chunk_frames):
             handle.write(audio[start:start + chunk_frames])
+    return audio
+
+
+def _compute_peaks(audio: np.ndarray) -> np.ndarray:
+    """Reduce audio to a fixed-width (min, max) envelope as signed bytes."""
+    mono = audio.mean(axis=1) if audio.ndim > 1 else audio
+    frames = len(mono)
+    if frames == 0:
+        return np.zeros((PEAK_BINS, 2), dtype=np.int8)
+    edges = np.linspace(0, frames, PEAK_BINS + 1).astype(np.int64)
+    # `reduceat` indexes samples directly, so a clip shorter than PEAK_BINS
+    # frames would produce out-of-range starts; clamping repeats the final
+    # sample across the remaining bins instead of raising.
+    starts = np.minimum(edges[:-1], frames - 1)
+    low = np.minimum.reduceat(mono, starts)
+    high = np.maximum.reduceat(mono, starts)
+    scaled = np.clip(np.stack([low, high], axis=1), -1.0, 1.0) * 127.0
+    return np.round(scaled).astype(np.int8)
 
 
 class ProjectStemStorage:
@@ -110,16 +144,22 @@ class ProjectStemStorage:
         sample_rate = int(metadata["sep_sr"])
         stem_keys = [str(item) for item in metadata["stem_keys"]]
         rows: list[ProjectStem] = []
+        peaks: list[np.ndarray] = []
+        duration_seconds = 0.0
         for stem_key in stem_keys:
             filename = stem_key.replace("@", "__").replace("/", "__").replace("\\", "__") + ".wav"
             path = entry / filename
             if not path.is_file():
                 raise RuntimeError(f"Project stem cache is missing {filename}")
             info = sf.info(str(path))
+            duration_seconds = max(duration_seconds, info.duration)
             preview_path = path.with_suffix(".preview.ogg")
             if not preview_path.is_file():
                 sample_rate_hz, compression_level = PREVIEW_QUALITY_LEVELS[quality]
-                _write_preview(path, preview_path, sample_rate=sample_rate_hz, compression_level=compression_level)
+                audio = _write_preview(path, preview_path, sample_rate=sample_rate_hz, compression_level=compression_level)
+            else:
+                audio, _ = sf.read(str(preview_path), always_2d=True)
+            peaks.append(_compute_peaks(audio))
             rows.append(ProjectStem(
                 project_id=project.id,
                 track_id=track.id,
@@ -134,7 +174,70 @@ class ProjectStemStorage:
             ))
         session.execute(delete(ProjectStem).where(ProjectStem.track_id == track.id))
         session.add_all(rows)
+        self.write_track_peaks(track, stem_keys, peaks, generation, duration_seconds)
         return rows
+
+    def write_track_peaks(
+        self,
+        track: ProjectTrack,
+        stem_keys: list[str],
+        peaks: list[np.ndarray],
+        generation: int,
+        duration_seconds: float,
+    ) -> None:
+        """Persist a track's waveform envelopes as one binary block per track.
+
+        Stem blocks are stored back to back in `stem_keys` order and the order
+        is repeated in the sidecar, so the browser slices the payload by index
+        without the binary needing a header of its own.
+        """
+        directory = self.track_root(track.project_id, track.id)
+        stacked = (
+            np.concatenate(peaks, axis=0) if peaks
+            else np.zeros((0, 2), dtype=np.int8)
+        )
+        (directory / PEAKS_FILENAME).write_bytes(stacked.astype(np.int8).tobytes())
+        (directory / PEAKS_META_FILENAME).write_text(json.dumps({
+            "schema": PEAKS_SCHEMA,
+            "bins": PEAK_BINS,
+            "generation": generation,
+            "duration_seconds": duration_seconds,
+            "stems": stem_keys,
+        }), encoding="utf-8")
+        track.peaks_relative_path = str((directory / PEAKS_FILENAME).relative_to(self.root))
+        track.peaks_duration_seconds = duration_seconds
+
+    def read_track_peaks_meta(self, project_id: str, track_id: str) -> dict | None:
+        path = self.root / project_id / track_id / PEAKS_META_FILENAME
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return meta if meta.get("schema") == PEAKS_SCHEMA else None
+
+    def track_peaks_path(self, project_id: str, track_id: str) -> Path | None:
+        path = self.root / project_id / track_id / PEAKS_FILENAME
+        return path if path.is_file() else None
+
+    def rebuild_track_peaks(self, track: ProjectTrack, stems: list[ProjectStem], generation: int) -> None:
+        """Backfill a track's peaks from its already-encoded preview proxies.
+
+        Used for projects catalogued before peaks existed: reading the OGG
+        proxies costs an order of magnitude less I/O than the full-rate stem
+        WAVs, and an envelope drawn a few pixels tall does not need the extra
+        fidelity.
+        """
+        stem_keys: list[str] = []
+        peaks: list[np.ndarray] = []
+        duration_seconds = 0.0
+        for stem in stems:
+            path = self.resolve(stem.preview_relative_path or stem.relative_path)
+            audio, rate = sf.read(str(path), always_2d=True)
+            if rate:
+                duration_seconds = max(duration_seconds, len(audio) / rate)
+            stem_keys.append(stem.stem_key)
+            peaks.append(_compute_peaks(audio))
+        self.write_track_peaks(track, stem_keys, peaks, generation, duration_seconds)
 
     def write_source_preview(self, track: ProjectTrack, source: Path, quality: str = DEFAULT_PREVIEW_QUALITY) -> None:
         """Create the compressed original-track proxy used by project preview."""

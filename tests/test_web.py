@@ -447,6 +447,153 @@ def test_project_view_builds_stem_urls_from_catalogued_stems(tmp_path, monkeypat
     )
 
 
+def test_project_view_exposes_versioned_peaks_url_and_serves_the_envelope(tmp_path, monkeypatch):
+    import json
+
+    import numpy as np
+
+    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectTrack
+    from upmixer_web.project_storage import PEAK_BINS, PEAKS_SCHEMA
+
+    database_url = f"sqlite:///{tmp_path / 'peaks-view.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+    with factory() as session:
+        batch = ImportBatch(kind="track", title="Song")
+        asset = MediaAsset(
+            import_batch=batch, filename="song.wav", relative_path="song.wav",
+            storage_key="objects/song.wav", sha256="0" * 64, size_bytes=1,
+        )
+        project = Project(import_batch=batch, name="Peaks project", manifest={}, stem_generation=4)
+        track = ProjectTrack(project=project, asset=asset, position=0)
+        session.add_all([batch, asset, project, track])
+        session.commit()
+        project_id, track_id = project.id, track.id
+    engine.dispose()
+
+    directory = tmp_path / "project-stems" / project_id / track_id
+    directory.mkdir(parents=True)
+    payload = np.zeros((2 * PEAK_BINS, 2), dtype=np.int8).tobytes()
+    (directory / "peaks.bin").write_bytes(payload)
+    (directory / "peaks.json").write_text(json.dumps({
+        "schema": PEAKS_SCHEMA, "bins": PEAK_BINS, "generation": 4,
+        "duration_seconds": 12.5, "stems": ["Vocals", "Drums"],
+    }), encoding="utf-8")
+
+    with TestClient(create_app(settings)) as client:
+        body = client.get(f"/api/v1/projects/{project_id}").json()
+        track_view = body["tracks"][0]
+        assert track_view["peaks_url"] == (
+            f"/api/v1/projects/{project_id}/tracks/{track_id}/peaks?v=4"
+        )
+        assert track_view["peaks_bins"] == PEAK_BINS
+        assert track_view["peaks_stem_keys"] == ["Vocals", "Drums"]
+        assert track_view["peaks_duration_seconds"] == 12.5
+
+        served = client.get(f"/api/v1/projects/{project_id}/tracks/{track_id}/peaks")
+        assert served.status_code == 200
+        assert served.content == payload
+
+
+def test_project_peaks_returns_404_when_the_envelope_is_missing(tmp_path, monkeypatch):
+    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'peaks-missing.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+    with factory() as session:
+        batch = ImportBatch(kind="track", title="Song")
+        asset = MediaAsset(
+            import_batch=batch, filename="song.wav", relative_path="song.wav",
+            storage_key="objects/song.wav", sha256="0" * 64, size_bytes=1,
+        )
+        project = Project(import_batch=batch, name="Peaks project", manifest={})
+        track = ProjectTrack(project=project, asset=asset, position=0)
+        session.add_all([batch, asset, project, track])
+        session.commit()
+        project_id, track_id = project.id, track.id
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as client:
+        assert client.get(f"/api/v1/projects/{project_id}").json()["tracks"][0]["peaks_url"] is None
+        assert client.get(f"/api/v1/projects/{project_id}/tracks/{track_id}/peaks").status_code == 404
+        assert client.get(f"/api/v1/projects/{project_id}/tracks/nope/peaks").status_code == 404
+
+
+def test_schedule_peaks_coalesces_repeat_calls_into_one_run(tmp_path, monkeypatch):
+    import threading
+
+    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectStem, ProjectTrack
+    from upmixer_web.project_storage import ProjectStemStorage
+    from upmixer_web.storage import LocalObjectStorage, StorageAudioSink, StorageAudioSource
+    from upmixer_web.worker import WorkerManager
+
+    database_url = f"sqlite:///{tmp_path / 'peaks-schedule.db'}"
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+    with factory() as session:
+        batch = ImportBatch(kind="track", title="Song")
+        asset = MediaAsset(
+            import_batch=batch, filename="song.wav", relative_path="song.wav",
+            storage_key="objects/song.wav", sha256="0" * 64, size_bytes=1,
+        )
+        project = Project(
+            import_batch=batch, name="Peaks project", manifest={},
+            status="ready", prepared_stems=["Vocals"], stem_generation=1,
+        )
+        track = ProjectTrack(project=project, asset=asset, position=0)
+        stem = ProjectStem(
+            project=project, track=track, stem_key="Vocals", relative_path="a/Vocals.wav",
+            sample_rate=48_000, channels=2, size_bytes=10, generation=1,
+        )
+        session.add_all([batch, asset, project, track, stem])
+        session.commit()
+        project_id = project.id
+    engine.dispose()
+
+    storage = LocalObjectStorage(tmp_path / "objects")
+    manager = WorkerManager(
+        sessions=factory, storage=storage,
+        source=StorageAudioSource(storage), sink=StorageAudioSink(storage),
+        work_root=tmp_path / "work", stem_cache_dir=tmp_path / "cache",
+        project_stems=ProjectStemStorage(tmp_path / "project-stems"), worker_count=1,
+    )
+    manager.start()
+    try:
+        release = threading.Event()
+        runs = []
+
+        def blocking_prepare(_self, pid):
+            runs.append(pid)
+            release.wait(5)
+
+        monkeypatch.setattr(WorkerManager, "prepare_peaks", blocking_prepare)
+        for _ in range(5):
+            manager.schedule_peaks(project_id)
+        assert manager.peaks_pending(project_id)
+        release.set()
+        manager._peaks_executor.shutdown(wait=True)
+        # Five calls while one run is in flight collapse into that run plus a
+        # single trailing one, never one run per call.
+        assert len(runs) <= 2
+    finally:
+        manager.stop()
+
+
 def test_project_delete_returns_404_for_missing_project(web_client):
     response = web_client.delete("/api/v1/projects/does-not-exist")
     assert response.status_code == 404

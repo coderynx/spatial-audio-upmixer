@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Upmixer Pro Apple pro-app identity route</title>
+  <desc id="desc">A visual identity board showing the Upmixer Pro soundfield icon, lockups, palette, and small-size performance.</desc>
+  <defs>
+    <radialGradient id="field" cx="50%" cy="43%" r="70%">
+      <stop offset="0" stop-color="#14294A"/><stop offset=".56" stop-color="#0A1628"/><stop offset="1" stop-color="#050A13"/>
+    </radialGradient>
+    <linearGradient id="outer" x1="10" y1="51" x2="54" y2="13" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#64D2FF"/><stop offset=".48" stop-color="#0A84FF"/><stop offset="1" stop-color="#BF5AF2"/>
+    </linearGradient>
+    <linearGradient id="inner" x1="20" y1="45" x2="45" y2="19" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#64D2FF"/><stop offset="1" stop-color="#5E5CE6"/>
+    </linearGradient>
+    <radialGradient id="listener">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset=".7" stop-color="#D9F5FF"/><stop offset="1" stop-color="#64D2FF"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="720" fill="#F2F2F7"/>
+  <rect x="600" width="600" height="720" fill="#101114"/>
+  <text x="64" y="72" fill="#101828" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="30" font-weight="600">Upmixer Pro</text>
+  <text x="64" y="104" fill="#667085" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="14" letter-spacing="2.5">SOUNDFIELD · APPLE PRO ROUTE</text>
+  <text x="664" y="72" fill="#FFFFFF" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="30" font-weight="600">Build the soundfield.</text>
+  <text x="664" y="104" fill="#98989E" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="14">A professional environment for immersive audio.</text>
+
+  <g transform="translate(140 160) scale(5)">
+    <rect width="64" height="64" rx="14" fill="url(#field)"/>
+    <circle cx="32" cy="32" r="23" fill="none" stroke="url(#outer)" stroke-opacity=".18" stroke-width="7"/>
+    <g fill="none" stroke="url(#outer)" stroke-width="3.25" stroke-linecap="round">
+      <path d="M32 9a23 23 0 0 1 23 23"/><path d="M55 32a23 23 0 0 1-23 23"/>
+      <path d="M32 55A23 23 0 0 1 9 32"/><path d="M9 32A23 23 0 0 1 32 9"/>
+    </g>
+    <circle cx="32" cy="32" r="13" fill="none" stroke="url(#inner)" stroke-opacity=".16" stroke-width="7"/>
+    <path d="M32 19a13 13 0 1 1-9.2 3.8" fill="none" stroke="url(#inner)" stroke-width="3.5" stroke-linecap="round"/>
+    <g>
+      <circle cx="32" cy="9" r="2.6" fill="#BF5AF2"/><circle cx="48.3" cy="15.7" r="2.6" fill="#8E6CFA"/>
+      <circle cx="55" cy="32" r="2.6" fill="#4F9DFF"/><circle cx="48.3" cy="48.3" r="2.6" fill="#2FB6FF"/>
+      <circle cx="32" cy="55" r="2.6" fill="#64D2FF"/><circle cx="15.7" cy="48.3" r="2.6" fill="#64D2FF"/>
+      <circle cx="9" cy="32" r="2.6" fill="#40B7FF"/><circle cx="15.7" cy="15.7" r="2.6" fill="#5B94FF"/>
+      <circle cx="32" cy="32" r="5" fill="#64D2FF" opacity=".16"/><circle cx="32" cy="32" r="3.5" fill="url(#listener)"/>
+    </g>
+  </g>
+
+  <g transform="translate(664 168)">
+    <g transform="scale(2)">
+      <rect width="64" height="64" rx="14" fill="url(#field)"/>
+      <circle cx="32" cy="32" r="23" fill="none" stroke="url(#outer)" stroke-opacity=".18" stroke-width="7"/>
+      <g fill="none" stroke="url(#outer)" stroke-width="3.25" stroke-linecap="round">
+        <path d="M32 9a23 23 0 0 1 23 23"/><path d="M55 32a23 23 0 0 1-23 23"/>
+        <path d="M32 55A23 23 0 0 1 9 32"/><path d="M9 32A23 23 0 0 1 32 9"/>
+      </g>
+      <path d="M32 19a13 13 0 1 1-9.2 3.8" fill="none" stroke="url(#inner)" stroke-width="3.5" stroke-linecap="round"/>
+      <g>
+        <circle cx="32" cy="9" r="2.6" fill="#BF5AF2"/><circle cx="48.3" cy="15.7" r="2.6" fill="#8E6CFA"/>
+        <circle cx="55" cy="32" r="2.6" fill="#4F9DFF"/><circle cx="48.3" cy="48.3" r="2.6" fill="#2FB6FF"/>
+        <circle cx="32" cy="55" r="2.6" fill="#64D2FF"/><circle cx="15.7" cy="48.3" r="2.6" fill="#64D2FF"/>
+        <circle cx="9" cy="32" r="2.6" fill="#40B7FF"/><circle cx="15.7" cy="15.7" r="2.6" fill="#5B94FF"/>
+        <circle cx="32" cy="32" r="3.5" fill="url(#listener)"/>
+      </g>
+    </g>
+    <text x="160" y="54" fill="#FFFFFF" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="35" font-weight="500" letter-spacing="1">UPMIXER</text>
+    <text x="162" y="84" fill="#98989E" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="15" font-weight="600" letter-spacing="4">PRO</text>
+  </g>
+
+  <g transform="translate(664 358)">
+    <text x="0" y="0" fill="#98989E" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="12" font-weight="600" letter-spacing="2">APP SCALE</text>
+    <g transform="translate(0 28)">
+      <rect width="64" height="64" rx="14" fill="url(#field)"/>
+      <circle cx="32" cy="32" r="23" fill="none" stroke="url(#outer)" stroke-width="3.25"/>
+      <circle cx="32" cy="32" r="13" fill="none" stroke="url(#inner)" stroke-width="3.5"/>
+      <circle cx="32" cy="32" r="3.5" fill="url(#listener)"/>
+    </g>
+    <g transform="translate(96 46) scale(.44)">
+      <rect width="64" height="64" rx="14" fill="url(#field)"/>
+      <circle cx="32" cy="32" r="23" fill="none" stroke="url(#outer)" stroke-width="4"/>
+      <circle cx="32" cy="32" r="13" fill="none" stroke="url(#inner)" stroke-width="4"/>
+      <circle cx="32" cy="32" r="4" fill="url(#listener)"/>
+    </g>
+    <text x="0" y="115" fill="#98989E" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="12">64 px</text>
+    <text x="96" y="115" fill="#98989E" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="12">28 px</text>
+  </g>
+
+  <g transform="translate(64 558)">
+    <text x="0" y="0" fill="#667085" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="12" font-weight="600" letter-spacing="2">IDENTITY PALETTE</text>
+    <g transform="translate(0 28)">
+      <rect width="92" height="52" rx="10" fill="#050A13"/><rect x="108" width="92" height="52" rx="10" fill="#0A84FF"/>
+      <rect x="216" width="92" height="52" rx="10" fill="#64D2FF"/><rect x="324" width="92" height="52" rx="10" fill="#BF5AF2"/>
+      <text x="0" y="76" fill="#667085" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="11">Instrument</text>
+      <text x="108" y="76" fill="#667085" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="11">Spatial</text>
+      <text x="216" y="76" fill="#667085" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="11">Monitor</text>
+      <text x="324" y="76" fill="#667085" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="11">Height</text>
+    </g>
+  </g>
+
+  <g transform="translate(664 558)">
+    <text x="0" y="0" fill="#98989E" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="12" font-weight="600" letter-spacing="2">BRAND SIGNALS</text>
+    <text x="0" y="40" fill="#FFFFFF" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="17">Precision · depth · confidence · delivery</text>
+    <text x="0" y="75" fill="#98989E" font-family="Avenir Next, Helvetica Neue, Arial, sans-serif" font-size="13">
+      <tspan x="0" dy="0">Dark like an instrument. Colourful like a creative tool.</tspan>
+      <tspan x="0" dy="22">Controlled enough for standards-oriented work.</tspan>
+    </text>
+  </g>
+</svg>

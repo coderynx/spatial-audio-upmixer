@@ -75,9 +75,6 @@ function TransportImpl({
   onToggleLoop,
   onSetVolume,
   onToggleMute,
-  onBeginScrub,
-  onScrubTo,
-  onCommitScrub,
   children,
 }: {
   playing: boolean;
@@ -93,9 +90,6 @@ function TransportImpl({
   onToggleLoop: () => void;
   onSetVolume: (value: number) => void;
   onToggleMute: () => void;
-  onBeginScrub: () => void;
-  onScrubTo: (value: number) => void;
-  onCommitScrub: (value: number) => void;
   // Extra controls (e.g. the output-mode picker) rendered in the same card,
   // after the volume control, so the whole row shares the card's full width.
   children?: React.ReactNode;
@@ -154,19 +148,11 @@ function TransportImpl({
         </Button>
       </div>
       <LcdDisplay currentTime={displayTime} duration={duration} mode={mode} onToggleMode={() => setMode((current) => (current === "elapsed" ? "remaining" : "elapsed"))} />
-      <input
-        aria-label="Preview position"
-        className={cn("h-1 min-w-0 flex-1 accent-primary", disabled && "opacity-40")}
-        type="range"
-        min={0}
-        max={Math.max(duration, 0)}
-        step={0.01}
-        disabled={disabled}
-        value={Math.min(displayTime, duration || 0)}
-        onPointerDown={onBeginScrub}
-        onPointerUp={(event) => onCommitScrub(Number(event.currentTarget.value))}
-        onChange={(event) => onScrubTo(Number(event.target.value))}
-      />
+      {/* No seek bar here: the timeline pane's playhead is the transport
+          position control, and two scrub surfaces for one value is exactly
+          the duplication the design spec's "one control per idea" rule
+          rejects. */}
+      <div className="min-w-0 flex-1" />
       <div className="flex shrink-0 items-center gap-1.5">
         <Button
           variant="ghost"
