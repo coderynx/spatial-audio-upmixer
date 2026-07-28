@@ -406,7 +406,7 @@ describe("output-path hearing safety", () => {
     expect(lastContext().waveShapers.length).toBe(2);
   });
 
-  it("routes native output mode to ctx.destination through the native soft-limiter", async () => {
+  it("routes native output mode to ctx.destination through the native soft-limiter and its monitor gain", async () => {
     installAudio();
     render(<Harness layoutChannels={["FL", "FR"]} outputMode="native" />);
     await act(async () => { await preview.playPause(); });
@@ -415,7 +415,13 @@ describe("output-path hearing safety", () => {
     // Creation order in `initialize()`: nativeSoftLimitNode (native bus) is
     // built before softLimitNode (stereo/binaural bus), so it's first.
     const nativeLimiter = ctx.waveShapers[0];
-    expect(nativeLimiter.connections).toContain(ctx.destination);
+    // The limiter feeds `nativeMonitorGain` (the Transport volume/mute
+    // stage, strictly downstream of the safety limiter — see
+    // useStemPreview.ts's PROGRAM/MONITOR split), which is what actually
+    // reaches destination, not the limiter directly.
+    const nativeMonitorGainNode = nativeLimiter.connections.find((node) => node instanceof FakeGain);
+    expect(nativeMonitorGainNode).toBeDefined();
+    expect(nativeMonitorGainNode?.connections).toContain(ctx.destination);
   });
 
   it("ramps volume/mute changes instead of snapping the gain, so a change never reaches headphones as a step", async () => {

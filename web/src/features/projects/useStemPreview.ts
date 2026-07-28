@@ -37,6 +37,7 @@ import {
   loadCachedRefMatchBuffers,
   type MasterPreview,
 } from "./previewGraph";
+import { faderPositionToGain } from "@/lib/fader";
 
 export type { SpatialProfile } from "./masteringProfiles";
 
@@ -155,6 +156,15 @@ type AudioNodeSet = {
 };
 
 type Timeline = { offset: number; contextTime: number };
+
+// One channel/headphone meter reading: `rms` is the smoothed level the bar
+// fill tracks, `peak` is the raw instantaneous sample peak of the most
+// recent analyser read (ChannelMeters holds/decays this itself — see its
+// `updatePeak`), and `clipped` latches true the first time `peak` reaches
+// 0dBFS and stays true until the next `stopSources()` (play/stop/seek).
+export type MeterLevel = { rms: number; peak: number; clipped: boolean };
+
+const SILENT_METER_LEVEL: MeterLevel = { rms: 0, peak: 0, clipped: false };
 
 type MixPreview = {
   stem_routing?: Record<string, Record<string, number>>;
@@ -276,6 +286,24 @@ function loudnessGainFor(measuredLkfs: number, targetLkfs: number, maxGainDb: nu
   return 10 ** (gainDb / 20);
 }
 
+// A sample must clear unity by a real margin, not merely reach or nudge
+// past it, to count as a clip. `buildSoftLimitCurve`'s threshold+margin
+// sums to exactly 1.0 (its designed asymptote — see masteringProfiles.ts),
+// so any moderately hot transient saturates the limiter's tanh curve close
+// enough to 1.0 that float32 rounds the sample to bit-exact 1.0 (the
+// limiter doing its job at its own ceiling, not an over). Separately, the
+// live WaveShaperNode's `oversample: "4x"` reconstruction filter measurably
+// rings past the curve's own bound at that same knee — observed peaks of
+// ~1.005-1.006 (~+0.04-0.05dB) on ordinary loud passages, a well-known
+// WaveShaperNode oversampling artifact, not audible content. `CLIP_TOLERANCE`
+// gives ~8x headroom over that observed ripple while still catching a
+// genuine over (something actually bypassing the limiter, off by much more
+// than a hundredth of a dB).
+const CLIP_TOLERANCE = 10 ** (0.5 / 20); // +0.5dB
+function isClippedPeak(peak: number): boolean {
+  return peak > CLIP_TOLERANCE;
+}
+
 /** Second-stage gain reduction mirroring `normalize_loudness`'s
  * `max_tp_dbtp` correction (`upmixer/loudness.py`): given the gain
  * `loudnessGainFor` above already computed, reduce it further if applying
@@ -328,8 +356,23 @@ export function useStemPreview(
   const positionalChannelsRef = React.useRef(positionalChannels);
   positionalChannelsRef.current = positionalChannels;
   const context = React.useRef<AudioContext | null>(null);
+  // PROGRAM domain: what a bounce of this graph would contain. `master`
+  // carries only `tpSafeGain` (the true-peak-safe loudness correction) —
+  // never the user's monitor volume. See `monitorGain` below for the split
+  // and `apply()` for where each is set.
   const master = React.useRef<GainNode | null>(null);
   const softLimit = React.useRef<WaveShaperNode | null>(null);
+  // MONITOR domain: the user's Transport volume/mute, applied strictly
+  // after `softLimit`. Placing it after the limiter (not folded into
+  // `master` the way it used to be) means raising the slider can never
+  // drive the limiter harder or change its engagement — it only changes
+  // what reaches the speakers/headphones, exactly like an interface's
+  // monitor knob sitting downstream of a DAW's program fader (see the
+  // "Master Fader is Not for Monitor Control" rationale linked from the
+  // plan this implements). The channel/headphone meter taps sit on
+  // `softLimit`'s output, upstream of this node, so the meters never move
+  // with the volume slider either.
+  const monitorGain = React.useRef<GainNode | null>(null);
   // The ambisonic rendering core: every positional speaker's encoder feeds
   // `hoaBus` (a plain summing gain, explicit/discrete at 16 channels so
   // multiple encoders' 16-channel outputs add channel-for-channel), which
@@ -416,11 +459,20 @@ export function useStemPreview(
   const nativeMerger = React.useRef<ChannelMergerNode | null>(null);
   const binauralGate = React.useRef<GainNode | null>(null);
   const stereoGate = React.useRef<GainNode | null>(null);
+  // PROGRAM domain, native path — kept at unity by `apply()` (native has no
+  // loudness correction of its own to apply, see that function), same role
+  // as `master` above.
   const nativeOutputGain = React.useRef<GainNode | null>(null);
   // Safety ceiling on the native discrete path, mirroring `softLimit` on the
   // binaural/stereo paths — native otherwise bypasses `master`/`softLimit`
   // entirely and would reach `ctx.destination` with no limiting at all.
   const nativeSoftLimit = React.useRef<WaveShaperNode | null>(null);
+  // MONITOR domain, native path — mirrors `monitorGain` above. Explicit
+  // channelCount/channelCountMode/channelInterpretation (set at creation,
+  // see `initialize()`) because a bare GainNode defaults to "max"/"speakers"
+  // and would fold the discrete N-channel native bus down to stereo; this
+  // node must pass every channel through untouched.
+  const nativeMonitorGain = React.useRef<GainNode | null>(null);
   const nativeChannelCount = React.useRef(0);
   const [maxChannels, setMaxChannels] = React.useState(2);
   const [outputDevices, setOutputDevices] = React.useState<MediaDeviceInfo[]>([]);
@@ -489,11 +541,20 @@ export function useStemPreview(
   // the Haze view's radial "inner = bass, outer = treble" axis.
   const stemSpectrum = React.useRef<Map<string, { level: number; centroid: number }>>(new Map());
   // Live per-channel meter levels (speaker code, incl. "LFE" -> smoothed
-  // 0..1 RMS) and the headphone L/R levels of the final binaural output.
-  // Refs, not state — updated every animation frame from `tick()`; the
-  // meter component reads these in its own rAF loop, same as `stemSpectrum`.
-  const channelLevels = React.useRef<Map<string, number>>(new Map());
-  const headphoneLevels = React.useRef<{ left: number; right: number }>({ left: 0, right: 0 });
+  // RMS/peak/clip) and the headphone L/R levels of the final binaural
+  // output. Refs, not state — updated every animation frame from `tick()`;
+  // the meter component reads these in its own rAF loop, same as
+  // `stemSpectrum`.
+  const channelLevels = React.useRef<Map<string, MeterLevel>>(new Map());
+  const headphoneLevels = React.useRef<{ left: MeterLevel; right: MeterLevel }>({
+    left: SILENT_METER_LEVEL,
+    right: SILENT_METER_LEVEL,
+  });
+  // Float time-domain scratch buffer for `measureAnalyser` (channel/
+  // headphone meters) — separate from `timeDomainBuffer` below, which stays
+  // 8-bit for the Haze view's per-stem `measureLevels` (cheaper, and its
+  // display glow doesn't need real dBFS resolution).
+  const channelTimeDomainBuffer = React.useRef<Float32Array | null>(null);
   const appliedGain = React.useRef<Map<string, number>>(new Map());
   const timeDomainBuffer = React.useRef<Uint8Array | null>(null);
   const frequencyBuffer = React.useRef<Uint8Array | null>(null);
@@ -509,7 +570,11 @@ export function useStemPreview(
   const [playing, setPlaying] = React.useState(false);
   const [currentTime, setCurrentTime] = React.useState(0);
   const [duration, setDuration] = React.useState(0);
-  const [volume, setVolume] = React.useState(0.8);
+  // Default to unity (fader position 1.0): with the PROGRAM/MONITOR split
+  // above, unity means "hear the render exactly as it would export" — see
+  // `faderPositionToGain` in lib/fader.ts. There is no headroom above it to
+  // give up by defaulting lower.
+  const [volume, setVolume] = React.useState(1);
   // Master mute — independent of `volume` so unmuting restores the exact
   // prior level instead of whatever a slider drag left it at.
   const [muted, setMuted] = React.useState(false);
@@ -581,10 +646,11 @@ export function useStemPreview(
     // down, but the smoothed level refs they feed (see `measureChannelLevels`)
     // don't decay on their own without a running tick — clear them here so
     // the meters drop to zero on pause/stop instead of freezing at the last
-    // sample. Peak-hold markers are a separate ref owned by ChannelMeters and
-    // still decay normally.
+    // sample, and so each play/stop/seek resets the latched clip indicator.
+    // Peak-hold markers are a separate ref owned by ChannelMeters and still
+    // decay normally.
     channelLevels.current.clear();
-    headphoneLevels.current = { left: 0, right: 0 };
+    headphoneLevels.current = { left: SILENT_METER_LEVEL, right: SILENT_METER_LEVEL };
   }, []);
 
   // Schedules every stem/anchor buffer source to start at `target`, shared by
@@ -660,36 +726,67 @@ export function useStemPreview(
 
   // Bus-tap RMS is unscaled by any applied gain (unlike `measureLevels`, the
   // stem path), so smooth it directly to keep meter bars from flickering.
-  const rmsFromAnalyser = React.useCallback((analyser: AnalyserNode) => {
+  // Reads float time-domain data (not the 8-bit `getByteTimeDomainData`
+  // `measureLevels` above uses for the Haze view — that quantization floor
+  // sits around -48dBFS per sample, fine for a glow, not for a level meter
+  // that needs to report a genuine clip), with no display-scale fudge, so
+  // both `rms` and the raw instantaneous sample `peak` are true 0..1
+  // amplitude fractions. ChannelMeters converts to dB and holds/decays the
+  // peak itself (see its `updatePeak`).
+  const measureAnalyser = React.useCallback((analyser: AnalyserNode): { rms: number; peak: number } => {
     const size = analyser.fftSize;
-    if (!timeDomainBuffer.current || timeDomainBuffer.current.length !== size) {
-      timeDomainBuffer.current = new Uint8Array(size);
+    if (!channelTimeDomainBuffer.current || channelTimeDomainBuffer.current.length !== size) {
+      channelTimeDomainBuffer.current = new Float32Array(size);
     }
-    analyser.getByteTimeDomainData(timeDomainBuffer.current);
+    const buf = channelTimeDomainBuffer.current;
+    analyser.getFloatTimeDomainData(buf);
     let sumSquares = 0;
+    let peak = 0;
     for (let i = 0; i < size; i++) {
-      const deviation = (timeDomainBuffer.current[i] - 128) / 128;
-      sumSquares += deviation * deviation;
+      const sample = buf[i];
+      sumSquares += sample * sample;
+      const abs = Math.abs(sample);
+      if (abs > peak) peak = abs;
     }
-    return Math.min(1, Math.sqrt(sumSquares / size) * 2.5);
+    return { rms: Math.sqrt(sumSquares / size), peak };
   }, []);
 
   const measureChannelLevels = React.useCallback(() => {
     channelAnalysers.current.forEach((analyser, channel) => {
-      const rms = rmsFromAnalyser(analyser);
-      const previous = channelLevels.current.get(channel) ?? 0;
-      channelLevels.current.set(channel, previous * 0.7 + rms * 0.3);
+      const { rms, peak } = measureAnalyser(analyser);
+      const previous = channelLevels.current.get(channel);
+      channelLevels.current.set(channel, {
+        rms: (previous?.rms ?? 0) * 0.7 + rms * 0.3,
+        peak,
+        // Never latched here: this tap is `masterOut`, pre-binaural-render
+        // and upstream of `softLimit` entirely (see `channelAnalysers`'
+        // declaration). A post-mastering channel legitimately exceeding
+        // 1.0 pre-render is ordinary headroom use — EQ boost, compressor
+        // makeup gain, bass shelf — exactly what the downstream limiter
+        // exists to catch. "Clipped" is only meaningful at the true final-
+        // output tap (`headphoneLevels`, post-`softLimit`) below.
+        clipped: false,
+      });
     });
     const headphones = headphoneAnalysers.current;
     if (headphones) {
-      const left = rmsFromAnalyser(headphones.left);
-      const right = rmsFromAnalyser(headphones.right);
+      const left = measureAnalyser(headphones.left);
+      const right = measureAnalyser(headphones.right);
+      const previous = headphoneLevels.current;
       headphoneLevels.current = {
-        left: headphoneLevels.current.left * 0.7 + left * 0.3,
-        right: headphoneLevels.current.right * 0.7 + right * 0.3,
+        left: {
+          rms: previous.left.rms * 0.7 + left.rms * 0.3,
+          peak: left.peak,
+          clipped: previous.left.clipped || isClippedPeak(left.peak),
+        },
+        right: {
+          rms: previous.right.rms * 0.7 + right.rms * 0.3,
+          peak: right.peak,
+          clipped: previous.right.clipped || isClippedPeak(right.peak),
+        },
       };
     }
-  }, [rmsFromAnalyser]);
+  }, [measureAnalyser]);
 
   // Applies the shared bus-compressor's live gain reduction to every
   // channel's `compGain` node — see `buildMasteringTopology`'s comment on
@@ -815,7 +912,7 @@ export function useStemPreview(
       headphoneAnalysers.current.right.disconnect();
       headphoneAnalysers.current = null;
     }
-    headphoneLevels.current = { left: 0, right: 0 };
+    headphoneLevels.current = { left: SILENT_METER_LEVEL, right: SILENT_METER_LEVEL };
     stereoMerger.current?.disconnect();
     stereoMerger.current = null;
     nativeMerger.current?.disconnect();
@@ -828,6 +925,8 @@ export function useStemPreview(
     nativeOutputGain.current = null;
     nativeSoftLimit.current?.disconnect();
     nativeSoftLimit.current = null;
+    nativeMonitorGain.current?.disconnect();
+    nativeMonitorGain.current = null;
     nativeChannelCount.current = 0;
     hoaBus.current?.disconnect();
     hoaBus.current = null;
@@ -867,6 +966,8 @@ export function useStemPreview(
     loudnessMeasureBuf.current = null;
     softLimit.current?.disconnect();
     softLimit.current = null;
+    monitorGain.current?.disconnect();
+    monitorGain.current = null;
     master.current?.disconnect();
     master.current = null;
     timeline.current = null;
@@ -1058,12 +1159,13 @@ export function useStemPreview(
     const ctx = context.current;
     if (!ctx) return;
     const destination = ctx.destination;
-    // Route from the soft-limiter, not the raw volume gain node — the
-    // limiter runs after the loudness/volume gain on both paths (see
-    // buildMasteringTopology and nativeSoftLimitNode above), so it is the
-    // actual last stage before headphones/speakers on either one.
-    const stereoOut = softLimit.current;
-    const nativeOut = nativeSoftLimit.current;
+    // Route from the monitor-gain node, not the soft-limiter directly — the
+    // monitor node runs after the limiter on both paths (see `monitorGain`/
+    // `nativeMonitorGain`'s declarations), so it is the actual last stage
+    // before headphones/speakers on either one, and is where the user's
+    // Transport volume/mute lives.
+    const stereoOut = monitorGain.current;
+    const nativeOut = nativeMonitorGain.current;
     try { stereoOut?.disconnect(destination); } catch { /* not connected */ }
     try { nativeOut?.disconnect(destination); } catch { /* not connected */ }
     const nCh = nativeChannelCount.current;
@@ -1179,24 +1281,33 @@ export function useStemPreview(
     const tpSafeGain = normalize
       ? applyTruePeakCeiling(preGainTpDbtp.current, loudnessGain, maxTpDbtp)
       : loudnessGain;
-    const effectiveVolume = muted ? 0 : volume;
+    // PROGRAM domain — what a bounce of this graph would contain. Carries
+    // only the loudness/true-peak correction, never the user's monitor
+    // volume (see `master`'s declaration) — so it stays live even during the
+    // warm-up (see `monitorGain` below for where silencing actually
+    // happens), and the fallback fires only when `ctx` itself is absent.
     if (master.current) {
-      // Warmup silence must land instantly — a ramped mute would leak a
-      // sliver of pre-correction level through the glide. The audible
-      // (post-warmup) branch ramps to avoid a click/startle on every
-      // volume/mute/loudness change.
-      if (warmupMuted.current) master.current.gain.value = 0;
-      else if (ctx) rampGainTo(master.current.gain, effectiveVolume * tpSafeGain, ctx);
-      else master.current.gain.value = effectiveVolume * tpSafeGain;
+      if (ctx) rampGainTo(master.current.gain, tpSafeGain, ctx);
+      else master.current.gain.value = tpSafeGain;
     }
-    // Native bypasses the stereo mastering chain (no loudness-normalize gain
-    // to apply there), but the Transport volume slider and mute should still work.
-    // Still forced silent during the warm-up, same as `master`, since native
-    // reaches `ctx.destination` on its own path instead of through `master`.
+    // Native bypasses the stereo mastering chain, so it has no
+    // loudness-normalize gain of its own to apply — stays at unity.
     if (nativeOutputGain.current) {
-      if (warmupMuted.current) nativeOutputGain.current.gain.value = 0;
-      else if (ctx) rampGainTo(nativeOutputGain.current.gain, effectiveVolume, ctx);
-      else nativeOutputGain.current.gain.value = effectiveVolume;
+      if (ctx) rampGainTo(nativeOutputGain.current.gain, 1, ctx);
+      else nativeOutputGain.current.gain.value = 1;
+    }
+    // MONITOR domain — strictly downstream of the soft limiter and the
+    // channel/headphone meter taps (see `monitorGain`'s declaration), so
+    // this is the only gain the volume slider and mute drive, and it can
+    // never feed back into the limiter's engagement or the meters' reading.
+    // Warmup silence must land instantly here — a ramped mute would leak a
+    // sliver of pre-correction level through the glide.
+    const monitorTarget = muted ? 0 : faderPositionToGain(volume);
+    for (const node of [monitorGain.current, nativeMonitorGain.current]) {
+      if (!node) continue;
+      if (warmupMuted.current) node.gain.value = 0;
+      else if (ctx) rampGainTo(node.gain, monitorTarget, ctx);
+      else node.gain.value = monitorTarget;
     }
     const anchor = mix?.stem_source_anchor_strength || 0;
     const source = nodes.current.get("__source_anchor__");
@@ -1333,6 +1444,14 @@ export function useStemPreview(
     nativeSoftLimitNode.curve = buildSoftLimitCurve();
     nativeSoftLimitNode.oversample = "4x";
     nativeOutputGainNode.connect(nativeSoftLimitNode);
+    // MONITOR domain, native path — see `nativeMonitorGain`'s declaration.
+    // Explicit discrete channelCount so this node passes every layout
+    // channel straight through instead of folding to the default stereo.
+    const nativeMonitorGainNode = ctx.createGain();
+    nativeMonitorGainNode.channelCount = Math.max(1, layoutChannelList.length);
+    nativeMonitorGainNode.channelCountMode = "explicit";
+    nativeMonitorGainNode.channelInterpretation = "discrete";
+    nativeSoftLimitNode.connect(nativeMonitorGainNode);
 
     const busesMap = new Map<string, SpeakerBus>();
     const channelAnalysersMap = new Map<string, AnalyserNode>();
@@ -1381,10 +1500,15 @@ export function useStemPreview(
       if (nativeIndex >= 0) masterOut.connect(nativeMergerNode, 0, nativeIndex);
 
       busesMap.set(channel, { muteGain, masterIn, masterOut, encoder, stereoSend, nativeIndex });
-      // No output connection — a pure meter tap, cannot affect the audible signal.
+      // No output connection — a pure meter tap, cannot affect the audible
+      // signal. 2048 samples (42.7ms @ 48kHz) comfortably exceeds the
+      // ~16.7ms rAF interval `measureChannelLevels` polls at, so no sample
+      // window is ever skipped between reads — the old 256-sample window
+      // (5.3ms) left roughly two thirds of every frame's audio unseen.
+      // `smoothingTimeConstant` only affects frequency-domain reads, so it's
+      // left at its default rather than set for a time-domain tap.
       const channelAnalyser = ctx.createAnalyser();
-      channelAnalyser.fftSize = 256;
-      channelAnalyser.smoothingTimeConstant = 0.7;
+      channelAnalyser.fftSize = 2048;
       masterOut.connect(channelAnalyser);
       channelAnalysersMap.set(channel, channelAnalyser);
     }
@@ -1398,6 +1522,12 @@ export function useStemPreview(
     const softLimitNode = ctx.createWaveShaper();
     softLimitNode.curve = buildSoftLimitCurve();
     softLimitNode.oversample = "4x";
+    // MONITOR domain — see `monitorGain`'s declaration. Deliberately after
+    // `softLimitNode`, not before: the channel/headphone meter taps below
+    // read `softLimitNode`'s output, so this node's gain (the Transport
+    // volume slider) can never move the meters or change how hard the
+    // limiter engages.
+    const monitorGainNode = ctx.createGain();
     const output = ctx.createGain();
     const lfeMuteGainNode = ctx.createGain();
     lfeMuteGainNode.gain.value = speakerEnabled.LFE === false ? 0 : 1;
@@ -1421,23 +1551,25 @@ export function useStemPreview(
     const lfeNativeIndex = layoutChannelList.indexOf("LFE");
     if (lfeNativeIndex >= 0) lfeMuteGainNode.connect(nativeMergerNode, 0, lfeNativeIndex);
     const lfeAnalyser = ctx.createAnalyser();
-    lfeAnalyser.fftSize = 256;
-    lfeAnalyser.smoothingTimeConstant = 0.7;
+    lfeAnalyser.fftSize = 2048;
     lfeMuteGainNode.connect(lfeAnalyser);
     channelAnalysersMap.set("LFE", lfeAnalyser);
 
     // Headphone L/R tap: splits the final output (post soft-limit, the exact
-    // signal reaching headphones) into two mono analysers.
+    // signal reaching headphones) into two mono analysers. Same 2048-sample
+    // window as the channel taps above — see that comment.
     const headphoneSplitter = ctx.createChannelSplitter(2);
     const headphoneLeftAnalyser = ctx.createAnalyser();
     const headphoneRightAnalyser = ctx.createAnalyser();
-    headphoneLeftAnalyser.fftSize = 256;
-    headphoneLeftAnalyser.smoothingTimeConstant = 0.7;
-    headphoneRightAnalyser.fftSize = 256;
-    headphoneRightAnalyser.smoothingTimeConstant = 0.7;
+    headphoneLeftAnalyser.fftSize = 2048;
+    headphoneRightAnalyser.fftSize = 2048;
+    // Tap `softLimitNode` directly (not `monitorGainNode`) — this is the
+    // channel meters' sibling tap and must stay pre-monitor for the same
+    // reason they do (see `monitorGainNode`'s declaration comment).
     softLimitNode.connect(headphoneSplitter);
     headphoneSplitter.connect(headphoneLeftAnalyser, 0);
     headphoneSplitter.connect(headphoneRightAnalyser, 1);
+    softLimitNode.connect(monitorGainNode);
 
     hoaBus.current = binaural.hoaBus;
     lfeMuteGain.current = lfeMuteGainNode;
@@ -1459,12 +1591,14 @@ export function useStemPreview(
     loudnessMeasureBuf.current = new Float32Array(mergePointAnalyserNode.fftSize);
     softLimit.current = softLimitNode;
     master.current = output;
+    monitorGain.current = monitorGainNode;
     stereoMerger.current = stereoMergerNode;
     nativeMerger.current = nativeMergerNode;
     binauralGate.current = binauralGateNode;
     stereoGate.current = stereoGateNode;
     nativeOutputGain.current = nativeOutputGainNode;
     nativeSoftLimit.current = nativeSoftLimitNode;
+    nativeMonitorGain.current = nativeMonitorGainNode;
     nativeChannelCount.current = layoutChannelList.length;
     setMaxChannels(ctx.destination.maxChannelCount || 2);
     buildMasteringTopology();
@@ -1599,8 +1733,13 @@ export function useStemPreview(
   const runLoudnessWarmup = React.useCallback((target: number) => {
     return new Promise<void>((resolve) => {
       warmupMuted.current = true;
-      if (master.current) master.current.gain.value = 0;
-      if (nativeOutputGain.current) nativeOutputGain.current.gain.value = 0;
+      // Silences the MONITOR nodes, not `master`/`nativeOutputGain` — those
+      // now carry only the PROGRAM-domain loudness correction and are
+      // allowed to keep updating (to unity, then to the real measured gain
+      // once it lands) while the monitor stays hard-muted downstream. See
+      // `monitorGain`'s declaration and `apply()`'s MONITOR domain block.
+      if (monitorGain.current) monitorGain.current.gain.value = 0;
+      if (nativeMonitorGain.current) nativeMonitorGain.current.gain.value = 0;
       setMeasuring(true);
       startSourcesAt(target);
       let frame = 0;

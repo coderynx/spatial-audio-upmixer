@@ -1,6 +1,7 @@
 import * as React from "react";
 import { Pause, Play, Repeat, Square, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { formatFaderDb } from "@/lib/fader";
 import { cn } from "@/lib/utils";
 
 function digits(seconds: number) {
@@ -138,7 +139,8 @@ function TransportImpl({
           {muted ? <VolumeX className="text-destructive" /> : <Volume2 />}
         </Button>
         <input
-          aria-label="Preview volume"
+          aria-label="Preview monitor volume"
+          aria-valuetext={formatFaderDb(volume)}
           className="h-1 w-20 accent-primary"
           type="range"
           min={0}
@@ -147,6 +149,12 @@ function TransportImpl({
           value={volume}
           onChange={(event) => onSetVolume(Number(event.target.value))}
         />
+        {/* dB-tapered monitor gain readout (lib/fader.ts) — unity (0.0 dB) at
+            max is the render itself; there is no gain above it to give up
+            reading. See useStemPreview.ts's PROGRAM/MONITOR gain split. */}
+        <span className="w-14 shrink-0 text-right text-[11px] font-medium tabular-nums text-muted-foreground" aria-hidden="true">
+          {formatFaderDb(volume)}
+        </span>
       </div>
       {children}
     </div>
