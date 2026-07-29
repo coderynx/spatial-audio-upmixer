@@ -5,11 +5,11 @@ import { cn } from "@/lib/utils";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import type { OutputMode } from "./useStemPreview";
 
-const MODE_OPTIONS: { value: OutputMode; label: string; hint: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { value: "binaural", label: "Binaural", hint: "Immersive spatial sound for headphone listening.", icon: Headphones },
-  { value: "transaural", label: "Transaural", hint: "Immersive spatial sound for a stereo speaker pair.", icon: Speaker },
-  { value: "native", label: "Native", hint: "Discrete channels of the selected layout, sent to a system output device.", icon: Grid3x3 },
-  { value: "stereo", label: "Stereo mixdown", hint: "Downmix of the channel bed for two speakers.", icon: Waves },
+const MODE_OPTIONS: { value: OutputMode; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { value: "binaural", label: "Binaural", icon: Headphones },
+  { value: "transaural", label: "Transaural", icon: Speaker },
+  { value: "native", label: "Native", icon: Grid3x3 },
+  { value: "stereo", label: "Stereo mixdown", icon: Waves },
 ];
 
 // Rows that carry a profile submenu, keyed by their MODE_OPTIONS value.
@@ -23,19 +23,19 @@ const GROUP_2_INDEX = MODE_OPTIONS.findIndex((option) => !SUBMENU_MODES.has(opti
 // Studio/Listening/Flat picker for the Spatial Audio Engine binaural render
 // (docs/standards/spatial_audio_engine.md), embedded as a submenu off the
 // binaural row below rather than a separate button.
-const PROFILE_OPTIONS: { value: SpatialProfile; label: string; hint: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { value: "studio", label: "Studio", hint: "Clean, balanced, true to the mix", icon: Building2 },
-  { value: "listening", label: "Listening", hint: "Warm, cinematic living-room feel", icon: Sofa },
-  { value: "flat", label: "Flat", hint: "Pure, uncolored reference sound", icon: Headphones },
+const PROFILE_OPTIONS: { value: SpatialProfile; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { value: "studio", label: "Studio", icon: Building2 },
+  { value: "listening", label: "Listening", icon: Sofa },
+  { value: "flat", label: "Flat", icon: Headphones },
 ];
 
 // Stereo/Smart speaker/Car picker for the crosstalk-cancellation (transaural)
 // render (docs/standards/transaural_speakers.md), same submenu pattern as
 // PROFILE_OPTIONS above, off the transaural row.
-const TRANSAURAL_PROFILE_OPTIONS: { value: TransauralProfile; label: string; hint: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { value: "stereo", label: "Stereo", hint: "For a standard pair of speakers", icon: Speaker },
-  { value: "smart_speaker", label: "Smart speaker", hint: "For compact, all-in-one speakers", icon: Radio },
-  { value: "car", label: "Car", hint: "Tuned for in-car listening", icon: Car },
+const TRANSAURAL_PROFILE_OPTIONS: { value: TransauralProfile; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { value: "stereo", label: "Stereo", icon: Speaker },
+  { value: "smart_speaker", label: "Smart speaker", icon: Radio },
+  { value: "car", label: "Car", icon: Car },
 ];
 
 // Grace period before the profile submenu closes on mouse-out.
@@ -202,7 +202,14 @@ export function OutputModeSelect({
                     read as a line on this surface (no other popover in the
                     app carries an internal divider) — muted-foreground at
                     low opacity gives it actual contrast. */}
-                {index === GROUP_2_INDEX && <div className="my-1 border-t border-muted-foreground/25" aria-hidden="true" />}
+                {index === GROUP_2_INDEX && (
+                  <>
+                    <div className="my-1 border-t border-muted-foreground/25" aria-hidden="true" />
+                    <div className="px-2 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[.08em] text-muted-foreground">
+                      Direct output
+                    </div>
+                  </>
+                )}
               <div
                 ref={hasSubmenu ? (el) => { rowRefs.current[option.value] = el; } : undefined}
                 className="relative"
@@ -219,17 +226,14 @@ export function OutputModeSelect({
                     else setOpen(false);
                   }}
                   className={cn(
-                    "flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50",
+                    "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50",
                     option.value === value && "bg-accent/60",
                   )}
                 >
-                  <Icon className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span className="flex-1">
-                    <span className="block font-medium">{option.label}</span>
-                    <span className="block text-xs text-muted-foreground">{option.hint}</span>
-                  </span>
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="flex-1 font-medium">{option.label}</span>
                   {hasSubmenu && (
-                    <span className="mt-0.5 flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                    <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
                       {rowCurrentProfile.label}
                       <ChevronRight className="h-3.5 w-3.5" />
                     </span>
@@ -269,15 +273,12 @@ export function OutputModeSelect({
                             setActiveSubmenu(null);
                           }}
                           className={cn(
-                            "flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground",
+                            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent hover:text-accent-foreground",
                             selected && "bg-accent/60",
                           )}
                         >
-                          <ProfileIcon className="mt-0.5 h-4 w-4 shrink-0" />
-                          <span>
-                            <span className="block font-medium">{profileOption.label}</span>
-                            <span className="block text-xs text-muted-foreground">{profileOption.hint}</span>
-                          </span>
+                          <ProfileIcon className="h-4 w-4 shrink-0" />
+                          <span className="font-medium">{profileOption.label}</span>
                         </button>
                       );
                     })}
