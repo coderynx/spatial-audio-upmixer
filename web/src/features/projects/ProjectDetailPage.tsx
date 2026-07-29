@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 import HazeView from "./HazeView";
 import ChannelMeters from "./ChannelMeters";
 import ElevationView from "./ElevationView";
-import type { SpatialProfile } from "./masteringProfiles";
+import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import { StemChannelStrip, StripResizeHandle } from "./ChannelStrip";
 import { MixerView } from "./MixerView";
 import { OutputModeSelect } from "./OutputModeSelect";
@@ -304,6 +304,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // always starts back on binaural/studio.
   const [outputMode, setOutputMode] = React.useState<OutputMode>("binaural");
   const [spatialProfile, setSpatialProfile] = React.useState<SpatialProfile>("studio");
+  const [transauralProfile, setTransauralProfile] = React.useState<TransauralProfile>("stereo");
   const [paneView, setPaneView] = React.useState<PaneView>(() => readStoredPane(projectId));
   const [paneHeight, setPaneHeight] = React.useState(() => readStoredPaneHeight(projectId));
   const previewColumn = React.useRef<HTMLElement>(null);
@@ -446,7 +447,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       },
     };
   }, [effectiveManifest?.mastering, project?.reference_match]);
-  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, previewMastering, channels, outputMode, spatialProfile);
+  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, previewMastering, channels, outputMode, spatialProfile, transauralProfile);
   // One cached fetch per track, independent of stem decode — the envelope and
   // the track's duration arrive together, so the timeline can draw its ruler
   // and lanes while playback is still loading.
@@ -606,6 +607,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         onDeviceChange={(deviceId) => void preview.setOutputDeviceId(deviceId)}
         spatialProfile={spatialProfile}
         onSpatialProfileChange={setSpatialProfile}
+        transauralProfile={transauralProfile}
+        onTransauralProfileChange={setTransauralProfile}
       />
     </Transport>
     {error && <p className="flex-none border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
@@ -915,7 +918,14 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       <StatusSeparator />
       <StatusCell label="Stems" value={`${stemNames.filter((stem) => effectiveManifest?.mixing.stem_enabled[stem] !== false).length}/${stemNames.length}`} />
       <StatusSeparator />
-      <StatusCell label="Monitor" value={outputMode === "binaural" ? `Binaural · ${spatialProfile}` : "Speakers"} />
+      <StatusCell
+        label="Monitor"
+        value={
+          outputMode === "binaural" ? `Binaural · ${spatialProfile}`
+          : outputMode === "transaural" ? `Transaural · ${transauralProfile}`
+          : "Speakers"
+        }
+      />
       <StatusSpacer />
       <StatusCell label="Transport" value={preview.playing ? "Playing" : preview.ready ? "Ready" : "Loading"} />
     </StatusBar>

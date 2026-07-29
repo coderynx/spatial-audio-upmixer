@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { AudioLines, Boxes, Headphones } from "lucide-react";
+import { AudioLines, Boxes, Headphones, Speaker } from "lucide-react";
 import { Panel, PanelBody, PanelHeader } from "@/app/Panel";
 import { FIELD_GRID, SelectField, SwitchRow } from "@/components/forms/fields";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,7 @@ const FORMATS: Record<string, { label: string; note: string; icon: LucideIcon }>
   wav: { label: "Multichannel WAV", note: "Discrete channels", icon: AudioLines },
   "adm-bwf": { label: "ADM-BWF", note: "Object master", icon: Boxes },
   binaural: { label: "Binaural", note: "Headphone stereo", icon: Headphones },
+  transaural: { label: "Transaural", note: "Crosstalk-cancelled speaker stereo", icon: Speaker },
 };
 
 function formatMeta(value: string) {
@@ -59,14 +60,23 @@ export function ProjectDeliverySection({
   const choices = configuration?.choices;
   const binauralBeds = choices?.binaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
   const bedSupported = binauralBeds.includes(manifest.mixing.channel_layout);
+  const transauralBeds = choices?.transaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
+  const transauralBedSupported = transauralBeds.includes(manifest.mixing.channel_layout);
   const type = manifest.format.type;
   const isBinaural = type === "binaural";
+  const isTransaural = type === "transaural";
+  // Both collapse a speaker bed straight to two channels, so neither has any
+  // use for a separate BS.775 stereo companion file.
+  const isTwoChannelSpatial = isBinaural || isTransaural;
   const downmixEnabled = manifest.format.downmix?.enabled ?? false;
 
   // A disabled option has to say why it is disabled, but that belongs on the
   // option itself rather than as prose under the picker.
-  const noteFor = (value: string) =>
-    value === "binaural" && !bedSupported ? `Needs ${binauralBeds.join(" / ")}` : undefined;
+  const noteFor = (value: string) => {
+    if (value === "binaural" && !bedSupported) return `Needs ${binauralBeds.join(" / ")}`;
+    if (value === "transaural" && !transauralBedSupported) return `Needs ${transauralBeds.join(" / ")}`;
+    return undefined;
+  };
 
   return (
     <div className="space-y-3">
@@ -82,11 +92,11 @@ export function ProjectDeliverySection({
             </span>
           </SelectTrigger>
           <SelectContent>
-            {(choices?.output_types || ["wav", "adm-bwf", "binaural"]).map((value) => (
+            {(choices?.output_types || ["wav", "adm-bwf", "binaural", "transaural"]).map((value) => (
               <SelectItem
                 key={value}
                 value={value}
-                disabled={value === "binaural" && !bedSupported}
+                disabled={(value === "binaural" && !bedSupported) || (value === "transaural" && !transauralBedSupported)}
                 className="h-11"
               >
                 <FormatOption value={value} note={noteFor(value)} />
@@ -145,9 +155,28 @@ export function ProjectDeliverySection({
             />
           )}
 
-          {/* A binaural render is already two-channel, so a stereo companion
-              file would just duplicate it. */}
-          {!isBinaural && (
+          {isTransaural && (
+            <SelectField
+              label="Spatial Audio Engine profile"
+              value={manifest.format.transaural.profile}
+              onChange={(profile) =>
+                onChange({
+                  ...manifest,
+                  format: {
+                    ...manifest.format,
+                    transaural: { ...manifest.format.transaural, profile },
+                  },
+                })
+              }
+              options={(choices?.transaural_profiles || ["stereo", "smart_speaker", "car"]).map(
+                (value) => ({ value, label: value.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") }),
+              )}
+            />
+          )}
+
+          {/* A binaural/transaural render is already two-channel, so a
+              stereo companion file would just duplicate it. */}
+          {!isTwoChannelSpatial && (
             <SwitchRow
               label="Stereo downmix"
               hint="BS.775 companion file."
@@ -166,7 +195,7 @@ export function ProjectDeliverySection({
               }
             />
           )}
-          {!isBinaural && downmixEnabled && (
+          {!isTwoChannelSpatial && downmixEnabled && (
             <SelectField
               label="Surround coefficient"
               value={String(manifest.format.downmix?.surround_coeff ?? 0.7071)}

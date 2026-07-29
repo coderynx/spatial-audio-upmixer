@@ -490,6 +490,49 @@ export const ACN12_N3D_CORRECTION = 1 / Math.sqrt(7);
 // the browser's per-file multichannel decode stays under its 8ch cap.
 export const DECODE_FILTER_SPLITS = ["01-08ch", "09-16ch", "17-24ch", "25-32ch"] as const;
 
+// Stereo / Smart-speaker / Car crosstalk-cancellation (transaural) profiles.
+// Filter geometry/regularization contract lives in
+// docs/standards/transaural_speakers.md; this section carries the XTC asset
+// name and post-cancellation voicing parameters (reusing the same
+// VoicingParams shape and Web Audio chain binaural profiles use) so
+// useStemPreview.ts's graph can match upmixer/crosstalk/ parameter-for-
+// parameter. upmixer/crosstalk/profiles.py XTC_FILTER_SET / VOICING_PARAMS.
+
+export type TransauralProfile = "stereo" | "smart_speaker" | "car";
+
+export const XTC_FILTER_SET: Record<TransauralProfile, string> = {
+  stereo: "stereo_xtc",
+  smart_speaker: "smart_speaker_xtc",
+  car: "car_xtc",
+};
+
+export const TRANSAURAL_VOICING_PARAMS: Record<TransauralProfile, VoicingParams> = {
+  stereo: NEUTRAL_VOICING,
+  smart_speaker: {
+    ...NEUTRAL_VOICING,
+    bassShelfHz: 150, bassShelfGainDb: 1.5,
+    stereoWiden: 0.20,
+  },
+  car: {
+    ...NEUTRAL_VOICING,
+    bassShelfHz: 120, bassShelfGainDb: 2.5,
+    presenceHz: 2500, presenceGainDb: 1.0, presenceQ: 0.9,
+    stereoWiden: 0.10,
+  },
+};
+
+// XTC filter set contract (docs/standards/transaural_speakers.md §4): 4 FIR
+// filters (H_LL, H_LR, H_RL, H_RR) in one 4-channel WAV — unlike the 32ch
+// binaural decode bank, 4 channels fits well inside the browser's 8ch cap,
+// so no multi-file split is needed.
+export const XTC_FILTER_CHANNELS = 4;
+
+// upmixer/crosstalk/renderer.py CROSSTALK_LOUDNESS_MAX_GAIN_DB. Same
+// rationale as BINAURAL_LOUDNESS_MAX_GAIN_DB above: the bed is already
+// loudness-matched before the crosstalk-cancellation collapse, so this only
+// corrects for the collapse's own level shift.
+export const CROSSTALK_LOUDNESS_MAX_GAIN_DB = 6.0;
+
 export type VoicingChain = {
   left: AudioNode;
   right: AudioNode;

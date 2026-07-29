@@ -680,9 +680,16 @@ describe("decode filter set loading (HRIR)", () => {
     await act(async () => { await preview.playPause(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    // initialize() loads the default ("studio") profile's 4-part set once.
-    expect(hrirUrls()).toHaveLength(4);
-    expect(hrirUrls().every((url) => url.startsWith("/hrir/studio_o3_decode_"))).toBe(true);
+    // initialize() loads the default ("studio") profile's 4-part set, plus
+    // the crosstalk graph's own always-"flat" 4-part set (see
+    // `loadCrosstalkDecodeFilterSet` — the transaural render always decodes
+    // its internal binaural stage anechoic, regardless of `spatialProfile`,
+    // so this fetch happens unconditionally alongside the headphone
+    // preview's profile-selected one, not just when `outputMode` is
+    // "transaural").
+    expect(hrirUrls()).toHaveLength(8);
+    expect(hrirUrls().slice(0, 4).every((url) => url.startsWith("/hrir/studio_o3_decode_"))).toBe(true);
+    expect(hrirUrls().slice(4, 8).every((url) => url.startsWith("/hrir/flat_o3_decode_"))).toBe(true);
 
     // Volume/mute changes and new mix/mastering object identities (as a
     // manifest edit produces) must not re-trigger a fetch.
@@ -691,19 +698,19 @@ describe("decode filter set loading (HRIR)", () => {
     rerender(<Harness mix={{ stem_rebalance: { Vocals: 3 } }} mastering={{ loudness: { target: -16 } }} />);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 
-    expect(hrirUrls()).toHaveLength(4);
+    expect(hrirUrls()).toHaveLength(8);
 
     // A genuine profile switch fetches the new profile's 4 parts...
     rerender(<Harness mix={{}} mastering={{}} spatialProfile="listening" />);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(hrirUrls()).toHaveLength(8);
-    expect(hrirUrls().slice(4).every((url) => url.startsWith("/hrir/listening_o3_decode_"))).toBe(true);
+    expect(hrirUrls()).toHaveLength(12);
+    expect(hrirUrls().slice(8).every((url) => url.startsWith("/hrir/listening_o3_decode_"))).toBe(true);
 
     // ...and switching back to an already-loaded profile is a cache hit,
     // not a new fetch.
     rerender(<Harness mix={{}} mastering={{}} spatialProfile="studio" />);
     await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(hrirUrls()).toHaveLength(8);
+    expect(hrirUrls()).toHaveLength(12);
   });
 });
 

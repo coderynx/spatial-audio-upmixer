@@ -81,6 +81,14 @@ class UpmixConfig:
     # the profile's virtual-loudspeaker HOA decode. See upmixer/binaural/.
     binaural_profile: str = "studio"
 
+    # Spatial Audio Engine (crosstalk-cancellation speaker rendering),
+    # selected via ``output_type == "transaural"`` (which requires
+    # ``output_format`` to be one of ``upmixer.formats.TRANSAURAL_BED_FORMATS``):
+    # the pipeline upmixes and masters to that bed normally, then collapses it
+    # to stereo through the profile's 2x2 crosstalk-cancellation filter. See
+    # upmixer/crosstalk/.
+    transaural_profile: str = "stereo"
+
     surround_downmix_coeff: float = 0.7071
 
     downmix_enabled: bool = False

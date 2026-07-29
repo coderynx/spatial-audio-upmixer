@@ -2,6 +2,7 @@ import type { ProjectStem, StemScene } from "@/api";
 import { positionToAzimuthElevation, routingFromAzimuthElevation, speakerCoordinates } from "@/lib/spatial";
 import {
   BINAURAL_LOUDNESS_MAX_GAIN_DB,
+  CROSSTALK_LOUDNESS_MAX_GAIN_DB,
   DECODE_FILTER_SET,
   ITU_CENTER_COEFF,
   LFE_GAIN,
@@ -14,7 +15,9 @@ import {
   SURROUND_DOWNMIX_COEFF,
   SURROUND_HAAS_MS,
   HEIGHT_HAAS_MS,
+  TRANSAURAL_VOICING_PARAMS,
   VOICING_PARAMS,
+  XTC_FILTER_SET,
   applyVoicingParams,
   buildDiffuseSend,
   buildFirEqNode,
@@ -26,17 +29,22 @@ import {
   measureBufferTruePeakDbtp,
   type SpatialProfile,
   type StemEqProfileName,
+  type TransauralProfile,
   type VoicingChain,
 } from "./masteringProfiles";
 import {
   assignDecodeFilterBuffers,
+  assignXtcFilterBuffers,
   buildBinauralGraph,
+  buildCrosstalkGraph,
   buildMasteringGraph,
   createPositionalEncoder,
   loadCachedDecodeFilterChannels,
   loadCachedEqBuffer,
   loadCachedRefMatchBuffers,
+  loadCachedXtcFilterChannels,
   type MasterPreview,
+  type XtcConvolvers,
 } from "./previewGraph";
 import { faderPositionToGain } from "@/lib/fader";
 import { TransportClock } from "./transportClock";
@@ -53,10 +61,11 @@ function engineRef<T>(value: T): EngineRef<T> {
 }
 
 // Preview monitoring mode: which final render stage the channel bed feeds.
-// "binaural" is the existing headphone-virtualized render; "stereo" is a
-// BS.775-compliant 2/0 downmix; "native" sends the channel bed's own
+// "binaural" is the existing headphone-virtualized render; "transaural" is
+// the crosstalk-cancelled stereo-speaker render (upmixer/crosstalk/); "stereo"
+// is a BS.775-compliant 2/0 downmix; "native" sends the channel bed's own
 // discrete channels straight to the chosen system output device.
-export type OutputMode = "binaural" | "stereo" | "native";
+export type OutputMode = "binaural" | "transaural" | "stereo" | "native";
 
 // ITU-R BS.775-4 Annex 4 Table 2 2/0 downmix coefficients, mirroring
 // upmixer/utils.py::itu_downmix_stereo. Back channels fold into the
@@ -204,6 +213,17 @@ function rampGainTo(param: AudioParam, target: number, ctx: BaseAudioContext) {
 async function fetchDecodeFilterPart(ctx: BaseAudioContext, partName: string): Promise<AudioBuffer> {
   const response = await fetch(`/hrir/${partName}.wav`);
   if (!response.ok) throw new Error(`Decode filter part missing: ${partName}.wav`);
+  const data = await response.arrayBuffer();
+  return ctx.decodeAudioData(data);
+}
+
+// Fetches a transaural profile's single 4-channel XTC filter WAV from
+// `/xtc/` — the browser-`fetch` fileLoader `loadXtcFilterChannels`
+// (previewGraph.ts) needs to stay decoupled from the golden-diff harness's
+// disk-read loader, same as `fetchDecodeFilterPart` above.
+async function fetchXtcFilterSet(ctx: BaseAudioContext, name: string): Promise<AudioBuffer> {
+  const response = await fetch(`/xtc/${name}.wav`);
+  if (!response.ok) throw new Error(`Crosstalk filter set missing: ${name}.wav`);
   const data = await response.arrayBuffer();
   return ctx.decodeAudioData(data);
 }
@@ -406,6 +426,7 @@ export class PreviewAudioEngine {
   layoutChannels: string[] = POSITIONAL_CHANNELS;
   outputMode: OutputMode = "binaural";
   spatialProfile: SpatialProfile = "studio";
+  transauralProfile: TransauralProfile = "stereo";
   positionalChannels: string[] = [];
   speakerEnabled: Record<string, boolean> = {};
 
@@ -459,6 +480,18 @@ export class PreviewAudioEngine {
   // individually referenced elsewhere, so one array covers their teardown
   // in `reset()` instead of a dedicated field per node.
   private binauralGraphNodes: AudioNode[] = [];
+  // Crosstalk-cancellation (transaural) render — a parallel bus alongside
+  // `hoaBus`/binaural, gated the same way (see `crosstalkGate` below), built
+  // by `buildCrosstalkGraph` (previewGraph.ts). Its internal anechoic
+  // "flat" binaural sub-decode has its own HOA bus/convolvers, entirely
+  // separate from the primary `hoaBus`/`decodeConvolvers` above (which
+  // decode whatever `spatialProfile` the headphone preview has selected).
+  private crosstalkHoaBus: GainNode | null = null;
+  private crosstalkDecodeConvolvers: { left: ConvolverNode; right: ConvolverNode; preGain: GainNode | null }[] = [];
+  private xtcConvolvers: XtcConvolvers | null = null;
+  private crosstalkVoicingChain: VoicingChain | null = null;
+  private crosstalkGraphNodes: AudioNode[] = [];
+  private crosstalkGate: GainNode | null = null;
   private speakerBuses: Map<string, SpeakerBus> = new Map();
   private preMasterBus: GainNode | null = null;
   // Linked bus-compressor detector: every channel's post-EQ signal sums in
@@ -559,6 +592,11 @@ export class PreviewAudioEngine {
   // can skip a redundant assignDecodeFilterBuffers call (32 buffer copies +
   // reassignments) when re-invoked with the profile already in place.
   private assignedDecodeProfile: SpatialProfile | null = null;
+  // Same per-context cache lifetime as decodeFilterCache, keyed by XTC filter
+  // set name — see loadCachedXtcFilterChannels.
+  private xtcFilterCache: Map<string, Promise<Float32Array[]>> = new Map();
+  // Same role as assignedDecodeProfile, for the transaural XTC filter set.
+  private assignedXtcProfile: TransauralProfile | null = null;
   private resolvedBass: { active: boolean; lfeGainDb: number } = { active: false, lfeGainDb: 0 };
   // Whole-program loudness/true-peak measured once, offline, by
   // `precomputeCorrection` before playback starts — static for the whole
@@ -577,6 +615,7 @@ export class PreviewAudioEngine {
   // `measuredLkfs` immediately). `null` (its `reset()` value) always misses.
   private precomputedForMode: OutputMode | null = null;
   private precomputedForProfile: SpatialProfile | null = null;
+  private precomputedForTransauralProfile: TransauralProfile | null = null;
   private nodes: Map<string, AudioNodeSet> = new Map();
 
   // ---- Public ref-shaped fields: UI reads these each frame, same shape a
@@ -905,7 +944,8 @@ export class PreviewAudioEngine {
   private async precomputeCorrection(): Promise<void> {
     if (this.outputMode === "native" || this.durationRef <= 0) return;
     const alreadyValid = this.precomputedForMode === this.outputMode
-      && (this.outputMode !== "binaural" || this.precomputedForProfile === this.spatialProfile);
+      && (this.outputMode !== "binaural" || this.precomputedForProfile === this.spatialProfile)
+      && (this.outputMode !== "transaural" || this.precomputedForTransauralProfile === this.transauralProfile);
     if (alreadyValid) return;
     const ctx = this.context;
     if (!ctx) return;
@@ -923,6 +963,7 @@ export class PreviewAudioEngine {
       const channelPorts = new Map<string, { input: AudioNode; output: AudioNode }>();
       const offlineBuses = new Map<string, { muteGain: GainNode }>();
       let binaural: ReturnType<typeof buildBinauralGraph> | null = null;
+      let crosstalk: ReturnType<typeof buildCrosstalkGraph> | null = null;
       let stereoMerger: ChannelMergerNode | null = null;
       if (this.outputMode === "binaural") {
         binaural = buildBinauralGraph(offlineCtx, this.spatialProfile);
@@ -930,6 +971,16 @@ export class PreviewAudioEngine {
           this.decodeFilterCache, offlineCtx, DECODE_FILTER_SET[this.spatialProfile], fetchDecodeFilterPart,
         );
         assignDecodeFilterBuffers(offlineCtx, binaural.convolverPairs, decodeChannels);
+      } else if (this.outputMode === "transaural") {
+        crosstalk = buildCrosstalkGraph(offlineCtx, this.transauralProfile);
+        const decodeChannels = await loadCachedDecodeFilterChannels(
+          this.decodeFilterCache, offlineCtx, DECODE_FILTER_SET.flat, fetchDecodeFilterPart,
+        );
+        assignDecodeFilterBuffers(offlineCtx, crosstalk.binaural.convolverPairs, decodeChannels);
+        const xtcChannels = await loadCachedXtcFilterChannels(
+          this.xtcFilterCache, offlineCtx, XTC_FILTER_SET[this.transauralProfile], fetchXtcFilterSet,
+        );
+        assignXtcFilterBuffers(offlineCtx, crosstalk.xtcConvolvers, xtcChannels);
       } else {
         stereoMerger = offlineCtx.createChannelMerger(2);
       }
@@ -948,6 +999,12 @@ export class PreviewAudioEngine {
           const encoder = createPositionalEncoder(offlineCtx, azim, elev);
           masterOut.connect(encoder.in);
           encoder.out.connect(binaural.hoaBus);
+        }
+        if (crosstalk) {
+          const { azim, elev } = positionToAzimuthElevation(speakerCoordinates[channel]);
+          const encoder = createPositionalEncoder(offlineCtx, azim, elev);
+          masterOut.connect(encoder.in);
+          encoder.out.connect(crosstalk.hoaBus);
         }
         if (stereoMerger) {
           const coeffs = STEREO_DOWNMIX_GAINS[channel];
@@ -995,6 +1052,10 @@ export class PreviewAudioEngine {
       if (binaural) {
         lfeMuteGain.connect(binaural.preVoicing, 0, 0);
         lfeMuteGain.connect(binaural.preVoicing, 0, 1);
+      }
+      if (crosstalk) {
+        lfeMuteGain.connect(crosstalk.preVoicing, 0, 0);
+        lfeMuteGain.connect(crosstalk.preVoicing, 0, 1);
       }
 
       // Stems: same already-decoded buffers, EQ profile, and mix gains as
@@ -1070,7 +1131,7 @@ export class PreviewAudioEngine {
       // collapse output — see `MasteringGraphHandle.sidechainSink`'s doc
       // comment: a node with no path to the destination may not reliably
       // keep updating `.reduction`.
-      const collapseOutput = binaural ? binaural.output : stereoMerger!;
+      const collapseOutput = binaural ? binaural.output : crosstalk ? crosstalk.output : stereoMerger!;
       const finalSum = offlineCtx.createGain();
       collapseOutput.connect(finalSum);
       handle.sidechainSink.connect(finalSum);
@@ -1109,6 +1170,7 @@ export class PreviewAudioEngine {
       this.preGainTpDbtp = Math.max(measureBufferTruePeakDbtp(left), measureBufferTruePeakDbtp(right));
       this.precomputedForMode = this.outputMode;
       this.precomputedForProfile = this.spatialProfile;
+      this.precomputedForTransauralProfile = this.transauralProfile;
     } catch {
       // Leave measuredLkfs/preGainTpDbtp at their prior value (or the -70
       // default on first play) and don't mark this mode/profile as
@@ -1194,6 +1256,7 @@ export class PreviewAudioEngine {
     this.preGainTpDbtp = -70;
     this.precomputedForMode = null;
     this.precomputedForProfile = null;
+    this.precomputedForTransauralProfile = null;
     this.speakerBuses.forEach((bus) => {
       bus.muteGain.disconnect();
       bus.masterIn.disconnect();
@@ -1222,6 +1285,8 @@ export class PreviewAudioEngine {
     this.binauralGate = null;
     this.stereoGate?.disconnect();
     this.stereoGate = null;
+    this.crosstalkGate?.disconnect();
+    this.crosstalkGate = null;
     this.nativeOutputGain?.disconnect();
     this.nativeOutputGain = null;
     this.nativeSoftLimit?.disconnect();
@@ -1244,6 +1309,20 @@ export class PreviewAudioEngine {
     this.voicingChain = null;
     this.voicingMerger?.disconnect();
     this.voicingMerger = null;
+    this.crosstalkHoaBus?.disconnect();
+    this.crosstalkHoaBus = null;
+    this.crosstalkDecodeConvolvers.forEach(({ left, right, preGain }) => {
+      left.disconnect();
+      right.disconnect();
+      preGain?.disconnect();
+    });
+    this.crosstalkDecodeConvolvers = [];
+    this.xtcConvolvers = null;
+    this.assignedXtcProfile = null;
+    this.crosstalkGraphNodes.forEach((node) => node.disconnect());
+    this.crosstalkGraphNodes = [];
+    this.crosstalkVoicingChain?.nodes.forEach((node) => node.disconnect());
+    this.crosstalkVoicingChain = null;
     this.preMasterBus?.disconnect();
     this.preMasterBus = null;
     this.sidechainSum?.disconnect();
@@ -1465,6 +1544,7 @@ export class PreviewAudioEngine {
     // avoid a click on mode switch without audible bleed.
     if (this.binauralGate) rampGainTo(this.binauralGate.gain, effectiveMode === "binaural" ? 1 : 0, ctx);
     if (this.stereoGate) rampGainTo(this.stereoGate.gain, effectiveMode === "stereo" ? 1 : 0, ctx);
+    if (this.crosstalkGate) rampGainTo(this.crosstalkGate.gain, effectiveMode === "transaural" ? 1 : 0, ctx);
   }
 
   async setOutputSink(deviceId: string) {
@@ -1481,6 +1561,12 @@ export class PreviewAudioEngine {
   // (cheap, no graph rebuild — see buildVoicingChain).
   retuneVoicing(profile: SpatialProfile) {
     if (this.voicingChain) applyVoicingParams(this.voicingChain, VOICING_PARAMS[profile]);
+  }
+
+  // Transaural profile switch: same immediate-retune contract as
+  // retuneVoicing above, for the crosstalk-cancellation voicing chain.
+  retuneCrosstalkVoicing(profile: TransauralProfile) {
+    if (this.crosstalkVoicingChain) applyVoicingParams(this.crosstalkVoicingChain, TRANSAURAL_VOICING_PARAMS[profile]);
   }
 
   // Loads a profile's decode filter set and assigns each ACN/ear filter into
@@ -1509,6 +1595,51 @@ export class PreviewAudioEngine {
     }
   }
 
+  // Loads the crosstalk graph's internal anechoic "flat" binaural sub-decode
+  // — always `flat_o3_decode` regardless of `transauralProfile` (a real
+  // speaker/room supplies reverberant coloration on playback, see
+  // upmixer/crosstalk/renderer.py::render_crosstalk), so this only ever
+  // needs to run once per graph build, not per profile switch. Shares
+  // `decodeFilterCache` with `loadDecodeFilterSet` (keyed by filter-set
+  // name) so a headphone preview already on "flat" doesn't refetch.
+  private async loadCrosstalkDecodeFilterSet(): Promise<boolean> {
+    const ctx = this.context;
+    const convolvers = this.crosstalkDecodeConvolvers;
+    if (!ctx || convolvers.length !== N_ACN_CHANNELS) return false;
+    try {
+      const channels = await loadCachedDecodeFilterChannels(
+        this.decodeFilterCache, ctx, DECODE_FILTER_SET.flat, fetchDecodeFilterPart,
+      );
+      if (this.context !== ctx || this.crosstalkDecodeConvolvers !== convolvers) return false;
+      assignDecodeFilterBuffers(ctx, convolvers, channels);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Loads a transaural profile's XTC filter set and assigns it onto the
+  // (already-wired) 2x2 crosstalk-cancellation convolvers — same
+  // non-blocking, dedupe-by-profile contract as loadDecodeFilterSet above.
+  async loadXtcFilterSet(profile: TransauralProfile): Promise<boolean> {
+    const ctx = this.context;
+    const convolvers = this.xtcConvolvers;
+    if (!ctx || !convolvers) return false;
+    if (this.assignedXtcProfile === profile) return true;
+    try {
+      const channels = await loadCachedXtcFilterChannels(
+        this.xtcFilterCache, ctx, XTC_FILTER_SET[profile], fetchXtcFilterSet,
+      );
+      if (this.context !== ctx || this.xtcConvolvers !== convolvers) return false;
+      if (this.assignedXtcProfile === profile) return true;
+      assignXtcFilterBuffers(ctx, convolvers, channels);
+      this.assignedXtcProfile = profile;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   apply() {
     const ctx = this.context;
     // The active Spatial Audio Engine profile's own loudness target (if any)
@@ -1518,14 +1649,21 @@ export class PreviewAudioEngine {
     // mastering block's target; the override stays wired for future use.
     const profileLoudnessTarget = this.outputMode === "binaural"
       ? VOICING_PARAMS[this.spatialProfile].loudnessTargetLkfs
+      : this.outputMode === "transaural"
+      ? TRANSAURAL_VOICING_PARAMS[this.transauralProfile].loudnessTargetLkfs
       : null;
     const targetLkfs = profileLoudnessTarget ?? this.mastering?.loudness?.target ?? -18;
     const normalize = this.mastering?.loudness?.normalize ?? true;
-    // Binaural's collapse-stage correction is capped small (see
-    // BINAURAL_LOUDNESS_MAX_GAIN_DB) — the bed is already loudness-matched
-    // before collapse, so this only nudges for the collapse's own level
-    // shift instead of re-running a full match that would inflate loudness.
-    const maxGainDb = this.outputMode === "binaural" ? BINAURAL_LOUDNESS_MAX_GAIN_DB : LOUDNESS_MAX_GAIN_DB;
+    // Binaural/transaural's collapse-stage correction is capped small (see
+    // BINAURAL_LOUDNESS_MAX_GAIN_DB / CROSSTALK_LOUDNESS_MAX_GAIN_DB) — the
+    // bed is already loudness-matched before collapse, so this only nudges
+    // for the collapse's own level shift instead of re-running a full match
+    // that would inflate loudness.
+    const maxGainDb = this.outputMode === "binaural"
+      ? BINAURAL_LOUDNESS_MAX_GAIN_DB
+      : this.outputMode === "transaural"
+      ? CROSSTALK_LOUDNESS_MAX_GAIN_DB
+      : LOUDNESS_MAX_GAIN_DB;
     const loudnessGain = normalize ? loudnessGainFor(this.measuredLkfs, targetLkfs, maxGainDb) : 1;
     // Mirrors normalize_loudness's second gain reduction (upmixer/loudness.py)
     // — gated on the same `normalize` flag as the loudness correction itself:
@@ -1701,8 +1839,15 @@ export class PreviewAudioEngine {
     // (docs/standards/spatial_audio_engine.md §4) — summed to stereo and
     // voiced per the active Spatial Audio Engine profile (§5).
     const binaural = buildBinauralGraph(ctx, this.spatialProfile);
+    // Crosstalk-cancellation (transaural) render — its own anechoic "flat"
+    // binaural sub-decode plus a 2x2 XTC matrix and voicing chain, entirely
+    // independent of `binaural` above (which decodes whatever
+    // `spatialProfile` the headphone preview has selected). See
+    // `buildCrosstalkGraph` (previewGraph.ts) and
+    // docs/standards/transaural_speakers.md §1.
+    const crosstalk = buildCrosstalkGraph(ctx, this.transauralProfile);
 
-    // Binaural/stereo are alternate render stages that both feed
+    // Binaural/transaural/stereo are alternate render stages that all feed
     // `preMasterBus` through their own gate — see `applyOutputMode`, which
     // zeroes whichever gate isn't the active mode instead of tearing down
     // and rebuilding this graph on every mode switch. `preMasterBus` is a
@@ -1712,6 +1857,10 @@ export class PreviewAudioEngine {
     const binauralGateNode = ctx.createGain();
     binaural.output.connect(binauralGateNode);
     binauralGateNode.connect(preMasterBusNode);
+
+    const crosstalkGateNode = ctx.createGain();
+    crosstalk.output.connect(crosstalkGateNode);
+    crosstalkGateNode.connect(preMasterBusNode);
 
     const stereoMergerNode = ctx.createChannelMerger(2);
     const stereoGateNode = ctx.createGain();
@@ -1801,6 +1950,7 @@ export class PreviewAudioEngine {
       const encoder = createPositionalEncoder(ctx, azim, elev);
       masterOut.connect(encoder.in);
       encoder.out.connect(binaural.hoaBus);
+      encoder.out.connect(crosstalk.hoaBus);
 
       const stereoCoeffs = STEREO_DOWNMIX_GAINS[channel];
       let stereoSend: SpeakerBus["stereoSend"] = null;
@@ -1873,6 +2023,10 @@ export class PreviewAudioEngine {
     // channel below, unaffected by any of this.
     lfeMuteGainNode.connect(binaural.preVoicing, 0, 0);
     lfeMuteGainNode.connect(binaural.preVoicing, 0, 1);
+    // Same LFE-before-voicing order for the crosstalk render — see
+    // `CrosstalkGraphHandle.preVoicing`'s doc comment.
+    lfeMuteGainNode.connect(crosstalk.preVoicing, 0, 0);
+    lfeMuteGainNode.connect(crosstalk.preVoicing, 0, 1);
     mergePointNode.connect(output).connect(softLimitNode);
     // LFE's own discrete native channel — bypasses the stereo mastering
     // chain entirely, same as every other native channel.
@@ -1905,6 +2059,12 @@ export class PreviewAudioEngine {
     this.voicingChain = binaural.voicing;
     this.voicingMerger = binaural.output as ChannelMergerNode;
     this.binauralGraphNodes = binaural.nodes;
+    this.crosstalkHoaBus = crosstalk.binaural.hoaBus;
+    this.crosstalkDecodeConvolvers = crosstalk.binaural.convolverPairs;
+    this.xtcConvolvers = crosstalk.xtcConvolvers;
+    this.crosstalkVoicingChain = crosstalk.voicing;
+    this.crosstalkGraphNodes = [...crosstalk.nodes, ...crosstalk.binaural.nodes];
+    this.crosstalkGate = crosstalkGateNode;
     this.speakerBuses = busesMap;
     this.channelAnalysers = channelAnalysersMap;
     this.headphoneAnalysers = { splitter: headphoneSplitter, left: headphoneLeftAnalyser, right: headphoneRightAnalyser };
@@ -1936,6 +2096,8 @@ export class PreviewAudioEngine {
     // assigned, so preview audio can start immediately rather than waiting
     // on this network fetch.
     void this.loadDecodeFilterSet(this.spatialProfile);
+    void this.loadCrosstalkDecodeFilterSet();
+    void this.loadXtcFilterSet(this.transauralProfile);
 
     const entries: { id: string; url: string; anchor: boolean }[] = [];
     for (const stem of this.stems) {

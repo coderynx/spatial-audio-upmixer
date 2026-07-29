@@ -11,12 +11,15 @@ from upmixer.analysis.spatial import SpatialPlan, analyze_spatial_plan
 from upmixer.analysis.stft import StreamingSTFT
 from upmixer.binaural.renderer import render_binaural_delivery
 from upmixer.config import UpmixConfig
+from upmixer.crosstalk.renderer import render_crosstalk_delivery
 from upmixer.decomposition.direct_ambient import SoftMatrixDecomposer
 from upmixer.formats import (
     BINAURAL,
     BINAURAL_BED_FORMATS,
     FORMAT_MAP,
     INPUT_FORMAT_MAP,
+    TRANSAURAL,
+    TRANSAURAL_BED_FORMATS,
     can_upmix,
     detect_input_format,
 )
@@ -266,6 +269,12 @@ class UpmixPipeline:
                 f"binaural output requires output_format one of {BINAURAL_BED_FORMATS}, "
                 f"got '{self.config.output_format}'"
             )
+        is_transaural = self.config.output_type == "transaural"
+        if is_transaural and self.config.output_format not in TRANSAURAL_BED_FORMATS:
+            raise ValueError(
+                f"transaural output requires output_format one of {TRANSAURAL_BED_FORMATS}, "
+                f"got '{self.config.output_format}'"
+            )
         cfg = self.config
 
         def _progress(msg: str, frac: float) -> None:
@@ -379,6 +388,13 @@ class UpmixPipeline:
             output_fmt = BINAURAL
             writer = AudioWriter(output_path, out_sr, self.config, output_format=BINAURAL)
             writer.write(channels)
+        elif is_transaural:
+            channels, mastering_result = render_crosstalk_delivery(
+                channels, output_fmt, out_sr, self.config
+            )
+            output_fmt = TRANSAURAL
+            writer = AudioWriter(output_path, out_sr, self.config, output_format=TRANSAURAL)
+            writer.write(channels)
         elif cfg.output_type == "adm-bwf":
             writer = AdmBwfWriter(output_path, out_sr, cfg)
             writer.write(
@@ -392,7 +408,7 @@ class UpmixPipeline:
 
         _progress(f"Output: {output_path}", 1.0)
 
-        if cfg.downmix_output_path and not is_binaural:
+        if cfg.downmix_output_path and not is_binaural and not is_transaural:
             self._write_downmix(channels, out_sr, cfg)
 
         return UpmixResult(

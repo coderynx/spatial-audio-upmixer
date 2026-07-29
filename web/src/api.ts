@@ -172,6 +172,8 @@ export type Configuration = {
     spatial_profiles: string[]
     binaural_profiles?: string[]
     binaural_beds?: string[]
+    transaural_profiles?: string[]
+    transaural_beds?: string[]
     eq_profiles: string[]
     compressor_profiles: string[]
     bass_profiles: string[]

@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { computeRealSH } from "spherical-harmonic-transform";
 import {
+  CROSSTALK_LOUDNESS_MAX_GAIN_DB,
   EQ_FIR_ASSETS,
   STEM_EQ_FIR_ASSETS,
+  TRANSAURAL_VOICING_PARAMS,
   VOICING_PARAMS,
+  XTC_FILTER_SET,
   buildFirEqNode,
   fetchEqFirBuffer,
   measureBufferTruePeakDbtp,
@@ -48,6 +51,37 @@ describe("VOICING_PARAMS.listening", () => {
     expect(listening.presenceGainDb).toBeCloseTo(1.5);
     expect(listening.stereoWiden).toBeCloseTo(0.15);
     expect(listening.loudnessTargetLkfs).toBeNull();
+  });
+});
+
+describe("TRANSAURAL_VOICING_PARAMS", () => {
+  it("matches the backend upmixer/crosstalk/profiles.py values exactly", () => {
+    // Same drift-guard as VOICING_PARAMS.listening above, for the
+    // crosstalk-cancellation (transaural) speaker profiles.
+    expect(TRANSAURAL_VOICING_PARAMS.stereo.crossfeedAmount).toBe(0);
+    expect(TRANSAURAL_VOICING_PARAMS.stereo.stereoWiden).toBe(0);
+
+    const smartSpeaker = TRANSAURAL_VOICING_PARAMS.smart_speaker;
+    expect(smartSpeaker.bassShelfHz).toBeCloseTo(150);
+    expect(smartSpeaker.bassShelfGainDb).toBeCloseTo(1.5);
+    expect(smartSpeaker.stereoWiden).toBeCloseTo(0.20);
+
+    const car = TRANSAURAL_VOICING_PARAMS.car;
+    expect(car.bassShelfHz).toBeCloseTo(120);
+    expect(car.bassShelfGainDb).toBeCloseTo(2.5);
+    expect(car.presenceHz).toBeCloseTo(2500);
+    expect(car.presenceGainDb).toBeCloseTo(1.0);
+    expect(car.stereoWiden).toBeCloseTo(0.10);
+  });
+
+  it("XTC_FILTER_SET names match the backend asset basenames", () => {
+    expect(XTC_FILTER_SET.stereo).toBe("stereo_xtc");
+    expect(XTC_FILTER_SET.smart_speaker).toBe("smart_speaker_xtc");
+    expect(XTC_FILTER_SET.car).toBe("car_xtc");
+  });
+
+  it("CROSSTALK_LOUDNESS_MAX_GAIN_DB matches the backend ceiling", () => {
+    expect(CROSSTALK_LOUDNESS_MAX_GAIN_DB).toBe(6.0);
   });
 });
 

@@ -21,6 +21,7 @@ import json
 
 from upmixer.binaural.renderer import BINAURAL_LOUDNESS_MAX_GAIN_DB
 from upmixer.config import UpmixConfig
+from upmixer.crosstalk.renderer import CROSSTALK_LOUDNESS_MAX_GAIN_DB
 from upmixer.mastering.bass import (
     BASS_PROFILES,
     EXCITE_BLEND,
@@ -86,6 +87,7 @@ def canonical_constants() -> dict:
         "bass_excite_blend": EXCITE_BLEND,
         "bass_excite_drive": EXCITE_DRIVE,
         "binaural_loudness_max_gain_db": BINAURAL_LOUDNESS_MAX_GAIN_DB,
+        "crosstalk_loudness_max_gain_db": CROSSTALK_LOUDNESS_MAX_GAIN_DB,
     }
 
 

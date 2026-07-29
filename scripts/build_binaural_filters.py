@@ -27,12 +27,10 @@ sys.path.insert(0, str(ROOT))
 
 from upmixer.binaural.ambisonics import N_ACN_CHANNELS, encoding_matrix  # noqa: E402
 from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION  # noqa: E402
+from upmixer.binaural.head_model import synth_hrir  # noqa: E402
 from upmixer.formats import ChannelLabel  # noqa: E402
-from upmixer.utils import elevation_eq  # noqa: E402
 
 SAMPLE_RATE = 48_000
-HEAD_RADIUS_M = 0.0875
-SPEED_OF_SOUND = 343.0
 
 CORE_OUT_DIR = ROOT / "upmixer" / "binaural" / "hrir"
 WEB_OUT_DIR = ROOT / "web" / "public" / "hrir"
@@ -85,58 +83,6 @@ def real_speaker_directions() -> list[tuple[float, float]]:
         (SPEAKER_AZIMUTH_ELEVATION[label].azimuth_rad, SPEAKER_AZIMUTH_ELEVATION[label].elevation_rad)
         for label in REAL_SPEAKER_ORDER
     ]
-
-
-def _fractional_impulse(delay_samples: float, n_taps: int) -> np.ndarray:
-    arr = np.zeros(n_taps, dtype=np.float64)
-    i0 = int(math.floor(delay_samples))
-    frac = delay_samples - i0
-    if 0 <= i0 < n_taps:
-        arr[i0] += 1.0 - frac
-    if 0 <= i0 + 1 < n_taps:
-        arr[i0 + 1] += frac
-    return arr
-
-
-def synth_hrir(azimuth: float, elevation: float, sr: int, n_taps: int) -> tuple[np.ndarray, np.ndarray]:
-    """Parametric spherical-head-model HRIR: Woodworth ITD + head-shadow ILD.
-
-    Not a measured HRTF — a documented approximation (see contract doc §4)
-    used because no measured dataset ships with this repository. ``flat``
-    uses this directly; ``studio``/``listening`` convolve it with a
-    synthesized room tail.
-    """
-    itd_s = (HEAD_RADIUS_M / SPEED_OF_SOUND) * (azimuth + math.sin(azimuth))
-    itd_samples = itd_s * sr
-    shadow_amount = abs(math.sin(azimuth))
-    shadow_cutoff_hz = max(1500.0, 8000.0 - 5000.0 * shadow_amount)
-    shadow_atten_db = -8.0 * shadow_amount
-    sos_shadow = butter(2, shadow_cutoff_hz / (sr / 2.0), btype="low", output="sos")
-
-    near = _fractional_impulse(0.0, n_taps)
-    if shadow_amount == 0.0:
-        # Dead center (azimuth exactly 0, e.g. `C`): no ITD, no head shadow —
-        # both ears hear the literal same signal. Filtering "far" through
-        # `sos_shadow` even at 0 dB commanded attenuation would still color
-        # it (an 8 kHz lowpass isn't transparent to a full-band impulse),
-        # splitting a dead-center source into two non-identical ears where
-        # physically there's no near/far distinction at all. That residual
-        # asymmetry was negligible while `C` was never an exact fit direction
-        # for the decode matrix (see `real_speaker_directions`) — now that it
-        # is, it was large enough to break L/R symmetry for any bed that
-        # includes `C`.
-        far = near
-    else:
-        far = _fractional_impulse(abs(itd_samples), n_taps)
-        far = sosfilt(sos_shadow, far) * (10.0 ** (shadow_atten_db / 20.0))
-    left, right = (near, far) if azimuth >= 0 else (far, near)
-
-    elevation_gain = max(0.0, math.sin(elevation))
-    if elevation_gain > 0:
-        left = elevation_eq(left, sr, high_shelf_gain=1.0 + 0.5 * elevation_gain)
-        right = elevation_eq(right, sr, high_shelf_gain=1.0 + 0.5 * elevation_gain)
-
-    return left, right
 
 
 def synth_room_tail(sr: int, rt60_s: float, pre_delay_s: float, seed: int, lp_hz: float = 3500.0) -> np.ndarray:

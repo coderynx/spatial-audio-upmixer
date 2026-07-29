@@ -1,7 +1,7 @@
 import * as React from "react";
 import type { ProjectStem, StemScene } from "@/api";
 import { speakerCoordinates } from "@/lib/spatial";
-import type { SpatialProfile } from "./masteringProfiles";
+import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import type { MasterPreview } from "./previewGraph";
 import {
   PreviewAudioEngine,
@@ -12,7 +12,7 @@ import {
 } from "./audioEngine";
 
 export type { OutputMode, MeterLevel, MixPreview } from "./audioEngine";
-export type { SpatialProfile } from "./masteringProfiles";
+export type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 export { applyTruePeakCeiling } from "./audioEngine";
 
 // This hook is a thin React binding over `PreviewAudioEngine` (audioEngine.ts):
@@ -42,6 +42,11 @@ export function useStemPreview(
   // decode filter set and voicing chain, see docs/standards/
   // spatial_audio_engine.md. Session-only, like outputMode.
   spatialProfile: SpatialProfile = "studio",
+  // Crosstalk-cancellation (transaural) speaker profile (Stereo/Smart
+  // speaker/Car) — selects the XTC filter set and voicing chain, see
+  // docs/standards/transaural_speakers.md. Session-only, like outputMode;
+  // only meaningful when outputMode === "transaural".
+  transauralProfile: TransauralProfile = "stereo",
 ) {
   const layoutChannelsKey = layoutChannels.join(",");
   // Stable-identity, layout-scoped speaker list: drives the ambisonic
@@ -117,6 +122,7 @@ export function useStemPreview(
   engine.layoutChannels = layoutChannels;
   engine.outputMode = outputMode;
   engine.spatialProfile = spatialProfile;
+  engine.transauralProfile = transauralProfile;
   engine.positionalChannels = positionalChannels;
   engine.speakerEnabled = speakerEnabled;
 
@@ -190,6 +196,7 @@ export function useStemPreview(
   }, [engine]);
 
   const loadDecodeFilterSet = React.useCallback((profile: SpatialProfile) => engine.loadDecodeFilterSet(profile), [engine]);
+  const loadXtcFilterSet = React.useCallback((profile: TransauralProfile) => engine.loadXtcFilterSet(profile), [engine]);
 
   React.useEffect(() => {
     engine.apply();
@@ -205,6 +212,16 @@ export function useStemPreview(
     void engine.loadDecodeFilterSet(spatialProfile);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
   }, [spatialProfile, ready]);
+
+  // Transaural profile switch: same pattern as the binaural effect above —
+  // retune the already-built crosstalk voicing chain immediately, swap in
+  // the new profile's XTC filter set in the background.
+  React.useEffect(() => {
+    engine.retuneCrosstalkVoicing(transauralProfile);
+    engine.apply();
+    void engine.loadXtcFilterSet(transauralProfile);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
+  }, [transauralProfile, ready]);
 
   React.useEffect(() => {
     engine.initialize().catch(() => {
@@ -262,6 +279,7 @@ export function useStemPreview(
     speakerEnabled,
     toggleSpeaker,
     loadDecodeFilterSet,
+    loadXtcFilterSet,
     maxChannels,
     nativeSupported: layoutChannels.length > 0 && layoutChannels.length <= maxChannels,
     outputDevices,

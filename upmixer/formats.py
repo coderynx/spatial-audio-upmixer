@@ -126,6 +126,22 @@ BINAURAL_BED_FORMATS: tuple[str, ...] = ("5.1.4", "7.1.2", "7.1.4")
 """Valid speaker-layout beds for ``UpmixConfig.output_format`` when
 ``UpmixConfig.binaural`` is enabled."""
 
+TRANSAURAL = OutputFormat(
+    name="transaural",
+    channels=(ChannelLabel.FL, ChannelLabel.FR),
+)
+"""Speaker-ready stereo produced by the Spatial Audio Engine's crosstalk-
+cancellation renderer (see ``upmixer/crosstalk/``). Like ``BINAURAL``, not a
+channel layout — an optional rendering pass collapsing a real speaker-layout
+bed (``UpmixConfig.output_format``) to this 2-channel format, pre-filtered so
+the binaural cues survive real stereo-loudspeaker crosstalk. Deliberately
+absent from ``FORMAT_MAP``, which enumerates only selectable speaker
+layouts."""
+
+TRANSAURAL_BED_FORMATS: tuple[str, ...] = ("5.1.4", "7.1.2", "7.1.4")
+"""Valid speaker-layout beds for ``UpmixConfig.output_format`` when
+``UpmixConfig.output_type == "transaural"``."""
+
 
 @dataclass(frozen=True)
 class InputFormat:

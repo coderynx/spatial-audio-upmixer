@@ -155,6 +155,11 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "binaural": {
             "profile": ("config", "binaural_profile"),
         },
+        # Spatial Audio Engine crosstalk-cancellation (transaural) render —
+        # a delivery format (format.type: transaural), not a channel layout.
+        "transaural": {
+            "profile": ("config", "transaural_profile"),
+        },
     },
 
     "mixing": {
@@ -249,6 +254,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "spatial_intensity":          ("spatial_intensity",        float),
     "spatial_preanalysis":        ("spatial_preanalysis",      bool),
     "binaural_profile":           ("binaural_profile",         str),
+    "transaural_profile":         ("transaural_profile",       str),
     "height_low_rolloff_gain":    ("height_low_rolloff_gain",  float),
     "height_high_shelf_gain":     ("height_high_shelf_gain",   float),
     "fft_size":                   ("fft_size",                 int),
@@ -387,6 +393,14 @@ def _binaural_profile_choices() -> tuple[str, ...]:
     return BINAURAL_PROFILES
 
 
+def _transaural_profile_choices() -> tuple[str, ...]:
+    # Deferred import: upmixer.crosstalk imports upmixer.binaural.renderer,
+    # which imports upmixer.mastering.chain, which imports this module at
+    # load time — a top-level import here would cycle, same as binaural's.
+    from upmixer.crosstalk.profiles import CROSSTALK_PROFILES
+    return CROSSTALK_PROFILES
+
+
 def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
     if value is None:
         return
@@ -442,11 +456,12 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             raise ManifestError(f"{path} must be at most {maximums[path]}.")
     choices = {
         "engine.mode": {"realtime", "stem"},
-        "format.type": {"wav", "adm-bwf", "binaural"},
+        "format.type": {"wav", "adm-bwf", "binaural", "transaural"},
         "format.subtype": {"PCM_16", "PCM_24", "PCM_32", "FLOAT"},
         "format.downmix.surround_coeff": {0.7071, 0.5, 0.0},
         "mixing.spatial.profile": {"auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"},
         "format.binaural.profile": set(_binaural_profile_choices()),
+        "format.transaural.profile": set(_transaural_profile_choices()),
     }
     if path in choices and value not in choices[path]:
         raise ManifestError(f"{path} has an unsupported value: {value!r}.")

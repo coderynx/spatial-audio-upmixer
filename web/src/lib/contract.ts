@@ -19,6 +19,7 @@ import {
   CENTER_GAIN,
   BACK_GAIN,
   COMP_PROFILES,
+  CROSSTALK_LOUDNESS_MAX_GAIN_DB,
   DIFFUSE_SEND_BLEND,
   EXCITE_BLEND,
   EXCITE_DRIVE,
@@ -77,5 +78,6 @@ export function canonicalConstants(): Record<string, unknown> {
     bass_excite_blend: EXCITE_BLEND,
     bass_excite_drive: EXCITE_DRIVE,
     binaural_loudness_max_gain_db: BINAURAL_LOUDNESS_MAX_GAIN_DB,
+    crosstalk_loudness_max_gain_db: CROSSTALK_LOUDNESS_MAX_GAIN_DB,
   };
 }

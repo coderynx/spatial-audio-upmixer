@@ -58,11 +58,13 @@ import {
   MONO_MAKER_STEREO_PAIRS,
   N_ACN_CHANNELS,
   SUB_CUTOFF_HZ,
+  TRANSAURAL_VOICING_PARAMS,
   VOICING_PARAMS,
   type BassProfileName,
   type CompProfileName,
   type EqProfileName,
   type SpatialProfile,
+  type TransauralProfile,
   type VoicingChain,
 } from "./masteringProfiles";
 
@@ -777,4 +779,167 @@ export function assignDecodeFilterBuffers(
     pair.left.buffer = leftBuffer;
     pair.right.buffer = rightBuffer;
   });
+}
+
+// ---- Crosstalk-cancellation (transaural) speaker rendering ----
+//
+// Mirrors upmixer/crosstalk/renderer.py::render_crosstalk exactly: reuse the
+// anechoic binaural ("flat") ear signals, apply a 2x2 crosstalk-cancellation
+// FIR matrix, then a profile voicing chain — see
+// docs/standards/transaural_speakers.md §1.
+
+export type XtcConvolvers = {
+  ll: ConvolverNode; // left speaker <- left ear
+  lr: ConvolverNode; // left speaker <- right ear
+  rl: ConvolverNode; // right speaker <- left ear
+  rr: ConvolverNode; // right speaker <- right ear
+};
+
+export type CrosstalkGraphHandle = {
+  /** Feed each positional channel's `AmbiMonoEncoder.out` into this — same
+   * role as `BinauralGraphHandle.hoaBus`, since this graph decodes its own
+   * internal "flat" (anechoic) binaural render before crosstalk-cancelling
+   * it (upmixer/crosstalk/renderer.py always renders the ear signals with
+   * the `flat` profile, never a room-tail profile — a real speaker/room
+   * already supplies reverberant coloration on playback). */
+  hoaBus: GainNode;
+  /** Pre-voicing insertion point for LFE — same contract as
+   * `BinauralGraphHandle.preVoicing` (Ledger D11): LFE folds into the
+   * anechoic ear signals *before* the XTC matrix and transaural voicing
+   * chain run, matching `render_binaural`'s own LFE-before-voicing order
+   * (the XTC/voicing stages downstream both then see the LFE-inclusive
+   * signal, same as the backend). */
+  preVoicing: AudioNode;
+  /** Post-voicing stereo output (2 discrete channels via a ChannelMerger). */
+  output: AudioNode;
+  /** The internal anechoic binaural sub-graph — exposed so its convolvers
+   * can be filled by `loadDecodeFilterSet("flat")`, same as the primary
+   * binaural graph's. */
+  binaural: BinauralGraphHandle;
+  xtcConvolvers: XtcConvolvers;
+  voicing: VoicingChain;
+  /** Every node this call created besides `hoaBus`/`preVoicing`/`output`/
+   * `binaural`/`voicing` (already covered by their own teardown) — for
+   * teardown. */
+  nodes: AudioNode[];
+};
+
+export function buildCrosstalkGraph(ctx: BaseAudioContext, profile: TransauralProfile): CrosstalkGraphHandle {
+  const nodes: AudioNode[] = [];
+
+  const binaural = buildBinauralGraph(ctx, "flat");
+
+  const earSplitter = ctx.createChannelSplitter(2);
+  binaural.output.connect(earSplitter);
+  const earL = ctx.createGain();
+  const earR = ctx.createGain();
+  earSplitter.connect(earL, 0);
+  earSplitter.connect(earR, 1);
+  nodes.push(earSplitter, earL, earR);
+
+  // 2x2 crosstalk-cancellation matrix: speaker = H @ ear (four convolvers,
+  // one per H_xy tap — see docs/standards/transaural_speakers.md §4).
+  const ll = ctx.createConvolver();
+  const lr = ctx.createConvolver();
+  const rl = ctx.createConvolver();
+  const rr = ctx.createConvolver();
+  for (const conv of [ll, lr, rl, rr]) conv.normalize = false;
+  earL.connect(ll);
+  earR.connect(lr);
+  earL.connect(rl);
+  earR.connect(rr);
+  nodes.push(ll, lr, rl, rr);
+
+  const speakerSumL = ctx.createGain();
+  const speakerSumR = ctx.createGain();
+  ll.connect(speakerSumL);
+  lr.connect(speakerSumL);
+  rl.connect(speakerSumR);
+  rr.connect(speakerSumR);
+  nodes.push(speakerSumL, speakerSumR);
+
+  const xtcMerger = ctx.createChannelMerger(2);
+  speakerSumL.connect(xtcMerger, 0, 0);
+  speakerSumR.connect(xtcMerger, 0, 1);
+  nodes.push(xtcMerger);
+
+  const voicingSplitter = ctx.createChannelSplitter(2);
+  xtcMerger.connect(voicingSplitter);
+  const voicingLeftTap = ctx.createGain();
+  const voicingRightTap = ctx.createGain();
+  voicingSplitter.connect(voicingLeftTap, 0);
+  voicingSplitter.connect(voicingRightTap, 1);
+  nodes.push(voicingSplitter, voicingLeftTap, voicingRightTap);
+
+  const voicing = buildVoicingChain(ctx, voicingLeftTap, voicingRightTap);
+  applyVoicingParams(voicing, TRANSAURAL_VOICING_PARAMS[profile]);
+  const voicingMerger = ctx.createChannelMerger(2);
+  voicing.left.connect(voicingMerger, 0, 0);
+  voicing.right.connect(voicingMerger, 0, 1);
+  nodes.push(voicingMerger);
+
+  return {
+    hoaBus: binaural.hoaBus,
+    preVoicing: binaural.preVoicing,
+    output: voicingMerger,
+    binaural,
+    xtcConvolvers: { ll, lr, rl, rr },
+    voicing,
+    nodes,
+  };
+}
+
+/** Fetches and decodes a profile's single 4-channel XTC filter WAV (no
+ * multi-file split needed — see `XTC_FILTER_CHANNELS`). `fileLoader`
+ * decouples the browser `fetch`-based default (`useStemPreview.ts`'s
+ * `fetchXtcFilterSet`) from the golden-diff harness's disk read, mirroring
+ * `loadDecodeFilterChannels`'s `partLoader` pattern above. */
+export async function loadXtcFilterChannels(
+  ctx: BaseAudioContext,
+  name: string,
+  fileLoader: (ctx: BaseAudioContext, name: string) => Promise<AudioBuffer>,
+): Promise<Float32Array[]> {
+  const buffer = await fileLoader(ctx, name);
+  const channels: Float32Array[] = [];
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) channels.push(buffer.getChannelData(ch));
+  if (channels.length !== 4) {
+    throw new Error(`Crosstalk filter set '${name}' has ${channels.length} channels, expected 4`);
+  }
+  return channels;
+}
+
+/** Dedupes concurrent/repeat fetches of the same profile's XTC filter set by
+ * `name` — same cache-by-key pattern as `loadCachedDecodeFilterChannels`. */
+export function loadCachedXtcFilterChannels(
+  cache: Map<string, Promise<Float32Array[]>>,
+  ctx: BaseAudioContext,
+  name: string,
+  fileLoader: (ctx: BaseAudioContext, name: string) => Promise<AudioBuffer>,
+): Promise<Float32Array[]> {
+  let pending = cache.get(name);
+  if (!pending) {
+    pending = loadXtcFilterChannels(ctx, name, fileLoader);
+    cache.set(name, pending);
+  }
+  return pending;
+}
+
+/** Assigns a loaded XTC filter set's 4 channels onto a `buildCrosstalkGraph`
+ * handle's `xtcConvolvers` (H_LL, H_LR, H_RL, H_RR in that order — matching
+ * upmixer/crosstalk/filters.py's WAV channel layout). */
+export function assignXtcFilterBuffers(
+  ctx: BaseAudioContext,
+  convolvers: XtcConvolvers,
+  channels: Float32Array[],
+): void {
+  const length = channels[0].length;
+  const toBuffer = (data: Float32Array) => {
+    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+    buffer.copyToChannel(data, 0);
+    return buffer;
+  };
+  convolvers.ll.buffer = toBuffer(channels[0]);
+  convolvers.lr.buffer = toBuffer(channels[1]);
+  convolvers.rl.buffer = toBuffer(channels[2]);
+  convolvers.rr.buffer = toBuffer(channels[3]);
 }

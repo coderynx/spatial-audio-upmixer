@@ -45,7 +45,8 @@ Canonical processing paths are:
   `engine.stem_silence_crossfade_ms`, `engine.stem_silence_pad_ms`.
 - `format.type`, `format.subtype`, `format.sample_rate`,
   `format.downmix.enabled`, `format.downmix.output`,
-  `format.downmix.surround_coeff`, `format.binaural.profile`.
+  `format.downmix.surround_coeff`, `format.binaural.profile`,
+  `format.transaural.profile`.
 - `mixing.channel_layout`, `mixing.stem_rebalance`, `mixing.stem_eq`,
   `mixing.stem_routing`, `mixing.stem_enabled`, `mixing.stem_solo`,
   `mixing.stem_source_anchor_strength`, `mixing.spatial.profile`,
@@ -84,6 +85,7 @@ Canonical processing paths are:
 | `mastering.*` | Mastering tab and reference upload | Exported job receives trusted reference | High before change | Unified |
 | `format.*` | Delivery controls and Advanced JSON | Direct mapping | None | Manifest behavior |
 | `format.binaural.*` | "Container" select on the Delivery tab gains a `binaural` option (disabled unless `channel_layout` is one of the binaural bed layouts) + profile select; in-preview Spatial Audio Engine picker mirrors the project value but is session-only | `type: binaural` renders `channel_layout`'s own bed through the profile's decode+voicing chain to stereo, in place of the plain multichannel bed (see [Spatial Audio Engine](standards/spatial_audio_engine.md)); routing/preview UI always keys off `channel_layout` directly | Medium | Unified |
+| `format.transaural.*` | "Container" select gains a `transaural` option (disabled unless `channel_layout` is one of the transaural bed layouts) + profile select; in-preview picker (Speakers row) mirrors the project value but is session-only, same pattern as `format.binaural.*` | `type: transaural` renders `channel_layout`'s own bed through the profile's crosstalk-cancellation+voicing chain to stereo (see [Transaural Speaker Rendering](standards/transaural_speakers.md)); mutually exclusive with `format.binaural.*` (one `type` field) | Medium | Unified |
 | `format.downmix` | Delivery toggle/coefficient | Server-managed companion artifact | High before change | Unified |
 | `processing.preview*` | Unsupported | Projects use browser audition; exports full render | Low | Project behavior |
 | Asset paths/cache/model paths | Server-managed | Injected by web worker | Low | Explicitly unsupported |

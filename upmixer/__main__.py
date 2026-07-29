@@ -107,6 +107,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.spatial_preanalysis = False
     if args.binaural_profile is not None:
         config.binaural_profile = args.binaural_profile
+    if args.transaural_profile is not None:
+        config.transaural_profile = args.transaural_profile
     if args.no_loudness_normalize:
         config.loudness_normalize = False
     if args.loudness_target is not None:
@@ -590,6 +592,12 @@ def main() -> None:
         help="Spatial Audio Engine profile for --output-type binaural (default: studio).",
     )
     parser.add_argument(
+        "--transaural-profile",
+        choices=["stereo", "smart_speaker", "car"],
+        default=None,
+        help="Spatial Audio Engine profile for --output-type transaural (default: stereo).",
+    )
+    parser.add_argument(
         "--content-hf-analysis-hz",
         type=lambda value: _positive_float(value, "--content-hf-analysis-hz"),
         default=None,
@@ -624,13 +632,16 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-type",
-        choices=["wav", "adm-bwf", "binaural"],
+        choices=["wav", "adm-bwf", "binaural", "transaural"],
         default=None,
         help=(
             "'wav' = standard multichannel WAV. "
             "'adm-bwf' = Dolby ADM-BWF (Logic Pro, DaVinci Resolve, Pro Tools). "
             "'binaural' = Spatial Audio Engine headphone-stereo render of --format's "
             "bed (--format must be 5.1.4, 7.1.2, or 7.1.4; see --binaural-profile). "
+            "'transaural' = Spatial Audio Engine crosstalk-cancelled speaker-stereo "
+            "render of --format's bed (same bed requirement; see "
+            "--transaural-profile). "
             "Default: 'wav' (or as set by manifest)."
         ),
     )

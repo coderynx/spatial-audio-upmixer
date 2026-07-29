@@ -1,5 +1,12 @@
 # Spatial Audio Engine — Binaural Rendering Contract
 
+**Sibling target:** this document covers headphone (binaural) playback only.
+For real stereo loudspeakers (standard hi-fi pairs, smart speakers, car
+audio), see
+[Transaural Speaker Rendering](transaural_speakers.md), which reuses this
+engine's anechoic (`flat`) ear signals as its input and adds a crosstalk-
+cancellation stage on top.
+
 **Source:** Internal design, modeled on published descriptions of Apple Spatial
 Audio and the Dolby Atmos binaural renderer (see References). No measured
 proprietary HRTF/BRIR data is used — all filters are synthesized (§4).

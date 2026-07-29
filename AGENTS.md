@@ -69,6 +69,7 @@ Consult the relevant neutral project reference before changing code governed by 
 - [Loudness DSP and ITU-R BS.1770](docs/standards/loudness_dsp_bs1770.md) for loudness and true-peak behavior.
 - [Spatial layouts and ITU-R BS.775/BS.2051](docs/standards/spatial_layouts_bs775_bs2051.md) for speaker layouts, labels, LFE, and downmixes.
 - [Spatial Audio Engine (binaural rendering)](docs/standards/spatial_audio_engine.md) for the `binaural` rendering pass, Studio/Listening/Flat profiles, and the core/web parity contract.
+- [Transaural Speaker Rendering (crosstalk cancellation)](docs/standards/transaural_speakers.md) for the `transaural` rendering pass, Stereo/Smart-speaker/Car profiles, and the XTC filter-design contract.
 
 ## Knowledge Base
 

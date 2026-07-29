@@ -78,6 +78,10 @@ export type Manifest = {
     // spatial_audio_engine.md. Only meaningful when type is "binaural";
     // a delivery format alongside "wav"/"adm-bwf", not a channel layout.
     binaural: { profile: string };
+    // Spatial Audio Engine crosstalk-cancellation (transaural) render — see
+    // docs/standards/transaural_speakers.md. Only meaningful when type is
+    // "transaural"; a delivery format alongside "wav"/"adm-bwf"/"binaural".
+    transaural: { profile: string };
   };
 };
 
@@ -169,6 +173,7 @@ export const defaultManifest: Manifest = {
     type: "wav", subtype: "PCM_24", sample_rate: 48000,
     downmix: { enabled: false, output: null, surround_coeff: 0.7071 },
     binaural: { profile: "studio" },
+    transaural: { profile: "stereo" },
   },
 };
 
@@ -222,6 +227,7 @@ export function normalizeManifest(source: Record<string, unknown>): Manifest {
         ...value.format?.downmix,
       },
       binaural: { ...defaultManifest.format.binaural, ...value.format?.binaural },
+      transaural: { ...defaultManifest.format.transaural, ...value.format?.transaural },
     },
   };
 }
