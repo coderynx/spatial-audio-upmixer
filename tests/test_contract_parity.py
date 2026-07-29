@@ -1,34 +1,62 @@
-"""Signed preview/export parity contract — Python-side signature check.
+"""Preview/export parity — live value cross-check.
 
-Asserts upmixer.contract.contract_signature() matches the value pinned in
-docs/contracts/preview_export_parity.md. web/src/lib/contract.test.ts
-asserts the same pinned value against the TypeScript mirror
-(web/src/lib/contract.ts). If either side's contracted constants drift from
-the pinned signature, its own test fails first — see
-docs/contracts/README.md for the required change protocol before updating
-the pinned value.
+Compares upmixer.contract.canonical_constants() directly against the web
+side's own canonicalConstants(), dumped ahead of time to
+tests/fixtures/contract/web_constants.json by
+web/scripts/dump-constants.mjs (`npm run constants:dump` from web/).
+web/src/lib/contract.test.ts covers the equivalent TypeScript-side sanity
+checks (determinism, no NaN/Infinity). If either side's contracted
+constants drift, this test fails with the specific diverging keys — see
+docs/contracts/README.md for the required change protocol before editing a
+contracted constant.
 """
 from __future__ import annotations
 
-from upmixer.contract import canonical_constants, contract_signature
+import json
+import os
 
-_PINNED_SIGNATURE = "8819f516a674d8fc9ce9be72e7733cc9cdba1b0febfa13a01097bad96811e218"
+from upmixer.contract import _canonical_value, canonical_constants
+
+_FIXTURE_PATH = os.path.join(
+    os.path.dirname(__file__), "fixtures", "contract", "web_constants.json"
+)
 
 
-def test_contract_signature_matches_pinned_doc_value():
-    assert contract_signature() == _PINNED_SIGNATURE, (
-        "upmixer/contract.py's constants no longer match the signature pinned in "
-        "docs/contracts/preview_export_parity.md. If this is an intentional, "
-        "both-sides change, follow docs/contracts/README.md's change protocol: "
-        "update the TypeScript mirror (web/src/lib/contract.ts / "
-        "masteringProfiles.ts), update the constants catalog and regenerate the "
-        "pinned signature in docs/contracts/preview_export_parity.md, then "
-        "re-run this test and web/src/lib/contract.test.ts."
+def _diverging_keys(python_value: object, web_value: object, path: str = "") -> list[str]:
+    if isinstance(python_value, dict) and isinstance(web_value, dict):
+        diffs: list[str] = []
+        keys = set(python_value) | set(web_value)
+        for key in sorted(keys):
+            child_path = f"{path}.{key}" if path else key
+            if key not in python_value:
+                diffs.append(f"{child_path}: missing on Python side")
+            elif key not in web_value:
+                diffs.append(f"{child_path}: missing on web side")
+            else:
+                diffs.extend(_diverging_keys(python_value[key], web_value[key], child_path))
+        return diffs
+    if _canonical_value(python_value) != _canonical_value(web_value):
+        return [f"{path}: python={python_value!r} web={web_value!r}"]
+    return []
+
+
+def test_web_constants_match_python():
+    assert os.path.exists(_FIXTURE_PATH), (
+        f"{_FIXTURE_PATH} not found — run `npm run constants:dump` from web/ "
+        "to generate it (see web/scripts/dump-constants.mjs)."
     )
+    with open(_FIXTURE_PATH) as f:
+        web_constants = json.load(f)
 
-
-def test_contract_signature_is_deterministic():
-    assert contract_signature() == contract_signature()
+    diffs = _diverging_keys(canonical_constants(), web_constants)
+    assert not diffs, (
+        "upmixer/contract.py's constants no longer match "
+        f"tests/fixtures/contract/web_constants.json:\n" + "\n".join(diffs) + "\n\n"
+        "If this is an intentional, both-sides change, follow "
+        "docs/contracts/README.md's change protocol: update the TypeScript mirror "
+        "(web/src/lib/contract.ts / masteringProfiles.ts), re-run "
+        "`npm run constants:dump` from web/, then re-run this test."
+    )
 
 
 def test_canonical_constants_has_no_nan_or_inf():

@@ -1,21 +1,18 @@
-// Signed preview/export parity contract — canonical Tier-1/Tier-2 constants.
+// Preview/export parity constants — the live cross-check's TypeScript half.
 //
 // See docs/contracts/preview_export_parity.md for what this covers and why.
-// This module is the TypeScript half of the "signing" mechanism: it mirrors
-// upmixer/contract.py::canonical_constants() field-for-field, importing the
-// real constants from masteringProfiles.ts (never re-typed literals), and
-// hashes them the same way. Both signatures are asserted against the value
-// pinned in the contract doc — one by tests/test_contract_parity.py, one by
-// contract.test.ts.
+// This module mirrors upmixer/contract.py::canonical_constants()
+// field-for-field, importing the real constants from masteringProfiles.ts
+// (never re-typed literals). web/scripts/dump-constants.mjs dumps
+// canonicalConstants() to tests/fixtures/contract/web_constants.json, which
+// tests/test_contract_parity.py compares directly against the live Python
+// values — no hash, no pinned literal to regenerate.
 //
-// Node-only (uses node:crypto): nothing in the browser bundle imports this
-// module, only contract.test.ts does, so it never ships to the browser.
-//
-// Changing any constant this module reads changes contractSignature(). Per
-// the contract's change protocol (docs/contracts/README.md), that signature
-// change must be intentional and mirrored on both sides — see that document
-// before editing any value referenced here.
-import { createHash } from "node:crypto";
+// Changing any constant this module reads changes what that comparison
+// checks against. Per the contract's change protocol
+// (docs/contracts/README.md), such a change must be mirrored on both sides
+// and the web fixture re-dumped (`npm run constants:dump`) — see that
+// document before editing any value referenced here.
 import {
   BASS_PROFILES,
   BINAURAL_LOUDNESS_MAX_GAIN_DB,
@@ -81,49 +78,4 @@ export function canonicalConstants(): Record<string, unknown> {
     bass_excite_drive: EXCITE_DRIVE,
     binaural_loudness_max_gain_db: BINAURAL_LOUDNESS_MAX_GAIN_DB,
   };
-}
-
-/** Format a number so Python and TypeScript hash the same payload.
- *
- * Native JSON.stringify/json.dumps float formatting differs across the two
- * languages (e.g. Python prints `30.0`, JS prints `30`), which would make
- * the two sides' signatures diverge over formatting, not real value drift.
- * Both this function and its Python mirror
- * (upmixer/contract.py::_canonical_number) instead: print integer-valued
- * numbers with no decimal point, and otherwise round to 12 fractional
- * digits and strip trailing zeros (keeping at least one). 12 digits is well
- * inside a float64's ~15-17 significant-digit precision, so both languages'
- * correctly-rounded fixed-decimal conversions agree byte-for-byte on the
- * same underlying double. */
-function canonicalNumber(value: number): string {
-  if (!Number.isFinite(value)) {
-    throw new Error(`Non-finite number not supported in canonical serialization: ${value}`);
-  }
-  if (Number.isInteger(value)) return String(value);
-  const text = value.toFixed(12).replace(/0+$/, "");
-  return text.endsWith(".") ? `${text}0` : text;
-}
-
-/** Recursively render `value` as deterministic, cross-language JSON text —
- * mirrors upmixer/contract.py::_canonical_value. */
-function canonicalValue(value: unknown): string {
-  if (value === null || value === undefined) return "null";
-  if (typeof value === "boolean") return value ? "true" : "false";
-  if (typeof value === "number") return canonicalNumber(value);
-  if (typeof value === "string") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalValue).join(",")}]`;
-  if (typeof value === "object") {
-    const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalValue(obj[key])}`).join(",")}}`;
-  }
-  throw new TypeError(`Unsupported type for canonical serialization: ${typeof value}`);
-}
-
-/** Stable sha256 hex digest of canonicalConstants() — must equal
- * upmixer/contract.py::contract_signature() and the value pinned in
- * docs/contracts/preview_export_parity.md. */
-export function contractSignature(): string {
-  const payload = canonicalValue(canonicalConstants());
-  return createHash("sha256").update(payload, "utf8").digest("hex");
 }

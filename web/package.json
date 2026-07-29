@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "format": "prettier --write src vite.config.ts eslint.config.js package.json",
-    "golden:render": "node scripts/render-preview-golden.mjs"
+    "golden:render": "node scripts/render-preview-golden.mjs",
+    "constants:dump": "node scripts/dump-constants.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.6",

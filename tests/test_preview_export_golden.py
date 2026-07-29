@@ -10,16 +10,19 @@ per-channel-RMS metrics for the fixed bed, the same way
 `test_mastering_golden.py` pins full-chain output — regenerate via
 `REGENERATE_GOLDEN=1 python3 -m pytest tests/test_preview_export_golden.py`.
 
-`test_cross_engine_golden_diff` is the actual contract acceptance test. It
-reads `tests/fixtures/preview_export_golden/web_bed_metrics.json`, produced
-by running `npm run golden:render` from `web/` (see
+`test_cross_engine_golden_diff` is the actual contract acceptance test, and
+runs in the default suite (not opt-in) — it reads the *committed*
+`tests/fixtures/preview_export_golden/web_bed_metrics.json`, produced by
+running `npm run golden:render` from `web/` (see
 `web/scripts/render-preview-golden.mjs`) — that script bundles the real
 `web/src/features/projects/previewGraph.ts` with esbuild, renders the same
 deterministic bed on a real `OfflineAudioContext` via `node-web-audio-api`
 (a spec-compliant native Web Audio implementation for Node), and writes the
-same metrics shape `_metrics()` below produces. If the fixture is missing,
-this test skips with a message pointing at that command rather than passing
-vacuously — regenerate the fixture instead of loosening the assertions.
+same metrics shape `_metrics()` below produces. Re-run that command to
+refresh the fixture after a web-side DSP/constant change; if the fixture is
+missing entirely, this test skips with a message pointing at that command
+rather than passing vacuously — regenerate the fixture instead of loosening
+the assertions.
 
 Scope: `test_python_bed_metrics_golden`/`test_cross_engine_golden_diff` cover
 the EQ/compressor/bass mastering-chain stage only — exactly what
@@ -210,7 +213,6 @@ def test_python_bed_metrics_golden():
         )
 
 
-@pytest.mark.perf
 def test_cross_engine_golden_diff():
     """The actual preview/export parity acceptance test (§5 tolerances).
 
@@ -267,7 +269,6 @@ def test_python_binaural_metrics_golden():
         )
 
 
-@pytest.mark.perf
 def test_cross_engine_binaural_golden_diff():
     """The binaural-collapse parity acceptance test (§5 tolerances, Ledger D10).
 

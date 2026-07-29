@@ -48,26 +48,28 @@ Where a contracted constant exists because a standard requires it (e.g. LFE
 
 ## Change protocol — binding on human and AI contributors
 
-A contract in this directory is **signed**: `preview_export_parity.md`
-pins a `contract_signature()` hash computed from the real constants on both
-sides (see below). Changing anything the contract covers means:
+This directory is **cross-checked**: `preview_export_parity.md`'s
+constants catalog is verified by comparing the real constants on both
+sides directly (see below) — no hash, nothing to regenerate but a JSON
+fixture. Changing anything the contract covers means:
 
 1. Update the Python source (`upmixer/...`).
 2. Update the TypeScript source (`web/src/...`).
 3. Update the constants catalog / tier / threshold in
-   `preview_export_parity.md` and regenerate the pinned signature (see that
-   file's "Regenerating the signature" section).
-4. Re-run both signature tests (`tests/test_contract_parity.py`,
+   `preview_export_parity.md`, then run `npm run constants:dump` (from
+   `web/`) to refresh `tests/fixtures/contract/web_constants.json`.
+4. Re-run the value cross-check (`tests/test_contract_parity.py`,
    `web/src/lib/contract.test.ts`) and the golden render diff
-   (`tests/test_preview_export_golden.py`) until green.
+   (`tests/test_preview_export_golden.py`, which runs by default — refresh
+   its fixtures with `npm run golden:render` first) until green.
 
 **Changing only one side is a contract violation.** It is not a style
-preference — `contract_signature()` is computed from the actual constant
-values imported from each side's real source modules (never re-typed
-literals), so an unmatched change makes the corresponding signature test
-fail on whichever side lags. Do not silence, skip, or loosen a tolerance to
-make a failing test pass; fix the divergent side, or if the contract itself
-should change, follow all four steps above.
+preference — `tests/test_contract_parity.py` loads the constants each side
+actually computes (never re-typed literals) and diffs them directly, so an
+unmatched change fails that test and names the specific diverging key(s).
+Do not silence, skip, or loosen a tolerance to make a failing test pass; fix
+the divergent side, or if the contract itself should change, follow all
+four steps above.
 
 If you are an AI agent asked to change DSP behavior anywhere in `upmixer/`
 or in the preview graph, **read `preview_export_parity.md` first** to find
@@ -75,16 +77,20 @@ out whether the value you're touching is contracted, and if so, at which
 parity tier — that determines whether the other side must also change and
 how tightly re-verification must hold.
 
-## Signature mechanism
+## Value cross-check mechanism
 
-`upmixer/contract.py::contract_signature()` and `web/src/lib/
-contract.ts::contractSignature()` each build a normalized, sorted-key
-structure from their real constants and hash it (sha256 over stable JSON).
-The two functions are mirrors of each other by construction — same key set,
-same normalization — so if either side's underlying constants change, its
-own signature changes. Both are asserted against the single value pinned in
-`preview_export_parity.md`. This does **not** prove the two engines compute
-the same signal — only that the documented shared constants are unchanged
-on whichever side ran the test. Actual signal-level equivalence is the job
-of the golden render diff (`tests/test_preview_export_golden.py`), described
-in `preview_export_parity.md`'s tolerance-thresholds section.
+`upmixer/contract.py::canonical_constants()` and `web/src/lib/
+contract.ts::canonicalConstants()` each build a normalized structure from
+their real constants — same key set by construction. `web/scripts/
+dump-constants.mjs` (`npm run constants:dump`) dumps the TypeScript side's
+structure to the committed `tests/fixtures/contract/web_constants.json`;
+`tests/test_contract_parity.py` loads that fixture and diffs it directly
+against the live Python structure (normalizing both through
+`upmixer.contract._canonical_value` so number-formatting differences
+between the two languages never cause a false mismatch). If either side's
+underlying constants change without the other following, the diff names
+the exact diverging key. This does **not** prove the two engines compute
+the same signal — only that the documented shared constants agree. Actual
+signal-level equivalence is the job of the golden render diff (`tests/
+test_preview_export_golden.py`), which runs by default (not opt-in) and is
+described in `preview_export_parity.md`'s tolerance-thresholds section.

@@ -1,22 +1,22 @@
-"""Signed preview/export parity contract — canonical Tier-1/Tier-2 constants.
+"""Preview/export parity constants — the live cross-check's Python half.
 
 See ``docs/contracts/preview_export_parity.md`` for what this covers and
-why. This module is the Python half of the "signing" mechanism: it
-assembles the constants that document declares must match between the core
-engine and the web preview, read straight from their real source modules
-(never re-typed literals), and hashes them into a single signature. The web
-mirror is ``web/src/lib/contract.ts``; both are asserted against the
-signature pinned in the contract doc by ``tests/test_contract_parity.py``
-and ``web/src/lib/contract.test.ts``.
+why. This module assembles the constants that document declares must match
+between the core engine and the web preview, read straight from their real
+source modules (never re-typed literals). ``tests/test_contract_parity.py``
+compares this module's :func:`canonical_constants` directly against
+``web/src/lib/contract.ts``'s ``canonicalConstants()``, dumped ahead of time
+to ``tests/fixtures/contract/web_constants.json`` via
+``npm run constants:dump`` (``web/scripts/dump-constants.mjs``) — no pinned
+hash to regenerate, the test just diffs the two live structures.
 
-Changing any constant this module reads changes ``contract_signature()``.
-Per the contract's change protocol (``docs/contracts/README.md``), that
-signature change must be intentional and mirrored on both sides — see that
-document before editing any value referenced here.
+Changing any constant this module reads changes what that comparison checks
+against. Per the contract's change protocol (``docs/contracts/README.md``),
+such a change must be mirrored on both sides and the web fixture
+re-dumped — see that document before editing any value referenced here.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 
 from upmixer.binaural.renderer import BINAURAL_LOUDNESS_MAX_GAIN_DB
@@ -43,9 +43,9 @@ def canonical_constants() -> dict:
 
     Every value is read from its real source module — ``UpmixConfig``
     defaults and the mastering/routing profile tables — never re-typed as a
-    literal here. That means this function (and therefore
-    ``contract_signature()``) changes automatically whenever any contracted
-    constant changes, with no edit to this file required.
+    literal here. That means this function's output changes automatically
+    whenever any contracted constant changes, with no edit to this file
+    required.
 
     Channel-layout/format constants (``upmixer.formats``) are deliberately
     excluded: the web has no independent static copy of them to check
@@ -128,16 +128,3 @@ def _canonical_value(value: object) -> str:
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(_canonical_value(v) for v in value) + "]"
     raise TypeError(f"Unsupported type for canonical serialization: {type(value)!r}")
-
-
-def contract_signature() -> str:
-    """Stable sha256 hex digest of :func:`canonical_constants`.
-
-    Uses :func:`_canonical_value` rather than plain ``json.dumps`` so the
-    digest depends only on the actual values (not on dict/import ordering,
-    and not on Python-vs-TypeScript native number formatting) — see
-    ``web/src/lib/contract.ts::contractSignature`` for the mirror this must
-    keep matching.
-    """
-    payload = _canonical_value(canonical_constants())
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

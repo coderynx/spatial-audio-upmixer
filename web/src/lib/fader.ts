@@ -5,8 +5,8 @@
  * audible range in the top third of the travel, as a raw linear gain does.
  *
  * Web-only monitor-UI concern, deliberately kept out of masteringProfiles.ts
- * — that module holds the Tier-1 DSP constants mirrored to
- * upmixer/contract.py::contract_signature(), and monitor gain never reaches
+ * — that module holds the Tier-1 DSP constants cross-checked against
+ * upmixer/contract.py::canonical_constants(), and monitor gain never reaches
  * the exported render (see useStemPreview.ts's PROGRAM/MONITOR gain split),
  * so it has no parity contract to keep. */
 

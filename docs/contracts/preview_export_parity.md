@@ -49,7 +49,7 @@ in the preview (not ordering-only) — see **Ledger D12**.
 
 - **Tier 1 — bit-for-bit.** Scalar constants, tables, and file assets: both
   sides must carry the exact same numeric value or byte-identical file.
-  Drift here is always a bug. Covered by the signature mechanism (§4).
+  Drift here is always a bug. Covered by the live value cross-check (§4).
 - **Tier 2 — parameter-level only.** The DSP *realization* may legitimately
   differ (SciPy `sosfilt` IIR vs. Web Audio `BiquadFilterNode`/`Convolver
   Node`/`DynamicsCompressorNode`) as long as every parameter feeding it is
@@ -84,7 +84,7 @@ edited mix.
 
 One row per constant shared between export and preview. "TS" column gives
 the export/mirror symbol in `web/src/features/projects/masteringProfiles.ts`
-unless noted. All verified in sync as of this contract's signature (§4).
+unless noted. All verified in sync by the live value cross-check (§4).
 
 ### Channel-group gains, LFE, cutoffs — `upmixer/config.py::UpmixConfig`
 
@@ -183,7 +183,7 @@ a whole-file peak.
 
 These constants live only in `upmixer/mastering/match_reference.py` — the
 web never re-derives the algorithm, only convolves with the FIR bytes the
-server already computed (§2), so none of them enter `contract_signature()`
+server already computed (§2), so none of them enter `canonical_constants()`
 (§4), the same rationale as the loudness K-weighting rows above. `strength`,
 `spectrum`, and `rms` *are* read live from the manifest by the preview
 (`ProjectDetailPage.tsx`'s `previewMastering`) — they gate/blend the
@@ -200,8 +200,8 @@ preview does the same).
 
 ### Channel layouts / formats — `upmixer/formats.py`
 
-Out of scope for `contract_signature()` (§4): the web has no static copy of
-these to hash against, only a runtime fetch. Listed here for completeness,
+Out of scope for `canonical_constants()` (§4): the web has no static copy of
+these to cross-check against, only a runtime fetch. Listed here for completeness,
 parity enforced by the separate mechanism in `docs/project_manifest_parity.md`.
 
 | Constant | Value | How web gets it |
@@ -212,39 +212,46 @@ parity enforced by the separate mechanism in `docs/project_manifest_parity.md`.
 
 ---
 
-## 4. Contract signature
+## 4. Live value cross-check
 
-`upmixer/contract.py::contract_signature()` and `web/src/lib/
-contract.ts::contractSignature()` build a normalized structure from the
-Tier-1 constants above (imported from their real source modules, never
-re-typed) and hash it (sha256 over sorted-key JSON).
+`upmixer/contract.py::canonical_constants()` and `web/src/lib/
+contract.ts::canonicalConstants()` each build a normalized structure from
+the Tier-1 constants above (imported from their real source modules, never
+re-typed). There is no hash and no pinned literal: `web/scripts/
+dump-constants.mjs` (`npm run constants:dump` from `web/`) dumps the
+TypeScript side's `canonicalConstants()` to the committed fixture
+`tests/fixtures/contract/web_constants.json`, and `tests/
+test_contract_parity.py` loads that fixture and diffs it directly against
+the live Python `canonical_constants()` — normalizing both sides through
+`upmixer.contract._canonical_value` first so Python-vs-JS number formatting
+(`30.0` vs `30`) never causes a false mismatch. A real drift fails with the
+specific diverging key(s) and both values, not an opaque hash mismatch.
+`web/src/lib/contract.test.ts` covers the TypeScript-side sanity checks
+(determinism, no NaN/Infinity) independently.
 
-```
-PINNED SIGNATURE: 8819f516a674d8fc9ce9be72e7733cc9cdba1b0febfa13a01097bad96811e218
-```
-
-`tests/test_contract_parity.py` and `web/src/lib/contract.test.ts` each
-assert their computed signature equals the pinned value above.
-
-### Regenerating the signature
+### Regenerating the fixture
 
 After a deliberate, both-sides-updated change to any Tier-1 constant:
 
 ```bash
-python3 -c "from upmixer.contract import contract_signature; print(contract_signature())"
+cd web && npm run constants:dump
 ```
 
-Paste the new value into the `PINNED SIGNATURE` line above, then update the
-constants catalog (§3) to describe the new value, then re-run both
-signature tests and the golden render diff (§5).
+Then update the constants catalog (§3) to describe the new value, and
+re-run `tests/test_contract_parity.py` and the golden render diff (§5).
 
 ---
 
 ## 5. Golden-render tolerance thresholds
 
-`tests/test_preview_export_golden.py` (marked `@pytest.mark.perf`, opt-in)
-renders a fixed deterministic input through both engines at the same output
-layout/profile and compares:
+`tests/test_preview_export_golden.py` renders a fixed deterministic input
+through both engines at the same output layout/profile and compares. The
+two cross-engine diff tests (`test_cross_engine_golden_diff`,
+`test_cross_engine_binaural_golden_diff`) run in the **default** suite
+(`python3 -m pytest -q`, no marker) against the committed web fixtures —
+they are the everyday audible-parity gate, not an opt-in check. The two
+`*_metrics_golden` pin tests (Python-only reproducibility) are likewise
+unmarked and always run.
 
 | Metric | Threshold | Rationale |
 |---|---|---|
@@ -290,8 +297,9 @@ acceptable, revise the threshold here explicitly — never silently).
   BS.1770-flavored loudness/true-peak/RMS, and writes
   `tests/fixtures/preview_export_golden/web_bed_metrics.json`.
 - `test_cross_engine_golden_diff` reads that fixture and asserts the
-  tolerances above. Run `npm run golden:render` (from `web/`) to regenerate
-  it, then `python3 -m pytest tests/test_preview_export_golden.py -m perf`.
+  tolerances above; it runs by default. Run `npm run golden:render` (from
+  `web/`) to refresh the committed fixture after a web-side DSP/constant
+  change, then `python3 -m pytest tests/test_preview_export_golden.py`.
 
 **Scope note (bed stage):** `test_cross_engine_golden_diff` covers the
 channel-bed mastering chain (EQ → compressor → bass/mono-maker) —
