@@ -13,9 +13,13 @@ from upmixer_web.models import ImportBatch, Job
 
 # These register their manifest block keys (register_block_keys) as an
 # import-time side effect; without them, validate_manifest rejects
-# mastering.match_reference.* fields with "Unknown manifest field" unless
-# something else already imported the module first (MasteringChain only
-# imports it lazily inside process(), once reference matching actually runs).
+# mastering.eq/compressor/bass/match_reference.* fields with "Unknown
+# manifest field" unless something else already imported the module first
+# (MasteringChain only imports them lazily inside process(), once each
+# stage actually runs).
+import upmixer.mastering.bass  # noqa: F401 E402
+import upmixer.mastering.compressor  # noqa: F401 E402
+import upmixer.mastering.eq  # noqa: F401 E402
 import upmixer.mastering.match_reference  # noqa: F401 E402
 
 

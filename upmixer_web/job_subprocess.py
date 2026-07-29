@@ -1,6 +1,6 @@
 """Runs pipeline processing in an isolated child process.
 
-Stem separation (Torch/ONNX via ``audio-separator``) and mastering both run
+Stem separation (in-core PyTorch inference) and mastering both run
 inside :meth:`~upmixer.pipeline.UpmixPipeline.process_file` /
 :meth:`~upmixer.separation.stem_pipeline.StemUpmixPipeline.process_file`.
 Native crashes (OS OOM-kill, CUDA/MPS driver crashes, segfaults) in that code

@@ -1,10 +1,9 @@
 """Backend-aware, full-precision stem separator optimization tests."""
 from __future__ import annotations
 
-import sys
-import types
 from unittest.mock import patch
 
+from upmixer.separation.inference.registry import ModelSpec
 from upmixer.separation.separator import (
     MODEL_STEM_OVERRIDES,
     StemSeparator,
@@ -121,54 +120,50 @@ def test_explicit_batch_does_not_replace_learned_auto_value():
 
 
 def test_separator_receives_full_precision_batch_options(tmp_path):
+    fake_model = object()
+    fake_config = object()
     captured = {}
 
-    class FakeAudioSeparator:
-        def __init__(
-            self, model_file_dir, output_dir, output_format, sample_rate,
-            normalization_threshold, log_level, use_soundfile=False,
-            use_autocast=True, chunk_duration=None, mdxc_params=None,
-        ):
-            captured.update(
-                use_soundfile=use_soundfile,
-                use_autocast=use_autocast,
-                chunk_duration=chunk_duration,
-                mdxc_params=mdxc_params,
-                sample_rate=sample_rate,
-            )
+    def fake_load_model(model_filename, device, model_dir):
+        captured.update(model=model_filename, device=device, model_dir=model_dir)
+        return fake_model, fake_config
 
-        def load_model(self, model_filename):
-            captured["model"] = model_filename
+    fake_spec = ModelSpec(
+        filename="model.ckpt", arch="bs_roformer",
+        config_name="unused", weights_url="", license="OK",
+    )
 
-    package = types.ModuleType("audio_separator")
-    module = types.ModuleType("audio_separator.separator")
-    module.Separator = FakeAudioSeparator
-    package.separator = module
-
-    with patch.dict(
-        sys.modules,
-        {"audio_separator": package, "audio_separator.separator": module},
+    with (
+        patch(
+            "upmixer.separation.inference.loader.load_model",
+            side_effect=fake_load_model,
+        ),
+        patch(
+            "upmixer.separation.inference.registry.get_model_spec",
+            return_value=fake_spec,
+        ),
     ):
         separator = StemSeparator(
             model="model.ckpt", model_dir=str(tmp_path),
             sample_rate=96000, batch_size=4,
             segment_size=128, chunk_duration_s=300.0,
         )
-        separator._get_separator()
+        engine = separator._get_separator()
         separator.close()
 
-    assert captured == {
-        "use_soundfile": True,
-        "use_autocast": False,
-        "chunk_duration": 300.0,
-        "mdxc_params": {
-            "batch_size": 4,
-            "segment_size": 128,
-            "override_model_segment_size": True,
-        },
-        "sample_rate": 96000,
-        "model": "model.ckpt",
-    }
+    # Weight loading receives exactly this instance's model/dir settings —
+    # not audio-separator kwargs, since there is no longer a third-party
+    # Separator object to configure. Full float32 precision (no autocast) is
+    # now a structural property of demix.py rather than a runtime kwarg.
+    assert captured["model"] == "model.ckpt"
+    assert captured["model_dir"] == str(tmp_path)
+    assert engine._model is fake_model
+    assert engine._config is fake_config
+    assert engine._arch == "bs_roformer"
+    assert engine._sample_rate == 96000
+    assert engine._batch_size == 4
+    assert engine._segment_size == 128
+    assert engine._chunk_duration_s == 300.0
 
 
 def test_karaoke_output_names_map_to_vocal_children():

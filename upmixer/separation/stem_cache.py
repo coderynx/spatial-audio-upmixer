@@ -13,7 +13,7 @@ Cache structure on disk::
             ...
 
 Cache key: SHA-256 of
-``schema|abs_path|mtime|size|inference_hash|sep_sr|preview_tag|silence_params|separator_version``
+``schema|abs_path|mtime|size|inference_hash|sep_sr|preview_tag|silence_params|engine_version``
 (first 20 hex chars).
 
 ``inference_hash`` identifies model sequence and intermediate lineage. Requests
@@ -30,7 +30,7 @@ and triggers a fresh full-file separation.
 Preview stems are **never written** to cache (they are short-lived test
 artifacts and would waste disk space for little benefit).
 
-Cache invalidation: any change to source metadata, inference plan, separator
+Cache invalidation: any change to source metadata, inference plan, engine
 version, sample rate, preview window, or silence-skip parameters produces a
 cold miss.
 
@@ -39,7 +39,6 @@ Stems are stored as PCM_24 WAV and loaded as float32 to bound pipeline RAM.
 from __future__ import annotations
 
 import hashlib
-import importlib.metadata
 import json
 import logging
 import os
@@ -52,14 +51,17 @@ _log = logging.getLogger("upmixer")
 
 _METADATA_FILE = "metadata.json"
 _MTIME_TOLERANCE = 2.0
-_CACHE_SCHEMA = 2
+_CACHE_SCHEMA = 3
+
+# Bump on any change to the in-core inference engine that can change stem
+# output (architecture code, demix numerics, model registry). This — not a
+# third-party package version — is now what identifies "what produced this
+# cached audio."
+_ENGINE_VERSION = "upmixer-sep-1"
 
 
-def _separator_version() -> str:
-    try:
-        return importlib.metadata.version("audio-separator")
-    except importlib.metadata.PackageNotFoundError:
-        return "unavailable"
+def _engine_version() -> str:
+    return _ENGINE_VERSION
 
 
 def _legacy_cache_key(
@@ -140,7 +142,7 @@ def _cache_key(
     )
     raw = (
         f"v{_CACHE_SCHEMA}|{abs_path}|{mtime:.6f}|{stat.st_size}|{stems_hash}|"
-        f"{sep_sr}|{tag}|{silence_tag}|separator={_separator_version()}"
+        f"{sep_sr}|{tag}|{silence_tag}|engine={_engine_version()}"
     )
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
@@ -346,7 +348,7 @@ class StemCache:
 
         meta = {
             "cache_schema": _CACHE_SCHEMA,
-            "separator_version": _separator_version(),
+            "engine_version": _engine_version(),
             "input_path": abs_path,
             "mtime": round(mtime, 6),
             "size": source_stat.st_size,

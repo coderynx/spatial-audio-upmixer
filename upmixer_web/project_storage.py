@@ -142,7 +142,19 @@ class ProjectStemStorage:
             raise RuntimeError("Project stem preparation completed without a readable stem cache")
         _, entry, metadata = max(candidates, key=lambda item: item[0])
         sample_rate = int(metadata["sep_sr"])
-        stem_keys = [str(item) for item in metadata["stem_keys"]]
+        # The cache also holds "free" stems a model emitted along the way to a
+        # requested one (e.g. the undivided `Drums`/`Vocals` parent behind
+        # `Kick`/`Lead Vocals`, kept on disk so a later request can reuse it —
+        # see stem_pipeline.py's "Models often emit more stems than requested"
+        # comment). Surfacing those as playable tracks double-counts their
+        # content against the children the user actually asked for, so filter
+        # to requested_stems here exactly like the core pipeline's own mixing
+        # step does.
+        requested = set(project.requested_stems)
+        stem_keys = [
+            str(item) for item in metadata["stem_keys"]
+            if str(item).split("@", 1)[0] in requested
+        ]
         rows: list[ProjectStem] = []
         peaks: list[np.ndarray] = []
         duration_seconds = 0.0

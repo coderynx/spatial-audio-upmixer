@@ -1,8 +1,8 @@
 """Real-model check for the separation evaluation harness.
 
 Runs the harness against the synthetic corpus with the default model and
-prints the per-stem SDR/fullness/bleedless report. Requires audio-separator
-and a model download; skipped unless run with -m perf.
+prints the per-stem SDR/fullness/bleedless report. Requires the separation
+extra (torch) and a model download; skipped unless run with -m perf.
 
     pytest -m perf -k eval -s
 """
@@ -21,7 +21,7 @@ from upmixer.separation.separator import DEFAULT_MODEL
 
 @pytest.mark.perf
 def test_eval_harness_reports_default_model_quality(tmp_path):
-    pytest.importorskip("audio_separator")
+    pytest.importorskip("torch")
 
     sample_rate = 44100
     corpus = synthetic_corpus(sample_rate=sample_rate, out_dir=str(tmp_path / "corpus"))

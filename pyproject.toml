@@ -44,11 +44,22 @@ web-postgres = [
 manifest = [
     "pyyaml>=6.0",
 ]
+separation = [
+    "torch>=2.1",
+    "einops>=0.7",
+    "librosa>=0.10",
+    "pyyaml>=6.0",
+    "beartype>=0.18",
+    "rotary-embedding-torch>=0.6",
+]
 separation-cpu = [
-    "audio-separator[cpu]>=0.44.5,<0.45",
+    "upmixer[separation]",
 ]
 separation-gpu = [
-    "audio-separator[gpu]>=0.44.5,<0.45",
+    # Same package set as separation-cpu; install a CUDA-enabled torch build
+    # first (see https://pytorch.org/get-started/locally/ for the matching
+    # --index-url), then this extra to pull in the rest.
+    "upmixer[separation]",
 ]
 
 [project.scripts]

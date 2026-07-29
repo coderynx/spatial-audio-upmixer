@@ -30,7 +30,7 @@ def session_factory(tmp_path):
     engine.dispose()
 
 
-def _seed_project_track(session, suffix="a"):
+def _seed_project_track(session, suffix="a", requested_stems=("Vocals",)):
     batch = ImportBatch(kind="track", title="Song")
     asset = MediaAsset(
         import_batch=batch,
@@ -40,7 +40,10 @@ def _seed_project_track(session, suffix="a"):
         sha256="0" * 64,
         size_bytes=1,
     )
-    project = Project(import_batch=batch, name="Preview project", manifest={})
+    project = Project(
+        import_batch=batch, name="Preview project", manifest={},
+        requested_stems=list(requested_stems),
+    )
     track = ProjectTrack(project=project, asset=asset, position=0)
     session.add_all([batch, asset, project, track])
     session.commit()
@@ -103,6 +106,30 @@ def _seed_stem_cache(storage, project, track, stem_keys, sample_rate=48_000, sec
     return entry
 
 
+def test_catalogue_track_excludes_bonus_stems_not_requested(tmp_path):
+    """stem_pipeline.py caches parent stems (e.g. `Drums`) alongside their
+    children (`Kick`, `Snare`, ...) as a free byproduct even when only the
+    children were requested (see its "Models often emit more stems than
+    requested" comment) — surfacing the parent as a playable track would
+    double the drum/vocal content in the monitor mix. catalogue_track must
+    only expose stems the project actually requested."""
+    engine_url = f"sqlite:///{tmp_path / 'bonus.db'}"
+    upgrade_database(engine_url)
+    engine = create_database_engine(engine_url)
+    factory = create_session_factory(engine)
+    storage = ProjectStemStorage(tmp_path / "project-stems")
+
+    with factory() as session:
+        project, track = _seed_project_track(session, requested_stems=["Kick", "Snare"])
+        _seed_stem_cache(storage, project, track, ["Kick", "Snare", "Drums"])
+        rows = storage.catalogue_track(session, project, track, generation=1)
+        session.commit()
+
+    assert {row.stem_key for row in rows} == {"Kick", "Snare"}
+
+    engine.dispose()
+
+
 def test_catalogue_track_writes_track_peaks_for_every_stem(tmp_path):
     engine_url = f"sqlite:///{tmp_path / 'peaks.db'}"
     upgrade_database(engine_url)
@@ -111,7 +138,7 @@ def test_catalogue_track_writes_track_peaks_for_every_stem(tmp_path):
     storage = ProjectStemStorage(tmp_path / "project-stems")
 
     with factory() as session:
-        project, track = _seed_project_track(session)
+        project, track = _seed_project_track(session, requested_stems=["Vocals", "Drums"])
         _seed_stem_cache(storage, project, track, ["Vocals", "Drums"])
         storage.catalogue_track(session, project, track, generation=3)
         session.commit()
@@ -145,7 +172,7 @@ def test_rebuild_track_peaks_backfills_from_existing_previews(tmp_path):
     storage = ProjectStemStorage(tmp_path / "project-stems")
 
     with factory() as session:
-        project, track = _seed_project_track(session)
+        project, track = _seed_project_track(session, requested_stems=["Vocals", "Drums"])
         _seed_stem_cache(storage, project, track, ["Vocals", "Drums"])
         rows = storage.catalogue_track(session, project, track, generation=1)
         session.commit()

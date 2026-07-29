@@ -1,8 +1,7 @@
-"""Thin wrapper around python-audio-separator for stem extraction."""
+"""In-core PyTorch stem separation engine (BS-RoFormer / Mel-Band RoFormer / TFC-TDF)."""
 from __future__ import annotations
 
 import gc
-import inspect
 import logging
 import os
 import tempfile
@@ -107,6 +106,16 @@ def _automatic_cpu_tuning(
     return None, None
 
 
+def _check_import() -> None:
+    try:
+        import torch  # noqa: F401
+    except ImportError as e:
+        raise ImportError(
+            "PyTorch not installed. "
+            "Run: pip install 'upmixer[separation-cpu]'  (or [separation-gpu] for CUDA)"
+        ) from e
+
+
 def _is_oom_error(exc: BaseException) -> bool:
     message = str(exc).lower()
     return (
@@ -132,7 +141,6 @@ STEM_NAME_MAP: dict[str, str] = {
     "No Vocals": "Instrumental",
     "Reverb": "Other",
     "No Reverb": "Vocals",
-    # NOTE: verify exact tag strings if model output filenames differ
     "Kick":   "Kick",
     "Snare":  "Snare",
     "Toms":   "Toms",
@@ -140,7 +148,6 @@ STEM_NAME_MAP: dict[str, str] = {
     "Hi-Hat": "Hi-Hat",
     "Ride":   "Ride",
     "Crash":  "Crash",
-    # NOTE: this model tags its residual as "(other)" — same tag as the primary
     "Crowd":    "Crowd",
     "No Crowd": "_crowd_other",   # kept as fallback in case model config changes
 }
@@ -159,60 +166,38 @@ MODEL_STEM_OVERRIDES: dict[str, dict[str, str]] = {
 }
 
 
-class _ForwardHandler(logging.Handler):
-    """Re-emit audio-separator log records through the upmixer logger.
-
-    Installed on the ``audio_separator.separator.separator`` logger so that
-    audio-separator's internal messages are visible when the ``upmixer``
-    logger is set to DEBUG, and suppressed otherwise.
-    """
-
-    def __init__(self, target: logging.Logger) -> None:
-        super().__init__()
-        self._target = target
-
-    def emit(self, record: logging.LogRecord) -> None:
-        self._target.log(record.levelno, "[separator] %s", record.getMessage())
-
-
-def _check_import() -> None:
-    try:
-        import audio_separator.separator  # noqa: F401
-    except ImportError as e:
-        raise ImportError(
-            "audio-separator not installed. "
-            "Run: pip install 'audio-separator[cpu]'  (or [gpu] for CUDA)"
-        ) from e
-
-
 class StemSeparator:
-    """Wraps audio-separator to extract instrument stems from an audio file.
+    """Separates an audio file into instrument stems using an in-core torch engine.
 
-    Separation is file-based (audio-separator writes to disk); stems are
-    loaded back as numpy arrays after processing.
+    Separation is file-based (stems are written to a temp directory as they
+    are produced, then loaded back as numpy arrays) to match the disk-backed
+    chaining the multi-stage pipeline relies on.
 
     A single persistent temporary directory is used for all separate() calls
-    on this instance.  The underlying Separator object (and loaded model
-    weights) are kept alive across calls so the model is loaded only once —
-    a major runtime saving when processing multiple zones.
+    on this instance. The underlying model weights are kept alive across
+    calls so the model is loaded only once — a major runtime saving when
+    processing multiple zones.
 
     Individual stem files are deleted immediately after reading to keep disk
-    usage bounded.  The persistent temp dir is removed when close() is called
+    usage bounded. The persistent temp dir is removed when close() is called
     or the instance is garbage-collected.
 
     Args:
-        model: Model filename. Demucs 4-stem and RoFormer 2-stem are both supported.
-        model_dir: Where models are cached. Defaults to ~/.cache/upmixer-models.
-        sample_rate: Output sample rate for stems. audio-separator resamples
-            internally so stems are returned at exactly this rate.
-        log_level: Python logging level forwarded to audio-separator's internal
-            logger.  Defaults to ``logging.WARNING`` (suppress verbose output).
-            Pass ``logging.DEBUG`` to surface all internal separation messages
-            through the ``upmixer`` logger.
-        batch_size: Full-precision inference batch size. ``None`` selects a
-            backend-aware value.
-        segment_size: MDXC segment size. ``None`` selects a VM-memory-aware CPU
-            value and keeps the model value on accelerators.
+        model: Model filename. See ``inference/registry.py`` for the
+            registered checkpoints and their architectures.
+        model_dir: Where model weights are cached. Defaults to
+            ~/.cache/upmixer-models.
+        sample_rate: Output sample rate for stems. The mix is resampled to
+            exactly this rate before separation, so stems are returned at
+            exactly this rate.
+        log_level: Accepted for backward compatibility; the in-core engine
+            logs through the ``upmixer`` logger directly (see ``_log``
+            calls in ``inference/engine.py``), so this no longer changes a
+            separate third-party logger's verbosity.
+        batch_size: TFC-TDF chunk batch size (ignored by Roformer models,
+            which do not batch). ``None`` selects a backend-aware value.
+        segment_size: Chunk frame count. ``None`` selects a VM-memory-aware
+            CPU value and keeps the model's own default on accelerators.
         chunk_duration_s: Long-file chunk duration. ``None`` enables bounded
             chunks on low-memory CPU systems and disables them elsewhere.
     """
@@ -256,12 +241,13 @@ class StemSeparator:
         self._chunk_duration_s = (
             chunk_duration_s if chunk_duration_s is not None else auto_chunk
         )
-        self._loaded_sep = None
+        self._device_manager: DeviceManager | None = None
+        self._engine: SeparationEngine | None = None
         self._tmp_dir: str | None = None
 
     @property
     def backend(self) -> str:
-        """Inference backend selected by audio-separator dependencies."""
+        """Inference backend selected for this model (cuda/mps/cpu)."""
         return self._backend
 
     def _ensure_tmp_dir(self) -> str:
@@ -270,55 +256,31 @@ class StemSeparator:
             self._tmp_dir = tempfile.mkdtemp(prefix="upmixer_stems_")
         return self._tmp_dir
 
-    def _get_separator(self) -> object:
-        """Return a ready Separator, loading the model only on first call.
+    def _get_separator(self) -> "SeparationEngine":
+        """Return a ready SeparationEngine, loading the model only on first call.
 
         Always uses the persistent _tmp_dir so the output_dir never changes
         between calls — avoids stale path issues after temp-dir cleanup.
 
-        audio-separator log records are intercepted and re-emitted through
-        the ``upmixer`` logger so callers control verbosity uniformly.
+        Torch and the rest of the inference stack are imported lazily here
+        (not at module scope) so that importing this module — and building
+        ``StemUpmixPipeline`` or probing ``.backend`` — does not require the
+        optional ``separation`` extra to be installed.
         """
-        _check_import()
-        from audio_separator.separator import Separator
+        if self._engine is None:
+            _check_import()
+            from .inference.device import DeviceManager
+            from .inference.engine import SeparationEngine
+            from .inference.loader import load_model
+            from .inference.registry import get_model_spec
 
-        if self._loaded_sep is None:
-            _as_log = logging.getLogger("audio_separator.separator.separator")
-            if not any(isinstance(h, _ForwardHandler) for h in _as_log.handlers):
-                _as_log.addHandler(_ForwardHandler(_log))
-            _as_log.propagate = False
-            _as_log.setLevel(self._log_level)
+            if self._device_manager is None:
+                self._device_manager = DeviceManager(self._backend)
 
-            kwargs = {
-                "model_file_dir": self._model_dir,
-                "output_dir": self._ensure_tmp_dir(),
-                "output_format": "WAV",
-                "sample_rate": self._sample_rate,
-                "normalization_threshold": 0.9,
-                "log_level": self._log_level,
-            }
-            parameters = inspect.signature(Separator).parameters
-            accepts_kwargs = any(
-                p.kind == inspect.Parameter.VAR_KEYWORD
-                for p in parameters.values()
+            spec = get_model_spec(self._model)
+            model, config = load_model(
+                self._model, self._device_manager.torch_device, self._model_dir
             )
-            if "use_soundfile" in parameters or accepts_kwargs:
-                kwargs["use_soundfile"] = True
-            if "use_autocast" in parameters or accepts_kwargs:
-                kwargs["use_autocast"] = False
-            if (
-                self._chunk_duration_s is not None
-                and ("chunk_duration" in parameters or accepts_kwargs)
-            ):
-                kwargs["chunk_duration"] = self._chunk_duration_s
-            if "mdxc_params" in parameters or accepts_kwargs:
-                mdxc_params = {"batch_size": self._batch_size}
-                if self._segment_size is not None:
-                    mdxc_params.update(
-                        segment_size=self._segment_size,
-                        override_model_segment_size=True,
-                    )
-                kwargs["mdxc_params"] = mdxc_params
 
             _log.info(
                 "  Separator backend=%s batch=%d segment=%s chunk=%s precision=float32",
@@ -327,10 +289,20 @@ class StemSeparator:
                 self._segment_size or "model",
                 f"{self._chunk_duration_s:g}s" if self._chunk_duration_s else "off",
             )
-            self._loaded_sep = Separator(**kwargs)
-            self._loaded_sep.load_model(model_filename=self._model)
+            self._engine = SeparationEngine(
+                model=model,
+                config=config,
+                arch=spec.arch,
+                model_filename=self._model,
+                device=self._device_manager,
+                output_dir=self._ensure_tmp_dir(),
+                sample_rate=self._sample_rate,
+                batch_size=self._batch_size,
+                segment_size=self._segment_size,
+                chunk_duration_s=self._chunk_duration_s,
+            )
 
-        return self._loaded_sep
+        return self._engine
 
     def _separate_paths(self, audio_path: str) -> list[str]:
         """Separate with progressively lower-memory retries after OOM."""
@@ -381,14 +353,11 @@ class StemSeparator:
                     self._segment_size or "model",
                     self._chunk_duration_s or "off",
                 )
-                self._loaded_sep = None
-                gc.collect()
-                try:
-                    import torch
-                    if self._backend == "cuda":
-                        torch.cuda.empty_cache()
-                except (ImportError, RuntimeError):
-                    pass
+                self._engine = None
+                if self._device_manager is not None:
+                    self._device_manager.empty_cache()
+                else:
+                    gc.collect()
 
     def separate(
         self,
@@ -534,13 +503,13 @@ class StemSeparator:
         return loaded, on_disk
 
     def close(self) -> None:
-        """Remove the persistent temp directory and release the Separator."""
+        """Remove the persistent temp directory and release the loaded model."""
         import shutil
         if self._tmp_dir and os.path.exists(self._tmp_dir):
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
             self._tmp_dir = None
-        had_loaded_model = self._loaded_sep is not None
-        self._loaded_sep = None
+        had_loaded_model = self._engine is not None
+        self._engine = None
         if had_loaded_model:
             gc.collect()
 
@@ -558,11 +527,11 @@ def _parse_stem_name(
     path: str,
     model_overrides: dict[str, str] | None = None,
 ) -> str | None:
-    """Extract canonical stem label from audio-separator output filename.
+    """Extract canonical stem label from a separated-stem output filename.
 
-    audio-separator names output files like:
-        song_(Vocals)_model_name.wav
-        song_(Lead Vocals)_model_name.wav
+    Stems are named ``song_(Vocals)_model_name.wav`` /
+    ``song_(Lead Vocals)_model_name.wav`` (see ``inference/audio_io.py``'s
+    ``stem_output_path``, matching python-audio-separator's convention).
 
     In multi-stage pipelines the intermediate filename is embedded in the
     next stage's output filename, e.g.:
@@ -574,7 +543,7 @@ def _parse_stem_name(
     stages always appear earlier (leftward) than the current stage's tag.
 
     Args:
-        path:             Output file path from audio-separator.
+        path:             Output file path from the separation engine.
         model_overrides:  Per-model tag→canonical mapping that takes precedence
                           over the general STEM_NAME_MAP when two tags occur at
                           the same position (i.e. the current model's own tag).

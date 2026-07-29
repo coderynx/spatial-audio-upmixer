@@ -7,7 +7,7 @@
 Two pipelines share a mastering chain:
 
 - `UpmixPipeline` in `upmixer/pipeline.py` is the realtime/file pipeline. Stereo or mono input is processed through coherence-based STFT analysis, direct/ambient decomposition, routing, and mastering. Multichannel input uses `MultichannelUpmixer` for pass-through and channel derivation.
-- `StemUpmixPipeline` in `upmixer/separation/stem_pipeline.py` separates zone audio into instrument stems, analyzes and routes each stem, mixes them, and then masters the result.
+- `StemUpmixPipeline` in `upmixer/separation/stem_pipeline.py` separates zone audio into instrument stems via the in-core inference engine (`upmixer/separation/inference/`), analyzes and routes each stem, mixes them, and then masters the result.
 
 Both pipelines finish with `MasteringChain` in `upmixer/mastering/chain.py`: spectral EQ, bus compression, bass control, BS.1770 loudness normalization, true-peak limiting, and soft limiting.
 
@@ -21,7 +21,7 @@ Parameter precedence is: CLI flags > manifest values > profile defaults > `Upmix
 
 Do not change `upmixer/` for web feature unless small, independently justified public API change is necessary. Do not move web concerns into core package, alter core behavior for browser-only cases, or patch third-party internals from core code.
 
-Stem inference is provided by `audio-separator`. Web code must not directly import or control Torch, ONNX Runtime, CUDA, MPS, CoreML, model classes, or other inference-framework internals. Let `audio-separator` choose accelerator and use its Python API only for web capability reporting; actual jobs continue through `StemUpmixPipeline`.
+Stem inference is an in-core PyTorch engine under `upmixer/separation/inference/` (architectures, model registry, chunked demix, device management). Web code must not directly import or control Torch, model classes, device objects, or other inference-framework internals — call the public `StemSeparator`/`StemUpmixPipeline` surface only (e.g. `StemSeparator(...).backend` for capability reporting); actual jobs continue through `StemUpmixPipeline`.
 
 `web/` follows a fixed visual specification. Read [Web UI design specification](docs/web_ui_design.md) before adding a page, control, or visual state, and follow its tokens, layout primitives, and control sizes rather than introducing new ones. Colours come from the `index.css` tokens in both light and dark; the only sanctioned literal colours are in `web/src/lib/canvasTheme.ts`.
 
@@ -74,7 +74,7 @@ Consult the relevant neutral project reference before changing code governed by 
 
 An external, independently versioned knowledge base lives at `~/Projects/upmixer-knowledge/` (sibling git repo, not part of this repository — read it directly by absolute path with `Read`/`Grep`; it is not fetched or synced automatically). Consult `~/Projects/upmixer-knowledge/README.md` before:
 
-- adding or swapping separation models in `upmixer/separation/stem_plan.py` (model registries and license policy in `~/Projects/upmixer-knowledge/models/`),
+- adding or swapping separation models in `upmixer/separation/stem_plan.py` (stem-to-model mapping) and `upmixer/separation/inference/registry.py` (architecture, config, weights, license per checkpoint) — model registries and license policy are cataloged in `~/Projects/upmixer-knowledge/models/`,
 - implementing ensembling, chained separation, or bleed/phase post-processing (`~/Projects/upmixer-knowledge/techniques/`),
 - adding mastering or restoration stages (`~/Projects/upmixer-knowledge/techniques/mastering_restoration.md`, `~/Projects/upmixer-knowledge/models/restoration.md`).
 

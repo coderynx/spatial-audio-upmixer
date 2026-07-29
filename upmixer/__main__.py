@@ -530,7 +530,7 @@ def main() -> None:
             "'realtime': coherence-based STFT pipeline, works on any input. "
             "'stem': source-separation pipeline — separates instruments then "
             "places each in 3D space. "
-            "Requires: pip install 'audio-separator[cpu]'."
+            "Requires: pip install 'upmixer[separation-cpu]'."
         ),
     )
     parser.add_argument(

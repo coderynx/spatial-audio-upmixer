@@ -278,6 +278,10 @@ async function loadBuffer(ctx: AudioContext, url: string): Promise<AudioBuffer> 
 // `measureOutputLoudness`.
 const LOUDNESS_MEASURE_DELAY_FRAMES = 55;
 
+// Re-sample cadence (in rAF ticks, ~60fps) for `measureOutputLoudness`'s
+// ongoing true-peak tracking once the initial one-shot snapshot has landed.
+const PEAK_TRACK_FRAME_STRIDE = 6;
+
 // Safety cap for `runLoudnessWarmup`, in case a silent or very short stem
 // never fills `mergePointAnalyser` with signal loud enough for
 // `measureOutputLoudness` to settle — bounds the muted warm-up so play can
@@ -842,33 +846,60 @@ export function useStemPreview(
     for (const node of compGains.current) node.gain.value = gain;
   }, []);
 
-  // One-shot loudness correction for the *actual* output signal — reads
+  // Loudness correction for the *actual* output signal — reads
   // `mergePointAnalyser` (tapped on `mergePointNode`, the real post-mastering/
   // post-binaural-collapse or post-stereo-downmix signal, immediately before
   // `master`'s gain) once enough playback has elapsed for its ring buffer to
-  // hold real audio instead of the graph's initial silence, then freezes.
-  // Mirrors `normalize_loudness` measuring the actual rendered signal on the
-  // backend (`upmixer/loudness.py`, `upmixer/binaural/renderer.py`) instead
-  // of the dry, unprocessed stem source material.
+  // hold real audio instead of the graph's initial silence. Mirrors
+  // `normalize_loudness` measuring the actual rendered signal on the backend
+  // (`upmixer/loudness.py`, `upmixer/binaural/renderer.py`) instead of the
+  // dry, unprocessed stem source material.
+  //
+  // The LKFS target-matching gain is one-shot, same as the offline
+  // normalize — re-deriving it continuously from a ~0.7s window would ride
+  // program dynamics and audibly pump. But `preGainTpDbtp` (the *safety*
+  // ceiling `applyTruePeakCeiling` clamps against) cannot stay one-shot: an
+  // early snapshot commonly lands on a quiet intro, under-measuring the
+  // track's real peak — the frozen gain then goes uncorrected straight
+  // through a later chorus/drop and drives the soft-limit WaveShaper hard
+  // enough to audibly distort (both stereo mixdown and binaural — same
+  // shared gain stage, see docs/standards/spatial_audio_engine.md's gain-
+  // staging note). So after the initial snapshot, keep sampling the true
+  // peak and ratchet `preGainTpDbtp` up (gain down) whenever a louder peak
+  // is observed — never the other way, so the ceiling only ever gets
+  // stricter as more of the track is heard, the same direction a look-ahead
+  // limiter's held ceiling would move.
   const measureOutputLoudness = React.useCallback(() => {
     const state = loudnessMeasureState.current;
-    if (state.done) return;
     state.framesElapsed += 1;
     if (state.framesElapsed < LOUDNESS_MEASURE_DELAY_FRAMES) return;
     const analyser = mergePointAnalyser.current;
     const buf = loudnessMeasureBuf.current;
     if (!analyser || !buf) return;
+    if (!state.done) {
+      analyser.getFloatTimeDomainData(buf);
+      let sumSquares = 0;
+      for (let i = 0; i < buf.length; i++) sumSquares += buf[i] * buf[i];
+      const meanSquare = sumSquares / buf.length;
+      // Same -0.691 dB offset / ungated mean-square approximation the removed
+      // measureApproxLkfs used — good enough to steer this correction gain
+      // toward the mastering target, not to reproduce the exact delivered LKFS.
+      measuredLkfs.current = meanSquare > 0 ? -0.691 + 10 * Math.log10(meanSquare) : -70;
+      preGainTpDbtp.current = measureBufferTruePeakDbtp(buf);
+      state.done = true;
+      applyRef.current();
+      return;
+    }
+    // Throttled re-sampling (~10Hz, not every rAF tick) — the 4x upsample
+    // in measureBufferTruePeakDbtp isn't free, and catching a sustained
+    // loud section within ~100ms is already far tighter than needed.
+    if (state.framesElapsed % PEAK_TRACK_FRAME_STRIDE !== 0) return;
     analyser.getFloatTimeDomainData(buf);
-    let sumSquares = 0;
-    for (let i = 0; i < buf.length; i++) sumSquares += buf[i] * buf[i];
-    const meanSquare = sumSquares / buf.length;
-    // Same -0.691 dB offset / ungated mean-square approximation the removed
-    // measureApproxLkfs used — good enough to steer this correction gain
-    // toward the mastering target, not to reproduce the exact delivered LKFS.
-    measuredLkfs.current = meanSquare > 0 ? -0.691 + 10 * Math.log10(meanSquare) : -70;
-    preGainTpDbtp.current = measureBufferTruePeakDbtp(buf);
-    state.done = true;
-    applyRef.current();
+    const peakDbtp = measureBufferTruePeakDbtp(buf);
+    if (peakDbtp > preGainTpDbtp.current) {
+      preGainTpDbtp.current = peakDbtp;
+      applyRef.current();
+    }
   }, []);
 
   const tick = React.useCallback(() => {

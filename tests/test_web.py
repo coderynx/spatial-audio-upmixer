@@ -1,7 +1,5 @@
 import io
-import sys
 import time
-import types
 
 import numpy as np
 import pytest
@@ -119,23 +117,22 @@ def test_configuration_lists_every_stem_and_runtime_capability(web_client):
     assert capability["platform"]
 
 
-def test_capability_uses_audio_separator_selected_device(tmp_path, monkeypatch):
-    class FakeSeparator:
-        torch_device = "mps"
-
+def test_capability_uses_engine_selected_device(tmp_path, monkeypatch):
+    class FakeStemSeparator:
         def __init__(self, **_kwargs):
             pass
 
-    package = types.ModuleType("audio_separator")
-    module = types.ModuleType("audio_separator.separator")
-    module.Separator = FakeSeparator
-    package.separator = module
+        @property
+        def backend(self):
+            return "mps"
+
     monkeypatch.setattr(
         "upmixer_web.separation.importlib.util.find_spec",
         lambda _name: object(),
     )
-    monkeypatch.setitem(sys.modules, "audio_separator", package)
-    monkeypatch.setitem(sys.modules, "audio_separator.separator", module)
+    monkeypatch.setattr(
+        "upmixer.separation.separator.StemSeparator", FakeStemSeparator,
+    )
 
     capability = separation_capability(tmp_path)
 
@@ -144,11 +141,11 @@ def test_capability_uses_audio_separator_selected_device(tmp_path, monkeypatch):
     assert capability["accelerated"]
 
 
-def test_capability_rejects_unsupported_roformer_runtime(tmp_path, monkeypatch):
+def test_capability_rejects_unsupported_torch_runtime(tmp_path, monkeypatch):
     monkeypatch.setattr("upmixer_web.separation.sys.version_info", (3, 14, 0))
     monkeypatch.setattr(
         "upmixer_web.separation.importlib.util.find_spec",
-        lambda _name: pytest.fail("audio-separator must not load on Python 3.14"),
+        lambda _name: pytest.fail("torch must not load on Python 3.14"),
     )
 
     capability = separation_capability(tmp_path)

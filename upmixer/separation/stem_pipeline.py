@@ -1,7 +1,8 @@
 """Stem-separation-based upmix pipeline.
 
-Uses python-audio-separator to split audio into instrument stems, then
-spatially routes each stem to the appropriate 3D position in the output layout.
+Uses the in-core inference engine (upmixer.separation.inference) to split
+audio into instrument stems, then spatially routes each stem to the
+appropriate 3D position in the output layout.
 
 Multichannel input handling:
   Stereo / mono  → single "front" zone, separated directly.
@@ -19,7 +20,7 @@ This is a non-realtime, file-based pipeline.
 For realtime/low-latency upmixing use UpmixPipeline in pipeline.py.
 
 Usage:
-    pip install 'audio-separator[cpu]'
+    pip install 'upmixer[separation-cpu]'
 
     from upmixer.separation.stem_pipeline import StemUpmixPipeline
     from upmixer.config import UpmixConfig

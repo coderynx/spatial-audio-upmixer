@@ -1,9 +1,8 @@
-"""Web-layer checks for optional audio-separator support."""
+"""Web-layer checks for optional in-core stem separation support."""
 
 from __future__ import annotations
 
 import importlib.util
-import logging
 import platform
 import sys
 from pathlib import Path
@@ -23,7 +22,12 @@ _UNSUPPORTED_RUNTIME_MESSAGE = (
 
 
 def separation_capability(work_dir: Path) -> dict[str, Any]:
-    """Probe audio-separator once without loading a separation model."""
+    """Probe the in-core separation engine's backend without loading a model.
+
+    Uses only the public ``StemSeparator`` surface (per the web/core
+    boundary in AGENTS.md): constructing it detects the accelerator backend
+    but does not load model weights, so this stays cheap.
+    """
     system = platform.system().lower()
     apple_silicon = system == "darwin" and platform.machine().lower() == "arm64"
     capability: dict[str, Any] = {
@@ -38,30 +42,20 @@ def separation_capability(work_dir: Path) -> dict[str, Any]:
     if sys.version_info >= (3, 14):
         capability["install_message"] = _UNSUPPORTED_RUNTIME_MESSAGE
         return capability
-    if importlib.util.find_spec("audio_separator") is None:
+    if importlib.util.find_spec("torch") is None:
         capability["install_message"] = _INSTALL_MESSAGE
         return capability
 
     try:
-        from audio_separator.separator import Separator
+        from upmixer.separation.separator import StemSeparator
 
-        probe_dir = work_dir / "audio-separator-probe"
-        separator = Separator(
-            model_file_dir=str(probe_dir / "models"),
-            output_dir=str(probe_dir / "output"),
-            log_level=logging.ERROR,
-        )
+        probe_dir = work_dir / "separation-probe"
+        separator = StemSeparator(model_dir=str(probe_dir / "models"))
+        backend = separator.backend
     except Exception as exc:
         capability["install_message"] = f"Stem separation is unavailable: {exc}"
         return capability
 
-    device = str(getattr(separator, "torch_device", "cpu")).lower()
-    if device.startswith("cuda"):
-        backend = "cuda"
-    elif device.startswith("mps"):
-        backend = "mps"
-    else:
-        backend = "cpu"
     capability.update(
         available=True,
         backend=backend,
@@ -70,7 +64,7 @@ def separation_capability(work_dir: Path) -> dict[str, Any]:
     )
     if apple_silicon and backend == "cpu":
         capability["accelerator_issue"] = (
-            "Apple GPU detected, but audio-separator could not enable MPS; "
+            "Apple GPU detected, but PyTorch could not enable MPS; "
             "stem separation will use CPU."
         )
     return capability

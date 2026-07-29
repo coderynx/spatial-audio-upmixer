@@ -18,8 +18,8 @@ python3 -m upmixer_web
 ```
 
 Stem separation requires Python 3.11, 3.12, or 3.13. The `separation-cpu`
-extra is also the correct choice for Apple Silicon Macs;
-`audio-separator` selects MPS acceleration when available. Use
+extra is also the correct choice for Apple Silicon Macs — the in-core
+inference engine selects MPS acceleration when available. Use
 `separation-gpu` only on NVIDIA CUDA hosts.
 
 Start the React client in another terminal:
@@ -114,7 +114,7 @@ saved run state to skip outputs whose input and settings still match.
 | Mode | Best for | How it works | Additional dependency |
 |---|---|---|---|
 | `realtime` | Fast previews, general files, and parallel batches | Coherence analysis separates correlated direct sound from diffuse ambience, then derives center, surround, back, height, and LFE content | None |
-| `stem` | Music, complex mixes, and deliberate instrument placement | Separates requested sources, analyzes each stem, routes it spatially, blends native source zones when requested, and masters the result | `audio-separator` extra |
+| `stem` | Music, complex mixes, and deliberate instrument placement | Separates requested sources, analyzes each stem, routes it spatially, blends native source zones when requested, and masters the result | `separation-cpu`/`separation-gpu` extra |
 
 Realtime mode treats mono as a centered stereo pair. For multichannel input it preserves existing channels and derives
 only the channels needed by the target layout.
@@ -164,9 +164,10 @@ weights. Override these limits with `--stem-segment-size`, `--stem-chunk-duratio
 `--stem-model-cache-size`. For a 4-core, low-memory VM, keep `--cpu-priority auto`, batch size 1, and place
 `--stem-cache-dir` on the SSD.
 
-Stem separation is provided through
-[python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) by nomadkaraoke, using supported Demucs,
-MDX, and RoFormer-family models.
+Stem separation runs on an in-core PyTorch inference engine
+(`upmixer/separation/inference/`) driving BS-RoFormer, Mel-Band RoFormer, and
+TFC-TDF (MDX23C) architectures directly, with model integration not tied to
+any third-party wrapper's supported-model list.
 
 ## Supported Layouts
 
@@ -477,8 +478,6 @@ python3 -m build
 
 ## References
 
-- [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) by nomadkaraoke — external source
-  separation library used by stem mode.
 - [ITU-R BS.1770](https://www.itu.int/rec/R-REC-BS.1770/) — audio programme loudness and true-peak measurement.
 - [ITU-R BS.2076](https://www.itu.int/rec/R-REC-BS.2076/) — Audio Definition Model.
 - [ITU-R BS.775](https://www.itu.int/rec/R-REC-BS.775/) and

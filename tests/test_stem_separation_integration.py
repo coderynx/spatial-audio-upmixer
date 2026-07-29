@@ -20,7 +20,7 @@ def test_automatic_batch_matches_full_precision_baseline():
     input_path = os.environ.get("UPMIXER_STEM_TEST_AUDIO")
     if not input_path:
         pytest.skip("set UPMIXER_STEM_TEST_AUDIO for real-model benchmark")
-    pytest.importorskip("audio_separator")
+    pytest.importorskip("torch")
 
     sample_rate = sf.info(input_path).samplerate
     model = os.environ.get("UPMIXER_STEM_TEST_MODEL", DEFAULT_MODEL)
