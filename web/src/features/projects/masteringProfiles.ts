@@ -357,7 +357,7 @@ export const HEIGHT_HAAS_MS = { left: 23, right: 29 };
 /** Web Audio version of `upmixer/utils.py` `diffuse_send`: blends a signal
  * with a delayed copy of itself for early-reflection decorrelation. */
 export function buildDiffuseSend(
-  ctx: AudioContext,
+  ctx: BaseAudioContext,
   input: AudioNode,
   delayMs: number,
   blend: number = DIFFUSE_SEND_BLEND,
@@ -380,7 +380,7 @@ export function buildDiffuseSend(
  * above the crossover. Implemented as the additive identity the Python
  * `sosfilt` version reduces to: `shaped = x - low·(1-g); out = shaped +
  * high(shaped)·(shelfGain-1)`. */
-export function buildHeightSend(ctx: AudioContext, input: AudioNode): { output: AudioNode; nodes: AudioNode[] } {
+export function buildHeightSend(ctx: BaseAudioContext, input: AudioNode): { output: AudioNode; nodes: AudioNode[] } {
   const lowpass = ctx.createBiquadFilter();
   lowpass.type = "lowpass";
   lowpass.frequency.value = HEIGHT_LOW_ROLLOFF_HZ;
@@ -407,7 +407,7 @@ export function buildHeightSend(ctx: AudioContext, input: AudioNode): { output: 
  * `SURROUND_BASS_CUTOFF_HZ` (keeps rhythmic low end out of the diffuse
  * surround/back layer) followed by the Haas diffuse send. */
 export function buildSurroundSend(
-  ctx: AudioContext,
+  ctx: BaseAudioContext,
   input: AudioNode,
   delayMs: number,
 ): { output: AudioNode; nodes: AudioNode[] } {

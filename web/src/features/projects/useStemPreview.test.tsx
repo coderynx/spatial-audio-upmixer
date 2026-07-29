@@ -125,11 +125,10 @@ class FakeAnalyser extends FakeNode {
   getByteFrequencyData(array: Uint8Array) {
     array.fill(0);
   }
-  // Read by the first-play loudness warm-up (`runLoudnessWarmup` /
-  // `measureOutputLoudness` in useStemPreview.ts) on `mergePointAnalyser`.
-  // Silence here is fine — these tests assert graph wiring, not the
-  // measured loudness value; `measuredLkfs` just falls back to its -70
-  // (unity-gain) default, same as before this analyser existed.
+  // Read by the channel/stem/headphone level meters (measureAnalyser in
+  // audioEngine.ts) — silence here is fine, these tests assert graph wiring,
+  // not meter values. Loudness/true-peak correction no longer reads any live
+  // analyser at all — see `precomputeCorrection`'s offline measurement.
   getFloatTimeDomainData(array: Float32Array) {
     array.fill(0);
   }
@@ -151,23 +150,17 @@ class FakeAudioBuffer {
   getChannelData() {
     return new Float32Array(this.length).fill(0.2);
   }
+  copyToChannel() {}
 }
 
-class FakeAudioContext {
-  static instances: FakeAudioContext[] = [];
-  static workletShouldFail = false;
-  currentTime = 0;
-  closed = false;
-  destination = new FakeNode();
-  audioWorklet = {
-    addModule: vi.fn(async () => {
-      if (FakeAudioContext.workletShouldFail) throw new Error("worklet module failed to load");
-    }),
-  };
-
-  constructor() {
-    FakeAudioContext.instances.push(this);
-  }
+// Shared node-factory surface for both the live `AudioContext` fake and the
+// `OfflineAudioContext` fake `precomputeCorrection()`'s tests exercise below
+// — both are genuine `BaseAudioContext` implementers in the real API (see
+// audioEngine.ts's/previewGraph.ts's widened `BaseAudioContext` param types),
+// so both fakes get the same node factories here, each with its own
+// instance-tracking arrays (so `lastContext()` assertions about the live
+// context are never polluted by nodes an offline precompute pass built).
+class FakeAudioGraphContext {
   eqFilters: FakeBiquadFilter[] = [];
   compressors: FakeDynamicsCompressor[] = [];
   waveShapers: FakeWaveShaper[] = [];
@@ -213,11 +206,65 @@ class FakeAudioContext {
     this.bufferSources.push(source);
     return source;
   }
+  createBuffer(numberOfChannels: number, length: number) {
+    const buffer = new FakeAudioBuffer();
+    buffer.numberOfChannels = numberOfChannels;
+    buffer.length = length;
+    return buffer;
+  }
   decodeAudioData() { return Promise.resolve(new FakeAudioBuffer()); }
+}
+
+class FakeAudioContext extends FakeAudioGraphContext {
+  static instances: FakeAudioContext[] = [];
+  static workletShouldFail = false;
+  currentTime = 0;
+  closed = false;
+  sampleRate = 48000;
+  destination = new FakeNode();
+  audioWorklet = {
+    addModule: vi.fn(async () => {
+      if (FakeAudioContext.workletShouldFail) throw new Error("worklet module failed to load");
+    }),
+  };
+
+  constructor() {
+    super();
+    FakeAudioContext.instances.push(this);
+  }
   resume = vi.fn(async () => {
     if (this.closed) throw new Error("Cannot resume a closed AudioContext.");
   });
   close = vi.fn(async () => { this.closed = true; });
+}
+
+// Fake for `precomputeCorrection()`'s offline whole-program measurement pass
+// (audioEngine.ts). `startRendering` doesn't actually simulate signal flow
+// through the connections recorded above (none of these fakes do — see
+// FakeAnalyser's canned reads) — it returns `FakeOfflineAudioContext.render`,
+// a canned constant-amplitude 2ch buffer, letting tests assert the measured
+// gain actually changed without needing a real DSP-capable fake.
+class FakeOfflineAudioContext extends FakeAudioGraphContext {
+  static instances: FakeOfflineAudioContext[] = [];
+  static render = { left: 0, right: 0 };
+  currentTime = 0;
+  destination = new FakeNode();
+  constructor(
+    public numberOfChannels: number,
+    public length: number,
+    public sampleRate: number,
+  ) {
+    super();
+    FakeOfflineAudioContext.instances.push(this);
+  }
+  async startRendering() {
+    const { left, right } = FakeOfflineAudioContext.render;
+    return {
+      numberOfChannels: 2,
+      length: this.length,
+      getChannelData: (channel: number) => new Float32Array(256).fill(channel === 0 ? left : right),
+    };
+  }
 }
 
 const stems: ProjectStem[] = [
@@ -276,6 +323,8 @@ afterEach(() => {
   FakeAudioContext.instances = [];
   FakeAudioContext.workletShouldFail = false;
   FakeAudioWorkletNode.instances = [];
+  FakeOfflineAudioContext.instances = [];
+  FakeOfflineAudioContext.render = { left: 0, right: 0 };
 });
 
 describe("useStemPreview mastering chain", () => {
@@ -478,14 +527,17 @@ describe("output-path hearing safety", () => {
     expect(spy).toHaveBeenCalled();
   });
 
-  it("drives the true-peak/compressor-reduction correction from a setInterval, not the rAF loop, so it keeps running in a backgrounded tab", async () => {
-    // Regression: both used to run only from tick() (requestAnimationFrame),
+  it("drives the compressor-reduction correction from a setInterval, not the rAF loop, so it keeps running in a backgrounded tab", async () => {
+    // Regression: this used to run only from tick() (requestAnimationFrame),
     // which browsers fully suspend in a hidden/backgrounded tab — freezing
-    // the true-peak safety net and the linked bus-compressor's gain
-    // reduction while audio keeps audibly playing. installAudio() stubs
-    // requestAnimationFrame as a no-op that never invokes its callback (see
-    // its own definition), simulating exactly that "rAF never fires" case;
-    // the correction loop must still be reachable via a real timer.
+    // the linked bus-compressor's gain reduction while audio keeps audibly
+    // playing. (Loudness/true-peak correction used to live on this same
+    // interval too, but is now measured once, offline, before playback
+    // starts — see `precomputeCorrection` — so it no longer needs a live
+    // timer at all.) installAudio() stubs requestAnimationFrame as a no-op
+    // that never invokes its callback (see its own definition), simulating
+    // exactly that "rAF never fires" case; the correction loop must still be
+    // reachable via a real timer.
     installAudio();
     const setIntervalSpy = vi.spyOn(window, "setInterval");
     const clearIntervalSpy = vi.spyOn(window, "clearInterval");
@@ -497,6 +549,56 @@ describe("output-path hearing safety", () => {
 
     act(() => { preview.stop(); });
     expect(clearIntervalSpy).toHaveBeenCalledWith(intervalId);
+  });
+});
+
+describe("whole-program loudness/true-peak precompute (precomputeCorrection)", () => {
+  it("measures the whole program offline before the first audible sample and applies a static gain, replacing the old live warm-up + ratchet", async () => {
+    installAudio();
+    vi.stubGlobal("OfflineAudioContext", FakeOfflineAudioContext);
+    // A loud canned "render" well above the -18 LKFS default target, so the
+    // measured correction should land well under unity gain — proof `apply()`
+    // is actually driven by this offline measurement, not the -70dB/unity
+    // fallback most other tests here implicitly rely on.
+    FakeOfflineAudioContext.render = { left: 0.9, right: 0.9 };
+    render(<Harness outputMode="stereo" />);
+    await act(async () => { await preview.playPause(); });
+
+    expect(FakeOfflineAudioContext.instances.length).toBe(1);
+    const [offlineCtx] = FakeOfflineAudioContext.instances;
+    expect(offlineCtx.numberOfChannels).toBe(2);
+    // Whole-program render (stem duration plus release tail), not a short
+    // live analyser window.
+    expect(offlineCtx.length).toBeGreaterThan(0);
+
+    // `master` is the one gain node feeding the tanh soft-limiter on the
+    // binaural/stereo path (see initialize()'s `output.connect(softLimitNode)`
+    // — identified structurally rather than by its resulting value, since
+    // several other gain nodes in this graph also land under 1.0).
+    const master = lastContext().gains.find((gain) => gain.connections[0] instanceof FakeWaveShaper);
+    expect(master).toBeDefined();
+    expect(master!.gain.value).toBeLessThan(0.5);
+  });
+
+  it("does not run any offline precompute for native output — apply() already keeps its gain at unity", async () => {
+    installAudio();
+    vi.stubGlobal("OfflineAudioContext", FakeOfflineAudioContext);
+    render(<Harness outputMode="native" layoutChannels={["FL", "FR"]} />);
+    await act(async () => { await preview.playPause(); });
+
+    expect(FakeOfflineAudioContext.instances.length).toBe(0);
+  });
+
+  it("does not re-run the offline render on a second play in the same output mode, so replays never re-measure", async () => {
+    installAudio();
+    vi.stubGlobal("OfflineAudioContext", FakeOfflineAudioContext);
+    render(<Harness outputMode="stereo" />);
+    await act(async () => { await preview.playPause(); });
+    expect(FakeOfflineAudioContext.instances.length).toBe(1);
+
+    act(() => { preview.stop(); });
+    await act(async () => { await preview.playPause(); });
+    expect(FakeOfflineAudioContext.instances.length).toBe(1);
   });
 });
 
@@ -535,13 +637,13 @@ describe("useStemPreview mixing alignment", () => {
     await act(async () => { await preview.playPause(); });
 
     const ctx = lastContext();
-    // First play triggers the muted loudness warm-up (runLoudnessWarmup in
-    // useStemPreview.ts), which schedules and stops its own throwaway
-    // buffer sources before the real, audible ones — so the two sources
-    // that matter here are the *last* two `ctx.bufferSources` created, not
-    // necessarily the only two.
-    expect(ctx.bufferSources.length).toBeGreaterThanOrEqual(2);
-    const [vocalsSource, bassSource] = ctx.bufferSources.slice(-2);
+    // Loudness/true-peak correction is measured offline before playback
+    // starts (see `precomputeCorrection`), on a separate `OfflineAudioContext`
+    // — not stubbed in this test, so it silently no-ops, same as it would on
+    // a transient measurement failure in production. Either way, the live
+    // `ctx.bufferSources` created here are exactly the two real, audible ones.
+    expect(ctx.bufferSources.length).toBe(2);
+    const [vocalsSource, bassSource] = ctx.bufferSources;
     // First connection out of each source must be a gain node (the stem
     // gain) whose value reflects that stem's mute state.
     expect(vocalsSource.connections[0]).toBeInstanceOf(FakeGain);

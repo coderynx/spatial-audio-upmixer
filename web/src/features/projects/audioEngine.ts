@@ -161,6 +161,14 @@ type AudioNodeSet = {
   meterAnalysers: AnalyserNode[];
 };
 
+// One stem's routed gain plan — see `computeMixGains`. `sends` is keyed by
+// positional channel name, mirroring `AudioNodeSet.sends`.
+type StemMixPlan = {
+  stemGainValue: number;
+  lfeGainValue: number;
+  sends: Partial<Record<string, number>>;
+};
+
 // One channel/headphone meter reading: `rms` is the smoothed level the bar
 // fill tracks, `peak` is the raw instantaneous sample peak of the most
 // recent analyser read (ChannelMeters holds/decays this itself — see its
@@ -208,9 +216,9 @@ async function fetchDecodeFilterPart(ctx: BaseAudioContext, partName: string): P
 // channel since several channels share the same shaped signal (e.g. SL and
 // BL both consume `surroundLeft`).
 function createStemSends(
-  ctx: AudioContext,
+  ctx: BaseAudioContext,
   input: AudioNode,
-  speakerBuses: Map<string, SpeakerBus>,
+  speakerBuses: Map<string, { muteGain: GainNode }>,
   channels: string[],
 ): { sends: Partial<Record<string, GainNode>>; ownNodes: AudioNode[] } {
   const splitter = ctx.createChannelSplitter(2);
@@ -274,29 +282,54 @@ async function loadBuffer(ctx: AudioContext, url: string): Promise<AudioBuffer> 
   return ctx.decodeAudioData(data);
 }
 
-// How long to let real post-collapse audio accumulate in `mergePointAnalyser`
-// before reading it for the one-shot loudness correction below — see
-// `measureOutputLoudness`.
-const LOUDNESS_MEASURE_DELAY_FRAMES = 55;
+// Poll cadence (ms) for the ongoing correction interval — see
+// `startTicker`/`applyCompressorReduction`. Loudness/true-peak correction is
+// no longer sampled here at all: it's measured once, offline, before playback
+// even starts (see `precomputeCorrection`), so this interval only drives the
+// live bus-compressor's gain-reduction poll now.
+const CORRECTION_STEP_MS = 16;
 
-// Re-sample cadence (in rAF ticks, ~60fps) for `measureOutputLoudness`'s
-// ongoing true-peak tracking once the initial one-shot snapshot has landed.
-const PEAK_TRACK_FRAME_STRIDE = 6;
+// Hard cap on how much audio `precomputeCorrection`'s offline measurement
+// pass ever renders, and how many evenly-spaced windows across the program
+// it samples to get there once the program is longer than the cap — see
+// `buildAnalysisExcerpts`. Render cost for that offline graph scales with
+// render-quanta count (duration x sample rate / 128), not with wall-clock
+// "faster than realtime" the way a simple graph's would — the full mastering
+// + per-stem routing + ambisonic encode/decode graph this mirrors is
+// hundreds of nodes (order-3 ambisonic encoding alone is ~18 nodes per
+// positional speaker), so rendering an entire multi-minute program at full
+// resolution took upwards of a minute on a real track in practice — not
+// infinite, but indistinguishable from a hang to a user waiting on it.
+// Bounding total analyzed duration keeps render cost roughly constant
+// regardless of song length.
+const ANALYSIS_MAX_SECONDS = 10;
+const ANALYSIS_EXCERPT_COUNT = 5;
 
-// Safety cap for `runLoudnessWarmup`, in case a silent or very short stem
-// never fills `mergePointAnalyser` with signal loud enough for
-// `measureOutputLoudness` to settle — bounds the muted warm-up so play can
-// never hang, at the cost of falling back to `measuredLkfs`'s unity-gain
-// default (today's behavior) for that one play.
-const LOUDNESS_WARMUP_MAX_FRAMES = LOUDNESS_MEASURE_DELAY_FRAMES + 30;
+type AnalysisExcerpt = { offlineStart: number; originalOffset: number; duration: number };
 
-// ~60fps, matching the cadence LOUDNESS_MEASURE_DELAY_FRAMES/
-// LOUDNESS_WARMUP_MAX_FRAMES were tuned against — see `runLoudnessWarmup`.
-// Also the ongoing correction loop's interval (see `startTicker`/`tick`):
-// both call `measureOutputLoudness` at this same nominal rate so its
-// internal frame-counting logic (tuned assuming ~60Hz calls) behaves
-// identically whichever loop is driving it.
-const WARMUP_STEP_MS = 16;
+// Programs at or under the cap are analyzed whole (most accurate, and the
+// common case for short stems/clips). Longer programs get
+// `ANALYSIS_EXCERPT_COUNT` equal-length windows spread evenly across the
+// full timeline — so both quiet intros and loud choruses are still
+// represented — stitched back-to-back into one short offline render via
+// each `AudioBufferSourceNode`'s own `(when, offset, duration)` scheduling,
+// rather than rendering the whole file. A few sample discontinuities at
+// each splice point are an accepted tradeoff: they can only ever nudge the
+// measured true peak *up* (a clipped edge briefly reads as a peak), which
+// only makes the resulting safety-net gain more conservative, never less.
+function buildAnalysisExcerpts(durationSeconds: number): { excerpts: AnalysisExcerpt[]; totalSeconds: number } {
+  if (durationSeconds <= ANALYSIS_MAX_SECONDS) {
+    return { excerpts: [{ offlineStart: 0, originalOffset: 0, duration: durationSeconds }], totalSeconds: durationSeconds };
+  }
+  const segmentSeconds = ANALYSIS_MAX_SECONDS / ANALYSIS_EXCERPT_COUNT;
+  const excerpts: AnalysisExcerpt[] = [];
+  for (let i = 0; i < ANALYSIS_EXCERPT_COUNT; i++) {
+    const center = (durationSeconds * (i + 0.5)) / ANALYSIS_EXCERPT_COUNT;
+    const originalOffset = Math.max(0, Math.min(durationSeconds - segmentSeconds, center - segmentSeconds / 2));
+    excerpts.push({ offlineStart: i * segmentSeconds, originalOffset, duration: segmentSeconds });
+  }
+  return { excerpts, totalSeconds: ANALYSIS_MAX_SECONDS };
+}
 
 function loudnessGainFor(measuredLkfs: number, targetLkfs: number, maxGainDb: number = LOUDNESS_MAX_GAIN_DB): number {
   if (measuredLkfs <= -70) return 1;
@@ -527,27 +560,23 @@ export class PreviewAudioEngine {
   // reassignments) when re-invoked with the profile already in place.
   private assignedDecodeProfile: SpatialProfile | null = null;
   private resolvedBass: { active: boolean; lfeGainDb: number } = { active: false, lfeGainDb: 0 };
+  // Whole-program loudness/true-peak measured once, offline, by
+  // `precomputeCorrection` before playback starts — static for the whole
+  // play, never ratcheted while the transport is running (see that method's
+  // doc comment for why a live re-measurement was the actual source of the
+  // "kicks in, then pumps" artifact this replaced).
   private measuredLkfs = -70;
-  // Same one-shot measurement window as `measuredLkfs`, but true peak
-  // (dBTP) instead of loudness — feeds `apply()`'s true-peak safety net, the
-  // preview-side mirror of `normalize_loudness`'s `max_tp_dbtp` gain
-  // reduction (see that function's comment in `apply()`).
   private preGainTpDbtp = -70;
-  // Pure meter tap on `mergePointNode` — the actual post-mastering,
-  // post-binaural-collapse (or post-stereo-downmix) signal, immediately
-  // before `master`'s loudness/volume gain is applied. `measureOutputLoudness`
-  // reads this once real audio has had time to fill its ring buffer, so
-  // `measuredLkfs` reflects what's actually coming out of the graph instead
-  // of the dry, unprocessed stem source material.
-  private mergePointAnalyser: AnalyserNode | null = null;
-  private loudnessMeasureBuf: Float32Array | null = null;
-  private loudnessMeasureState = { framesElapsed: 0, done: false };
-  // Forces every audible output path to silence during the first-play
-  // loudness warm-up (see `runLoudnessWarmup`) regardless of what `apply()`
-  // would otherwise compute — covers both `master` (binaural/stereo) and
-  // `nativeOutputGain` (native bypasses `master` entirely, see
-  // `applyOutputMode`), so no output mode can leak the pre-correction level.
-  private warmupMuted = false;
+  // Which (outputMode, spatialProfile) pair `measuredLkfs`/`preGainTpDbtp`
+  // above were last measured for — `precomputeCorrection` compares against
+  // this instead of maintaining a separate dirty flag, since a mode/profile
+  // switch is the only thing that changes the render `precomputeCorrection`
+  // itself measures (ordinary mix/mastering edits are cheap enough live that
+  // re-running a whole-file offline render for each one isn't worthwhile;
+  // `apply()` still re-derives the loudness delta from the fixed
+  // `measuredLkfs` immediately). `null` (its `reset()` value) always misses.
+  private precomputedForMode: OutputMode | null = null;
+  private precomputedForProfile: SpatialProfile | null = null;
   private nodes: Map<string, AudioNodeSet> = new Map();
 
   // ---- Public ref-shaped fields: UI reads these each frame, same shape a
@@ -573,15 +602,12 @@ export class PreviewAudioEngine {
   private playingRef = false;
   private scrub: { wasPlaying: boolean } | null = null;
   private animationFrame: number | null = null;
-  // Drives `applyCompressorReduction`/`measureOutputLoudness` independently
-  // of the visual rAF loop below — see `startTicker`/`stopTicker`. These two
-  // affect the actual audible signal (the true-peak safety net, the linked
-  // bus-compressor's gain), not just an on-screen meter, so they must keep
-  // running even in a backgrounded tab, where browsers fully suspend
-  // `requestAnimationFrame` (no paint to schedule against) but only
-  // throttle `setInterval` to a slower cadence, never fully stop it — the
-  // same reasoning `runLoudnessWarmup`'s own `setTimeout` choice documents,
-  // now applied to the rest of playback, not just the first-play warm-up.
+  // Drives `applyCompressorReduction` independently of the visual rAF loop
+  // below — see `startTicker`/`stopTicker`. This affects the actual audible
+  // signal (the linked bus-compressor's gain), not just an on-screen meter,
+  // so it must keep running even in a backgrounded tab, where browsers fully
+  // suspend `requestAnimationFrame` (no paint to schedule against) but only
+  // throttle `setInterval` to a slower cadence, never fully stop it.
   private correctionInterval: number | null = null;
   private loopRef = false;
   private initPromise: Promise<void> | null = null;
@@ -656,15 +682,10 @@ export class PreviewAudioEngine {
     this.headphoneLevels.current = { left: SILENT_METER_LEVEL, right: SILENT_METER_LEVEL };
   }
 
-  // Schedules every stem/anchor buffer source to start at `target`, shared by
-  // the audible start in `playFrom` and the muted warm-up in
-  // `runLoudnessWarmup` — identical scheduling either way, so the warm-up's
-  // measurement sees the same signal an audible start would produce. Returns
-  // the `AudioContext` time sources were scheduled to start at, or `null` if
-  // there's no context to schedule against. Does not itself commit this
-  // instant as the transport's new timeline origin — see `playFrom`, the
-  // only caller that wants position-tracking to actually advance (the
-  // warm-up pass discards this return value on purpose).
+  // Schedules every stem/anchor buffer source to start at `target` on the
+  // live `AudioContext`. Returns the `AudioContext` time sources were
+  // scheduled to start at, or `null` if there's no context to schedule
+  // against.
   private startSourcesAt(target: number): number | null {
     const ctx = this.context;
     if (!ctx) return null;
@@ -832,59 +853,269 @@ export class PreviewAudioEngine {
     }
   }
 
-  // Loudness correction for the *actual* output signal — reads
-  // `mergePointAnalyser` (tapped on `mergePointNode`, the real post-mastering/
-  // post-binaural-collapse or post-stereo-downmix signal, immediately before
-  // `master`'s gain) once enough playback has elapsed for its ring buffer to
-  // hold real audio instead of the graph's initial silence. Mirrors
-  // `normalize_loudness` measuring the actual rendered signal on the backend
-  // (`upmixer/loudness.py`, `upmixer/binaural/renderer.py`) instead of the
-  // dry, unprocessed stem source material.
+  // Whole-program loudness/true-peak measurement, replacing the old realtime
+  // approach entirely: rather than sampling a live post-mastering tap
+  // frame-by-frame during playback (a one-shot snapshot for loudness, then
+  // an ever-tightening ratchet re-sampling true peak every ~100ms — see git
+  // history), this renders the program once through a throwaway
+  // `OfflineAudioContext` mirror of the same mastering + collapse graph
+  // `initialize()`/`buildMasteringTopology()` build live, and measures both
+  // quantities over that render in one pass. That live ratchet was the
+  // actual cause of the "correction kicks in late, then the signal keeps
+  // pumping" artifact: an early snapshot commonly landed on a quiet intro,
+  // so the first loud chorus/drop later would newly set a true-peak record
+  // and yank the gain down mid-playback — a moving target masquerading as a
+  // limiter. A DAW bounce doesn't do this: it knows the whole file's level
+  // before a single sample reaches the output.
   //
-  // The LKFS target-matching gain is one-shot, same as the offline
-  // normalize — re-deriving it continuously from a ~0.7s window would ride
-  // program dynamics and audibly pump. But `preGainTpDbtp` (the *safety*
-  // ceiling `applyTruePeakCeiling` clamps against) cannot stay one-shot: an
-  // early snapshot commonly lands on a quiet intro, under-measuring the
-  // track's real peak — the frozen gain then goes uncorrected straight
-  // through a later chorus/drop and drives the soft-limit WaveShaper hard
-  // enough to audibly distort (both stereo mixdown and binaural — same
-  // shared gain stage, see docs/standards/spatial_audio_engine.md's gain-
-  // staging note). So after the initial snapshot, keep sampling the true
-  // peak and ratchet `preGainTpDbtp` up (gain down) whenever a louder peak
-  // is observed — never the other way, so the ceiling only ever gets
-  // stricter as more of the track is heard, the same direction a look-ahead
-  // limiter's held ceiling would move.
-  private measureOutputLoudness() {
-    const state = this.loudnessMeasureState;
-    state.framesElapsed += 1;
-    if (state.framesElapsed < LOUDNESS_MEASURE_DELAY_FRAMES) return;
-    const analyser = this.mergePointAnalyser;
-    const buf = this.loudnessMeasureBuf;
-    if (!analyser || !buf) return;
-    if (!state.done) {
-      analyser.getFloatTimeDomainData(buf);
+  // This does NOT render the entire file, though an earlier version did —
+  // measured against a real multi-minute track, that took upwards of a
+  // minute wall-clock (not infinite, just indistinguishable from a hang to
+  // a waiting user): `OfflineAudioContext` render cost scales with render
+  // quanta (duration x sample rate / 128) times graph size, and the full
+  // mastering + per-stem routing + ambisonic encode/decode graph this
+  // mirrors is hundreds of nodes (order-3 ambisonic encoding alone is ~18
+  // nodes per positional speaker) — nowhere near the trivial single-oscillator
+  // graphs "OfflineAudioContext renders faster than realtime" usually means
+  // in practice. See `buildAnalysisExcerpts`: programs over
+  // `ANALYSIS_MAX_SECONDS` are analyzed via a handful of short windows
+  // spread across the timeline instead, bounding render cost to roughly a
+  // constant regardless of song length.
+  //
+  // Reuses the exact same framework-free builders `initialize()` and the
+  // golden-diff harness (`render-preview-golden.mjs`) already call
+  // (`buildMasteringGraph`, `buildBinauralGraph`, `createStemSends`,
+  // `createPositionalEncoder`) and the same already-decoded stem buffers /
+  // cached FIR + decode-filter assets (`AudioBuffer`s and the raw
+  // `Float32Array` caches are not tied to the context that created them, so
+  // they're reused as-is against the fresh `OfflineAudioContext`) — no new
+  // DSP, just a static measurement of the same signal instead of a moving
+  // one. `computeMixGains()` supplies the exact same per-stem numbers
+  // `apply()` ramps onto the live graph, so this offline mirror and the
+  // live graph are always driven by identical values.
+  //
+  // Native output needs no correction of its own — `apply()` keeps
+  // `nativeOutputGain` at unity, the look-ahead limiter worklet is the
+  // native path's own safety net — so this only runs for binaural/stereo.
+  // Tracked against `precomputedForMode`/`precomputedForProfile` (the only
+  // two things that change what this offline render itself measures)
+  // instead of a one-shot "done" flag, so a mode/profile switch mid-session
+  // re-measures instead of carrying over a stale value from a different
+  // collapse stage.
+  private async precomputeCorrection(): Promise<void> {
+    if (this.outputMode === "native" || this.durationRef <= 0) return;
+    const alreadyValid = this.precomputedForMode === this.outputMode
+      && (this.outputMode !== "binaural" || this.precomputedForProfile === this.spatialProfile);
+    if (alreadyValid) return;
+    const ctx = this.context;
+    if (!ctx) return;
+    this.callbacks.onMeasuring(true);
+    try {
+      const sr = ctx.sampleRate;
+      const { excerpts, totalSeconds } = buildAnalysisExcerpts(this.durationRef);
+      // Small tail beyond the analyzed audio itself so decode-filter/EQ
+      // convolution ringing finishes decaying inside the rendered buffer
+      // instead of being cut off mid-decay.
+      const tailSeconds = 0.5;
+      const length = Math.ceil((totalSeconds + tailSeconds) * sr);
+      const offlineCtx = new OfflineAudioContext(2, length, sr);
+
+      const channelPorts = new Map<string, { input: AudioNode; output: AudioNode }>();
+      const offlineBuses = new Map<string, { muteGain: GainNode }>();
+      let binaural: ReturnType<typeof buildBinauralGraph> | null = null;
+      let stereoMerger: ChannelMergerNode | null = null;
+      if (this.outputMode === "binaural") {
+        binaural = buildBinauralGraph(offlineCtx, this.spatialProfile);
+        const decodeChannels = await loadCachedDecodeFilterChannels(
+          this.decodeFilterCache, offlineCtx, DECODE_FILTER_SET[this.spatialProfile], fetchDecodeFilterPart,
+        );
+        assignDecodeFilterBuffers(offlineCtx, binaural.convolverPairs, decodeChannels);
+      } else {
+        stereoMerger = offlineCtx.createChannelMerger(2);
+      }
+
+      for (const channel of this.positionalChannels) {
+        const muteGain = offlineCtx.createGain();
+        muteGain.gain.value = this.speakerEnabled[channel] === false ? 0 : 1;
+        const masterIn = offlineCtx.createGain();
+        const masterOut = offlineCtx.createGain();
+        muteGain.connect(masterIn);
+        offlineBuses.set(channel, { muteGain });
+        channelPorts.set(channel, { input: masterIn, output: masterOut });
+
+        if (binaural) {
+          const { azim, elev } = positionToAzimuthElevation(speakerCoordinates[channel]);
+          const encoder = createPositionalEncoder(offlineCtx, azim, elev);
+          masterOut.connect(encoder.in);
+          encoder.out.connect(binaural.hoaBus);
+        }
+        if (stereoMerger) {
+          const coeffs = STEREO_DOWNMIX_GAINS[channel];
+          if (coeffs) {
+            const gainL = offlineCtx.createGain();
+            gainL.gain.value = coeffs.left;
+            const gainR = offlineCtx.createGain();
+            gainR.gain.value = coeffs.right;
+            masterOut.connect(gainL).connect(stereoMerger, 0, 0);
+            masterOut.connect(gainR).connect(stereoMerger, 0, 1);
+          }
+        }
+      }
+
+      const handle = buildMasteringGraph(
+        offlineCtx, channelPorts, this.mastering, this.firEqBufferCache,
+        { refMatchBufferCache: this.refMatchBufferCache },
+      );
+
+      // LFE bridge — mirrors `buildMasteringTopology`'s own LFE ref-match
+      // block and `initialize()`'s stable lfeBus -> lfeMasterIn/lfeMasterOut
+      // -> mute wiring, ending at the binaural pre-voicing insertion point
+      // (D11); stereo excludes LFE entirely, matching BS.775, same as the
+      // live graph.
+      const lfeBus = offlineCtx.createGain();
+      const lfeMuteGain = offlineCtx.createGain();
+      lfeMuteGain.gain.value = this.speakerEnabled.LFE === false ? 0 : 1;
+      let lfeChainEnd: AudioNode = lfeBus;
+      const refCfg = this.mastering?.match_reference;
+      if (refCfg?.rms && refCfg.rms_gain_db) {
+        const lfeRmsGain = offlineCtx.createGain();
+        lfeRmsGain.gain.value = 10 ** (refCfg.rms_gain_db / 20);
+        lfeChainEnd.connect(lfeRmsGain);
+        lfeChainEnd = lfeRmsGain;
+      }
+      if (refCfg?.spectrum && refCfg.fir_url && (refCfg.strength ?? 0) > 0 && refCfg.channels?.includes("LFE")) {
+        const firLfeRef = buildFirEqNode(offlineCtx, refCfg.strength ?? 1);
+        lfeChainEnd.connect(firLfeRef.input);
+        lfeChainEnd = firLfeRef.output;
+        const buffers = await loadCachedRefMatchBuffers(this.refMatchBufferCache, offlineCtx, refCfg.fir_url, refCfg.channels);
+        const buffer = buffers.get("LFE");
+        if (buffer) firLfeRef.convolver.buffer = buffer;
+      }
+      lfeChainEnd.connect(lfeMuteGain);
+      if (binaural) {
+        lfeMuteGain.connect(binaural.preVoicing, 0, 0);
+        lfeMuteGain.connect(binaural.preVoicing, 0, 1);
+      }
+
+      // Stems: same already-decoded buffers, EQ profile, and mix gains as
+      // the live graph (via `computeMixGains`) — set as static values, no
+      // ramp needed since this render is never heard.
+      const { anchor, perStem } = this.computeMixGains();
+      for (const stem of this.stems) {
+        const stemNode = this.nodes.get(stem.id);
+        const plan = perStem.get(stem.id);
+        if (!stemNode || !plan) continue;
+        const base = stem.stem_key.split("@", 1)[0];
+        const profile = this.mix?.stem_eq?.[stem.stem_key] || this.mix?.stem_eq?.[base];
+        const assetName = profile && profile in STEM_EQ_FIR_ASSETS
+          ? STEM_EQ_FIR_ASSETS[profile as StemEqProfileName]
+          : null;
+
+        // One shared downstream chain per stem, fed by one source per
+        // excerpt window (see `buildAnalysisExcerpts`) — the excerpts never
+        // overlap in the offline timeline, so fanning them all into the same
+        // gain nodes just sums them in sequence, not on top of each other.
+        const stemGain = offlineCtx.createGain();
+        stemGain.gain.value = plan.stemGainValue;
+        let postEqInput: AudioNode = stemGain;
+        if (assetName) {
+          const firEq = buildFirEqNode(offlineCtx, 1);
+          stemGain.connect(firEq.input);
+          postEqInput = firEq.output;
+          const buffer = await loadCachedEqBuffer(this.firEqBufferCache, offlineCtx, assetName);
+          firEq.convolver.buffer = buffer;
+        }
+        const postEqGain = offlineCtx.createGain();
+        postEqInput.connect(postEqGain);
+        const built = createStemSends(offlineCtx, postEqGain, offlineBuses, this.positionalChannels);
+        for (const [channel, sendGain] of Object.entries(built.sends)) {
+          if (sendGain) sendGain.gain.value = plan.sends[channel] || 0;
+        }
+
+        const lfeGain = offlineCtx.createGain();
+        lfeGain.gain.value = plan.lfeGainValue;
+        const lfeFilter1 = offlineCtx.createBiquadFilter();
+        lfeFilter1.type = "lowpass";
+        lfeFilter1.frequency.value = LFE_LOWPASS_HZ;
+        const lfeFilter2 = offlineCtx.createBiquadFilter();
+        lfeFilter2.type = "lowpass";
+        lfeFilter2.frequency.value = LFE_LOWPASS_HZ;
+        lfeGain.connect(lfeFilter1).connect(lfeFilter2).connect(lfeBus);
+
+        for (const excerpt of excerpts) {
+          const source = offlineCtx.createBufferSource();
+          source.buffer = stemNode.buffer;
+          source.start(excerpt.offlineStart, excerpt.originalOffset, excerpt.duration);
+          source.connect(stemGain);
+          source.connect(lfeGain);
+        }
+      }
+      if (this.sourcePreviewUrl) {
+        const anchorNode = this.nodes.get("__source_anchor__");
+        if (anchorNode) {
+          const input = offlineCtx.createGain();
+          const built = createStemSends(offlineCtx, input, offlineBuses, this.positionalChannels);
+          if (built.sends.FL) built.sends.FL.gain.value = anchor;
+          if (built.sends.FR) built.sends.FR.gain.value = anchor;
+          for (const excerpt of excerpts) {
+            const source = offlineCtx.createBufferSource();
+            source.buffer = anchorNode.buffer;
+            source.start(excerpt.offlineStart, excerpt.originalOffset, excerpt.duration);
+            source.connect(input);
+          }
+        }
+      }
+
+      // Sums the compressor's zero-gain keep-alive sink alongside the real
+      // collapse output — see `MasteringGraphHandle.sidechainSink`'s doc
+      // comment: a node with no path to the destination may not reliably
+      // keep updating `.reduction`.
+      const collapseOutput = binaural ? binaural.output : stereoMerger!;
+      const finalSum = offlineCtx.createGain();
+      collapseOutput.connect(finalSum);
+      handle.sidechainSink.connect(finalSum);
+      finalSum.connect(offlineCtx.destination);
+
+      // Deliberately NOT reproducing the compressor's dynamic gain reduction
+      // here via `render-preview-golden.mjs`'s suspend()/resume() polling
+      // trick — that harness only ever renders a fixed 5-second synthetic
+      // signal, where a few hundred 60Hz suspend points are cheap. Scaled up
+      // to a real multi-minute track, that becomes tens of thousands of
+      // serialized suspend/resume round-trips (each with real cross-thread
+      // synchronization cost against the audio render thread) — which
+      // doesn't fail, it just never finishes in practice. `compGains` stay
+      // at the static makeup gain `buildMasteringGraph` already set them to
+      // (no dynamic attenuation applied during this pass) — this measurement
+      // was already a coarse approximation (mono-downmix mean-square, no
+      // BS.1770 gating) whose whole job is steering one global static gain,
+      // not reproducing bit-exact dynamics, so skipping a few dB of glue
+      // compression here doesn't meaningfully change the result. Live
+      // playback still applies the real dynamic reduction every tick via
+      // `applyCompressorReduction`/`correctionInterval`, unaffected by this.
+      const rendered = await offlineCtx.startRendering();
+      const left = rendered.getChannelData(0);
+      const right = rendered.numberOfChannels > 1 ? rendered.getChannelData(1) : left;
       let sumSquares = 0;
-      for (let i = 0; i < buf.length; i++) sumSquares += buf[i] * buf[i];
-      const meanSquare = sumSquares / buf.length;
-      // Same -0.691 dB offset / ungated mean-square approximation the removed
-      // measureApproxLkfs used — good enough to steer this correction gain
-      // toward the mastering target, not to reproduce the exact delivered LKFS.
+      for (let i = 0; i < left.length; i++) {
+        const mono = (left[i] + right[i]) * 0.5;
+        sumSquares += mono * mono;
+      }
+      const meanSquare = sumSquares / left.length;
+      // Same -0.691 dB offset / ungated mean-square approximation the live
+      // measurement always used — good enough to steer this correction gain
+      // toward the mastering target, not to reproduce the exact delivered
+      // LKFS — now applied over the whole program instead of a snapshot.
       this.measuredLkfs = meanSquare > 0 ? -0.691 + 10 * Math.log10(meanSquare) : -70;
-      this.preGainTpDbtp = measureBufferTruePeakDbtp(buf);
-      state.done = true;
-      this.apply();
-      return;
-    }
-    // Throttled re-sampling (~10Hz, not every rAF tick) — the 4x upsample
-    // in measureBufferTruePeakDbtp isn't free, and catching a sustained
-    // loud section within ~100ms is already far tighter than needed.
-    if (state.framesElapsed % PEAK_TRACK_FRAME_STRIDE !== 0) return;
-    analyser.getFloatTimeDomainData(buf);
-    const peakDbtp = measureBufferTruePeakDbtp(buf);
-    if (peakDbtp > this.preGainTpDbtp) {
-      this.preGainTpDbtp = peakDbtp;
-      this.apply();
+      this.preGainTpDbtp = Math.max(measureBufferTruePeakDbtp(left), measureBufferTruePeakDbtp(right));
+      this.precomputedForMode = this.outputMode;
+      this.precomputedForProfile = this.spatialProfile;
+    } catch {
+      // Leave measuredLkfs/preGainTpDbtp at their prior value (or the -70
+      // default on first play) and don't mark this mode/profile as
+      // measured — apply() still runs safely with that fallback, same as if
+      // this measurement had never existed, and the next play retries.
+    } finally {
+      this.callbacks.onMeasuring(false);
     }
   }
 
@@ -924,8 +1155,7 @@ export class PreviewAudioEngine {
     this.animationFrame = window.requestAnimationFrame(this.tick);
     this.correctionInterval = window.setInterval(() => {
       this.applyCompressorReduction();
-      this.measureOutputLoudness();
-    }, WARMUP_STEP_MS);
+    }, CORRECTION_STEP_MS);
   }
 
   pause() {
@@ -962,7 +1192,8 @@ export class PreviewAudioEngine {
     this.resolvedBass = { active: false, lfeGainDb: 0 };
     this.measuredLkfs = -70;
     this.preGainTpDbtp = -70;
-    this.loudnessMeasureState = { framesElapsed: 0, done: false };
+    this.precomputedForMode = null;
+    this.precomputedForProfile = null;
     this.speakerBuses.forEach((bus) => {
       bus.muteGain.disconnect();
       bus.masterIn.disconnect();
@@ -1031,9 +1262,6 @@ export class PreviewAudioEngine {
     this.lfeMuteGain = null;
     this.mergePoint?.disconnect();
     this.mergePoint = null;
-    this.mergePointAnalyser?.disconnect();
-    this.mergePointAnalyser = null;
-    this.loudnessMeasureBuf = null;
     this.softLimit?.disconnect();
     this.softLimit = null;
     this.monitorGain?.disconnect();
@@ -1329,16 +1557,13 @@ export class PreviewAudioEngine {
     // channel/headphone meter taps (see `monitorGain`'s declaration), so
     // this is the only gain the volume slider and mute drive, and it can
     // never feed back into the limiter's engagement or the meters' reading.
-    // Warmup silence must land instantly here — a ramped mute would leak a
-    // sliver of pre-correction level through the glide.
     const monitorTarget = this.muted ? 0 : faderPositionToGain(this.volume);
     for (const node of [this.monitorGain, this.nativeMonitorGain]) {
       if (!node) continue;
-      if (this.warmupMuted) node.gain.value = 0;
-      else if (ctx) rampGainTo(node.gain, monitorTarget, ctx);
+      if (ctx) rampGainTo(node.gain, monitorTarget, ctx);
       else node.gain.value = monitorTarget;
     }
-    const anchor = this.mix?.stem_source_anchor_strength || 0;
+    const { anchor, perStem } = this.computeMixGains();
     const source = this.nodes.get("__source_anchor__");
     if (source) {
       // Dry stereo anchor blends straight into the FL/FR speaker buses —
@@ -1353,7 +1578,44 @@ export class PreviewAudioEngine {
     }
     for (const stem of this.stems) {
       const node = this.nodes.get(stem.id);
-      if (!node) continue;
+      const plan = perStem.get(stem.id);
+      if (!node || !plan) continue;
+      const base = stem.stem_key.split("@", 1)[0];
+      this.appliedGain.set(base, plan.stemGainValue);
+      // Ramped from here down: mute/solo/rebalance, LFE send, and per-
+      // channel routing are all live-editable mix controls (fader drags,
+      // mute/solo toggles, dragging a stem's position) — a raw `.value`
+      // snap would click on every one of those edits, not just the ones
+      // already ramped above (volume/mute, speaker mute, output-mode
+      // switch). `rampGainTo`'s short time constant is inaudible as a
+      // glide but still lands the new value well within one video frame.
+      if (node.stemGain) {
+        if (ctx) rampGainTo(node.stemGain.gain, plan.stemGainValue, ctx);
+        else node.stemGain.gain.value = plan.stemGainValue;
+      }
+      if (node.lfeGain) {
+        if (ctx) rampGainTo(node.lfeGain.gain, plan.lfeGainValue, ctx);
+        else node.lfeGain.gain.value = plan.lfeGainValue;
+      }
+      for (const channel of this.positionalChannels) {
+        const send = node.sends[channel];
+        if (!send) continue;
+        const sendValue = plan.sends[channel] || 0;
+        if (ctx) rampGainTo(send.gain, sendValue, ctx);
+        else send.gain.value = sendValue;
+      }
+    }
+  }
+
+  // Pure computation of every stem's routed gain (mute/solo/rebalance/anchor
+  // duck), LFE send, and per-channel routing weight — the same math `apply()`
+  // used to compute and ramp onto live nodes inline, extracted so
+  // `precomputeCorrection()`'s offline measurement graph can be driven by the
+  // exact same numbers instead of a hand-duplicated copy that could drift.
+  private computeMixGains(): { anchor: number; perStem: Map<string, StemMixPlan> } {
+    const anchor = this.mix?.stem_source_anchor_strength || 0;
+    const perStem = new Map<string, StemMixPlan>();
+    for (const stem of this.stems) {
       const base = stem.stem_key.split("@", 1)[0];
       const value = this.scene.stems?.[stem.stem_key] || this.scene.stems?.[base] || {};
       let route = this.mix?.stem_routing?.[stem.stem_key] || this.mix?.stem_routing?.[base];
@@ -1384,36 +1646,17 @@ export class PreviewAudioEngine {
         || this.mix?.stem_enabled?.[base] === false || value.enabled === false;
       const gainDb = this.mix?.stem_rebalance?.[base] || 0;
       const stemGainValue = muted ? 0 : (1.0 - anchor * frontFraction) * 10 ** (gainDb / 20);
-      this.appliedGain.set(base, stemGainValue);
-      // Ramped from here down: mute/solo/rebalance, LFE send, and per-
-      // channel routing are all live-editable mix controls (fader drags,
-      // mute/solo toggles, dragging a stem's position) — a raw `.value`
-      // snap would click on every one of those edits, not just the ones
-      // already ramped above (volume/mute, speaker mute, output-mode
-      // switch). `rampGainTo`'s short time constant is inaudible as a
-      // glide but still lands the new value well within one video frame.
-      if (node.stemGain) {
-        if (ctx) rampGainTo(node.stemGain.gain, stemGainValue, ctx);
-        else node.stemGain.gain.value = stemGainValue;
-      }
-      if (node.lfeGain) {
-        const lfeGainValue = muted
-          ? 0
-          : LFE_GAIN * lfeWeight * 10 ** (this.resolvedBass.lfeGainDb / 20);
-        if (ctx) rampGainTo(node.lfeGain.gain, lfeGainValue, ctx);
-        else node.lfeGain.gain.value = lfeGainValue;
-      }
+      const lfeGainValue = muted ? 0 : LFE_GAIN * lfeWeight * 10 ** (this.resolvedBass.lfeGainDb / 20);
 
       const routeScale = estimateRouteScale(route);
+      const sends: Partial<Record<string, number>> = {};
       for (const channel of this.positionalChannels) {
-        const send = node.sends[channel];
-        if (!send) continue;
         const weight = route[channel] || 0;
-        const sendValue = weight > 0 ? routeScale * weight * channelGroupGain(channel) : 0;
-        if (ctx) rampGainTo(send.gain, sendValue, ctx);
-        else send.gain.value = sendValue;
+        sends[channel] = weight > 0 ? routeScale * weight * channelGroupGain(channel) : 0;
       }
+      perStem.set(stem.id, { stemGainValue, lfeGainValue, sends });
     }
+    return { anchor, perStem };
   }
 
   initialize(): Promise<void> {
@@ -1631,13 +1874,6 @@ export class PreviewAudioEngine {
     lfeMuteGainNode.connect(binaural.preVoicing, 0, 0);
     lfeMuteGainNode.connect(binaural.preVoicing, 0, 1);
     mergePointNode.connect(output).connect(softLimitNode);
-    // Pure meter tap for measureOutputLoudness — see mergePointAnalyser's
-    // declaration. Sits before `output`'s own loudness/volume gain, so it
-    // reads the same pre-correction signal normalize_loudness measures on
-    // the backend.
-    const mergePointAnalyserNode = ctx.createAnalyser();
-    mergePointAnalyserNode.fftSize = 32768;
-    mergePointNode.connect(mergePointAnalyserNode);
     // LFE's own discrete native channel — bypasses the stereo mastering
     // chain entirely, same as every other native channel.
     const lfeNativeIndex = layoutChannelList.indexOf("LFE");
@@ -1679,8 +1915,6 @@ export class PreviewAudioEngine {
     this.lfeMasterIn = lfeMasterInNode;
     this.lfeMasterOut = lfeMasterOutNode;
     this.mergePoint = mergePointNode;
-    this.mergePointAnalyser = mergePointAnalyserNode;
-    this.loudnessMeasureBuf = new Float32Array(mergePointAnalyserNode.fftSize);
     this.softLimit = softLimitNode;
     this.master = output;
     this.monitorGain = monitorGainNode;
@@ -1815,50 +2049,6 @@ export class PreviewAudioEngine {
     return target;
   }
 
-  // Runs the real output exactly as an audible start would (same
-  // `startSourcesAt` scheduling), but muted (`warmupMuted`), purely so
-  // `measureOutputLoudness` sees genuine post-mastering signal instead of the
-  // graph's initial silence — without ever letting the pre-correction level
-  // reach the listener. Only needed once per engine lifetime: after
-  // `loudnessMeasureState.done` flips true, `playFrom` skips this entirely
-  // and starts audible playback immediately, same as before this warm-up
-  // existed.
-  //
-  // Paced with `setTimeout` rather than the main `tick()` loop's
-  // `requestAnimationFrame`: this has no UI frame to draw, only real
-  // AudioContext time to wait out while the post-mastering signal fills
-  // `mergePointAnalyser`'s ring buffer, and rAF throttles/suspends in
-  // backgrounded tabs — which would stall the very first play indefinitely
-  // if the user switched tabs right after pressing it.
-  private runLoudnessWarmup(target: number): Promise<void> {
-    return new Promise<void>((resolve) => {
-      this.warmupMuted = true;
-      // Silences the MONITOR nodes, not `master`/`nativeOutputGain` — those
-      // now carry only the PROGRAM-domain loudness correction and are
-      // allowed to keep updating (to unity, then to the real measured gain
-      // once it lands) while the monitor stays hard-muted downstream. See
-      // `monitorGain`'s declaration and `apply()`'s MONITOR domain block.
-      if (this.monitorGain) this.monitorGain.gain.value = 0;
-      if (this.nativeMonitorGain) this.nativeMonitorGain.gain.value = 0;
-      this.callbacks.onMeasuring(true);
-      this.startSourcesAt(target);
-      let frame = 0;
-      const step = () => {
-        frame += 1;
-        this.measureOutputLoudness();
-        if (this.loudnessMeasureState.done || frame >= LOUDNESS_WARMUP_MAX_FRAMES) {
-          this.stopSources();
-          this.warmupMuted = false;
-          this.callbacks.onMeasuring(false);
-          resolve();
-          return;
-        }
-        window.setTimeout(step, WARMUP_STEP_MS);
-      };
-      window.setTimeout(step, WARMUP_STEP_MS);
-    });
-  }
-
   async playFrom(time: number): Promise<boolean> {
     try {
       await this.initialize();
@@ -1870,14 +2060,14 @@ export class PreviewAudioEngine {
       const target = this.durationRef > 0 && time >= this.durationRef ? 0 : time;
       this.stopSources();
       await ctx.resume();
-      // First play only: measure real post-mastering loudness while muted,
-      // so the very first audible sample already carries the corrected
-      // gain instead of ~55 frames (≈0.9s) of unity/uncorrected level — see
-      // `runLoudnessWarmup`.
-      if (!this.loudnessMeasureState.done) {
-        await this.runLoudnessWarmup(target);
-        this.apply();
-      }
+      // Whole-program loudness/true-peak measurement (see
+      // `precomputeCorrection`'s doc comment) — a no-op after the first
+      // successful measurement for the current output mode/spatial profile,
+      // so this costs nothing on ordinary replays. Faster than realtime, so
+      // even a first-ever play stays effectively instant instead of the old
+      // ~0.9s muted warm-up.
+      await this.precomputeCorrection();
+      this.apply();
       const passStartedAt = ctx.currentTime;
       const startAt = this.startSourcesAt(target);
       if (startAt === null) return false;
@@ -1888,7 +2078,6 @@ export class PreviewAudioEngine {
       this.startTicker();
       return true;
     } catch (nextError) {
-      this.warmupMuted = false;
       this.callbacks.onMeasuring(false);
       this.stopSources();
       this.transport.clear();
