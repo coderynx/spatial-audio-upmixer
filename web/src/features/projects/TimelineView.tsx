@@ -138,6 +138,14 @@ function TimelineViewImpl({
   const playheadCanvas = React.useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = React.useState(0);
   const scrubbing = React.useRef(false);
+  // Native HTML5 drag fires `dragstart` with `event.target` set to the
+  // draggable node itself (the row), never the descendant actually under the
+  // pointer — so gating the drag source on `dragstart`'s own target can never
+  // see which part of the row a mousedown landed on. `mousedown` fires with
+  // the real hit-tested target first, so it — not `dragstart` — is where
+  // "did this gesture start on the grip handle" has to be decided; only one
+  // row can be mid-gesture at a time, so a single ref is enough.
+  const dragFromHandle = React.useRef(false);
   const tokens = useThemeTokens();
 
   const mutedKey = mutedStems.join(" ");
@@ -379,7 +387,26 @@ function TimelineViewImpl({
               <div
                 key={stem}
                 draggable
-                onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; onDragStart(stem); }}
+                onMouseDown={(event) => {
+                  dragFromHandle.current = Boolean((event.target as HTMLElement).closest("[data-drag-handle]"));
+                }}
+                onDragStart={(event) => {
+                  // The row's native HTML5 drag (for reordering) fires on a
+                  // mousedown+move starting anywhere in the row — including
+                  // the fader, whose own pointermove-based dragging is a
+                  // "mousedown then move" gesture too and would otherwise
+                  // lose the rest of its events to the row's drag once the
+                  // browser commits to it. Restricting the drag source to the
+                  // grip icon makes that the one deliberate way to reorder a
+                  // row, leaving every other gesture on it — the fader, M/S,
+                  // the name — to its own handlers. Gated on `dragFromHandle`
+                  // (set on `mousedown`, see above) rather than this event's
+                  // own `event.target`, which native drag always sets to the
+                  // draggable row itself, never the descendant the pointer
+                  // actually landed on.
+                  if (!dragFromHandle.current) { event.preventDefault(); return; }
+                  event.dataTransfer.effectAllowed = "move"; onDragStart(stem);
+                }}
                 onDragEnd={onDragEnd}
                 onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }}
                 onDrop={(event) => { event.preventDefault(); onDropOn(stem); }}
@@ -392,7 +419,7 @@ function TimelineViewImpl({
                 )}
                 style={{ height: LANE_HEIGHT, borderLeftColor: getStemColor(stem) }}
               >
-                <GripVertical className="h-3.5 w-3.5 shrink-0 cursor-grab self-center text-muted-foreground/60" aria-hidden="true" />
+                <GripVertical data-drag-handle className="h-3.5 w-3.5 shrink-0 cursor-grab self-center text-muted-foreground/60" aria-hidden="true" />
                 {/* Name on its own line, M/S/gain below — the two-line shape
                     iPad Logic's own track header uses, wide enough now that
                     the row no longer has to fit everything on one line. */}
@@ -412,8 +439,8 @@ function TimelineViewImpl({
                       aria-label={`${isMuted ? "Enable" : "Mute"} ${stem}`}
                       onClick={(event) => { event.stopPropagation(); onToggleMute(stem); }}
                       className={cn(
-                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-bold leading-none transition-colors",
-                        isMuted ? "bg-destructive text-destructive-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                        "flex h-6 w-7 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-bold leading-none transition-colors",
+                        isMuted ? "bg-destructive text-destructive-foreground" : "bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground",
                       )}
                     >
                       <span className="leading-none">M</span>
@@ -424,8 +451,8 @@ function TimelineViewImpl({
                       aria-label={`${isSoloed ? "Clear solo" : "Solo"} ${stem}`}
                       onClick={(event) => { event.stopPropagation(); onToggleSolo(stem); }}
                       className={cn(
-                        "flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-bold leading-none transition-colors",
-                        isSoloed ? "bg-warning text-warning-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                        "flex h-6 w-7 shrink-0 items-center justify-center rounded-[5px] text-[10px] font-bold leading-none transition-colors",
+                        isSoloed ? "bg-warning text-warning-foreground" : "bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground",
                       )}
                     >
                       <span className="leading-none">S</span>
@@ -444,11 +471,10 @@ function TimelineViewImpl({
                       min={STEM_GAIN_MIN_DB}
                       max={STEM_GAIN_MAX_DB}
                       step={STEM_GAIN_STEP_DB}
-                      detent={0}
                       valueText={`${(gains[stem] ?? 0).toFixed(1)} dB`}
                       onChange={(next) => onGain(stem, next)}
                       onReset={() => onGain(stem, 0)}
-                      knobSize={16}
+                      knobSize={20}
                       meterChannels={Math.min(2, Math.max(1, stemChannelCounts[stem] ?? 1))}
                       meterSource={meterSources[stem]}
                       meterActive={playing}
@@ -456,17 +482,14 @@ function TimelineViewImpl({
                     />
                   </div>
                 </div>
-                {/* Instrument-icon swatch, full row height — the same
-                    per-stem icon this app already draws small inline before
-                    the name (`getStemIcon`), given the prominent square
-                    treatment iPad Logic gives it, now that a two-line row
-                    has the height to spare. */}
-                <div
-                  className="flex shrink-0 items-center justify-center self-stretch rounded-md"
-                  style={{ width: LANE_HEIGHT - 16, backgroundColor: `${getStemColor(stem)}2E` }}
-                >
+                {/* Bare instrument icon, trailing edge — the same per-stem
+                    icon this app already draws small inline before the name
+                    (`getStemIcon`), sized up and given room on its own,
+                    matching iPad Logic's plain (no swatch/background) icon
+                    treatment for this row. */}
+                <div className="flex shrink-0 items-center self-center pr-1">
                   <StemIcon
-                    className={cn("h-5 w-5 shrink-0", isMuted && "opacity-30")}
+                    className={cn("h-6 w-6 shrink-0", isMuted && "opacity-30")}
                     style={{ color: getStemColor(stem) }}
                     aria-hidden="true"
                   />

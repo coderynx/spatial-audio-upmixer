@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronUp,
-  Code2,
   Download,
   Loader2,
   Package,
@@ -20,11 +19,10 @@ import { useHeaderTitle } from "@/app/HeaderSlot";
 import { InspectorGroup } from "@/app/InspectorRow";
 import { SegmentedControl } from "@/app/SegmentedControl";
 import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
-import { Toolbar, ToolbarGroup, ToolbarSeparator, ToolbarSpacer } from "@/app/Toolbar";
+import { ToolbarSeparator } from "@/app/Toolbar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
-import { AdvancedSection } from "@/features/composer/sections/AdvancedSection";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
 import { getStemColor, getStemIcon, stemColors } from "@/lib/stems";
@@ -33,7 +31,7 @@ import HazeView from "./HazeView";
 import ChannelMeters from "./ChannelMeters";
 import ElevationView from "./ElevationView";
 import type { SpatialProfile } from "./masteringProfiles";
-import { StemChannelStrip } from "./ChannelStrip";
+import { StemChannelStrip, StripResizeHandle } from "./ChannelStrip";
 import { MixerView } from "./MixerView";
 import { OutputModeSelect } from "./OutputModeSelect";
 import { PreparationView } from "./PreparationView";
@@ -60,6 +58,12 @@ const PANE_DEFAULT_HEIGHT = 260;
 /** Left for the spatial displays above the pane, so dragging the divider to
  * the top of its travel can never squeeze them out of existence. */
 const PANE_HEADROOM = 220;
+/** Absolute roof on the pane's own height, independent of how much headroom
+ * a large window would otherwise allow — on a tall display `available -
+ * PANE_HEADROOM` alone permits a pane so large the spatial row above it
+ * shrinks to an unusably thin strip well before that dynamic ceiling is
+ * reached. This caps it outright. */
+const PANE_MAX_HEIGHT = 480;
 
 function paneStorageKey(projectId: string | undefined) {
   return `upmixer.project.${projectId || "unknown"}.pane`;
@@ -79,11 +83,44 @@ function readStoredPane(projectId: string | undefined): PaneView {
 function readStoredPaneHeight(projectId: string | undefined): number {
   try {
     const stored = Number(window.localStorage.getItem(`${paneStorageKey(projectId)}.height`));
-    if (Number.isFinite(stored) && stored >= PANE_MIN_HEIGHT) return stored;
+    if (Number.isFinite(stored) && stored >= PANE_MIN_HEIGHT) return Math.min(stored, PANE_MAX_HEIGHT);
   } catch {
     // Same fallback as `readStoredPane`.
   }
   return PANE_DEFAULT_HEIGHT;
+}
+
+/** Floors (and, for Meters, a ceiling) for the spatial row's three
+ * displays — Haze's own drag-resize can't shrink it past `HAZE_MIN_WIDTH`;
+ * Elevation is a true `flex-1` with `min-w-[ELEVATION_MIN_WIDTH]`, so it can
+ * never be squeezed past that either, no matter what Haze/Meters do; Meters'
+ * own drag-resize is bounded by both `METERS_MIN_WIDTH` and
+ * `METERS_MAX_WIDTH` (this used to be `ChannelMeters`' own baked-in
+ * `min-w-[180px] max-w-[480px]`, moved out to the caller alongside the rest
+ * of this resize system). */
+const HAZE_MIN_WIDTH = 140;
+const ELEVATION_MIN_WIDTH = 160;
+const METERS_MIN_WIDTH = 180;
+const METERS_MAX_WIDTH = 480;
+/** Gap between the three displays (matches the row's own `gap-2`). */
+const ROW_GAP = 8;
+/** Meters' default width when neither column has been dragged — Haze takes
+ * its own square, Meters takes this (a reasonable point in its own range),
+ * and Elevation (`flex-1`) takes whatever's left. */
+const METERS_DEFAULT_SHARE = 320;
+
+function columnStorageKey(projectId: string | undefined) {
+  return `upmixer.project.${projectId || "unknown"}.columns`;
+}
+
+function readStoredColumnExtra(projectId: string | undefined, name: "haze" | "elevation"): number {
+  try {
+    const stored = Number(window.localStorage.getItem(`${columnStorageKey(projectId)}.${name}Extra`));
+    if (Number.isFinite(stored)) return stored;
+  } catch {
+    // Same fallback as the pane helpers above.
+  }
+  return 0;
 }
 
 const STAGES = [
@@ -91,6 +128,8 @@ const STAGES = [
   { value: "mastering" as const, label: "Mastering", icon: AudioWaveform },
   { value: "delivery" as const, label: "Delivery", icon: Package },
 ];
+
+const SETTINGS_SEGMENT = [{ value: "settings" as const, label: "Settings", icon: Settings }];
 
 export function ProjectDetailPage({ configuration }: { configuration: Configuration | null }) {
   const { projectId } = useParams();
@@ -103,10 +142,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const [draggedStem, setDraggedStem] = React.useState<string | null>(null);
   const [editScope, setEditScope] = React.useState<"project" | "track">("project");
   const [activeTab, setActiveTab] = React.useState<Stage>("mixing");
-  const [manifestView, setManifestView] = React.useState(false);
   const [settingsView, setSettingsView] = React.useState(false);
-  const [rawManifest, setRawManifest] = React.useState("");
-  const [rawError, setRawError] = React.useState<string | null>(null);
   const [preset, setPreset] = React.useState("balanced");
   const [presetIntensity, setPresetIntensity] = React.useState(1);
   const [error, setError] = React.useState<string | null>(null);
@@ -286,10 +322,13 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   }, [projectId]);
   // Divider drag. Height is clamped against the live column height so the
   // spatial displays above always keep `PANE_HEADROOM`, which is what stops a
-  // drag to the top from collapsing them and forcing the page to scroll.
+  // drag to the top from collapsing them and forcing the page to scroll —
+  // and separately against `PANE_MAX_HEIGHT`, an absolute roof so a big
+  // enough window can't still drag the pane large enough to squeeze that
+  // row thin even though headroom alone would technically allow it.
   const resizePaneTo = React.useCallback((height: number) => {
     const available = previewColumn.current?.clientHeight ?? 0;
-    const ceiling = Math.max(PANE_MIN_HEIGHT, available - PANE_HEADROOM);
+    const ceiling = Math.min(PANE_MAX_HEIGHT, Math.max(PANE_MIN_HEIGHT, available - PANE_HEADROOM));
     setPaneHeight(Math.round(Math.min(ceiling, Math.max(PANE_MIN_HEIGHT, height))));
   }, []);
   const beginPaneResize = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -318,6 +357,70 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     event.preventDefault();
     resizePaneTo(paneHeight + moves[event.key]);
   };
+  // Spatial row column sizing. Haze and Meters are both "natural size + a
+  // user delta" (`hazeExtra`/`elevationExtra`, persisted per project) — 0
+  // reproduces today's default look exactly (Haze square, Meters at a
+  // reasonable point in its own range) — the same "extra on top of a
+  // live-computed minimum" pattern `StripResizeHandle` already uses for
+  // mixer strips, reused verbatim here rather than a second resize
+  // implementation. Elevation has no width of its own to store: it is a
+  // genuine `flex-1`, so it always renders as exactly whatever Haze and
+  // Meters don't use — the row can't develop a gap nothing is sized to
+  // fill, unlike an approach where all three carry explicit widths that
+  // have to be kept summing to the container's own width by hand.
+  // A callback ref, not a plain useRef + useEffect(…, []) — the row only
+  // enters the DOM once `ready` flips true (see the early return below), so
+  // a mount-only effect would find `rowRef.current` still null on the
+  // render where it registers and never retry once the node actually
+  // appears. A callback ref re-fires exactly when the node changes,
+  // including from null to real, so the observer attaches whenever the row
+  // is actually there.
+  const rowObserver = React.useRef<ResizeObserver | null>(null);
+  const [rowSize, setRowSize] = React.useState({ width: 0, height: 0 });
+  const rowRef = React.useCallback((node: HTMLDivElement | null) => {
+    rowObserver.current?.disconnect();
+    rowObserver.current = null;
+    if (!node) return;
+    // Read the size synchronously on attach, the same way HazeView's own
+    // resize handling does — don't rely solely on the observer's first
+    // callback for the initial measurement, since it isn't guaranteed to
+    // land promptly.
+    setRowSize({ width: node.clientWidth, height: node.clientHeight });
+    const observer = new ResizeObserver(([entry]) => {
+      setRowSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(node);
+    rowObserver.current = observer;
+  }, []);
+  React.useEffect(() => () => rowObserver.current?.disconnect(), []);
+  const [hazeExtra, setHazeExtra] = React.useState(() => readStoredColumnExtra(projectId, "haze"));
+  const [elevationExtra, setElevationExtra] = React.useState(() => readStoredColumnExtra(projectId, "elevation"));
+  React.useEffect(() => {
+    setHazeExtra(readStoredColumnExtra(projectId, "haze"));
+    setElevationExtra(readStoredColumnExtra(projectId, "elevation"));
+  }, [projectId]);
+  const commitColumnExtra = (name: "haze" | "elevation", px: number) => {
+    try {
+      window.localStorage.setItem(`${columnStorageKey(projectId)}.${name}Extra`, String(px));
+    } catch {
+      // See `changePane`.
+    }
+  };
+  // Clamped every render against the row's *live* measured size (not just on
+  // drag) — same reasoning as the pane's own headroom clamp: a window
+  // resize between drags must not leave a stale width that no longer fits.
+  const hazeMaxWidth = Math.max(HAZE_MIN_WIDTH, rowSize.width - ROW_GAP * 2 - ELEVATION_MIN_WIDTH - METERS_MIN_WIDTH);
+  const hazeWidth = Math.min(hazeMaxWidth, Math.max(HAZE_MIN_WIDTH, rowSize.height + hazeExtra));
+  // Meters gets the explicit width now (Elevation is a true `flex-1`, below)
+  // — `elevationExtra` still means "how much wider than its default share
+  // Elevation is," it just expresses that by shrinking Meters' width by the
+  // same amount rather than by setting Elevation's own width directly.
+  // Elevation's actual rendered width is whatever flexbox leaves it after
+  // Haze and Meters take these two explicit widths — guaranteed to be
+  // exactly the remaining space, never more or less, so the row can't
+  // develop a gap no display is sized to fill.
+  const metersMaxWidth = Math.min(METERS_MAX_WIDTH, Math.max(METERS_MIN_WIDTH, rowSize.width - hazeWidth - ROW_GAP * 2 - ELEVATION_MIN_WIDTH));
+  const metersWidth = Math.min(metersMaxWidth, Math.max(METERS_MIN_WIDTH, METERS_DEFAULT_SHARE - elevationExtra));
   // Live strength/spectrum/rms toggles come from the manifest (instant, no
   // server round-trip needed — they're just a wet/dry blend and an RMS gate,
   // same as the named-EQ `strength` slider); the FIR itself and the
@@ -436,59 +539,75 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   useHeaderTitle(headerTitle);
   if (!project) return <main className="grid h-full place-items-center p-5 text-sm text-muted-foreground">{error || "Loading project…"}</main>;
   if (!ready) return <PreparationView project={project} onRetry={() => void retry()} />;
+  // The stage tabs are the app's workflow, deliberately condensed into one
+  // segmented control — Project settings is not a stage, so it sits outside
+  // that group entirely, past a `ToolbarSeparator`, as its own one-segment
+  // `SegmentedControl` (identical look/press behavior, no fourth tab).
+  const stageTabs = <>
+    <SegmentedControl
+      aria-label="Project stage"
+      segments={STAGES}
+      value={settingsView ? ("" as Stage) : activeTab}
+      onChange={(value) => {
+        setActiveTab(value);
+        setSettingsView(false);
+      }}
+    />
+    {activeTab === "mixing" && !settingsView && project.tracks.length > 1 && (
+      <>
+        <ToolbarSeparator />
+        <select
+          aria-label="Track"
+          className="h-6 rounded-md border bg-secondary px-1 text-[11px]"
+          value={selectedTrack ?? ""}
+          onChange={(event) => setSelectedTrack(event.target.value)}
+        >
+          {project.tracks.map((track) => (
+            <option key={track.id} value={track.id}>{track.asset.title || track.asset.filename}</option>
+          ))}
+        </select>
+      </>
+    )}
+    <ToolbarSeparator />
+    <SegmentedControl
+      aria-label="Project settings"
+      segments={SETTINGS_SEGMENT}
+      value={(settingsView ? "settings" : "") as "settings"}
+      onChange={() => setSettingsView(true)}
+    />
+  </>;
   return <main className="flex h-[calc(100vh-var(--topbar-h))] w-full flex-col overflow-hidden">
-    <Toolbar>
-      <SegmentedControl
-        aria-label="Project stage"
-        segments={STAGES}
-        value={settingsView || manifestView ? ("" as Stage) : activeTab}
-        onChange={(value) => {
-          setActiveTab(value);
-          setSettingsView(false);
-          setManifestView(false);
-        }}
+    {/* Merged with what used to be a separate stage-tabs toolbar above it —
+        one bar, always visible (including during Settings, unlike the
+        per-stage panels below), rather than two stacked rows. */}
+    <Transport
+      playing={preview.playing}
+      currentTime={preview.currentTime}
+      currentTimeRef={preview.currentTimeRef}
+      duration={preview.duration}
+      volume={preview.volume}
+      muted={preview.muted}
+      loop={preview.loop}
+      disabled={!preview.supported || !preview.ready || !previewStems.length}
+      onPlayPause={() => void preview.playPause()}
+      onStop={preview.stop}
+      onToggleLoop={preview.toggleLoop}
+      onSetVolume={preview.setVolume}
+      onToggleMute={preview.toggleMute}
+      headphoneLevels={preview.headphoneLevels}
+      leading={stageTabs}
+    >
+      <OutputModeSelect
+        value={outputMode}
+        onChange={setOutputMode}
+        nativeSupported={preview.nativeSupported}
+        devices={preview.outputDevices}
+        deviceId={preview.outputDeviceId}
+        onDeviceChange={(deviceId) => void preview.setOutputDeviceId(deviceId)}
+        spatialProfile={spatialProfile}
+        onSpatialProfileChange={setSpatialProfile}
       />
-      {activeTab === "mixing" && !settingsView && !manifestView && project.tracks.length > 1 && (
-        <>
-          <ToolbarSeparator />
-          <select
-            aria-label="Track"
-            className="h-6 rounded-md border bg-secondary px-1 text-[11px]"
-            value={selectedTrack ?? ""}
-            onChange={(event) => setSelectedTrack(event.target.value)}
-          >
-            {project.tracks.map((track) => (
-              <option key={track.id} value={track.id}>{track.asset.title || track.asset.filename}</option>
-            ))}
-          </select>
-        </>
-      )}
-      <ToolbarSpacer />
-      <ToolbarGroup>
-        <Button
-          variant={settingsView ? "secondary" : "ghost"}
-          size="sm"
-          aria-pressed={settingsView}
-          onClick={() => { setManifestView(false); setSettingsView(true); }}
-        >
-          <Settings />
-          Project settings
-        </Button>
-        <Button
-          variant={manifestView ? "secondary" : "ghost"}
-          size="sm"
-          aria-pressed={manifestView}
-          onClick={() => {
-            if (!manifestView && effectiveManifest) setRawManifest(JSON.stringify(effectiveManifest, null, 2));
-            setSettingsView(false);
-            setManifestView(true);
-          }}
-        >
-          <Code2 />
-          Manifest JSON
-        </Button>
-      </ToolbarGroup>
-    </Toolbar>
+    </Transport>
     {error && <p className="flex-none border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
     {settingsView && manifest ? (
       <section className="min-h-0 flex-1 overflow-auto p-3">
@@ -501,49 +620,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           onPreviewQualityChange={(quality) => void savePreviewQuality(quality)}
         />
       </section>
-    ) : manifestView ? (
-      <section className="min-h-0 flex-1 overflow-auto p-3">
-        <AdvancedSection rawManifest={rawManifest} rawError={rawError} onChange={(value) => {
-          setRawManifest(value);
-          try {
-            const next = normalizeManifest(JSON.parse(value) as Record<string, unknown>);
-            setRawError(null);
-            updateManifest(next);
-          } catch (reason) { setRawError((reason as Error).message); }
-        }} />
-      </section>
     ) : (() => {
-      // Transport is chrome, not one of the displays: it sits flush at the
-      // top of the preview column as a full-bleed bar, so the only things
-      // reading as floating panels here are the metering surfaces.
       const previewPanel = <section ref={previewColumn} className="flex min-h-0 flex-col">
-        <Transport
-          playing={preview.playing}
-          currentTime={preview.currentTime}
-          currentTimeRef={preview.currentTimeRef}
-          duration={preview.duration}
-          volume={preview.volume}
-          muted={preview.muted}
-          loop={preview.loop}
-          disabled={!preview.supported || !preview.ready || !previewStems.length}
-          onPlayPause={() => void preview.playPause()}
-          onStop={preview.stop}
-          onToggleLoop={preview.toggleLoop}
-          onSetVolume={preview.setVolume}
-          onToggleMute={preview.toggleMute}
-          headphoneLevels={preview.headphoneLevels}
-        >
-          <OutputModeSelect
-            value={outputMode}
-            onChange={setOutputMode}
-            nativeSupported={preview.nativeSupported}
-            devices={preview.outputDevices}
-            deviceId={preview.outputDeviceId}
-            onDeviceChange={(deviceId) => void preview.setOutputDeviceId(deviceId)}
-            spatialProfile={spatialProfile}
-            onSpatialProfileChange={setSpatialProfile}
-          />
-        </Transport>
         <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
         {preview.error && <p className="shrink-0 text-[11px] text-destructive">{preview.error}</p>}
         {!preview.error && preview.supported && !preview.ready && previewStems.length > 0 && (
@@ -585,21 +663,53 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             any stem, same virtual-loudspeaker idea as Apple's Spatial Audio
             renderer. ChannelMeters mirrors the same layout-scoped `channels`
             array and mute state, and stays mounted alongside HazeView across
-            Mixing/Mastering/Delivery since both live in this shared panel. */}
-        <div className={cn("flex min-h-0 gap-2", paneView ? "min-h-[180px] flex-1" : "flex-[3]")}>
-          <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className={paneView ? "aspect-square min-h-0 shrink-0" : "min-h-0 min-w-0 flex-[2]"} />
-          {/* With the pane open, HazeView goes square (above) instead of
-              stretching wide with dead bands either side of its circle.
-              Elevation moves into the row here to absorb the width that
-              frees up — it still yields its below-Haze vertical slot below
-              (unchanged), so no headroom is spent, only relocated. */}
-          {paneView && <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="min-h-0 min-w-0 flex-1" />}
-          <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} outputMode={outputMode} active={preview.playing} />
+            Mixing/Mastering/Delivery since both live in this shared panel.
+            The row is always Haze | Elevation | Meters, left to right,
+            whether the bottom pane is open or collapsed — only the row's
+            own total height (below) still depends on that, since a
+            collapsed pane frees the vertical space back to this row. */}
+        <div ref={rowRef} className={cn("flex min-h-0 gap-2", paneView ? "min-h-[180px] flex-1" : "flex-[3]")}>
+          {/* Haze and Meters get an explicit pixel width (natural size + a
+              persisted user delta); Elevation is a real `flex-1` and takes
+              whatever's left — flexbox, not manual arithmetic, guarantees
+              that always accounts for exactly 100% of the row, so the row
+              can never develop a gap no display claims (the "magnetic,
+              nothing floats loose" property). Both borders are real drag
+              targets — a `StripResizeHandle` anchored to the wrapper on
+              each border's *left* side, reusing the exact same drag/keys/
+              double-click-reset contract the mixer rack's own column resize
+              already uses. */}
+          <div className="relative min-h-0 shrink-0" style={{ width: hazeWidth }}>
+            <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="h-full w-full" />
+            <StripResizeHandle
+              label="Resize Haze view"
+              value={hazeExtra}
+              onChange={setHazeExtra}
+              onCommit={(px) => { setHazeExtra(px); commitColumnExtra("haze", px); }}
+              min={HAZE_MIN_WIDTH - rowSize.height}
+              max={hazeMaxWidth - rowSize.height}
+            />
+          </div>
+          <div className="relative min-h-0 min-w-0 flex-1">
+            <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="h-full w-full" />
+            {/* Dragging this border moves `elevationExtra`, the same delta
+                as before — it still reads as "resize Elevation" to the
+                user, it just now expresses itself by shrinking/growing
+                Meters' explicit width (below) rather than Elevation's own,
+                since Elevation no longer has an explicit width to change. */}
+            <StripResizeHandle
+              label="Resize Elevation view"
+              value={elevationExtra}
+              onChange={setElevationExtra}
+              onCommit={(px) => { setElevationExtra(px); commitColumnExtra("elevation", px); }}
+              min={METERS_DEFAULT_SHARE - metersMaxWidth}
+              max={METERS_DEFAULT_SHARE - METERS_MIN_WIDTH}
+            />
+          </div>
+          <div className="relative min-h-0 shrink-0" style={{ width: metersWidth }}>
+            <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} outputMode={outputMode} active={preview.playing} className="h-full w-full" />
+          </div>
         </div>
-        {/* Elevation yields its 160px to the pane: its floor/height axis is
-            already carried by HazeView's dashed height ring, which makes it
-            the most redundant display when vertical space is contested. */}
-        {!paneView && <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="h-40 shrink-0" />}
         </div>
         {paneView && (
           <div

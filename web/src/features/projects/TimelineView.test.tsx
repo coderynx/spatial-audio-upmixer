@@ -86,12 +86,33 @@ describe("TimelineView stem lanes", () => {
     const { onDragStart, onDropOn } = renderTimeline();
     const dataTransfer = { effectAllowed: "", dropEffect: "" };
 
-    fireEvent.dragStart(screen.getByTitle("Vocals"), { dataTransfer });
+    // Drag only starts from the grip handle now — starting it anywhere else
+    // in the row would hijack a click-drag on the fader (see
+    // `horizontal-fader.tsx`'s own comment on this). Native `dragstart` fires
+    // with `event.target` set to the draggable row itself, never the
+    // descendant the pointer actually landed on, so the row's own handler
+    // reads that decision off `mousedown` instead — fired here on the handle
+    // first, then `dragstart` on the row, matching the real browser sequence.
+    const row = screen.getByTitle("Vocals");
+    const handle = row.querySelector("[data-drag-handle]")!;
+    fireEvent.mouseDown(handle);
+    fireEvent.dragStart(row, { dataTransfer });
     expect(onDragStart).toHaveBeenCalledWith("Vocals");
 
     fireEvent.dragOver(screen.getByTitle("Drums"), { dataTransfer });
     fireEvent.drop(screen.getByTitle("Drums"), { dataTransfer });
     expect(onDropOn).toHaveBeenCalledWith("Drums");
+  });
+
+  it("does not start a reorder drag from anywhere else in the row", () => {
+    const { onDragStart } = renderTimeline();
+    const dataTransfer = { effectAllowed: "", dropEffect: "" };
+
+    const row = screen.getByTitle("Vocals");
+    fireEvent.mouseDown(row);
+    fireEvent.dragStart(row, { dataTransfer });
+
+    expect(onDragStart).not.toHaveBeenCalled();
   });
 
   it("dims the lane while it is being dragged", () => {

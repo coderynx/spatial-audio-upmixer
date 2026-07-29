@@ -48,6 +48,7 @@ export function OutputModeSelect({
   onSpatialProfileChange: (profile: SpatialProfile) => void;
 }) {
   const [open, setOpen] = React.useState(false);
+  const [menuFlip, setMenuFlip] = React.useState(false);
   const [submenuOpen, setSubmenuOpen] = React.useState(false);
   const [submenuFlip, setSubmenuFlip] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -109,14 +110,28 @@ export function OutputModeSelect({
         title={`Preview output: ${current.label}`}
         aria-label={`Preview output mode: ${current.label}`}
         aria-expanded={open}
-        onClick={() => setOpen((next) => !next)}
+        onClick={() => {
+          // Left-aligned under the trigger overflows off the right edge of
+          // the window when this control sits at the bar's trailing
+          // edge (its usual spot) — flip to right-aligned whenever the
+          // menu's own width wouldn't fit, the same check the profile
+          // submenu already makes for its own overflow.
+          const rect = containerRef.current?.getBoundingClientRect();
+          setMenuFlip(!!rect && rect.left + 256 > window.innerWidth);
+          setOpen((next) => !next);
+        }}
         className="h-8 shrink-0 gap-1 px-2.5"
       >
         <CurrentIcon className="h-4 w-4 shrink-0" />
         <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
       </Button>
       {open && (
-        <div className="absolute left-0 top-full z-10 mt-1 w-64 rounded-md border bg-popover p-1 shadow-md">
+        <div
+          className={cn(
+            "absolute top-full z-10 mt-1 w-64 rounded-md border bg-popover p-1 shadow-md",
+            menuFlip ? "right-0" : "left-0",
+          )}
+        >
           {MODE_OPTIONS.map((option) => {
             const Icon = option.icon;
             const disabled = option.value === "native" && !nativeSupported;

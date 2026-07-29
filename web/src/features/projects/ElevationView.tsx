@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { StemRouting } from "@/api";
 import { canvasTheme } from "@/lib/canvasTheme";
+import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
 import { speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo } from "@/lib/spatial";
 
@@ -25,6 +26,28 @@ function hexToRgb(hex: string): [number, number, number] {
   const value = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
   const num = parseInt(value, 16);
   return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
+// Same "plain opacity on the whole effect" preference as HazeView, kept in
+// its own localStorage key (a user may want this view calmer than Haze, or
+// vice versa) rather than sharing HazeView's — see IntensitySlider.tsx and
+// HazeView.tsx's matching constants for the full rationale.
+const INTENSITY_STORAGE_KEY = "upmixer.elevationIntensity";
+/** Alpha multiplier at intensity 0 — same floor as HazeView. */
+const MIN_ALPHA_SCALE = 0.22;
+
+function readStoredIntensity(): number {
+  try {
+    const stored = Number(window.localStorage.getItem(INTENSITY_STORAGE_KEY));
+    if (Number.isFinite(stored) && stored >= 0 && stored <= 1) return stored;
+  } catch {
+    // Private-mode or blocked storage: fall through to the default.
+  }
+  return 0.5;
 }
 
 export type ElevationViewProps = {
@@ -64,8 +87,17 @@ function ElevationViewImpl({
   const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
-  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled });
-  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled };
+  const [intensity, setIntensity] = React.useState(readStoredIntensity);
+  const changeIntensity = (next: number) => {
+    setIntensity(next);
+    try {
+      window.localStorage.setItem(INTENSITY_STORAGE_KEY, String(next));
+    } catch {
+      // Storage being unavailable only costs the preference, not the view.
+    }
+  };
+  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity });
+  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity };
   const activeRef = React.useRef(active);
   activeRef.current = active;
   const idleFrames = React.useRef(0);
@@ -111,12 +143,25 @@ function ElevationViewImpl({
     const draw = (time: number) => {
       const delta = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
-      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled } = propsRef.current;
+      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled, intensity: currentIntensity } = propsRef.current;
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
-      const padX = 34;
-      const padTop = 20;
-      const padBottom = 22;
+      // One uniform gap on all four sides between the canvas edge (or, on
+      // top, the intensity chip's own bottom edge) and the plot's actual
+      // content — not the guide line itself, but the topmost thing drawn,
+      // which is the height-channel name labels 8px *above* the top guide
+      // (`padTop - 8`, see below). Solving `(padTop - 8) - chipBottom = pad`
+      // for `padTop` is what makes that gap mathematically identical to the
+      // `pad` on the other three sides, rather than an eyeballed number.
+      // CHIP_TOP/CHIP_HEIGHT are IntensitySlider's actual rendered geometry
+      // (`top-2` + its border/padding/content box, absolute top-left,
+      // §IntensitySlider) — update both together if that component resizes.
+      const pad = 40;
+      const CHIP_TOP = 8;
+      const CHIP_HEIGHT = 22;
+      const padX = pad;
+      const padTop = CHIP_TOP + CHIP_HEIGHT + pad + 8;
+      const padBottom = pad;
       const plotWidth = Math.max(1, width - padX * 2);
       const plotHeight = Math.max(1, height - padTop - padBottom);
       const floorY = height - padBottom;
@@ -172,13 +217,17 @@ function ElevationViewImpl({
       ctx.lineTo(Math.round(toX(0)) + 0.5, floorY);
       ctx.stroke();
 
+      // Left-aligned at the same 8px inset the intensity chip's own left
+      // edge sits at (`left-2`) — one shared gutter line for every label,
+      // instead of a corner label sitting apart from everything else's
+      // margin.
       ctx.save();
       ctx.font = "600 9px system-ui, sans-serif";
       ctx.letterSpacing = "0.08em";
       ctx.fillStyle = canvasTheme.label;
       ctx.textAlign = "left";
-      ctx.fillText("TOP", 4, padTop + 8);
-      ctx.fillText("FLOOR", 4, floorY + 3);
+      ctx.fillText("TOP", 8, padTop + 8);
+      ctx.fillText("FLOOR", 8, floorY + 3);
       ctx.restore();
 
       // Speaker labels: floor channels along the bottom edge, height
@@ -207,10 +256,12 @@ function ElevationViewImpl({
       }
       // LFE has no left/right position (non-positional bass bus), so its
       // mute point sits in the bottom-right corner instead of on the plot —
-      // the bottom-left is already taken by the "FLOOR" axis label.
+      // the bottom-left is already taken by the "FLOOR" axis label. Centred
+      // in the right gutter (half the margin in from the edge), the mirror
+      // of the left-side labels sitting a consistent inset from their edge.
       if (currentChannels.includes("LFE")) {
         const lfeMuted = currentSpeakerEnabled.LFE === false;
-        const lfePoint = { x: width - padX + 20, y: floorY };
+        const lfePoint = { x: width - padX / 2, y: floorY };
         drawSpeakerPoint(ctx, lfePoint.x, lfePoint.y, 3.5, lfeMuted);
         ctx.font = "500 9px system-ui, sans-serif";
         ctx.fillStyle = lfeMuted ? canvasTheme.muteLabel : canvasTheme.label;
@@ -237,10 +288,10 @@ function ElevationViewImpl({
       }
 
       // Same melt treatment as the Haze view: resolve smoothed voices, paint
-      // tendrils + oversized additive blobs into an offscreen buffer, then
-      // blur + screen-composite that buffer onto the main canvas so
-      // overlapping stems merge into one continuous field instead of
-      // separate circular halos.
+      // oversized additive blobs into an offscreen buffer, then blur +
+      // screen-composite that buffer onto the main canvas so overlapping
+      // stems merge into one continuous field instead of separate circular
+      // halos — no tendrils here either, same reasoning as Haze.
       type Resolved = { voice: Voice; point: { x: number; y: number }; blobRadius: number; emphasis: number; level: number; r: number; g: number; b: number };
       const resolved: Resolved[] = [];
       for (const voice of voices) {
@@ -267,7 +318,7 @@ function ElevationViewImpl({
         const dimmed = Boolean(currentSelected) && currentSelected !== voice.stem;
         const emphasis = (currentSelected === voice.stem ? 1 : dimmed ? 0.35 : 0.8) * audible;
         const point = { x: toX(next.x), y: toY(next.y) };
-        const blobRadius = (20 + next.level * 40) * voice.sizeScale * (currentSelected === voice.stem ? 1.15 : 1);
+        const blobRadius = (28 + next.level * 50) * voice.sizeScale * (currentSelected === voice.stem ? 1.15 : 1);
 
         resolved.push({ voice, point, blobRadius, emphasis, level: next.level, r, g, b });
       }
@@ -275,33 +326,30 @@ function ElevationViewImpl({
       blobCtx.clearRect(0, 0, width, height);
       blobCtx.globalCompositeOperation = "lighter";
 
-      const tendrilReach = Math.min(plotWidth, plotHeight) * 0.45;
-      for (let i = 0; i < resolved.length; i++) {
-        for (let j = i + 1; j < resolved.length; j++) {
-          const a = resolved[i];
-          const c = resolved[j];
-          if (a.voice.stem === c.voice.stem) continue;
-          const dist = Math.hypot(a.point.x - c.point.x, a.point.y - c.point.y);
-          if (dist >= tendrilReach) continue;
-          const strength = (1 - dist / tendrilReach) * Math.min(a.emphasis, c.emphasis) * Math.min(a.level, c.level) * 6;
-          if (strength <= 0.01) continue;
-          const tendril = blobCtx.createLinearGradient(a.point.x, a.point.y, c.point.x, c.point.y);
-          tendril.addColorStop(0, `rgba(${a.r}, ${a.g}, ${a.b}, ${Math.min(0.5, strength)})`);
-          tendril.addColorStop(1, `rgba(${c.r}, ${c.g}, ${c.b}, ${Math.min(0.5, strength)})`);
-          blobCtx.strokeStyle = tendril;
-          blobCtx.lineWidth = Math.max(2, Math.min(a.blobRadius, c.blobRadius) * 0.35);
-          blobCtx.beginPath();
-          blobCtx.moveTo(a.point.x, a.point.y);
-          blobCtx.lineTo(c.point.x, c.point.y);
-          blobCtx.stroke();
-        }
-      }
-
+      // No tendrils: proximity alone carries the "melting together" cue —
+      // large, soft halos overlap and additively brighten into a shared
+      // core on their own, same reasoning as the Haze view. The reach here
+      // is bigger than Haze's own multiplier: this plot spreads stems by
+      // real stereo pan across its full width, a much wider spread than
+      // Haze's radial layout produces, so bridging the gaps between
+      // adjacent stems takes a larger, fainter tail.
+      //
+      // `currentIntensity` (the overlay slider) is a plain opacity control,
+      // not a reshaping — reach and blur stay fixed, `alphaScale` just dims
+      // every stop uniformly, floored at `MIN_ALPHA_SCALE` so the pinned Y
+      // position never fully disappears.
+      //
+      // The alpha stops themselves are the exact values HazeView uses — only
+      // `meltRadius`'s multiplier and the blur factor below differ between
+      // the two views (justified by this plot's wider pan-based spread).
+      // Brightness has to match between the two displays; reach doesn't.
+      const alphaScale = lerp(MIN_ALPHA_SCALE, 1, currentIntensity);
       for (const { point, blobRadius, emphasis, level, r, g, b } of resolved) {
-        const meltRadius = blobRadius * 1.55;
+        const meltRadius = blobRadius * 3.6;
         const gradient = blobCtx.createRadialGradient(point.x, point.y, 0, point.x, point.y, meltRadius);
-        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.4 + level * 0.3) * emphasis})`);
-        gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${0.16 * emphasis})`);
+        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.45 + level * 0.35) * emphasis * alphaScale})`);
+        gradient.addColorStop(0.3, `rgba(${r}, ${g}, ${b}, ${(0.22 + level * 0.15) * emphasis * alphaScale})`);
+        gradient.addColorStop(0.65, `rgba(${r}, ${g}, ${b}, ${0.09 * emphasis * alphaScale})`);
         gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
         blobCtx.fillStyle = gradient;
         blobCtx.beginPath();
@@ -310,7 +358,10 @@ function ElevationViewImpl({
       }
       blobCtx.globalCompositeOperation = "source-over";
 
-      const blurPx = Math.max(6, Math.min(22, Math.min(plotWidth, plotHeight) * 0.07));
+      // Wider, softer blur than the halos alone suggest — boosted further
+      // than Haze's own factor for the same wide-spread reason above. Fixed
+      // regardless of intensity — only opacity responds to the slider.
+      const blurPx = Math.max(12, Math.min(42, Math.min(plotWidth, plotHeight) * 0.16));
       ctx.save();
       ctx.filter = `blur(${blurPx}px)`;
       ctx.globalCompositeOperation = "screen";
@@ -340,7 +391,7 @@ function ElevationViewImpl({
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled]);
+  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -363,6 +414,12 @@ function ElevationViewImpl({
     <div ref={containerRef} className="min-h-0 flex-1">
       <canvas ref={canvasRef} className="h-full w-full cursor-pointer" onPointerDown={handlePointerDown} />
     </div>
+    <IntensitySlider
+      value={intensity}
+      onChange={changeIntensity}
+      label="Elevation intensity"
+      className="absolute left-2 top-2 z-10"
+    />
   </div>;
 }
 

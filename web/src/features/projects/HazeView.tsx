@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { StemRouting } from "@/api";
 import { canvasTheme } from "@/lib/canvasTheme";
+import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
 import { heightFraction, speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo, vecAngle } from "@/lib/spatial";
 
@@ -37,6 +38,34 @@ function hexToRgb(hex: string): [number, number, number] {
 
 function polar(center: { x: number; y: number }, radius: number, angle: number) {
   return { x: center.x + Math.sin(angle) * radius, y: center.y - Math.cos(angle) * radius };
+}
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
+// User-facing "how visible is the effect" preference — a plain opacity
+// control on the whole melt/glow, not a reshaping of it (reach and blur stay
+// fixed; only alpha responds). A display taste, not project data, so it
+// lives in localStorage rather than the manifest and is shared across
+// projects like the theme toggle. Defaults to 0.5 (a middle ground, not the
+// full-strength look) until the user picks their own; 1 is full strength, 0
+// is floored at `MIN_ALPHA_SCALE` rather than fully transparent, so turning
+// it all the way down mutes the effect without erasing the stem's
+// position/level reading.
+const INTENSITY_STORAGE_KEY = "upmixer.hazeIntensity";
+/** Alpha multiplier at intensity 0 — low enough to read as "mostly off,"
+ * high enough that a stem's position and level are still legible. */
+const MIN_ALPHA_SCALE = 0.22;
+
+function readStoredIntensity(): number {
+  try {
+    const stored = Number(window.localStorage.getItem(INTENSITY_STORAGE_KEY));
+    if (Number.isFinite(stored) && stored >= 0 && stored <= 1) return stored;
+  } catch {
+    // Private-mode or blocked storage: fall through to the default.
+  }
+  return 0.5;
 }
 
 // Consecutive idle frames (no audible voice) required before the draw loop
@@ -87,9 +116,18 @@ function HazeViewImpl({
   const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
+  const [intensity, setIntensity] = React.useState(readStoredIntensity);
+  const changeIntensity = (next: number) => {
+    setIntensity(next);
+    try {
+      window.localStorage.setItem(INTENSITY_STORAGE_KEY, String(next));
+    } catch {
+      // Storage being unavailable only costs the preference, not the view.
+    }
+  };
   // Latest props, read fresh by the draw loop without restarting it.
-  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled });
-  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled };
+  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity });
+  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity };
   const activeRef = React.useRef(active);
   activeRef.current = active;
   const idleFrames = React.useRef(0);
@@ -135,7 +173,7 @@ function HazeViewImpl({
     const draw = (time: number) => {
       const delta = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
-      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled } = propsRef.current;
+      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled, intensity: currentIntensity } = propsRef.current;
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
       const center = { x: width / 2, y: height / 2 };
@@ -260,12 +298,12 @@ function HazeViewImpl({
       }
 
       // Two-pass render: resolve smoothed voice state + hit targets first,
-      // then paint tendrils and oversized soft blobs into an offscreen
-      // buffer that gets blurred and screen-composited back onto the main
-      // canvas. That blur is what turns separate circular halos into one
-      // continuous, melted field — additive blending in the buffer makes
-      // overlapping stems brighten into shared "hot" cores instead of just
-      // stacking flat discs.
+      // then paint oversized soft blobs into an offscreen buffer that gets
+      // blurred and screen-composited back onto the main canvas. That blur
+      // is what turns separate circular halos into one continuous, melted
+      // field — additive blending in the buffer makes overlapping stems
+      // brighten into shared "hot" cores instead of just stacking flat
+      // discs.
       const nextHits: HitTarget[] = [];
       type Resolved = { voice: Voice; point: { x: number; y: number }; blobRadius: number; emphasis: number; level: number; r: number; g: number; b: number };
       const resolved: Resolved[] = [];
@@ -323,36 +361,24 @@ function HazeViewImpl({
       blobCtx.clearRect(0, 0, width, height);
       blobCtx.globalCompositeOperation = "lighter";
 
-      // Faint tendrils between nearby, simultaneously active stems — a
-      // visual cue that they're melting into each other, not just glowing
-      // in place.
-      const tendrilReach = radius * 0.85;
-      for (let i = 0; i < resolved.length; i++) {
-        for (let j = i + 1; j < resolved.length; j++) {
-          const a = resolved[i];
-          const c = resolved[j];
-          if (a.voice.stem === c.voice.stem) continue;
-          const dist = Math.hypot(a.point.x - c.point.x, a.point.y - c.point.y);
-          if (dist >= tendrilReach) continue;
-          const strength = (1 - dist / tendrilReach) * Math.min(a.emphasis, c.emphasis) * Math.min(a.level, c.level) * 6;
-          if (strength <= 0.01) continue;
-          const tendril = blobCtx.createLinearGradient(a.point.x, a.point.y, c.point.x, c.point.y);
-          tendril.addColorStop(0, `rgba(${a.r}, ${a.g}, ${a.b}, ${Math.min(0.5, strength)})`);
-          tendril.addColorStop(1, `rgba(${c.r}, ${c.g}, ${c.b}, ${Math.min(0.5, strength)})`);
-          blobCtx.strokeStyle = tendril;
-          blobCtx.lineWidth = Math.max(2, Math.min(a.blobRadius, c.blobRadius) * 0.35);
-          blobCtx.beginPath();
-          blobCtx.moveTo(a.point.x, a.point.y);
-          blobCtx.lineTo(c.point.x, c.point.y);
-          blobCtx.stroke();
-        }
-      }
-
+      // No tendrils: proximity alone now carries the "melting together" cue
+      // — each halo is large and soft enough that two nearby stems' fields
+      // overlap and additively brighten into a shared core on their own,
+      // rather than needing an explicit connecting line to say so.
+      //
+      // `currentIntensity` (the overlay slider, §IntensitySlider) is a plain
+      // opacity control on the whole effect, not a reshaping of it — the
+      // melt's reach and blur stay at their tuned values regardless, and only
+      // `alphaScale` dims every stop uniformly. Floored at `MIN_ALPHA_SCALE`
+      // rather than 0 so turning the slider all the way down mutes the effect
+      // without erasing it.
+      const alphaScale = lerp(MIN_ALPHA_SCALE, 1, currentIntensity);
       for (const { point, blobRadius, emphasis, level, r, g, b } of resolved) {
-        const meltRadius = blobRadius * 1.55;
+        const meltRadius = blobRadius * 2.1;
         const gradient = blobCtx.createRadialGradient(point.x, point.y, 0, point.x, point.y, meltRadius);
-        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.4 + level * 0.3) * emphasis})`);
-        gradient.addColorStop(0.5, `rgba(${r}, ${g}, ${b}, ${0.16 * emphasis})`);
+        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.45 + level * 0.35) * emphasis * alphaScale})`);
+        gradient.addColorStop(0.3, `rgba(${r}, ${g}, ${b}, ${(0.22 + level * 0.15) * emphasis * alphaScale})`);
+        gradient.addColorStop(0.65, `rgba(${r}, ${g}, ${b}, ${0.09 * emphasis * alphaScale})`);
         gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
         blobCtx.fillStyle = gradient;
         blobCtx.beginPath();
@@ -361,7 +387,11 @@ function HazeViewImpl({
       }
       blobCtx.globalCompositeOperation = "source-over";
 
-      const blurPx = Math.max(6, Math.min(26, radius * 0.14));
+      // Wider, softer blur than the halos alone would suggest — this is
+      // what actually liquefies adjoining blobs into one continuous field
+      // instead of a cluster of visibly separate soft discs. Fixed regardless
+      // of intensity — only opacity responds to the slider.
+      const blurPx = Math.max(10, Math.min(36, radius * 0.2));
       ctx.save();
       ctx.filter = `blur(${blurPx}px)`;
       ctx.globalCompositeOperation = "screen";
@@ -391,7 +421,7 @@ function HazeViewImpl({
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled]);
+  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -430,6 +460,12 @@ function HazeViewImpl({
     <div ref={containerRef} className="min-h-0 flex-1">
       <canvas ref={canvasRef} className="h-full w-full cursor-pointer" onPointerDown={handlePointerDown} />
     </div>
+    <IntensitySlider
+      value={intensity}
+      onChange={changeIntensity}
+      label="Haze intensity"
+      className="absolute left-2 top-2 z-10"
+    />
     <button
       type="button"
       onClick={() => onSelectStem(null)}

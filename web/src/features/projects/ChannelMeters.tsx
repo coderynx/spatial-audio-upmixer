@@ -158,12 +158,16 @@ function ChannelMetersImpl({
       ctx.fillStyle = shade;
       ctx.fillRect(0, 0, width, height);
 
-      const padLeft = 26;
-      const padRight = 10;
-      const padTop = 16;
-      const labelHeight = 20;
+      // Same uniform 40px gutter as Haze/Elevation (§4.1) — bars stop at
+      // `pad` from every edge, with the channel-name row living inside the
+      // bottom gutter the same way those two views draw their own axis
+      // labels inside their padding rather than in a separate strip.
+      const pad = 40;
+      const padLeft = pad;
+      const padRight = pad;
+      const padTop = pad;
       const meterTop = padTop;
-      const meterBottom = height - labelHeight;
+      const meterBottom = height - pad;
       const plotWidth = Math.max(1, width - padLeft - padRight);
 
       // dB scale: numeral in the left gutter plus a hairline ruled across the
@@ -310,9 +314,15 @@ function ChannelMetersImpl({
     if (hit) onToggleSpeaker(hit.channel);
   };
 
+  // Sizing (width, min/max, flex vs fixed) is the caller's call — width used
+  // to be self-managed here (`min-w-[180px] max-w-[480px] flex-1`), but with
+  // Haze/Elevation/Meters all user-resizable now (§4.1), a fixed internal cap
+  // fought the caller's own explicit width, occasionally leaving unabsorbed
+  // space between this panel and its neighbour. The caller wraps this in a
+  // sized container and passes `w-full h-full`.
   return (
     <div
-      className={`relative flex min-w-[180px] max-w-[480px] flex-1 flex-col overflow-hidden rounded-lg border ${className || ""}`}
+      className={`relative flex flex-col overflow-hidden rounded-lg border ${className || ""}`}
       style={{ backgroundColor: canvasTheme.plotField }}
     >
       <div ref={containerRef} className="min-h-0 flex-1">

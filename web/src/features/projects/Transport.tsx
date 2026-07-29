@@ -79,6 +79,7 @@ function TransportImpl({
   onToggleMute,
   headphoneLevels,
   children,
+  leading,
 }: {
   playing: boolean;
   currentTime: number;
@@ -100,6 +101,13 @@ function TransportImpl({
   // Extra controls (e.g. the output-mode picker) rendered in the same card,
   // after the volume control, so the whole row shares the card's full width.
   children?: React.ReactNode;
+  /** Column 1 content — the page's own stage tabs/settings, merged into this
+   * bar rather than a separate `Toolbar` row above it. Left-aligned, not
+   * centred: col 1 and col 3 are equal `1fr` shares, which is what keeps the
+   * transport pod in col 2 sitting at the row's true centre regardless of
+   * how much (or little) sits in col 1 — the same reasoning that used to
+   * keep col 1 deliberately empty, just no longer requiring it to be. */
+  leading?: React.ReactNode;
 }) {
   const [mode, setMode] = React.useState<"elapsed" | "remaining">("elapsed");
   // Stable identity (headphoneLevels is a ref, not state) — the volume
@@ -131,12 +139,13 @@ function TransportImpl({
     // between two small clusters in a full-width bar becomes one oversized
     // void wherever the container happens to be wide (the same "content
     // stranded across a black gap" shape as the Haze view's dead bands).
-    // Centering the transport pod in col 2 (with col 1 mirroring col 3's
-    // width) and pinning the monitor cluster to col 3 keeps the bar
-    // Apple-transport-shaped — the empty space stays a proportional margin
-    // on both sides rather than one lopsided gap.
+    // Col 1 and col 3 are equal `1fr` shares regardless of how much each
+    // holds, which is what keeps the transport pod in col 2 sitting at the
+    // row's true centre — pinning the monitor cluster to col 3 and the
+    // page's stage tabs/settings (`leading`) to col 1 keeps the bar
+    // Apple-transport-shaped either way.
     <div className="grid h-12 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b bg-card px-2">
-      <div aria-hidden="true" />
+      <div className="flex min-w-0 items-center gap-2 justify-self-start overflow-hidden">{leading}</div>
       <div className="flex items-center gap-2 justify-self-center">
         {/* Sized up from the app's ordinary h-7 icon button (§6) on purpose:
             transport is the control the user's hand returns to constantly
@@ -184,7 +193,7 @@ function TransportImpl({
           position control, and two scrub surfaces for one value is exactly
           the duplication the design spec's "one control per idea" rule
           rejects. */}
-      <div className="flex shrink-0 items-center gap-1.5 justify-self-end">
+      <div className="flex shrink-0 items-center gap-2 justify-self-end">
         {/* Matches the transport cluster's h-8 bump (see above) — volume and
             output mode are read and touched just as constantly while a
             preview is playing, so they get the same emphasis rather than

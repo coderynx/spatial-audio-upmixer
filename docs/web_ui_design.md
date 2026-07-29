@@ -164,20 +164,55 @@ implementation.
 - **Its height is clamped against the live column height, not a constant.**
   The pane keeps a `140px` floor and always leaves `220px` of headroom for the
   displays above, so no drag can squeeze them out of existence or make the
-  page scroll (§1.2). Clamp on every drag frame, not only on release — the
-  window can be resized while the pane is open.
-- **The pane takes its space from the displays above it, and they say which.**
-  It does not add height. Name the display that yields and why. On the project
-  page the spatial block drops from `flex-[3]` to `flex-1 min-h-[180px]`, and
-  `ElevationView` gives up its own `h-40` row below the block, because its
-  floor/height axis is already carried by `HazeView`'s dashed height ring —
-  that redundancy is what makes it the right thing to yield.
-  Vertical space given up is not content deleted: with the block now wide and
-  short, `HazeView` goes `aspect-square` rather than stretching wide (a
-  circular radar in a wide-short panel would otherwise float over dead bands
-  either side of it, against §1.1), and `ElevationView` relocates beside it in
-  the same row to absorb the width the square panel no longer uses — one
-  `min-h-0 min-w-0 flex-1` display in place of two empty margins.
+  page scroll (§1.2), **and** a `480px` absolute roof (`PANE_MAX_HEIGHT`) on
+  top of that — a large enough window makes the headroom-based ceiling alone
+  too permissive, letting the pane grow tall enough to squeeze the spatial
+  row thin well before that dynamic ceiling is reached. Both clamps apply on
+  every drag frame, not only on release — the window can be resized while the
+  pane is open — and the roof also clamps whatever height was persisted
+  before it existed, so an old stored value can't reopen the row past it.
+- **The pane takes its space from the display above it, and it says which.**
+  It does not add height. On the project page the spatial row drops from
+  `flex-[3]` to `flex-1 min-h-[180px]` when the pane opens — the row's own
+  total height responds to the pane, nothing else does.
+- **The spatial row's composition never changes.** It is always
+  `HazeView | ElevationView | ChannelMeters`, left to right, whether the pane
+  is open or collapsed — there is no pane-collapsed variant that drops
+  `ElevationView` below the row or stretches `HazeView` wide. What changes
+  with the pane is only the row's total height (above) and, within it, each
+  display's width (below).
+- **Haze and Meters are user-resizable; Elevation is magnetic.** Haze and
+  Meters each sit in their own `relative shrink-0` wrapper with an explicit
+  pixel `style={{ width }}`, computed as a live natural size plus a
+  persisted delta (`hazeExtra`/`elevationExtra`, 0 by default) — Haze's
+  natural width is the row's own live height (reproducing the square by
+  default), Meters' is `METERS_DEFAULT_SHARE` (a reasonable point in its own
+  `[180, 480]` range) minus `elevationExtra`. Elevation itself carries no
+  stored width at all: its wrapper is a genuine `min-h-0 min-w-0 flex-1`, so
+  it always renders as exactly whatever Haze and Meters leave — not an
+  estimate kept in sync by hand, but a flexbox guarantee, which is what
+  makes the row "magnetic": no combination of the other two displays' widths
+  can ever leave a gap, because Elevation has no ceiling and always claims
+  every remaining pixel. `ChannelMeters` used to self-manage this width via
+  its own baked-in `min-w-[180px] max-w-[480px] flex-1`; that moved out to
+  the caller (its own classes dropped) once a fixed internal cap could
+  disagree with the caller's explicit width and leave unabsorbed space
+  between it and Elevation.
+
+  A `StripResizeHandle` (§6.4) sits in the Haze and Elevation wrappers (the
+  one between Elevation and Meters lives on Elevation's side but drives
+  `elevationExtra`, which moves *Meters'* width — dragging Elevation's own
+  border still reads as "resize Elevation" to the user even though, having
+  no width of its own, it's Meters' width the drag actually changes and
+  Elevation's rendered size that changes as a result). Reused verbatim from
+  the mixer rack's own column resize rather than a second implementation —
+  its `min`/`max` props (added alongside this feature) are what let a caller
+  outside `ChannelStrip.tsx` supply a different natural range than a
+  fader-width strip's. Both deltas are clamped against the row's *live*
+  measured size every render, the same "don't trust a stale computed value"
+  rule the pane's own resize already follows, and persist per project the
+  same way the pane's height does
+  (`upmixer.project.{id}.columns.hazeExtra`/`.elevationExtra`).
 
 ## 5. Layout primitives
 
@@ -505,9 +540,17 @@ is for a control inline in a row too compact for a full strip — a dark pill
 spanning the control's full height (not a thin centred line), a glowing
 `success`-token fill or live-level bars inset from the pill's own edge by a
 small fixed margin (`PILL_INSET`, 3px — content never sits flush against the
-rounded cap), and a light round knob the same height as the pill, matching
-the reduced, touch-first idiom iPad Logic uses in exactly that context (a
-per-track volume control in a row, not a full mixer strip).
+rounded cap), and a translucent grey knob the same height as the pill,
+matching the reduced, touch-first idiom iPad Logic uses in exactly that
+context (a per-track volume control in a row, not a full mixer strip). The
+knob is `bg-foreground/35` with a `border-foreground/25` ring, not an opaque
+plate — at this size (16-20px) an opaque cap the same tone as the pill hid
+whatever fill or meter bar sat directly beneath it, the one part of the level
+a knob sitting mid-travel would otherwise cover; translucency lets that
+still read through. It has no detent tick and no inner grip line: a tick at
+the knob's own position showed through the same translucency as a stray line
+bisecting it, and a grip line read as noise at this size — the knob's
+position is already the value.
 
 Two usages today, both sized only via `knobSize` (which also sets the pill's
 height — there is no separate track-thickness prop):
@@ -554,6 +597,39 @@ per-bar: a stereo strip's two bars both use the multi-channel floor even
 though each bar still shows one channel's signal, because the meter as a
 whole is reading two channels together. Any new meter follows the same
 rule — check `bars.length`/`channels`, don't hardcode a floor.
+
+### 6.6 Merged stage/transport bar
+
+`ProjectDetailPage` used to stack two bars: a `Toolbar` (§5) holding the
+Mixing/Mastering/Delivery `SegmentedControl` plus "Project settings" and
+"Manifest JSON" buttons, directly above `Transport`'s own centred playback
+bar. They're one bar now — `Transport` gained a `leading` prop rendered in
+its grid's column 1 (previously always empty, kept that way only to mirror
+column 3's width for centring; col 1 and col 3 being equal `1fr` shares
+centres column 2 regardless of how much either side actually holds, so
+giving column 1 real content costs nothing). `ProjectDetailPage` passes its
+stage tabs there instead of rendering a separate `Toolbar` above.
+
+- **The stage tabs are the workflow; Project settings is not one of its
+  steps.** The three stages stay condensed into one `SegmentedControl` —
+  that grouping *is* the point, it reads as "the sequence you follow." Project
+  settings sits past a `ToolbarSeparator` as a plain ghost `Button`, not a
+  fourth segment, precisely so it doesn't imply "next step after Delivery."
+  Any future non-workflow action on this bar (this page or another one that
+  adopts the same merged pattern) belongs on that side of the separator, not
+  folded into the segmented group.
+- **The bar is always visible, including during Settings.** Previously
+  `Transport` (and everything under it) was replaced outright while viewing
+  settings; merging put the stage tabs in the one place that was already
+  unconditionally rendered, so now Settings can be reached and left without
+  the bar disappearing, and playback controls stay reachable while adjusting
+  settings.
+- **Manifest JSON is gone, not hidden.** The raw-JSON manifest editor
+  (`AdvancedSection`) was a second, unfiltered way to edit project state
+  alongside the structured `ProjectSettingsSection`/mastering/delivery forms;
+  removing the entry point here removes the feature from this page. The
+  component itself is unchanged and still used by `ManifestEditor.tsx`
+  (job composition), so nothing there was touched.
 
 ### Semantic colour mapping
 
@@ -644,14 +720,22 @@ column `card`, separators `border`.
   a single 44px line/176px column when the row adopted iPad Logic's own
   two-line track-header shape. The header column is `sticky left-0` so lane
   names stay put while lanes scroll, and each row carries a 3px stem-colour
-  left border. A row is drag handle, then a name line, then M/S and the
-  inline gain `HorizontalFader` (§6.5) on a second line, then a full-height
-  instrument-icon swatch on the trailing edge (the same per-stem icon this
-  app already carries, given the prominent square treatment Logic gives it)
-  — everything the removed stem rail once carried, in one place, at Logic's
+  left border. A row is drag handle, then a name line, then a second line of
+  M/S (`h-6 w-7`, filled `bg-secondary` at rest so the button reads as a
+  control even before it's toggled — not the transparent-until-active look
+  the rest of the app's icon buttons use) and the inline gain
+  `HorizontalFader` (§6.5, `knobSize={20}`), then the bare per-stem icon
+  (`getStemIcon`, `h-6 w-6`, no background swatch) on the trailing edge —
+  everything the removed stem rail once carried, in one place, at Logic's
   own proportions rather than squeezed onto one line. iPad Logic's row also
   carries a third "R" (record-arm) button; this app has no recording
   concept, so it's a two-button M/S row here, not a fabricated third control.
+  The row itself is HTML5-`draggable` for reordering, but the drag only
+  starts from the grip icon (`data-drag-handle`) — a plain "mousedown then
+  move" reorder-drag and the fader's own pointer-drag are the same gesture,
+  and the row's native drag would otherwise win the race and starve the
+  fader of its pointermove events the moment a drag started anywhere else on
+  the row (the name, M/S, the fader itself).
 - **Ruler.** Tick step is the first of 1/2/5/10/15/30/60/120/300/600 seconds
   that keeps ticks at least 68px apart, so density holds from a 90-second demo
   to a 40-minute set. Gridlines run the full height at `border` / 0.7.

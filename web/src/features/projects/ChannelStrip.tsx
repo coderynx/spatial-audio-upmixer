@@ -39,7 +39,12 @@ export const STRIP_EXTRA_MAX = 96;
  * is drawn; the shared border itself is the handle, highlighted on
  * hover/focus so it's discoverable without adding a floating element.
  * Shared by every strip kind (stem, anchor, master) so the drag math can't
- * drift between them.
+ * drift between them — and reused as-is for the project page's Haze/
+ * Elevation column resize (`ProjectDetailPage.tsx`), which is why `min`/
+ * `max` are props rather than the module's own `STRIP_EXTRA_MIN`/`_MAX`
+ * constants: those stay the *default*, for every existing strip call site,
+ * while a caller with a different natural range (a spatial display isn't a
+ * fader-width strip) supplies its own.
  *
  * `onChange` fires continuously while dragging, for the live width; `onCommit`
  * fires once at the end of the gesture, for the caller to persist. Requires a
@@ -47,15 +52,17 @@ export const STRIP_EXTRA_MAX = 96;
  * carries `relative` for exactly this. Stops click/pointerdown propagation so
  * a resize drag never also selects the strip underneath it. */
 export function StripResizeHandle({
-  label, value, onChange, onCommit,
+  label, value, onChange, onCommit, min = STRIP_EXTRA_MIN, max = STRIP_EXTRA_MAX,
 }: {
   label: string;
   value: number;
   onChange: (px: number) => void;
   onCommit: (px: number) => void;
+  min?: number;
+  max?: number;
 }) {
   const drag = React.useRef<{ startX: number; startValue: number } | null>(null);
-  const commit = (px: number) => Math.round(Math.min(STRIP_EXTRA_MAX, Math.max(STRIP_EXTRA_MIN, px)));
+  const commit = (px: number) => Math.round(Math.min(max, Math.max(min, px)));
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     event.stopPropagation();
@@ -88,8 +95,8 @@ export function StripResizeHandle({
       role="slider"
       aria-label={label}
       aria-orientation="horizontal"
-      aria-valuemin={STRIP_EXTRA_MIN}
-      aria-valuemax={STRIP_EXTRA_MAX}
+      aria-valuemin={min}
+      aria-valuemax={max}
       aria-valuenow={value}
       tabIndex={0}
       title="Drag this border to resize the strip"

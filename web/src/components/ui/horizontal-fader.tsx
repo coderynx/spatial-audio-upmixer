@@ -3,14 +3,17 @@ import { DB_TICKS, MULTI_CHANNEL_YELLOW_ZONE_DB, STRIP_METER_PALETTE, YELLOW_ZON
 import { cn } from "@/lib/utils";
 
 /** Logic Pro for iPad's horizontal track-volume fader: a dark pill track and
- * a light round knob for the value, distinct from `Fader`
- * (`components/ui/fader.tsx`), which renders the desktop-Logic vertical
- * channel-strip fader (flat plate cap, no glow) — the app's own reference,
- * §1's "Apple pro-app idiom used by Logic Pro ... for iPad," draws on both:
- * the vertical flat-plate cap for a mixer channel strip, this control for a
- * per-track volume inline in a row. Same interaction contract as `Fader`/
- * `Pot`: pointer drag, arrow/page/Home/End keys, double-click to reset, wheel
- * gated on focus.
+ * a round knob for the value, distinct from `Fader` (`components/ui/
+ * fader.tsx`), which renders the desktop-Logic vertical channel-strip fader
+ * (flat plate cap, no glow) — the app's own reference, §1's "Apple pro-app
+ * idiom used by Logic Pro ... for iPad," draws on both: the vertical
+ * flat-plate cap for a mixer channel strip, this control for a per-track
+ * volume inline in a row. The knob is the same themed `bg-secondary
+ * border-border` plate `Fader`/`Pot` use for their own caps (see the knob's
+ * own comment below) rather than a literal-colour cap, so it stays legible
+ * in both themes instead of reading as a light-mode control stranded on a
+ * dark bar. Same interaction contract as `Fader`/`Pot`: pointer drag,
+ * arrow/page/Home/End keys, double-click to reset, wheel gated on focus.
  *
  * Two fill modes, matching what iPad Logic itself draws in each context:
  * - No `meterSource`: a single glowing bar filled to the knob's position
@@ -48,9 +51,6 @@ export type HorizontalFaderProps = {
   onChange: (value: number) => void;
   /** Double-click target. */
   onReset?: () => void;
-  /** Position of a small detent tick on the track, e.g. 0 dB unity. Omit for
-   * no tick. */
-  detent?: number;
   /** Accessible value text — pass the formatted readout. */
   valueText: string;
   disabled?: boolean;
@@ -80,7 +80,6 @@ export function HorizontalFader({
   step,
   onChange,
   onReset,
-  detent,
   valueText,
   disabled = false,
   knobSize = 16,
@@ -172,16 +171,23 @@ export function HorizontalFader({
         // of a screen position, so this bar reads the same "how loud" as
         // every vertical meter without re-deriving the curve.
         const levelFraction = dbToY(db, 1, 0, DB_TICKS);
-        const barY = count >= 2 ? channel * (barHeight + METER_BAR_GAP) : (height - barHeight) / 2;
-        const barWidth = Math.max(1, width * levelFraction);
-        // Green-to-yellow, matching Logic's own mixer-channel-strip meter
-        // (`STRIP_METER_PALETTE`) rather than the Level Meter's blue
-        // (`ChannelMeters`' palette) — this control is a channel strip's
-        // meter, just laid out horizontally instead of vertically.
-        ctx.fillStyle = zoneColor(db, STRIP_METER_PALETTE, yellowZoneDb);
-        ctx.beginPath();
-        ctx.roundRect(0, barY, barWidth, barHeight, barHeight / 2);
-        ctx.fill();
+        // True silence (idle, nothing playing) must draw nothing — a floor
+        // of `Math.max(1, …)` here would leave a permanent sliver sitting at
+        // the pill's left edge even at rest, since `width * 0` still got
+        // bumped up to 1px. The 1px floor only applies once there is an
+        // actual (if very quiet) signal to show.
+        if (levelFraction > 0) {
+          const barY = count >= 2 ? channel * (barHeight + METER_BAR_GAP) : (height - barHeight) / 2;
+          const barWidth = Math.max(1, width * levelFraction);
+          // Green-to-yellow, matching Logic's own mixer-channel-strip meter
+          // (`STRIP_METER_PALETTE`) rather than the Level Meter's blue
+          // (`ChannelMeters`' palette) — this control is a channel strip's
+          // meter, just laid out horizontally instead of vertically.
+          ctx.fillStyle = zoneColor(db, STRIP_METER_PALETTE, yellowZoneDb);
+          ctx.beginPath();
+          ctx.roundRect(0, barY, barWidth, barHeight, barHeight / 2);
+          ctx.fill();
+        }
       }
 
       idle = activeRef.current || !settled ? 0 : idle + 1;
@@ -249,7 +255,6 @@ export function HorizontalFader({
     }
   };
 
-  const markAt = (mark: number) => `calc(${knobSize / 2}px + (100% - ${knobSize}px) * ${(mark - min) / span} - 0.5px)`;
   const showMeter = Boolean(meterSource && meterChannels);
 
   return (
@@ -318,20 +323,17 @@ export function HorizontalFader({
             }}
           />
         )}
-        {detent !== undefined && (
-          <span
-            aria-hidden="true"
-            className="absolute top-1/2 w-px -translate-y-1/2 bg-foreground/40"
-            style={{ left: markAt(detent), height: knobSize * 0.7 }}
-          />
-        )}
-        {/* Knob: a light, slightly domed cap — the one skeuomorphic touch the
-            iPad idiom keeps, unlike the flat plate `Fader`/`Pot` draw for the
-            desktop-styled controls. Always the value's own position, in both
-            fill modes. */}
+        {/* Knob: a translucent grey disc, not an opaque plate — at this size
+            (16-20px, inline in a row) an opaque cap the same secondary tone
+            as the pill hid the meter bars directly beneath it, the one part
+            of the level a knob sitting mid-travel would otherwise cover.
+            `bg-foreground/35` lets the live bar/fill still read through the
+            knob rather than blocking it. No inner grip line — at this size,
+            translucent over a lit meter bar, it read as a stray hairline
+            rather than a grip. */}
         <span
           aria-hidden="true"
-          className="absolute top-1/2 -translate-y-1/2 rounded-full border border-black/10 bg-gradient-to-b from-white to-neutral-300 shadow-[0_1px_3px_rgba(0,0,0,0.45)]"
+          className="absolute top-1/2 -translate-y-1/2 rounded-full border border-foreground/25 bg-foreground/35 shadow-[0_1px_3px_rgba(0,0,0,0.35)]"
           style={{
             left: `calc((100% - ${knobSize}px) * ${fraction})`,
             width: knobSize,
