@@ -137,6 +137,8 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
     format_block.setdefault("type", "wav")
     binaural = format_block.setdefault("binaural", {})
     binaural.setdefault("profile", "studio")
+    transaural = format_block.setdefault("transaural", {})
+    transaural.setdefault("profile", "stereo")
     routing_fmt = FORMAT_MAP[mixing["channel_layout"]]
     if not mixing.get("stem_routing"):
         mixing["stem_routing"] = build_stem_routing(stems, routing_fmt)

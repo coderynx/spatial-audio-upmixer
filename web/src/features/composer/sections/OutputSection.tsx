@@ -68,6 +68,8 @@ export function OutputSection({
       {(() => {
         const binauralBeds = choices?.binaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
         const bedSupported = binauralBeds.includes(manifest.mixing.channel_layout);
+        const transauralBeds = choices?.transaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
+        const transauralBedSupported = transauralBeds.includes(manifest.mixing.channel_layout);
         return (
           <>
             <SelectField
@@ -76,17 +78,30 @@ export function OutputSection({
               onChange={(type) =>
                 setManifest({ ...manifest, format: { ...manifest.format, type } })
               }
-              options={(choices?.output_types || ["wav", "adm-bwf", "binaural"]).map((value) => ({
+              options={(choices?.output_types || ["wav", "adm-bwf", "binaural", "transaural"]).map((value) => ({
                 value,
-                label: value === "adm-bwf" ? "ADM-BWF" : value === "binaural" ? "Binaural (headphone stereo)" : "Multichannel WAV",
-                disabled: value === "binaural" && !bedSupported,
+                label:
+                  value === "adm-bwf"
+                    ? "ADM-BWF"
+                    : value === "binaural"
+                      ? "Binaural (headphone stereo)"
+                      : value === "transaural"
+                        ? "Transaural (crosstalk-cancelled speakers)"
+                        : "Multichannel WAV",
+                disabled:
+                  (value === "binaural" && !bedSupported) ||
+                  (value === "transaural" && !transauralBedSupported),
               }))}
               hint={
                 manifest.format.type === "binaural"
                   ? "Renders the speaker layout above as headphone stereo through the Spatial Audio Engine."
-                  : !bedSupported
-                    ? `Binaural requires speaker layout ${binauralBeds.join(", ")}.`
-                    : undefined
+                  : manifest.format.type === "transaural"
+                    ? "Renders the speaker layout above as crosstalk-cancelled stereo for real speakers."
+                    : !bedSupported
+                      ? `Binaural requires speaker layout ${binauralBeds.join(", ")}.`
+                      : !transauralBedSupported
+                        ? `Transaural requires speaker layout ${transauralBeds.join(", ")}.`
+                        : undefined
               }
             />
             {manifest.format.type === "binaural" && (
@@ -102,6 +117,24 @@ export function OutputSection({
                   label: value.charAt(0).toUpperCase() + value.slice(1),
                 }))}
                 hint="Studio = neutral monitoring room. Listening = flattering hi-fi enhance (warm, airy, cinema-wide; loudness-matched). Flat = anechoic reference."
+              />
+            )}
+            {manifest.format.type === "transaural" && (
+              <SelectField
+                label="Transaural profile"
+                value={manifest.format.transaural.profile}
+                onChange={(profile) => setManifest({
+                  ...manifest,
+                  format: { ...manifest.format, transaural: { ...manifest.format.transaural, profile } },
+                })}
+                options={(choices?.transaural_profiles || ["stereo", "smart_speaker", "car"]).map((value) => ({
+                  value,
+                  label: value
+                    .split("_")
+                    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                    .join(" "),
+                }))}
+                hint="Stereo = standard hi-fi speaker pair. Smart speaker = narrow dual-driver cabinet. Car = off-center driver-seat position."
               />
             )}
           </>
