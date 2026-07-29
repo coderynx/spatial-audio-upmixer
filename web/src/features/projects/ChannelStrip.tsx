@@ -25,6 +25,18 @@ export const STEM_GAIN_MAX_DB = 6;
 export const STEM_GAIN_STEP_DB = 0.1;
 export const STEM_GAIN_TICKS = [6, 3, 0, -3, -6, -9, -12];
 
+/** Tints a stem's accent hex for the nameplate's resting plate — full
+ * saturation would fight the dark chrome and fail contrast for the paler
+ * stem colours (Hi-Hat's yellow, Toms' lime), so the plate only takes a
+ * wash of the colour and the name itself carries the full hue. */
+function hexToRgba(hex: string, alpha: number) {
+  const value = hex.replace("#", "");
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 export function stripWidth(channels: number) {
   return FADER_WIDTH + stripMeterWidth(channels) + 20;
 }
@@ -234,27 +246,30 @@ export function StemChannelStrip({
   const meterChannels = Math.min(2, Math.max(1, channels));
   const { register, peakDb } = useStripMeterLoop(meterSource, silent, active);
 
+  const stemColor = getStemColor(stem);
   const nameplateClassName = cn(
-    "flex w-full items-center gap-1 rounded-sm border-b-2 px-0.5 pb-1 text-[11px] font-medium transition-colors",
-    selected ? "text-primary" : "text-muted-foreground",
-    onSelect && !selected && "hover:text-foreground",
+    "flex w-full items-center justify-center gap-1 rounded-[5px] px-1 py-1 text-[11px] font-medium transition-colors",
+    selected && "ring-1 ring-primary",
   );
-  const nameplateStyle = { borderBottomColor: silent ? "transparent" : getStemColor(stem) };
+  const nameplateStyle = {
+    backgroundColor: silent ? canvasTheme.stripWell : hexToRgba(stemColor, 0.16),
+    color: silent ? canvasTheme.label : stemColor,
+  };
   const nameplateContent = (
     <>
       <StemIcon
         className={cn("h-3 w-3 shrink-0", silent && "opacity-40")}
-        style={{ color: getStemColor(stem) }}
+        style={{ color: silent ? canvasTheme.label : stemColor }}
         aria-hidden="true"
       />
-      <span className="min-w-0 flex-1 truncate text-left">{stem}</span>
+      <span className="min-w-0 flex-1 truncate text-center">{stem}</span>
     </>
   );
 
   return (
     <div
       className={cn(
-        "relative flex shrink-0 flex-col items-center gap-1.5 transition-colors",
+        "relative flex shrink-0 flex-col items-center justify-end gap-1.5 transition-colors",
         onSelect && !selected && "cursor-pointer",
         className,
       )}
@@ -269,23 +284,6 @@ export function StemChannelStrip({
           onCommit={onExtraWidthCommit}
         />
       )}
-      {showNameplate && (onSelect ? (
-        <button
-          type="button"
-          onClick={onSelect}
-          aria-pressed={selected}
-          title={`${stem} — ${meterChannels === 2 ? "stereo" : "mono"}`}
-          className={nameplateClassName}
-          style={nameplateStyle}
-        >
-          {nameplateContent}
-        </button>
-      ) : (
-        <div className={nameplateClassName} style={nameplateStyle} title={`${stem} — ${meterChannels === 2 ? "stereo" : "mono"}`}>
-          {nameplateContent}
-        </div>
-      ))}
-
       <StripReadouts value={gain > 0 ? `+${gain.toFixed(1)}` : gain.toFixed(1)} peakDb={peakDb} />
 
       <div className="flex items-stretch gap-1" style={{ height: FADER_TRAVEL }}>
@@ -310,9 +308,23 @@ export function StemChannelStrip({
         <StripToggle letter="M" active={muted} label={`${muted ? "Enable" : "Mute"} ${subjectName}`} onClick={onToggleMute} />
         <StripToggle letter="S" active={soloed} label={`${soloed ? "Clear solo" : "Solo"} ${subjectName}`} onClick={onToggleSolo} />
       </div>
-      <span className="h-3 text-[9px] uppercase tracking-[.08em] text-destructive">
-        {muted ? "Muted" : silent ? "Silent" : ""}
-      </span>
+
+      {showNameplate && (onSelect ? (
+        <button
+          type="button"
+          onClick={onSelect}
+          aria-pressed={selected}
+          title={`${stem} — ${meterChannels === 2 ? "stereo" : "mono"}`}
+          className={nameplateClassName}
+          style={nameplateStyle}
+        >
+          {nameplateContent}
+        </button>
+      ) : (
+        <div className={nameplateClassName} style={nameplateStyle} title={`${stem} — ${meterChannels === 2 ? "stereo" : "mono"}`}>
+          {nameplateContent}
+        </div>
+      ))}
     </div>
   );
 }

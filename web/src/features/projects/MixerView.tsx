@@ -90,7 +90,7 @@ function AnchorStrip({
   const percent = Math.round(strength * 100);
   return (
     <div
-      className="relative flex shrink-0 flex-col items-center gap-1.5 border-x border-success/30 bg-success/5 px-1.5 py-1.5"
+      className="relative flex shrink-0 flex-col items-center justify-end gap-1.5 border-x border-success/30 bg-success/5 px-1.5 py-1.5"
       style={{ width: FADER_WIDTH + 28 + extraWidth }}
     >
       <StripResizeHandle
@@ -99,13 +99,6 @@ function AnchorStrip({
         onChange={onExtraWidthChange}
         onCommit={onExtraWidthCommit}
       />
-      <div
-        className="flex w-full items-center gap-1 rounded-sm border-b-2 border-success px-0.5 pb-1 text-[11px] font-medium text-success"
-        title="Source anchor — blends the original mixed track back into the render, alongside the stems"
-      >
-        <Link2 className="h-3 w-3 shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-left">Anchor</span>
-      </div>
       <span
         className="w-full rounded-[3px] py-px text-center text-[10px] font-semibold tabular-nums text-success"
         style={{ backgroundColor: canvasTheme.stripWell }}
@@ -127,9 +120,17 @@ function AnchorStrip({
           style={{ width: FADER_WIDTH }}
         />
       </div>
-      <p className="text-center text-[9px] uppercase leading-tight tracking-[.08em] text-success/80">
-        Blend original
-      </p>
+      {/* Matches the stem/master strips' M/S row so the fader and percent
+          readout above it land at the same height across the rack, even
+          though the anchor strip has no mute/solo of its own. */}
+      <div className="h-6 w-full" aria-hidden="true" />
+      <div
+        className="flex w-full items-center justify-center gap-1 rounded-[5px] bg-success/15 px-1 py-1 text-[11px] font-medium text-success"
+        title="Source anchor — blends the original mixed track back into the render, alongside the stems"
+      >
+        <Link2 className="h-3 w-3 shrink-0" aria-hidden="true" />
+        <span className="min-w-0 flex-1 truncate text-center">Anchor</span>
+      </div>
     </div>
   );
 }
@@ -164,7 +165,7 @@ function MasterStrip({
 
   return (
     <div
-      className="relative flex shrink-0 flex-col items-center gap-1.5 border-l-2 bg-muted/40 px-1.5 py-1.5"
+      className="relative flex shrink-0 flex-col items-center justify-end gap-1.5 border-l-2 bg-muted/40 px-1.5 py-1.5"
       style={{ width: stripWidth(2) + extraWidth }}
     >
       <StripResizeHandle
@@ -173,7 +174,6 @@ function MasterStrip({
         onChange={onExtraWidthChange}
         onCommit={onExtraWidthCommit}
       />
-      <span className="w-full truncate px-0.5 pb-1 text-center text-[11px] font-semibold">Master</span>
       <StripReadouts value={formatFaderDb(volume).replace(" dB", "")} peakDb={peakDb} />
       <div className="flex items-stretch gap-1" style={{ height: FADER_TRAVEL }}>
         <Fader
@@ -197,7 +197,12 @@ function MasterStrip({
       {/* The master fader is monitor gain, not program gain — it never
           reaches the exported render (see lib/fader.ts and
           useStemPreview.ts's PROGRAM/MONITOR split). */}
-      <span className="h-3 text-[9px] uppercase tracking-[.08em] text-muted-foreground">Monitor</span>
+      <span
+        className="w-full truncate rounded-[5px] px-1 py-1 text-center text-[11px] font-semibold"
+        style={{ backgroundColor: canvasTheme.stripWell }}
+      >
+        Master
+      </span>
     </div>
   );
 }
