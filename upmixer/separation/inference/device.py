@@ -22,16 +22,18 @@ class DeviceManager:
     def __init__(self, backend: str) -> None:
         self.backend = backend
         self.torch_device = torch.device(_TORCH_DEVICE_NAMES.get(backend, "cpu"))
-        if backend == "cpu":
-            self._apply_cpu_thread_cap()
+        if backend in ("cpu", "mps", "cuda"):
+            self._apply_thread_cap()
 
-    def _apply_cpu_thread_cap(self) -> None:
-        """Leave one core free on CPU-only hosts.
+    def _apply_thread_cap(self) -> None:
+        """Leave one core free so host-side work doesn't starve the box.
 
-        A separation job otherwise saturates every core via torch's
-        intra-op parallelism; on a low-end server that also runs the web
-        process in the same container, that starves everything else
-        sharing the box. Stability over raw throughput here, per the
+        On CPU this bounds the whole job's intra-op parallelism. On
+        MPS/CUDA it still matters: some archs fall back to CPU for
+        STFT/complex-tensor work the accelerator can't do (e.g. the
+        karaoke model's larger chunks on MPS), and an uncapped thread
+        pool there can still saturate every core and stutter a shared
+        low-end host. Stability over raw throughput, per the
         no-GPU-server requirement.
         """
         cpu_count = os.cpu_count() or 1

@@ -422,6 +422,7 @@ class BSRoformer(Module):
         self.stft_kwargs = dict(n_fft=stft_n_fft, hop_length=stft_hop_length, win_length=stft_win_length, normalized=stft_normalized)
 
         self.stft_window_fn = partial(default(stft_window_fn, torch.hann_window), stft_win_length)
+        self.register_buffer("stft_window", self.stft_window_fn(), persistent=False)
 
         freqs = torch.stft(torch.randn(1, 4096), **self.stft_kwargs, return_complex=True).shape[1]
 
@@ -491,7 +492,7 @@ class BSRoformer(Module):
 
         raw_audio, batch_audio_channel_packed_shape = pack_one(raw_audio, "* t")
 
-        stft_window = self.stft_window_fn().to(device)
+        stft_window = self.stft_window.to(device)
 
         if x_is_dml:
             stft_repr = torch.stft(raw_audio.cpu(), **self.stft_kwargs, window=stft_window.cpu(), return_complex=True)

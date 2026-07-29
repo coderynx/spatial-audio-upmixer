@@ -37,7 +37,7 @@ def _match_length(source: np.ndarray, n_samples: int) -> np.ndarray:
     return np.pad(source, pad_width)
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def demix_roformer(
     model: torch.nn.Module,
     mix: np.ndarray,
@@ -45,6 +45,7 @@ def demix_roformer(
     device: torch.device,
     segment_size: int | None,
     overlap_seconds: float = 8.0,
+    batch_size: int = 1,
 ) -> dict[str, np.ndarray]:
     """Chunked inference for BS-Roformer / Mel-Band Roformer models.
 
@@ -56,6 +57,11 @@ def demix_roformer(
             audio. Clamped to at most the chunk length — with the default
             (8s) and a chunk shorter than that, the loop advances one full
             chunk at a time, i.e. no actual overlap for these models.
+        batch_size: Chunks processed per forward pass — a memory/speed
+            knob. Chunks are independent (no cross-item norm or state) and
+            are always accumulated back in the same left-to-right order
+            regardless of batch size, so grouping them for one forward
+            call doesn't change which values land where.
 
     Returns:
         Canonical instrument name -> ``(2, n_samples)`` float32 array.
@@ -74,6 +80,17 @@ def demix_roformer(
         mix_t = torch.nn.functional.pad(mix_t, (0, chunk_size - orig_n_samples))
     n_samples = mix_t.shape[1]
 
+    # Pinning lets each chunk's host->device copy overlap with prior GPU work
+    # instead of blocking the host thread; the model's forward call is
+    # enqueued on the same stream right after, so it still waits for the
+    # copy to land before reading it. Device->host transfers below stay
+    # synchronous (read on the host immediately after), which non_blocking
+    # would race. CUDA/ROCm only: MPS ignores non_blocking, and CPU never
+    # copies at all.
+    use_async_transfer = device.type == "cuda"
+    if use_async_transfer:
+        mix_t = mix_t.pin_memory()
+
     desired_step = int(overlap_seconds * config.sample_rate)
     step = chunk_size if desired_step <= 0 else min(desired_step, chunk_size)
 
@@ -84,21 +101,28 @@ def demix_roformer(
     result = torch.zeros(acc_shape, dtype=torch.float32)
     counter = torch.zeros(acc_shape, dtype=torch.float32)
 
-    for i in range(0, n_samples, step):
-        part = mix_t[:, i : i + chunk_size]
-        length = part.shape[-1]
-        start = i
-        if i + chunk_size > n_samples:
-            part = mix_t[:, -chunk_size:]
-            length = chunk_size
-            start = result.shape[-1] - chunk_size
+    # Chunk start is always either the window position `i` or, for the
+    # final overlapping window, pulled back to end exactly at n_samples
+    # (matching the single-chunk loop this replaces) — the result slot is
+    # the same offset, so one list covers both reading and placement.
+    starts = [
+        i if i + chunk_size <= n_samples else n_samples - chunk_size
+        for i in range(0, n_samples, step)
+    ]
+    max_safe_len = min(chunk_size, window.shape[0])
+    step_size = max(1, batch_size)
 
-        out = model(part.unsqueeze(0).to(device))[0].cpu()
+    for batch_start in range(0, len(starts), step_size):
+        batch_starts = starts[batch_start : batch_start + step_size]
+        batch = torch.stack([mix_t[:, s : s + chunk_size] for s in batch_starts], dim=0)
+        outputs = model(batch.to(device, non_blocking=use_async_transfer))
 
-        safe_len = min(length, out.shape[-1], window.shape[0])
-        if safe_len > 0:
-            result[..., start : start + safe_len] += out[..., :safe_len] * window[:safe_len]
-            counter[..., start : start + safe_len] += window[:safe_len]
+        for s, out in zip(batch_starts, outputs):
+            out = out.cpu()
+            safe_len = min(max_safe_len, out.shape[-1])
+            if safe_len > 0:
+                result[..., s : s + safe_len] += out[..., :safe_len] * window[:safe_len]
+                counter[..., s : s + safe_len] += window[:safe_len]
 
     inferenced = (result / counter.clamp(min=1e-10)).numpy()
 
@@ -110,7 +134,7 @@ def demix_roformer(
     return dict(zip(config.instruments, trimmed))
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def demix_tfc_tdf(
     model: torch.nn.Module,
     mix: np.ndarray,
@@ -151,6 +175,13 @@ def demix_tfc_tdf(
         dim=1,
     )
 
+    # See demix_roformer's matching comment: pinning + non_blocking only
+    # overlaps the host->device copy; the device->host read below stays
+    # synchronous, so accumulation always sees completed data.
+    use_async_transfer = device.type == "cuda"
+    if use_async_transfer:
+        padded = padded.pin_memory()
+
     chunks = padded.unfold(1, chunk_size, hop_size).transpose(0, 1)
     num_stems = config.num_stems
     accumulated = (
@@ -159,7 +190,7 @@ def demix_tfc_tdf(
 
     count = 0
     for start in range(0, len(chunks), batch_size):
-        batch = chunks[start : start + batch_size].to(device)
+        batch = chunks[start : start + batch_size].to(device, non_blocking=use_async_transfer)
         output = model(batch)
         for single in output:
             accumulated[..., count * hop_size : count * hop_size + chunk_size] += single.cpu()

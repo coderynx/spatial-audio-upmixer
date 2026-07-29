@@ -24,6 +24,8 @@ def _detect_backend() -> str:
     try:
         import torch
         if torch.cuda.is_available():
+            if getattr(torch.version, "hip", None):
+                _log.debug("ROCm build detected (torch.version.hip=%s); using cuda backend path", torch.version.hip)
             return "cuda"
         mps = getattr(torch.backends, "mps", None)
         if mps is not None and mps.is_available():

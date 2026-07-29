@@ -37,7 +37,10 @@ class SeparationEngine:
         device: DeviceManager the model was loaded onto.
         output_dir: Directory stems are written to.
         sample_rate: Working sample rate; the mix is resampled to this.
-        batch_size: TFC-TDF chunk batch size (ignored by Roformer models).
+        batch_size: Chunks processed per forward pass. Applies to both
+            TFC-TDF and Roformer models, except Roformer always forces 1
+            on the CPU backend regardless of this value (see
+            ``_demix_one``) to bound peak memory on low-end hosts.
         segment_size: Chunk frame count override, or ``None`` for the
             model's own default.
         chunk_duration_s: Long-file splitting window, or ``None`` to
@@ -134,12 +137,24 @@ class SeparationEngine:
 
     def _demix_one(self, mix: np.ndarray) -> dict[str, np.ndarray]:
         if self._arch in _ARCH_ROFORMER:
+            # Roformer chunks span 8-11s of audio; batching them multiplies
+            # peak activation memory linearly. CUDA/ROCm have isolated VRAM
+            # and a proven OOM-retry ladder, so they use the auto-tuned or
+            # caller-supplied batch size. Every other backend (CPU, MPS,
+            # CoreML-as-CPU) shares memory with the OS and stays at 1 —
+            # confirmed the hard way: batch=2 on MPS for the 11s karaoke
+            # chunk froze a real M3 Pro (unified-memory pressure, not a
+            # catchable OOM exception).
+            roformer_batch_size = (
+                self._batch_size if self._device.torch_device.type == "cuda" else 1
+            )
             return demix.demix_roformer(
                 self._model,
                 mix,
                 self._config,
                 self._device.torch_device,
                 segment_size=self._segment_size,
+                batch_size=roformer_batch_size,
             )
         return demix.demix_tfc_tdf(
             self._model,
