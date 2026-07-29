@@ -586,7 +586,13 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             array and mute state, and stays mounted alongside HazeView across
             Mixing/Mastering/Delivery since both live in this shared panel. */}
         <div className={cn("flex min-h-0 gap-2", paneView ? "min-h-[180px] flex-1" : "flex-[3]")}>
-          <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="min-h-0 min-w-0 flex-[2]" />
+          <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className={paneView ? "aspect-square min-h-0 shrink-0" : "min-h-0 min-w-0 flex-[2]"} />
+          {/* With the pane open, HazeView goes square (above) instead of
+              stretching wide with dead bands either side of its circle.
+              Elevation moves into the row here to absorb the width that
+              frees up — it still yields its below-Haze vertical slot below
+              (unchanged), so no headroom is spent, only relocated. */}
+          {paneView && <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="min-h-0 min-w-0 flex-1" />}
           <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} outputMode={outputMode} active={preview.playing} />
         </div>
         {/* Elevation yields its 160px to the pane: its floor/height axis is

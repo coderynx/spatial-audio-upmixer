@@ -113,47 +113,57 @@ function TransportImpl({
   }, [playing, currentTimeRef]);
   const displayTime = playing ? liveTime : currentTime;
   return (
-    <div className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-2">
-      <div className="flex items-center gap-1.5 rounded-lg bg-muted p-1">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-foreground hover:bg-accent hover:text-foreground"
-          aria-label="Stop"
-          disabled={disabled}
-          onClick={onStop}
-        >
-          <Square className="fill-current" />
-        </Button>
-        <Button
-          variant={playing ? "success" : "secondary"}
-          size="icon"
-          aria-label={playing ? "Pause" : "Play"}
-          aria-pressed={playing}
-          disabled={disabled}
-          onClick={onPlayPause}
-        >
-          {playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
-        </Button>
-        <Button
-          variant={loop ? "warning" : "ghost"}
-          size="icon"
-          className={cn(!loop && "text-foreground hover:bg-accent hover:text-foreground")}
-          aria-label="Toggle repeat"
-          aria-pressed={loop}
-          disabled={disabled}
-          onClick={onToggleLoop}
-        >
-          <Repeat />
-        </Button>
+    // Three-column grid, not a flex row with a single spacer: a flex-1 gap
+    // between two small clusters in a full-width bar becomes one oversized
+    // void wherever the container happens to be wide (the same "content
+    // stranded across a black gap" shape as the Haze view's dead bands).
+    // Centering the transport pod in col 2 (with col 1 mirroring col 3's
+    // width) and pinning the monitor cluster to col 3 keeps the bar
+    // Apple-transport-shaped — the empty space stays a proportional margin
+    // on both sides rather than one lopsided gap.
+    <div className="grid h-12 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b bg-card px-2">
+      <div aria-hidden="true" />
+      <div className="flex items-center gap-2 justify-self-center">
+        <div className="flex items-center gap-1.5 rounded-lg bg-muted p-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-foreground hover:bg-accent hover:text-foreground"
+            aria-label="Stop"
+            disabled={disabled}
+            onClick={onStop}
+          >
+            <Square className="fill-current" />
+          </Button>
+          <Button
+            variant={playing ? "success" : "secondary"}
+            size="icon"
+            aria-label={playing ? "Pause" : "Play"}
+            aria-pressed={playing}
+            disabled={disabled}
+            onClick={onPlayPause}
+          >
+            {playing ? <Pause className="fill-current" /> : <Play className="fill-current" />}
+          </Button>
+          <Button
+            variant={loop ? "warning" : "ghost"}
+            size="icon"
+            className={cn(!loop && "text-foreground hover:bg-accent hover:text-foreground")}
+            aria-label="Toggle repeat"
+            aria-pressed={loop}
+            disabled={disabled}
+            onClick={onToggleLoop}
+          >
+            <Repeat />
+          </Button>
+        </div>
+        <LcdDisplay currentTime={displayTime} duration={duration} mode={mode} onToggleMode={() => setMode((current) => (current === "elapsed" ? "remaining" : "elapsed"))} />
       </div>
-      <LcdDisplay currentTime={displayTime} duration={duration} mode={mode} onToggleMode={() => setMode((current) => (current === "elapsed" ? "remaining" : "elapsed"))} />
       {/* No seek bar here: the timeline pane's playhead is the transport
           position control, and two scrub surfaces for one value is exactly
           the duplication the design spec's "one control per idea" rule
           rejects. */}
-      <div className="min-w-0 flex-1" />
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5 justify-self-end">
         <Button
           variant="ghost"
           size="icon"
@@ -181,8 +191,8 @@ function TransportImpl({
         <span className="w-11 shrink-0 text-right text-[10px] font-medium tabular-nums text-muted-foreground" aria-hidden="true">
           {formatFaderDb(volume)}
         </span>
+        {children}
       </div>
-      {children}
     </div>
   );
 }

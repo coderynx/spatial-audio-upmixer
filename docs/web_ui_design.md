@@ -168,10 +168,16 @@ implementation.
   window can be resized while the pane is open.
 - **The pane takes its space from the displays above it, and they say which.**
   It does not add height. Name the display that yields and why. On the project
-  page the spatial block drops from `flex-[3]` to `flex-1 min-h-[180px]` and
-  `ElevationView` hides entirely, because its floor/height axis is already
-  carried by `HazeView`'s dashed height ring — that redundancy is what makes
-  it the right thing to drop.
+  page the spatial block drops from `flex-[3]` to `flex-1 min-h-[180px]`, and
+  `ElevationView` gives up its own `h-40` row below the block, because its
+  floor/height axis is already carried by `HazeView`'s dashed height ring —
+  that redundancy is what makes it the right thing to yield.
+  Vertical space given up is not content deleted: with the block now wide and
+  short, `HazeView` goes `aspect-square` rather than stretching wide (a
+  circular radar in a wide-short panel would otherwise float over dead bands
+  either side of it, against §1.1), and `ElevationView` relocates beside it in
+  the same row to absorb the width the square panel no longer uses — one
+  `min-h-0 min-w-0 flex-1` display in place of two empty margins.
 
 ## 5. Layout primitives
 
