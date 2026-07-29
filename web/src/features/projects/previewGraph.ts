@@ -604,27 +604,37 @@ export function buildMasteringGraph(
 // channels -> per-speaker order-3 SH encode -> sum to 16ch HOA bus ->
 // convolve with profile decode filters -> stereo -> voicing.
 //
-// LFE is deliberately **not** handled here — the live preview adds it at
-// `mergePoint`, after this graph's `output` (post-voicing), whereas the
-// backend's `render_binaural` adds it to left/right *before* voicing. At
-// the Studio/Flat profiles (the only ones with an all-zero/identity voicing
-// chain) that ordering is numerically inert, so this is safe for now but is
-// a real, open discrepancy for the Listening profile — see Ledger D11 in
-// docs/contracts/preview_export_parity.md.
+// LFE is not created here (this function has no LFE input parameter of its
+// own), but a pre-voicing insertion point is exposed for it — see
+// `preVoicing` below. The caller (audioEngine.ts) sums its LFE bus in there,
+// mirroring `render_binaural`'s order exactly: decode to binaural -> +lfe ->
+// apply_voicing. This used to instead be added at `mergePoint`, after this
+// graph's `output` (post-voicing) — numerically inert at the Studio/Flat
+// profiles (all-zero/identity voicing) but a real signal difference at
+// Listening's non-identity voicing chain, and it also leaked LFE into the
+// BS.775 stereo downmix (which excludes LFE by standard) — both fixed;
+// see Ledger D11 in docs/contracts/preview_export_parity.md.
 export type BinauralGraphHandle = {
   /** Feed each positional channel's `AmbiMonoEncoder.out` into this. */
   hoaBus: GainNode;
-  /** Post-voicing stereo output (2 discrete channels via a ChannelMerger) —
-   * connect onward to the loudness-gain stage. A caller may also connect an
-   * LFE send directly into this same node's input 0 and 1 (a
+  /** Pre-voicing stereo merge point (2 discrete channels): the decoded HOA
+   * bus summed to binaural stereo, before the profile voicing chain runs.
+   * Connect an LFE send into this node's input 0 *and* 1 (a
    * ChannelMergerNode sums multiple sources landing on the same input
-   * index), reproducing the live preview's `mergePoint` semantics without
-   * this function needing to know about LFE at all. */
+   * index) to reproduce `render_binaural`'s LFE-before-voicing order. Only
+   * meaningful for the binaural render — the stereo (BS.775) and native
+   * paths don't route through this graph at all, so an LFE send wired only
+   * here (not also at `output`/`mergePoint`) naturally excludes LFE from
+   * those paths too, matching BS.775's own exclusion. */
+  preVoicing: AudioNode;
+  /** Post-voicing stereo output (2 discrete channels via a ChannelMerger) —
+   * connect onward to the loudness-gain stage. */
   output: AudioNode;
   voicing: VoicingChain;
   convolverPairs: { left: ConvolverNode; right: ConvolverNode; preGain: GainNode | null }[];
-  /** Every node this call created besides `hoaBus`/`output`/`voicing`'s own
-   * nodes (already covered by `voicing.nodes`) — for teardown. */
+  /** Every node this call created besides `hoaBus`/`preVoicing`/`output`/
+   * `voicing`'s own nodes (already covered by `voicing.nodes`) — for
+   * teardown. */
   nodes: AudioNode[];
 };
 
@@ -685,7 +695,7 @@ export function buildBinauralGraph(ctx: BaseAudioContext, profile: SpatialProfil
   voicing.right.connect(voicingMerger, 0, 1);
   nodes.push(voicingMerger);
 
-  return { hoaBus, output: voicingMerger, voicing, convolverPairs, nodes };
+  return { hoaBus, preVoicing: decodeMerger, output: voicingMerger, voicing, convolverPairs, nodes };
 }
 
 /** One positional channel's fixed direction, in the same

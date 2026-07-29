@@ -477,6 +477,27 @@ describe("output-path hearing safety", () => {
     act(() => { preview.setVolume(0.3); });
     expect(spy).toHaveBeenCalled();
   });
+
+  it("drives the true-peak/compressor-reduction correction from a setInterval, not the rAF loop, so it keeps running in a backgrounded tab", async () => {
+    // Regression: both used to run only from tick() (requestAnimationFrame),
+    // which browsers fully suspend in a hidden/backgrounded tab — freezing
+    // the true-peak safety net and the linked bus-compressor's gain
+    // reduction while audio keeps audibly playing. installAudio() stubs
+    // requestAnimationFrame as a no-op that never invokes its callback (see
+    // its own definition), simulating exactly that "rAF never fires" case;
+    // the correction loop must still be reachable via a real timer.
+    installAudio();
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    const clearIntervalSpy = vi.spyOn(window, "clearInterval");
+    render(<Harness />);
+    await act(async () => { await preview.playPause(); });
+
+    expect(setIntervalSpy).toHaveBeenCalled();
+    const intervalId = setIntervalSpy.mock.results[0].value;
+
+    act(() => { preview.stop(); });
+    expect(clearIntervalSpy).toHaveBeenCalledWith(intervalId);
+  });
 });
 
 describe("virtual-loudspeaker ambisonic rendering", () => {

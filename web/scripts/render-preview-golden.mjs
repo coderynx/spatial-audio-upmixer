@@ -360,11 +360,11 @@ async function main() {
     source.start(0);
   });
 
-  // LFE: lowpass + gain, summed directly into both of `binaural.output`'s
+  // LFE: lowpass + gain, summed directly into both of `binaural.preVoicing`'s
   // channels — a ChannelMergerNode sums multiple sources landing on the
-  // same input index, reproducing the live preview's `mergePoint` addition
-  // without `buildBinauralGraph` needing to know about LFE at all (see that
-  // function's docstring on the Studio-profile-only safety of this).
+  // same input index, reproducing the live preview's LFE wiring (Ledger
+  // D11, fixed: before the voicing chain, matching render_binaural's own
+  // `left = left + lfe` / `right = right + lfe` ahead of `apply_voicing`).
   const lfeBuffer = stageBCtx.createBuffer(1, n, SR);
   lfeBuffer.copyToChannel(outputChannels.LFE, 0);
   const lfeSource = stageBCtx.createBufferSource();
@@ -375,8 +375,8 @@ async function main() {
   const lfeGainNode = stageBCtx.createGain();
   lfeGainNode.gain.value = LFE_GAIN;
   lfeSource.connect(lfeLowpass).connect(lfeGainNode);
-  lfeGainNode.connect(binaural.output, 0, 0);
-  lfeGainNode.connect(binaural.output, 0, 1);
+  lfeGainNode.connect(binaural.preVoicing, 0, 0);
+  lfeGainNode.connect(binaural.preVoicing, 0, 1);
   lfeSource.start(0);
 
   binaural.output.connect(stageBCtx.destination);

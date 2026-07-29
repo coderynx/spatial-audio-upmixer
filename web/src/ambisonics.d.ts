@@ -33,3 +33,14 @@ declare module "numeric" {
 declare module "spherical-harmonic-transform" {
   export function computeRealSH(order: number, directions: [number, number][]): number[][];
 }
+
+// `limiter.worklet.js` is a plain static file under `public/` (served as-is
+// to the browser's `audioWorklet.addModule`, not bundled), so it ships no
+// declaration of its own. Only `limiterWorklet.test.ts` imports it — to pin
+// its true-peak kernel against masteringProfiles.ts's copy — so this covers
+// just the named exports that guard test reads.
+declare module "*/limiter.worklet.js" {
+  export const TAPS: number;
+  export const OVERSAMPLE: number;
+  export const KERNEL: Float64Array;
+}

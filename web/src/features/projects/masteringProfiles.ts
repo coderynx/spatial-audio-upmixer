@@ -193,7 +193,13 @@ export function buildExciteCurve(drive: number = EXCITE_DRIVE, samples = 4096): 
 // implementation of this approximation, not two that could drift apart.
 const _TRUE_PEAK_UPSAMPLE_TAPS = 32;
 
-function _upsampleTruePeak4x(x: Float32Array | Float64Array): Float64Array {
+// Exported so `limiterWorklet.test.ts` can pin this against
+// `limiter.worklet.js`'s hand-duplicated copy of the same kernel (worklet
+// modules can't `import` this file — see that file's own comment) — a real
+// divergence between the two would otherwise only surface as a subtle
+// true-peak mismatch between the native limiter and everywhere else this
+// approximation is used, not a build/type error.
+export function buildTruePeakKernel(): Float64Array {
   const taps = _TRUE_PEAK_UPSAMPLE_TAPS;
   const kernel = new Float64Array(taps);
   const center = (taps - 1) / 2;
@@ -203,6 +209,12 @@ function _upsampleTruePeak4x(x: Float32Array | Float64Array): Float64Array {
     const window = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (taps - 1)); // Hann
     kernel[i] = sinc * window;
   }
+  return kernel;
+}
+
+function _upsampleTruePeak4x(x: Float32Array | Float64Array): Float64Array {
+  const taps = _TRUE_PEAK_UPSAMPLE_TAPS;
+  const kernel = buildTruePeakKernel();
   const upsampled = new Float64Array(x.length * 4);
   for (let i = 0; i < x.length; i++) upsampled[i * 4] = x[i];
   const out = new Float64Array(upsampled.length);

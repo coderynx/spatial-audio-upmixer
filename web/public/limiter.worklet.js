@@ -20,13 +20,12 @@
 // software mastering limiters alike pay this same cost.
 //
 // Detection reuses the same 32-tap Hann-windowed-sinc 4x oversample kernel
-// as masteringProfiles.ts's `_upsampleTruePeak4x` (that function's own
+// as masteringProfiles.ts's `buildTruePeakKernel` (that function's own
 // comment documents this as the one shared true-peak approximation for the
 // whole preview, Tier-3 bounded by the parity contract's 1.0 dBTP
-// tolerance) rather than inventing a third approximation. AudioWorklet
-// modules run in their own global scope with no access to the app's
-// module graph, so the kernel is duplicated here rather than imported —
-// keep the two in sync by hand if either changes.
+// tolerance) rather than inventing a third approximation — imported from
+// truePeakKernel.js, the one worklet-side copy also used by
+// loudness.worklet.js, rather than each worklet hand-duplicating it.
 //
 // Linked (cross-channel) detection: every input channel's oversampled
 // envelope is combined with a running max, so one shared gain curve is
@@ -36,23 +35,9 @@
 // tone/dense-noise test signals during development; see the PR this
 // shipped in for that validation.
 
-const OVERSAMPLE = 4;
-const TAPS = 32;
+import { KERNEL, OVERSAMPLE, TAPS } from "./truePeakKernel.js";
+
 const SAFETY_MARGIN_DB = 0.1;
-
-function buildKernel() {
-  const kernel = new Float64Array(TAPS);
-  const center = (TAPS - 1) / 2;
-  for (let i = 0; i < TAPS; i++) {
-    const t = i - center;
-    const sinc = t === 0 ? 1 : Math.sin((Math.PI * t) / 4) / ((Math.PI * t) / 4);
-    const window = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (TAPS - 1));
-    kernel[i] = sinc * window;
-  }
-  return kernel;
-}
-
-const KERNEL = buildKernel();
 const KERNEL_DELAY = Math.floor(TAPS / 2);
 
 /** Monotonic-deque sliding-window minimum: O(1) amortized per push, holding
@@ -228,3 +213,8 @@ class LimiterProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor("limiter-processor", LimiterProcessor);
+
+// Re-exported (from the `import` above) for `limiterWorklet.test.ts`'s drift
+// guard only — harmless in the real worklet, `registerProcessor` above
+// doesn't care what else this module exports.
+export { KERNEL, TAPS, OVERSAMPLE };
