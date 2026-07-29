@@ -332,13 +332,16 @@ against `Slider` is by **layout purpose**, not by what the number means:
 `Fader` is the same kind of value laid out the way a console lays it out, so a
 rack of them can be compared and balanced at a glance.
 
-Per-stem gain has **two homes, one control**: the mixer rack's strip and the
+Per-stem gain has **three homes, one control**: the mixer rack's strip and the
 inspector's always-accessible copy of the selected stem's strip (below) are
 the literal same `StemChannelStrip` component (`ChannelStrip.tsx`), not a
 parallel re-implementation — the inspector never falls back to a `Slider` for
 this value. That is what "one idea, two viewports" (§6.3) means taken
 seriously: the two homes cannot drift apart because they are one piece of
-code rendered twice.
+code rendered twice. The timeline row's inline `HorizontalFader` (§6.5) is a
+third rendering of the same manifest field through the same `onGain` handler,
+not a fourth independent implementation — a different control shape for a
+row too compact for the full strip, but still one value with one writer.
 
 The inspector's "Stem" group orders its content **title, then position and
 EQ, then the fader** — not the fader first. The section already has exactly
@@ -490,6 +493,68 @@ give one idea two homes with no viewport justification.
   change bound by `docs/contracts/preview_export_parity.md`, not a UI one.
 - The rack scrolls horizontally when strips overflow; strips never shrink.
 
+### 6.5 Horizontal fader
+
+`HorizontalFader` (`components/ui/horizontal-fader.tsx`) is the other Apple
+fader idiom §1 names — Logic Pro **for iPad**'s glowing horizontal
+track-volume bar, not the desktop-styled flat-plate cap `Fader` (§6.4) draws.
+The two are not competing implementations of the same thing: `Fader` is the
+mixer channel strip's vertical control, drawn the way desktop Logic and the
+app's other flat-plate controls (`Pot`, §6.1) draw a grip. `HorizontalFader`
+is for a control inline in a row too compact for a full strip — a dark pill
+spanning the control's full height (not a thin centred line), a glowing
+`success`-token fill or live-level bars inset from the pill's own edge by a
+small fixed margin (`PILL_INSET`, 3px — content never sits flush against the
+rounded cap), and a light round knob the same height as the pill, matching
+the reduced, touch-first idiom iPad Logic uses in exactly that context (a
+per-track volume control in a row, not a full mixer strip).
+
+Two usages today, both sized only via `knobSize` (which also sets the pill's
+height — there is no separate track-thickness prop):
+
+- **Transport's monitor volume** (`Transport.tsx`), larger (`knobSize={18}`,
+  `w-32`) than the timeline's row instance — this control is read and
+  adjusted constantly while a preview plays, so it earns a wider track for
+  finer drag resolution, the same reasoning that sized up the transport
+  buttons and LCD beside it (§6, control-text density notwithstanding —
+  precision here outweighs the ordinary control height). Its live-level
+  bars read the actual L/R signal reaching the monitor (`headphoneLevels`).
+- **The timeline row's inline gain** (`TimelineView.tsx`), compact
+  (`knobSize={16}`) sized to the two-line row (§7.2) — see §6.4's "three
+  homes" note for how this shares its value with the mixer/inspector fader
+  rather than forking it. Its live-level bars read the stem's actual level
+  (`stemLevels`).
+
+Same interaction contract as `Fader`/`Pot`: pointer drag, arrow/page/Home/End
+keys, double-click to reset, wheel gated on `document.activeElement`. With no
+`meterSource`, the fill is a single glowing bar to the knob's position,
+reusing the themed `success` CSS variable (`shadow-[...hsl(var(--success)
+/0.7)]`) rather than a new literal colour. With `meterSource`, that fill is
+replaced by one live-level bar per channel (1 for mono, 2 for stereo, same
+cap `StripMeter` uses) — **independent of the knob**: the bars are the
+stem's or the monitor's actual playback level right now, the knob is the
+gain value, and the two are deliberately not wired together, matching what
+iPad Logic itself draws in this exact context (a fader set loud with silent
+audio shows empty bars). The bars reuse the app's one dB scale
+(`meterScale.ts`'s `levelToDb`/`dbToY`/`zoneColor`) in Logic's
+green-to-yellow mixer-strip palette (`STRIP_METER_PALETTE`), not the blue
+Level Meter palette `ChannelMeters` draws — same "shared math, host picks
+the palette" split §7 already documents, just applied to a third host. It
+skips the peak-hold tick `StripMeter` draws: at this size a tick would be
+noise, and Logic's own per-track bar doesn't show one either.
+
+**Yellow zone depends on channel count, not host.** `meterScale.ts` exports
+two floors: `YELLOW_ZONE_DB` (-20, the default) for a meter that represents a
+single channel in isolation — a mono stem's strip meter, a mono stem's
+`HorizontalFader` — and `MULTI_CHANNEL_YELLOW_ZONE_DB` (-10) for one that
+represents two or more channels together: a stereo/master strip, a stereo
+stem's `HorizontalFader`, and `ChannelMeters` (always multi-channel — it is
+never a single isolated reading). This is a per-*meter-instance* split, not
+per-bar: a stereo strip's two bars both use the multi-channel floor even
+though each bar still shows one channel's signal, because the meter as a
+whole is reading two channels together. Any new meter follows the same
+rule — check `bars.length`/`channels`, don't hardcode a floor.
+
 ### Semantic colour mapping
 
 | Meaning | Token | Examples |
@@ -575,9 +640,18 @@ meaning with the appearance setting.
 Chrome (§7.1): the lane field is `background`, the ruler `muted`, the header
 column `card`, separators `border`.
 
-- **Metrics.** Lane `44px`, ruler `22px`, header column `128px`. The header
-  column is `sticky left-0` so lane names stay put while lanes scroll, and
-  each row carries a 3px stem-colour left border, matching the stem rail.
+- **Metrics.** Lane `64px`, ruler `22px`, header column `280px` — grown from
+  a single 44px line/176px column when the row adopted iPad Logic's own
+  two-line track-header shape. The header column is `sticky left-0` so lane
+  names stay put while lanes scroll, and each row carries a 3px stem-colour
+  left border. A row is drag handle, then a name line, then M/S and the
+  inline gain `HorizontalFader` (§6.5) on a second line, then a full-height
+  instrument-icon swatch on the trailing edge (the same per-stem icon this
+  app already carries, given the prominent square treatment Logic gives it)
+  — everything the removed stem rail once carried, in one place, at Logic's
+  own proportions rather than squeezed onto one line. iPad Logic's row also
+  carries a third "R" (record-arm) button; this app has no recording
+  concept, so it's a two-button M/S row here, not a fabricated third control.
 - **Ruler.** Tick step is the first of 1/2/5/10/15/30/60/120/300/600 seconds
   that keeps ticks at least 68px apart, so density holds from a 90-second demo
   to a 40-minute set. Gridlines run the full height at `border` / 0.7.

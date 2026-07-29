@@ -1,6 +1,7 @@
 import * as React from "react";
 import { canvasTheme } from "@/lib/canvasTheme";
 import {
+  MULTI_CHANNEL_YELLOW_ZONE_DB,
   RED_ZONE_DB,
   STRIP_DB_TICKS,
   STRIP_METER_PALETTE,
@@ -53,8 +54,13 @@ export function drawStripMeterBars(
   bars: { currentDb: number; peakDb: number; clipped: boolean }[],
   muted: boolean,
 ) {
+  // A mono stem's strip (one bar) represents a single channel in isolation
+  // and keeps the finer single-channel floor; a stereo/master strip (two
+  // bars) represents multiple channels together and gets the later one —
+  // same split `ChannelMeters` and `HorizontalFader` apply.
+  const yellowZoneDb = bars.length >= 2 ? MULTI_CHANNEL_YELLOW_ZONE_DB : YELLOW_ZONE_DB;
   const redBottomY = dbToY(RED_ZONE_DB, 0, height, STRIP_DB_TICKS);
-  const yellowBottomY = dbToY(YELLOW_ZONE_DB, 0, height, STRIP_DB_TICKS);
+  const yellowBottomY = dbToY(yellowZoneDb, 0, height, STRIP_DB_TICKS);
   bars.forEach((bar, index) => {
     drawMeterBar(
       ctx, SCALE_WIDTH + index * (BAR_WIDTH + BAR_GAP), BAR_WIDTH, 0, height,
@@ -64,6 +70,7 @@ export function drawStripMeterBars(
         palette: STRIP_METER_PALETTE,
         ticks: STRIP_DB_TICKS,
         radius: BAR_RADIUS,
+        yellowZoneDb,
       },
     );
   });

@@ -98,18 +98,22 @@ export function OutputModeSelect({
 
   return (
     <div ref={containerRef} className="relative flex shrink-0 items-center gap-2">
+      {/* h-8 to match the transport cluster and the mute/volume group beside
+          it (Transport.tsx) — this trigger is touched as often as those
+          while monitoring a preview, and it was previously smaller (`sm`,
+          h-6) than its own device <select> a few pixels to its right. */}
       <Button
         type="button"
         variant="outline"
-        size="sm"
+        size="default"
         title={`Preview output: ${current.label}`}
         aria-label={`Preview output mode: ${current.label}`}
         aria-expanded={open}
         onClick={() => setOpen((next) => !next)}
-        className="shrink-0 gap-1 px-2.5"
+        className="h-8 shrink-0 gap-1 px-2.5"
       >
         <CurrentIcon className="h-4 w-4 shrink-0" />
-        <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
       </Button>
       {open && (
         <div className="absolute left-0 top-full z-10 mt-1 w-64 rounded-md border bg-popover p-1 shadow-md">

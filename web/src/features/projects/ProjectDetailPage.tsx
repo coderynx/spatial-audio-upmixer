@@ -531,6 +531,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           onToggleLoop={preview.toggleLoop}
           onSetVolume={preview.setVolume}
           onToggleMute={preview.toggleMute}
+          headphoneLevels={preview.headphoneLevels}
         >
           <OutputModeSelect
             value={outputMode}
@@ -653,6 +654,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             solo={effectiveManifest?.mixing.stem_solo || []}
             onToggleMute={toggleEnabled}
             onToggleSolo={toggleSolo}
+            gains={effectiveManifest?.mixing.stem_rebalance || {}}
+            onGain={setStemGain}
+            stemLevels={preview.stemLevels}
+            stemChannelCounts={stemChannelCounts}
             draggedStem={draggedStem}
             onDragStart={setDraggedStem}
             onDragEnd={clearDraggedStem}

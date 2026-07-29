@@ -7,6 +7,7 @@ function renderTimeline(overrides: Partial<React.ComponentProps<typeof TimelineV
     onSelectStem: vi.fn(),
     onToggleMute: vi.fn(),
     onToggleSolo: vi.fn(),
+    onGain: vi.fn(),
     onDragStart: vi.fn(),
     onDragEnd: vi.fn(),
     onDropOn: vi.fn(),
@@ -23,6 +24,9 @@ function renderTimeline(overrides: Partial<React.ComponentProps<typeof TimelineV
       mutedStems={[]}
       enabled={{}}
       solo={[]}
+      gains={{}}
+      stemLevels={{ current: new Map() }}
+      stemChannelCounts={{}}
       draggedStem={null}
       selectedStem={null}
       duration={30}

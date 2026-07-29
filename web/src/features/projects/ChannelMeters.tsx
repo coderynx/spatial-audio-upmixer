@@ -2,9 +2,9 @@ import * as React from "react";
 import { canvasTheme } from "@/lib/canvasTheme";
 import {
   DB_TICKS,
+  MULTI_CHANNEL_YELLOW_ZONE_DB,
   RED_ZONE_DB,
   SETTLE_EPSILON_DB,
-  YELLOW_ZONE_DB,
   createMeterState,
   dbToY,
   drawMeterBar,
@@ -216,11 +216,15 @@ function ChannelMetersImpl({
         const peakDb = meterState.current.updatePeak(channel, currentDb, deltaSec);
         if (peakDb - currentDb > SETTLE_EPSILON_DB) settled = false;
         const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
-        const yellowBottomY = dbToY(YELLOW_ZONE_DB, meterTop, meterBottom);
+        // This display is always multi-channel — the full speaker layout,
+        // never a single isolated channel — so it always uses the later
+        // multi-channel yellow floor (§ meterScale.ts).
+        const yellowBottomY = dbToY(MULTI_CHANNEL_YELLOW_ZONE_DB, meterTop, meterBottom);
 
         drawMeterBar(
           ctx, barX, barWidth, meterTop, meterBottom, redBottomY, yellowBottomY,
           currentDb, peakDb, muted, !muted && (meterLevel?.clipped ?? false),
+          { yellowZoneDb: MULTI_CHANNEL_YELLOW_ZONE_DB },
         );
 
         const label = channel === "LFE" ? "LFE" : speakerDisplayLabel(channel, currentChannels);
@@ -256,11 +260,14 @@ function ChannelMetersImpl({
           const peakDb = meterState.current.updatePeak(`hp:${label}`, currentDb, deltaSec);
           if (peakDb - currentDb > SETTLE_EPSILON_DB) settled = false;
           const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
-          const yellowBottomY = dbToY(YELLOW_ZONE_DB, meterTop, meterBottom);
+          // The binaural/stereo trailing group is a two-channel downmix,
+          // same multi-channel floor as the per-speaker bars above.
+          const yellowBottomY = dbToY(MULTI_CHANNEL_YELLOW_ZONE_DB, meterTop, meterBottom);
 
           drawMeterBar(
             ctx, barX, barWidth, meterTop, meterBottom, redBottomY, yellowBottomY,
             currentDb, peakDb, false, meterLevel.clipped,
+            { yellowZoneDb: MULTI_CHANNEL_YELLOW_ZONE_DB },
           );
           if (currentMode === "stereo") drawLabel(ctx, label, centerX, meterBottom + 3, canvasTheme.headphone, pitch);
         });

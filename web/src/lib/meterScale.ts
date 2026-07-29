@@ -17,7 +17,17 @@ export const DB_TICKS = [0, -5, -10, -15, -20, -30, -45, -60];
 export const STRIP_DB_TICKS = [0, -3, -6, -9, -12, -15, -18, -24, -30, -35, -40, -50, -60];
 
 export const RED_ZONE_DB = -5;
+/** Yellow-zone floor for a meter that represents a single channel in
+ * isolation (a mono stem's strip meter). Kept lower than
+ * `MULTI_CHANNEL_YELLOW_ZONE_DB` so a single discrete channel still gates
+ * into "hot" at the finer, earlier threshold a solo reading benefits from. */
 export const YELLOW_ZONE_DB = -20;
+/** Yellow-zone floor for a meter representing two or more channels together
+ * — a stereo/master strip, the full speaker layout (`ChannelMeters`, always
+ * multi-channel), or a stereo stem's inline fader. Later than the
+ * single-channel floor so a busy multi-channel read doesn't spend most of
+ * ordinary playback sitting in yellow. */
+export const MULTI_CHANNEL_YELLOW_ZONE_DB = -10;
 export const CLIP_DB = -1;
 export const PEAK_DECAY_DB_PER_SEC = 14;
 // Same exponential rate HazeView/ElevationView smooth their per-stem level
@@ -104,10 +114,12 @@ export const STRIP_METER_PALETTE: MeterPalette = {
 };
 
 /** Colour a lit bar takes at a given dB — `safe` below the yellow zone,
- * `warn` through it, `hot` above the red zone. */
-export function zoneColor(db: number, palette: MeterPalette = FIELD_METER_PALETTE) {
+ * `warn` through it, `hot` above the red zone. `yellowZoneDb` defaults to the
+ * single-channel floor; pass `MULTI_CHANNEL_YELLOW_ZONE_DB` for a meter that
+ * represents two or more channels together. */
+export function zoneColor(db: number, palette: MeterPalette = FIELD_METER_PALETTE, yellowZoneDb: number = YELLOW_ZONE_DB) {
   if (db >= RED_ZONE_DB) return palette.hot;
-  if (db >= YELLOW_ZONE_DB) return palette.warn;
+  if (db >= yellowZoneDb) return palette.warn;
   return palette.safe;
 }
 
@@ -138,9 +150,12 @@ export function drawMeterBar(
     ticks?: readonly number[];
     /** Corner radius, for the rounded slot a channel strip's meter sits in. */
     radius?: number;
+    /** Must match whatever dB the caller used to compute `yellowBottomY`, so
+     * the held-peak tick's colour agrees with the bar's own fill zones. */
+    yellowZoneDb?: number;
   } = {},
 ) {
-  const { well, palette = FIELD_METER_PALETTE, ticks = DB_TICKS, radius = 0 } = options;
+  const { well, palette = FIELD_METER_PALETTE, ticks = DB_TICKS, radius = 0, yellowZoneDb = YELLOW_ZONE_DB } = options;
   const slot = (fill: string) => {
     ctx.fillStyle = fill;
     ctx.beginPath();
@@ -182,7 +197,7 @@ export function drawMeterBar(
   // within a hair of clipping, otherwise the colour of the zone it sits in.
   if (peakDb > -60) {
     const peakY = dbToY(peakDb, meterTop, meterBottom, ticks);
-    ctx.fillStyle = peakDb >= CLIP_DB ? canvasTheme.mute : zoneColor(peakDb, palette);
+    ctx.fillStyle = peakDb >= CLIP_DB ? canvasTheme.mute : zoneColor(peakDb, palette, yellowZoneDb);
     ctx.fillRect(barX, Math.max(meterTop, peakY - 1), barWidth, 2);
   }
 

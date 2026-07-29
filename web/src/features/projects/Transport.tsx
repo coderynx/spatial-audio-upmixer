@@ -1,9 +1,11 @@
 import * as React from "react";
 import { Pause, Play, Repeat, Square, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { HorizontalFader } from "@/components/ui/horizontal-fader";
 import { canvasTheme } from "@/lib/canvasTheme";
 import { formatFaderDb } from "@/lib/fader";
 import { cn } from "@/lib/utils";
+import type { MeterLevel } from "./useStemPreview";
 
 function digits(seconds: number) {
   const clamped = Math.max(0, seconds || 0);
@@ -25,7 +27,7 @@ function LcdDisplay({ currentTime, duration, mode, onToggleMode }: { currentTime
   const value = mode === "elapsed" ? digits(currentTime) : `-${digits(remaining)}`;
   return (
     <div
-      className="flex h-9 shrink-0 items-stretch rounded-md border shadow-[inset_0_2px_5px_rgba(0,0,0,0.7)]"
+      className="flex h-10 shrink-0 items-stretch rounded-md border shadow-[inset_0_2px_5px_rgba(0,0,0,0.7)]"
       style={{ backgroundColor: canvasTheme.plotField, borderColor: canvasTheme.gridSoft }}
     >
       <button
@@ -75,6 +77,7 @@ function TransportImpl({
   onToggleLoop,
   onSetVolume,
   onToggleMute,
+  headphoneLevels,
   children,
 }: {
   playing: boolean;
@@ -90,11 +93,22 @@ function TransportImpl({
   onToggleLoop: () => void;
   onSetVolume: (value: number) => void;
   onToggleMute: () => void;
+  /** Live L/R signal reaching the monitor output — drives the volume
+   * fader's live-level bars (`HorizontalFader`'s `meterSource`), independent
+   * of the fader's own value the same way every other meter in the app is. */
+  headphoneLevels: React.MutableRefObject<{ left: MeterLevel; right: MeterLevel }>;
   // Extra controls (e.g. the output-mode picker) rendered in the same card,
   // after the volume control, so the whole row shares the card's full width.
   children?: React.ReactNode;
 }) {
   const [mode, setMode] = React.useState<"elapsed" | "remaining">("elapsed");
+  // Stable identity (headphoneLevels is a ref, not state) — the volume
+  // fader's own rAF loop calls this every frame, so a fresh function here
+  // would tear down and restart that loop on every render.
+  const meterSource = React.useCallback(
+    () => [headphoneLevels.current.left, headphoneLevels.current.right],
+    [headphoneLevels],
+  );
   // While playing, `currentTime` (React state on the shared preview hook) is
   // deliberately not updated every frame — that used to re-render the whole
   // page ~60x/sec. Instead this component polls `currentTimeRef` in its own
@@ -124,11 +138,17 @@ function TransportImpl({
     <div className="grid h-12 shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 border-b bg-card px-2">
       <div aria-hidden="true" />
       <div className="flex items-center gap-2 justify-self-center">
+        {/* Sized up from the app's ordinary h-7 icon button (§6) on purpose:
+            transport is the control the user's hand returns to constantly
+            during a mix, and Apple gives its own transport clusters the same
+            emphasis over surrounding utility icons (mute/volume stay at the
+            ordinary size below). Scoped to this cluster via className, not a
+            change to Button's shared `icon` size. */}
         <div className="flex items-center gap-1.5 rounded-lg bg-muted p-1">
           <Button
             variant="ghost"
             size="icon"
-            className="text-foreground hover:bg-accent hover:text-foreground"
+            className="h-8 w-8 text-foreground hover:bg-accent hover:text-foreground [&_svg]:size-4"
             aria-label="Stop"
             disabled={disabled}
             onClick={onStop}
@@ -138,6 +158,7 @@ function TransportImpl({
           <Button
             variant={playing ? "success" : "secondary"}
             size="icon"
+            className="h-8 w-8 [&_svg]:size-4"
             aria-label={playing ? "Pause" : "Play"}
             aria-pressed={playing}
             disabled={disabled}
@@ -148,7 +169,7 @@ function TransportImpl({
           <Button
             variant={loop ? "warning" : "ghost"}
             size="icon"
-            className={cn(!loop && "text-foreground hover:bg-accent hover:text-foreground")}
+            className={cn("h-8 w-8 [&_svg]:size-4", !loop && "text-foreground hover:bg-accent hover:text-foreground")}
             aria-label="Toggle repeat"
             aria-pressed={loop}
             disabled={disabled}
@@ -164,9 +185,14 @@ function TransportImpl({
           the duplication the design spec's "one control per idea" rule
           rejects. */}
       <div className="flex shrink-0 items-center gap-1.5 justify-self-end">
+        {/* Matches the transport cluster's h-8 bump (see above) — volume and
+            output mode are read and touched just as constantly while a
+            preview is playing, so they get the same emphasis rather than
+            reading as an afterthought next to it. */}
         <Button
           variant="ghost"
           size="icon"
+          className="h-8 w-8 [&_svg]:size-4"
           aria-label={muted ? "Unmute" : "Mute"}
           aria-pressed={muted}
           disabled={disabled}
@@ -174,16 +200,28 @@ function TransportImpl({
         >
           {muted ? <VolumeX className="text-destructive" /> : <Volume2 />}
         </Button>
-        <input
-          aria-label="Preview monitor volume"
-          aria-valuetext={formatFaderDb(volume)}
-          className="h-1 w-14 accent-primary"
-          type="range"
+        {/* Logic-iPad-style horizontal fader (components/ui/
+            horizontal-fader.tsx), sized up from an ordinary inline slider —
+            monitor volume is read and adjusted constantly while a preview
+            plays, so it gets a wider track for finer drag resolution instead
+            of the cramped native <input type=range> this replaces. The two
+            live-level bars are the actual L/R signal reaching the monitor,
+            independent of the knob's own gain position — see
+            `horizontal-fader.tsx`'s doc comment. */}
+        <HorizontalFader
+          label="Preview monitor volume"
+          value={volume}
           min={0}
           max={1}
           step={0.01}
-          value={volume}
-          onChange={(event) => onSetVolume(Number(event.target.value))}
+          onChange={onSetVolume}
+          onReset={() => onSetVolume(1)}
+          valueText={formatFaderDb(volume)}
+          knobSize={18}
+          meterChannels={2}
+          meterSource={meterSource}
+          meterActive={playing}
+          className="w-32"
         />
         {/* dB-tapered monitor gain readout (lib/fader.ts) — unity (0.0 dB) at
             max is the render itself; there is no gain above it to give up
