@@ -164,11 +164,17 @@ export function OutputModeSelect({
         // ever shows ("Stereo mixdown"), and the chevron together — this
         // trigger sits packed against the mute button and volume fader (see
         // Transport.tsx), so a width that changed with the mode/profile
-        // would drag those along with it every time.
-        className="h-8 w-[156px] shrink-0 gap-1 px-2.5"
+        // would drag those along with it every time. `justify-between`
+        // pins the icon+label to the left edge and the chevron to the right
+        // edge, both at a constant position — the button's default centred
+        // content would otherwise drift both of them sideways as the label
+        // text's own length changed between profiles.
+        className="h-8 w-[156px] shrink-0 justify-between px-2.5"
       >
-        <CurrentIcon className="h-4 w-4 shrink-0" />
-        <span className="truncate text-xs font-medium text-muted-foreground">{triggerLabel}</span>
+        <span className="flex min-w-0 items-center gap-1">
+          <CurrentIcon className="h-4 w-4 shrink-0" />
+          <span className="truncate text-xs font-medium text-muted-foreground">{triggerLabel}</span>
+        </span>
         <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
       </Button>
       {open && (
