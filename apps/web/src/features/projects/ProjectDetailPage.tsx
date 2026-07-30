@@ -453,6 +453,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       <Button
         variant="ghost"
         size="icon"
+        className="h-8 w-8 [&_svg]:size-4"
         aria-label={trackRailCollapsed ? "Show tracks" : "Hide tracks"}
         aria-pressed={!trackRailCollapsed}
         onClick={() => setTrackRailCollapsed((current) => !current)}
