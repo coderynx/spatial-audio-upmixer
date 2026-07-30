@@ -4,7 +4,10 @@ Spatial Audio Upmixer is a Python library and command-line tool for converting m
 audio into higher-channel-count spatial beds. It combines content-aware spatial processing, optional neural source
 separation, and a shared mastering chain to produce standard multichannel WAV or ADM-BWF files.
 
-The installable package, Python namespace, and command remain `upmixer`.
+The installable library package and Python namespace remain `upmixer`. The `upmixer` command now ships from a
+separate `upmixer-cli` package (which depends on `upmixer`), so you can install just the library without a CLI
+footprint. This repository is a uv workspace monorepo — `packages/core` (library), `apps/cli`, `apps/api`, and
+`apps/web` — see `AGENTS.md` for the full layout.
 
 An optional web application adds interactive track and album workflows without changing the CLI. It uses the same manifests and processing pipelines, so browser-configured jobs remain portable to automation.
 
@@ -13,8 +16,8 @@ An optional web application adds interactive track and album workflows without c
 Install and start the API:
 
 ```bash
-python3 -m pip install -e ".[dev,web,web-dev,separation-cpu]"
-python3 -m upmixer_web
+uv sync --all-packages --extra dev --extra web-dev --extra separation-cpu
+uv run upmixer-web
 ```
 
 Stem separation requires Python 3.11, 3.12, or 3.13. The `separation-cpu`
@@ -25,7 +28,7 @@ inference engine selects MPS acceleration when available. Use
 Start the React client in another terminal:
 
 ```bash
-cd web
+cd apps/web
 npm install
 npm run dev
 ```
@@ -53,7 +56,13 @@ Open `http://localhost:5173`. API documentation is available at `http://localhos
 
 ## Installation
 
-Install the core package for realtime processing:
+Install the CLI (pulls in the `upmixer` library automatically):
+
+```bash
+python3 -m pip install upmixer-cli
+```
+
+Or install just the library, for realtime processing without a CLI:
 
 ```bash
 python3 -m pip install upmixer
@@ -62,14 +71,14 @@ python3 -m pip install upmixer
 Install stem separation support for CPU or GPU inference:
 
 ```bash
-python3 -m pip install "upmixer[separation-cpu]"
-python3 -m pip install "upmixer[separation-gpu]"
+python3 -m pip install "upmixer-cli[separation-cpu]"
+python3 -m pip install "upmixer-cli[separation-gpu]"
 ```
 
 YAML manifests require PyYAML. JSON manifests work with the core installation.
 
 ```bash
-python3 -m pip install "upmixer[manifest]"
+python3 -m pip install "upmixer-cli[manifest]"
 ```
 
 For local development:
@@ -77,7 +86,7 @@ For local development:
 ```bash
 git clone https://github.com/coderynx/audio-upmixer.git
 cd audio-upmixer
-python3 -m pip install -e ".[dev]"
+uv sync --all-packages --extra dev --extra web-dev --extra manifest
 ```
 
 ## Quick Start
@@ -457,23 +466,23 @@ from upmixer import (
 
 ## Development
 
-Install development dependencies and run the complete suite:
+Install development dependencies and run each package's suite:
 
 ```bash
-python3 -m pip install -e ".[dev]"
-python3 -m pytest -q
+uv sync --all-packages --extra dev --extra web-dev --extra manifest
+uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q
 ```
 
 Performance and real-model checks are opt-in:
 
 ```bash
-python3 -m pytest -m perf -s
+uv run pytest packages/core/tests -m perf -s
 ```
 
-Build distributions when the `build` package is installed:
+Build a distribution for a given package:
 
 ```bash
-python3 -m build
+uv build packages/core
 ```
 
 ## References
@@ -493,4 +502,4 @@ standards.
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0-or-later](LICENSE)
