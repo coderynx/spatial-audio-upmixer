@@ -56,6 +56,16 @@ Architecture, design rationale, and cross-system parity notes do not belong in c
 
 Exemptions: `# noqa: F401` / `# type: ignore` pragmas; the three public re-export shim modules, which retain their `# noqa: F401` imports; and vendored code under `upmixer/separation/inference/archs/`, which tracks upstream and keeps its own comment style as-is.
 
+## File Size Policy
+
+Soft target: ~400 lines per file. Hard cap: ~600 lines — split above this unless the file is a named exemption below.
+
+Exemptions (must still try to stay reasonable, but not required to split): vendored code (`upmixer/separation/inference/archs/`), generated/data files, and a file that is genuinely one cohesive class/dataclass/constant table with no separable concern.
+
+Named long-but-cohesive files (checked when this rule was written; don't re-split without a new reason): `web/src/features/projects/previewGraph.ts`, `web/src/features/projects/masteringProfiles.ts`, `upmixer/pipeline.py`, `upmixer/separation/separator.py`, `upmixer/separation/stem_router.py`, `upmixer/mastering/match_reference.py`.
+
+How to split: mirror the project's existing per-responsibility decomposition — a package `__init__.py` re-exporting the original public names (like `mastering/`, `separation/`, `binaural/`, `crosstalk/`), or sibling flat modules matching an existing prefix convention (like `upmixer_web`'s `project_storage.py`/`project_routing.py`). Preserve every existing import path either via re-export or a compatibility shim (see the `mastering_comp.py`/`mastering_bass.py`/`mastering_eq.py` shim pattern). Applies to `upmixer/`, `upmixer_web/`, `web/src/`, and `tests/`.
+
 ## Testing and Change Validation
 
 Place coverage beside related tests as `test_<feature>.py` with `test_<behavior>` functions. Reuse fixtures from `tests/conftest.py`; fixtures must be referenced by at least one test. Do not add test-only helpers to production code. Mark benchmarks with `@pytest.mark.perf`.

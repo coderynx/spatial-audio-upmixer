@@ -39,89 +39,24 @@ import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import { TimelineView } from "./TimelineView";
 import { Transport } from "./Transport";
+import {
+  HAZE_MIN_WIDTH,
+  METERS_DEFAULT_SHARE,
+  METERS_MIN_WIDTH,
+  PANE_DEFAULT_HEIGHT,
+  PANE_MIN_HEIGHT,
+} from "./projectDetailLayout";
+import { useColumnLayout } from "./useColumnLayout";
+import { usePaneLayout } from "./usePaneLayout";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
 import { useTrackPeaks } from "./useTrackPeaks";
 
 type Stage = "mixing" | "mastering" | "delivery";
 
-/** The bottom pane's two views, or `null` for collapsed. Persisted per
- * project so a session comes back to the surface the user was working in. */
-type PaneView = "timeline" | "mixer" | null;
-
 const PANE_SEGMENTS = [
   { value: "timeline" as const, label: "Timeline", icon: AudioWaveform },
   { value: "mixer" as const, label: "Mixer", icon: SlidersHorizontal },
 ];
-
-const PANE_MIN_HEIGHT = 140;
-const PANE_DEFAULT_HEIGHT = 260;
-/** Left for the spatial displays above the pane, so dragging the divider to
- * the top of its travel can never squeeze them out of existence. */
-const PANE_HEADROOM = 220;
-/** Absolute roof on the pane's own height, independent of how much headroom
- * a large window would otherwise allow — on a tall display `available -
- * PANE_HEADROOM` alone permits a pane so large the spatial row above it
- * shrinks to an unusably thin strip well before that dynamic ceiling is
- * reached. This caps it outright. */
-const PANE_MAX_HEIGHT = 480;
-
-function paneStorageKey(projectId: string | undefined) {
-  return `upmixer.project.${projectId || "unknown"}.pane`;
-}
-
-function readStoredPane(projectId: string | undefined): PaneView {
-  try {
-    const stored = window.localStorage.getItem(paneStorageKey(projectId));
-    if (stored === "mixer" || stored === "timeline") return stored;
-    if (stored === "off") return null;
-  } catch {
-    // Private-mode or blocked storage: fall through to the default.
-  }
-  return "timeline";
-}
-
-function readStoredPaneHeight(projectId: string | undefined): number {
-  try {
-    const stored = Number(window.localStorage.getItem(`${paneStorageKey(projectId)}.height`));
-    if (Number.isFinite(stored) && stored >= PANE_MIN_HEIGHT) return Math.min(stored, PANE_MAX_HEIGHT);
-  } catch {
-    // Same fallback as `readStoredPane`.
-  }
-  return PANE_DEFAULT_HEIGHT;
-}
-
-/** Floors (and, for Meters, a ceiling) for the spatial row's three
- * displays — Haze's own drag-resize can't shrink it past `HAZE_MIN_WIDTH`;
- * Elevation is a true `flex-1` with `min-w-[ELEVATION_MIN_WIDTH]`, so it can
- * never be squeezed past that either, no matter what Haze/Meters do; Meters'
- * own drag-resize is bounded by both `METERS_MIN_WIDTH` and
- * `METERS_MAX_WIDTH` (this used to be `ChannelMeters`' own baked-in
- * `min-w-[180px] max-w-[480px]`, moved out to the caller alongside the rest
- * of this resize system). */
-const HAZE_MIN_WIDTH = 140;
-const ELEVATION_MIN_WIDTH = 160;
-const METERS_MIN_WIDTH = 180;
-const METERS_MAX_WIDTH = 480;
-/** Gap between the three displays (matches the row's own `gap-2`). */
-const ROW_GAP = 8;
-/** Meters' default width when neither column has been dragged — Haze takes
- * its own square, Meters takes this (a reasonable point in its own range),
- * and Elevation (`flex-1`) takes whatever's left. */
-const METERS_DEFAULT_SHARE = 320;
-
-function columnStorageKey(projectId: string | undefined) {
-  return `upmixer.project.${projectId || "unknown"}.columns`;
-}
-
-function readStoredColumnExtra(projectId: string | undefined, name: "haze" | "elevation"): number {
-  try {
-    const stored = Number(window.localStorage.getItem(`${columnStorageKey(projectId)}.${name}Extra`));
-    if (Number.isFinite(stored)) return stored;
-  } catch {
-    // Same fallback as the pane helpers above.
-  }
-  return 0;
-}
 
 const STAGES = [
   { value: "mixing" as const, label: "Mixing", icon: SlidersHorizontal },
@@ -297,102 +232,14 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const [outputMode, setOutputMode] = React.useState<OutputMode>("binaural");
   const [spatialProfile, setSpatialProfile] = React.useState<SpatialProfile>("studio");
   const [transauralProfile, setTransauralProfile] = React.useState<TransauralProfile>("stereo");
-  const [paneView, setPaneView] = React.useState<PaneView>(() => readStoredPane(projectId));
-  const [paneHeight, setPaneHeight] = React.useState(() => readStoredPaneHeight(projectId));
-  const previewColumn = React.useRef<HTMLElement>(null);
-  const paneDrag = React.useRef<{ startY: number; startHeight: number } | null>(null);
-  React.useEffect(() => {
-    setPaneView(readStoredPane(projectId));
-    setPaneHeight(readStoredPaneHeight(projectId));
-  }, [projectId]);
-  const changePane = React.useCallback((next: PaneView) => {
-    setPaneView(next);
-    try {
-      window.localStorage.setItem(paneStorageKey(projectId), next ?? "off");
-    } catch {
-      // Storage being unavailable only costs the preference, not the view.
-    }
-  }, [projectId]);
-  // Divider drag. Height is clamped against the live column height so the
-  // spatial displays above always keep `PANE_HEADROOM`, which is what stops a
-  // drag to the top from collapsing them and forcing the page to scroll —
-  // and separately against `PANE_MAX_HEIGHT`, an absolute roof so a big
-  // enough window can't still drag the pane large enough to squeeze that
-  // row thin even though headroom alone would technically allow it.
-  const resizePaneTo = React.useCallback((height: number) => {
-    const available = previewColumn.current?.clientHeight ?? 0;
-    const ceiling = Math.min(PANE_MAX_HEIGHT, Math.max(PANE_MIN_HEIGHT, available - PANE_HEADROOM));
-    setPaneHeight(Math.round(Math.min(ceiling, Math.max(PANE_MIN_HEIGHT, height))));
-  }, []);
-  const beginPaneResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    paneDrag.current = { startY: event.clientY, startHeight: paneHeight };
-  };
-  const movePaneResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = paneDrag.current;
-    if (!drag) return;
-    resizePaneTo(drag.startHeight + (drag.startY - event.clientY));
-  };
-  const endPaneResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!paneDrag.current) return;
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-    paneDrag.current = null;
-    try {
-      window.localStorage.setItem(`${paneStorageKey(projectId)}.height`, String(paneHeight));
-    } catch {
-      // See `changePane`.
-    }
-  };
-  const paneResizeKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    const moves: Record<string, number> = { ArrowUp: 16, ArrowDown: -16, PageUp: 64, PageDown: -64 };
-    if (!(event.key in moves)) return;
-    event.preventDefault();
-    resizePaneTo(paneHeight + moves[event.key]);
-  };
-  // Haze/Meters are "natural size + user delta" (hazeExtra/elevationExtra), the
-  // same pattern StripResizeHandle uses for mixer strips. Elevation stays flex-1
-  // with no stored width, so the row can't develop an unfilled gap.
-  //
-  // Callback ref, not useRef + useEffect([]): the row only enters the DOM once
-  // `ready` flips true, so a mount-only effect would find rowRef.current still
-  // null and never retry.
-  const rowObserver = React.useRef<ResizeObserver | null>(null);
-  const [rowSize, setRowSize] = React.useState({ width: 0, height: 0 });
-  const rowRef = React.useCallback((node: HTMLDivElement | null) => {
-    rowObserver.current?.disconnect();
-    rowObserver.current = null;
-    if (!node) return;
-    // Read synchronously on attach — the observer's first callback isn't
-    // guaranteed to land promptly (same as HazeView's resize handling).
-    setRowSize({ width: node.clientWidth, height: node.clientHeight });
-    const observer = new ResizeObserver(([entry]) => {
-      setRowSize({ width: entry.contentRect.width, height: entry.contentRect.height });
-    });
-    observer.observe(node);
-    rowObserver.current = observer;
-  }, []);
-  React.useEffect(() => () => rowObserver.current?.disconnect(), []);
-  const [hazeExtra, setHazeExtra] = React.useState(() => readStoredColumnExtra(projectId, "haze"));
-  const [elevationExtra, setElevationExtra] = React.useState(() => readStoredColumnExtra(projectId, "elevation"));
-  React.useEffect(() => {
-    setHazeExtra(readStoredColumnExtra(projectId, "haze"));
-    setElevationExtra(readStoredColumnExtra(projectId, "elevation"));
-  }, [projectId]);
-  const commitColumnExtra = (name: "haze" | "elevation", px: number) => {
-    try {
-      window.localStorage.setItem(`${columnStorageKey(projectId)}.${name}Extra`, String(px));
-    } catch {
-      // See `changePane`.
-    }
-  };
-  // Clamped every render against the row's live measured size (not just on drag),
-  // so a window resize between drags can't leave a stale width that no longer fits.
-  const hazeMaxWidth = Math.max(HAZE_MIN_WIDTH, rowSize.width - ROW_GAP * 2 - ELEVATION_MIN_WIDTH - METERS_MIN_WIDTH);
-  const hazeWidth = Math.min(hazeMaxWidth, Math.max(HAZE_MIN_WIDTH, rowSize.height + hazeExtra));
-  // Elevation is flex-1 with no stored width; elevationExtra shrinks Meters' width instead.
-  const metersMaxWidth = Math.min(METERS_MAX_WIDTH, Math.max(METERS_MIN_WIDTH, rowSize.width - hazeWidth - ROW_GAP * 2 - ELEVATION_MIN_WIDTH));
-  const metersWidth = Math.min(metersMaxWidth, Math.max(METERS_MIN_WIDTH, METERS_DEFAULT_SHARE - elevationExtra));
+  const {
+    paneView, paneHeight, previewColumn, changePane, resizePaneTo,
+    beginPaneResize, movePaneResize, endPaneResize, paneResizeKeys,
+  } = usePaneLayout(projectId);
+  const {
+    rowRef, rowSize, hazeExtra, setHazeExtra, elevationExtra, setElevationExtra,
+    commitColumnExtra, hazeMaxWidth, hazeWidth, metersMaxWidth, metersWidth,
+  } = useColumnLayout(projectId);
   // strength/spectrum/rms come from the manifest (instant, no round-trip); the FIR
   // and RMS gain come from the server-precomputed asset — see Ledger D12.
   const previewMastering = React.useMemo(() => {

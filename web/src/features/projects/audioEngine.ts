@@ -48,6 +48,16 @@ import {
 } from "./previewGraph";
 import { faderPositionToGain } from "@/lib/fader";
 import { TransportClock } from "./transportClock";
+import {
+  CORRECTION_STEP_MS,
+  applyTruePeakCeiling,
+  buildAnalysisExcerpts,
+  isClippedPeak,
+  loudnessGainFor,
+} from "./audioAnalysis";
+import { fetchDecodeFilterPart, fetchXtcFilterSet, loadBuffer } from "./audioLoaders";
+
+export { applyTruePeakCeiling } from "./audioAnalysis";
 
 // Framework-free DAW audio layer — see docs/web_architecture.md "Preview audio graph".
 export type EngineRef<T> = { current: T };
@@ -145,22 +155,6 @@ function rampGainTo(param: AudioParam, target: number, ctx: BaseAudioContext) {
   param.setTargetAtTime(target, ctx.currentTime, GAIN_RAMP_TIME_CONSTANT);
 }
 
-// Browser fetch loader; kept decoupled from the golden-diff harness's disk-read loader.
-async function fetchDecodeFilterPart(ctx: BaseAudioContext, partName: string): Promise<AudioBuffer> {
-  const response = await fetch(`/hrir/${partName}.wav`);
-  if (!response.ok) throw new Error(`Decode filter part missing: ${partName}.wav`);
-  const data = await response.arrayBuffer();
-  return ctx.decodeAudioData(data);
-}
-
-// Same rationale as fetchDecodeFilterPart above, for the transaural XTC filter WAV.
-async function fetchXtcFilterSet(ctx: BaseAudioContext, name: string): Promise<AudioBuffer> {
-  const response = await fetch(`/xtc/${name}.wav`);
-  if (!response.ok) throw new Error(`Crosstalk filter set missing: ${name}.wav`);
-  const data = await response.arrayBuffer();
-  return ctx.decodeAudioData(data);
-}
-
 // See docs/web_architecture.md "Preview audio graph" — Routing.
 function createStemSends(
   ctx: BaseAudioContext,
@@ -220,61 +214,6 @@ function createStemSends(
   }
 
   return { sends, ownNodes };
-}
-
-async function loadBuffer(ctx: AudioContext, url: string): Promise<AudioBuffer> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("Preview stem could not be loaded");
-  const data = await response.arrayBuffer();
-  return ctx.decodeAudioData(data);
-}
-
-// See docs/web_architecture.md "Preview audio graph" — Offline pre-playback analysis.
-const CORRECTION_STEP_MS = 16;
-
-const ANALYSIS_MAX_SECONDS = 10;
-const ANALYSIS_EXCERPT_COUNT = 5;
-
-type AnalysisExcerpt = { offlineStart: number; originalOffset: number; duration: number };
-
-function buildAnalysisExcerpts(durationSeconds: number): { excerpts: AnalysisExcerpt[]; totalSeconds: number } {
-  if (durationSeconds <= ANALYSIS_MAX_SECONDS) {
-    return { excerpts: [{ offlineStart: 0, originalOffset: 0, duration: durationSeconds }], totalSeconds: durationSeconds };
-  }
-  const segmentSeconds = ANALYSIS_MAX_SECONDS / ANALYSIS_EXCERPT_COUNT;
-  const excerpts: AnalysisExcerpt[] = [];
-  for (let i = 0; i < ANALYSIS_EXCERPT_COUNT; i++) {
-    const center = (durationSeconds * (i + 0.5)) / ANALYSIS_EXCERPT_COUNT;
-    const originalOffset = Math.max(0, Math.min(durationSeconds - segmentSeconds, center - segmentSeconds / 2));
-    excerpts.push({ offlineStart: i * segmentSeconds, originalOffset, duration: segmentSeconds });
-  }
-  return { excerpts, totalSeconds: ANALYSIS_MAX_SECONDS };
-}
-
-function loudnessGainFor(measuredLkfs: number, targetLkfs: number, maxGainDb: number = LOUDNESS_MAX_GAIN_DB): number {
-  if (measuredLkfs <= -70) return 1;
-  const gainDb = Math.min(targetLkfs - measuredLkfs, maxGainDb);
-  return 10 ** (gainDb / 20);
-}
-
-// See docs/web_architecture.md "Preview audio graph" — Clip detection.
-const CLIP_TOLERANCE = 10 ** (0.5 / 20); // +0.5dB
-function isClippedPeak(peak: number): boolean {
-  return peak > CLIP_TOLERANCE;
-}
-
-/** Second-stage gain reduction mirroring `normalize_loudness`'s
- * `max_tp_dbtp` correction (`upmixer/loudness.py`): given the gain
- * `loudnessGainFor` above already computed, reduce it further if applying
- * it would push the measured pre-gain true peak (`preGainTpDbtp`) over
- * `maxTpDbtp`. Returns the final gain to apply (folds `loudnessGain` in,
- * not just the extra reduction) — a no-op (`loudnessGain` unchanged) when
- * already under the ceiling. Exported (pure, no AudioContext) so this
- * exact formula is unit-testable without a live graph. */
-export function applyTruePeakCeiling(preGainTpDbtp: number, loudnessGain: number, maxTpDbtp: number): number {
-  const postGainTpDbtp = preGainTpDbtp + 20 * Math.log10(loudnessGain);
-  if (postGainTpDbtp <= maxTpDbtp) return loudnessGain;
-  return loudnessGain * 10 ** ((maxTpDbtp - postGainTpDbtp) / 20);
 }
 
 export type EngineCallbacks = {
