@@ -75,11 +75,11 @@ Consult the relevant neutral project reference before changing code governed by 
 
 An external, independently versioned knowledge base lives at `~/Projects/upmixer-knowledge/` (sibling git repo, not part of this repository — read it directly by absolute path with `Read`/`Grep`; it is not fetched or synced automatically). Consult `~/Projects/upmixer-knowledge/README.md` before:
 
-- adding or swapping separation models in `upmixer/separation/stem_plan.py` (stem-to-model mapping) and `upmixer/separation/inference/registry.py` (architecture, config, weights, license per checkpoint) — model registries and license policy are cataloged in `~/Projects/upmixer-knowledge/models/`,
+- adding or swapping separation models in `upmixer/separation/stem_plan.py` (stem-to-model mapping) and `upmixer/separation/inference/registry.py` (architecture, config, weights per checkpoint) — model registries are cataloged in `~/Projects/upmixer-knowledge/models/`,
 - implementing ensembling, chained separation, or bleed/phase post-processing (`~/Projects/upmixer-knowledge/techniques/`),
 - adding mastering or restoration stages (`~/Projects/upmixer-knowledge/techniques/mastering_restoration.md`, `~/Projects/upmixer-knowledge/models/restoration.md`).
 
-Model licenses are load-bearing: no NC-licensed weights may ship, and `VERIFY` rows must be resolved before integration. The improvement roadmap lives at `~/Projects/upmixer-knowledge/roadmap.md`. If the directory is missing (different machine/environment), say so rather than guessing its contents.
+The improvement roadmap lives at `~/Projects/upmixer-knowledge/roadmap.md`. If the directory is missing (different machine/environment), say so rather than guessing its contents.
 
 ## Commits and Pull Requests
 

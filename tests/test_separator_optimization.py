@@ -130,7 +130,7 @@ def test_separator_receives_full_precision_batch_options(tmp_path):
 
     fake_spec = ModelSpec(
         filename="model.ckpt", arch="bs_roformer",
-        config_name="unused", weights_url="", license="OK",
+        config_name="unused", weights_url="",
     )
 
     with (

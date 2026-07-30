@@ -53,8 +53,8 @@ def _load_state_dict(path: str) -> dict:
     except Exception:
         # Community MSST checkpoints are plain tensor state dicts, but some
         # were pickled with a wider payload than weights_only=True accepts.
-        # These are pinned, license-checked files (registry.py), not
-        # arbitrary user input, so the unsafe reload is acceptable here.
+        # These are pinned checkpoint files (registry.py), not arbitrary
+        # user input, so the unsafe reload is acceptable here.
         state = torch.load(path, map_location="cpu", weights_only=False)
     if isinstance(state, dict) and "state_dict" in state and not any(
         isinstance(v, torch.Tensor) for v in state.values()
