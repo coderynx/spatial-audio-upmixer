@@ -148,7 +148,7 @@ function TransportImpl({
     // holds, which is what keeps the transport pod in col 2 pinned to the
     // row's true centre — the page's stage tabs/settings (`leading`) sit in
     // col 1, the monitor cluster in col 3, Apple-transport-shaped either way.
-    <div className="grid h-12 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b bg-card px-2">
+    <div className="grid h-18 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b bg-card px-2 py-4">
       <div className="flex min-w-0 items-center gap-2 justify-self-start overflow-hidden">{leading}</div>
       <div className="flex items-center gap-2 justify-self-center">
         {/* Sized up from the app's ordinary h-7 icon button (§6) on purpose:
