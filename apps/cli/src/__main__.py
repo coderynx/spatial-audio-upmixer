@@ -22,9 +22,9 @@ from pathlib import Path
 
 _log = logging.getLogger("upmixer")
 
-from upmixer.cli.args import build_parser
-from upmixer.cli.flags import _apply_cli_flags, _apply_resource_limits, _parse_key_value_pairs  # noqa: F401
-from upmixer.cli.manifest_run import _run_manifest_assets
+from upmixer_cli.args import build_parser
+from upmixer_cli.flags import _apply_cli_flags, _apply_resource_limits, _parse_key_value_pairs  # noqa: F401
+from upmixer_cli.manifest_run import _run_manifest_assets
 from upmixer.config import UpmixConfig
 from upmixer.pipeline import UpmixPipeline
 

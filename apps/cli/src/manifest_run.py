@@ -4,7 +4,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from upmixer.cli.flags import _apply_cli_flags, _apply_resource_limits
+from upmixer_cli.flags import _apply_cli_flags, _apply_resource_limits
 from upmixer.config import UpmixConfig
 from upmixer.pipeline import UpmixPipeline
 
