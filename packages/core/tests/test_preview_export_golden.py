@@ -14,8 +14,8 @@ per-channel-RMS metrics for the fixed bed, the same way
 runs in the default suite (not opt-in) — it reads the *committed*
 `tests/fixtures/preview_export_golden/web_bed_metrics.json`, produced by
 running `npm run golden:render` from `web/` (see
-`web/scripts/render-preview-golden.mjs`) — that script bundles the real
-`web/src/features/projects/previewGraph.ts` with esbuild, renders the same
+`apps/web/scripts/render-preview-golden.mjs`) — that script bundles the real
+`apps/web/src/features/projects/previewGraph.ts` with esbuild, renders the same
 deterministic bed on a real `OfflineAudioContext` via `node-web-audio-api`
 (a spec-compliant native Web Audio implementation for Node), and writes the
 same metrics shape `_metrics()` below produces. Re-run that command to
@@ -36,7 +36,7 @@ extend this to the previously-uncovered stage (Ledger D10): the mastered bed
 is fed through `render_binaural_delivery` (ambisonic encode -> HOA decode ->
 voicing -> BS.1770 loudness normalize -> soft-limit, at the Studio profile),
 diffed against the equivalent web harness pass in
-`web/scripts/render-preview-golden.mjs` (which now also bundles
+`apps/web/scripts/render-preview-golden.mjs` (which now also bundles
 `previewGraph.ts`'s extracted `buildBinauralGraph` — see Ledger D7's
 successor there). Studio profile's voicing chain is all-zero/identity, which
 is why Ledger D11 (the preview adding LFE after voicing, not before like
@@ -104,7 +104,7 @@ def _tohex(value: float) -> str:
 def _mastering_config() -> UpmixConfig:
     """The mastering configuration both engines must apply to the bed.
 
-    Scoped to exactly what `web/src/features/projects/previewGraph.ts`
+    Scoped to exactly what `apps/web/src/features/projects/previewGraph.ts`
     currently implements: spectral EQ, bus compression, and bass control
     (incl. mono-maker via ``enhance``) on the discrete channel bed — the
     stages `buildMasteringGraph` was extracted from
@@ -132,7 +132,7 @@ def _deterministic_bed(sr: int, duration_s: float, fmt) -> dict[str, np.ndarray]
     at incommensurate frequency ratios so it isn't a single pure tone) —
     deliberately **not** RNG-based noise: this bed must be regenerated
     bit-for-bit identically by the web harness's JS port
-    (web/scripts/render-preview-golden.mjs::deterministicBed), and matching
+    (apps/web/scripts/render-preview-golden.mjs::deterministicBed), and matching
     a NumPy PCG64 bitstream in JS is impractical, whereas `Math.sin`/`math.sin`
     of the same double input agree to float precision on both sides — far
     inside this module's dB-scale tolerances. Distinct per-channel content
@@ -180,7 +180,7 @@ def _binaural_config() -> UpmixConfig:
     Defaults (Studio profile, -18 LKFS target, 0.95 peak-limit threshold)
     match what `useStemPreview.ts`'s `apply()` computes for binaural output
     with no per-project loudness/profile override — the same assumption
-    `web/scripts/render-preview-golden.mjs`'s binaural stage hardcodes.
+    `apps/web/scripts/render-preview-golden.mjs`'s binaural stage hardcodes.
     Deliberately a separate `UpmixConfig` from `_mastering_config()`'s (which
     stays `loudness_normalize=False`, scoped to the bed-only stage above) —
     this is the later, independent collapse-stage loudness pass.
@@ -218,14 +218,14 @@ def test_cross_engine_golden_diff():
 
     Reads ``tests/fixtures/preview_export_golden/web_bed_metrics.json``,
     produced by ``npm run golden:render`` (see
-    ``web/scripts/render-preview-golden.mjs``) — regenerate it if this test
+    ``apps/web/scripts/render-preview-golden.mjs``) — regenerate it if this test
     fails on a change to the bed, the mastering config, or the preview
     graph, rather than loosening these assertions.
     """
     if not os.path.exists(_WEB_METRICS_PATH):
         pytest.skip(
             f"{_WEB_METRICS_PATH} not found — run `npm run golden:render` "
-            "from web/ to generate it (see web/scripts/render-preview-golden.mjs). "
+            "from apps/web/ to generate it (see apps/web/scripts/render-preview-golden.mjs). "
             "See this module's docstring and docs/contracts/preview_export_parity.md §5."
         )
     python_metrics = _render_python_bed()
@@ -274,7 +274,7 @@ def test_cross_engine_binaural_golden_diff():
 
     Reads ``tests/fixtures/preview_export_golden/web_binaural_metrics.json``,
     produced by ``npm run golden:render`` (see the binaural stage
-    ``web/scripts/render-preview-golden.mjs`` adds after its existing bed
+    ``apps/web/scripts/render-preview-golden.mjs`` adds after its existing bed
     render) — regenerate it if this test fails on a change to the bed, the
     mastering config, the Spatial Audio Engine profile, or either engine's
     binaural graph, rather than loosening these assertions.
@@ -282,7 +282,7 @@ def test_cross_engine_binaural_golden_diff():
     if not os.path.exists(_WEB_BINAURAL_METRICS_PATH):
         pytest.skip(
             f"{_WEB_BINAURAL_METRICS_PATH} not found — run `npm run golden:render` "
-            "from web/ to generate it (see web/scripts/render-preview-golden.mjs). "
+            "from apps/web/ to generate it (see apps/web/scripts/render-preview-golden.mjs). "
             "See this module's docstring and docs/contracts/preview_export_parity.md §5."
         )
     python_metrics = _render_python_binaural()

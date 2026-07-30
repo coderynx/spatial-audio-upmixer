@@ -1,7 +1,7 @@
 # preview/export golden-diff fixtures
 
 Both files here are generated, not hand-written, by
-`web/scripts/render-preview-golden.mjs` — see
+`apps/web/scripts/render-preview-golden.mjs` — see
 `docs/contracts/preview_export_parity.md` §5.
 
 - `web_bed_metrics.json`: the web preview engine's measured
@@ -16,7 +16,7 @@ Both files here are generated, not hand-written, by
 
 Regenerate both after any change to the bed, the mastering config in
 `test_preview_export_golden.py::_mastering_config`/`_binaural_config`, or
-`web/src/features/projects/previewGraph.ts`:
+`apps/web/src/features/projects/previewGraph.ts`:
 
 ```bash
 cd web && npm run golden:render

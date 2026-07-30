@@ -103,7 +103,7 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
         assert view["reference_match"] is not None
         assert view["reference_match"]["fir_url"]
         # The URL is versioned with the asset's signature (see
-        # `_project_view` in upmixer_web/api.py) so the browser's
+        # `_project_view` in apps/api/src/api.py) so the browser's
         # fir_url-keyed decode cache (useStemPreview.ts's
         # refMatchBufferCache) is naturally busted on a real recompute
         # instead of serving a stale FIR for the AudioContext's lifetime.

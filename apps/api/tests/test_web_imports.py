@@ -5,7 +5,7 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("sqlalchemy")
 
-from tests.web_test_helpers import _wav_bytes, web_client
+from _helpers import _wav_bytes
 
 
 def test_album_import_preview_and_paused_job(web_client):

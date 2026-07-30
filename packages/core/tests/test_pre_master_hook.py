@@ -1,7 +1,7 @@
 """Tests for StemUpmixPipeline.process_file's pre_master_hook / PreMasterAbort.
 
 Covers the plumbing the web project's reference-match precompute relies on
-(see upmixer_web/worker.py::WorkerManager.prepare_reference_match): the hook
+(see apps/api/src/worker.py::WorkerManager.prepare_reference_match): the hook
 must see the exact pre-mastering channel bed, and raising PreMasterAbort must
 stop the run before mastering/writing without leaving a partial output file.
 """

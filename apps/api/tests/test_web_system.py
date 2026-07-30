@@ -6,8 +6,6 @@ pytest.importorskip("sqlalchemy")
 from upmixer_web.separation import separation_capability
 from upmixer_web.storage import LocalObjectStorage
 
-from tests.web_test_helpers import web_client
-
 
 def test_local_storage_rejects_parent_path(tmp_path):
     storage = LocalObjectStorage(tmp_path / "objects")

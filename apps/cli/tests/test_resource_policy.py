@@ -4,7 +4,7 @@ from __future__ import annotations
 import types
 from unittest.mock import patch
 
-from upmixer.__main__ import _apply_resource_limits
+from upmixer_cli.__main__ import _apply_resource_limits
 
 
 def _run(policy: str, mode: str):

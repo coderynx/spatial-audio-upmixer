@@ -3,8 +3,8 @@
 Compares upmixer.contract.canonical_constants() directly against the web
 side's own canonicalConstants(), dumped ahead of time to
 tests/fixtures/contract/web_constants.json by
-web/scripts/dump-constants.mjs (`npm run constants:dump` from web/).
-web/src/lib/contract.test.ts covers the equivalent TypeScript-side sanity
+apps/web/scripts/dump-constants.mjs (`npm run constants:dump` from web/).
+apps/web/src/lib/contract.test.ts covers the equivalent TypeScript-side sanity
 checks (determinism, no NaN/Infinity). If either side's contracted
 constants drift, this test fails with the specific diverging keys — see
 docs/contracts/README.md for the required change protocol before editing a
@@ -42,8 +42,8 @@ def _diverging_keys(python_value: object, web_value: object, path: str = "") -> 
 
 def test_web_constants_match_python():
     assert os.path.exists(_FIXTURE_PATH), (
-        f"{_FIXTURE_PATH} not found — run `npm run constants:dump` from web/ "
-        "to generate it (see web/scripts/dump-constants.mjs)."
+        f"{_FIXTURE_PATH} not found — run `npm run constants:dump` from apps/web/ "
+        "to generate it (see apps/web/scripts/dump-constants.mjs)."
     )
     with open(_FIXTURE_PATH) as f:
         web_constants = json.load(f)
@@ -54,7 +54,7 @@ def test_web_constants_match_python():
         f"tests/fixtures/contract/web_constants.json:\n" + "\n".join(diffs) + "\n\n"
         "If this is an intentional, both-sides change, follow "
         "docs/contracts/README.md's change protocol: update the TypeScript mirror "
-        "(web/src/lib/contract.ts / masteringProfiles.ts), re-run "
+        "(apps/web/src/lib/contract.ts / masteringProfiles.ts), re-run "
         "`npm run constants:dump` from web/, then re-run this test."
     )
 

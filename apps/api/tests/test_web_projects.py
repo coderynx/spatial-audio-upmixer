@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from upmixer_web.api import create_app
 from upmixer_web.settings import Settings
 
-from tests.web_test_helpers import _wav_bytes, web_client
+from _helpers import _wav_bytes
 
 
 def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch):

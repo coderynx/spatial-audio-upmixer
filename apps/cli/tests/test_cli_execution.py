@@ -6,7 +6,7 @@ import sys
 import numpy as np
 import soundfile as sf
 
-from upmixer.__main__ import main
+from upmixer_cli.__main__ import main
 
 
 def test_help_lists_vocal_sub_stems(monkeypatch, capsys):
