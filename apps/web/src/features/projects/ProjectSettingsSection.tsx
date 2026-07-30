@@ -1,8 +1,10 @@
 import * as React from "react";
+import { Save } from "lucide-react";
 import { SelectField } from "@/components/forms/fields";
+import { api, type Configuration, type Project } from "@/api";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { Configuration, Project } from "@/api";
 import type { Manifest } from "@/lib/manifest";
 
 // Project-level identity and speaker layout. Layout lives here (not
@@ -61,6 +63,20 @@ export function ProjectSettingsSection({
         options={(configuration?.choices.preview_qualities || ["low", "medium", "high"]).map((value) => ({ value, label: value }))}
         hint="Lower quality decodes and loads faster in the browser preview. Does not affect the exported/delivered master."
       />
+      {project.tracks.length > 0 && (
+        <div className="space-y-2 border-t pt-4">
+          <Button variant="outline" size="sm" asChild>
+            <a href={api.projectArchiveUrl(project.id)} download aria-label="Download project">
+              <Save />
+              Download project
+            </a>
+          </Button>
+          <p className="text-[11px] text-muted-foreground">
+            A portable .upmix.zip re-importable to an identical workspace — distinct from the Delivery tab's
+            "Export project", which renders a deliverable mix, not a re-editable project.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

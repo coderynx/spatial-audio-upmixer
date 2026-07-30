@@ -58,6 +58,18 @@ export const ROW_GAP = 8;
  * and Elevation (`flex-1`) takes whatever's left. */
 export const METERS_DEFAULT_SHARE = 320;
 
+export function trackRailStorageKey(projectId: string | undefined) {
+  return `upmixer.project.${projectId || "unknown"}.trackRail`;
+}
+
+export function readStoredTrackRailCollapsed(projectId: string | undefined): boolean {
+  try {
+    return window.localStorage.getItem(trackRailStorageKey(projectId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function columnStorageKey(projectId: string | undefined) {
   return `upmixer.project.${projectId || "unknown"}.columns`;
 }

@@ -11,7 +11,6 @@ import {
   Settings2,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
-import type { Configuration } from "@/api";
 import logoMark from "@/assets/logo-mark.svg";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -20,58 +19,20 @@ import { ThemeToggle } from "./ThemeToggle";
 
 const SIDEBAR_COLLAPSED_KEY = "upmixer.sidebar-collapsed";
 
-/** Processing-node state, rendered into the global status bar so machine
- * state is always visible without occupying a sidebar block. */
-function CapabilityStatus({ configuration }: { configuration: Configuration | null }) {
-  const stem = configuration?.capabilities.stem_separation;
-  const title = !stem
-    ? "Detecting processing node"
-    : !stem.available
-      ? "Stem engine unavailable"
-      : stem.accelerated
-        ? `${stem.backend === "cuda" ? "NVIDIA CUDA" : "Apple MPS"} available`
-        : "CPU processing";
-  const description = !stem
-    ? "Checking capabilities."
-    : !stem.available
-      ? stem.install_message || "Install separation support to enable stem jobs."
-      : stem.accelerated
-        ? "Accelerated separation selected automatically."
-        : stem.accelerator_issue || "No compatible accelerator detected.";
-  return (
-    <span className="flex min-w-0 items-center gap-1.5" title={`${title} — ${description}`}>
-      <span
-        className={cn(
-          "h-1.5 w-1.5 shrink-0 rounded-full",
-          stem?.accelerated ? "bg-success" : stem?.available ? "bg-primary" : "bg-warning",
-        )}
-      />
-      <span className="truncate">{title}</span>
-    </span>
-  );
-}
-
 export function AppShell({
   children,
-  configuration,
   onRefresh,
   onCreate,
   createLabel,
 }: {
   children: ReactNode;
-  configuration: Configuration | null;
-  onRefresh: () => void;
+  onRefresh?: () => void;
   onCreate?: () => void;
   createLabel?: string;
 }) {
   return (
     <HeaderSlotProvider>
-      <AppShellLayout
-        configuration={configuration}
-        onRefresh={onRefresh}
-        onCreate={onCreate}
-        createLabel={createLabel}
-      >
+      <AppShellLayout onRefresh={onRefresh} onCreate={onCreate} createLabel={createLabel}>
         {children}
       </AppShellLayout>
     </HeaderSlotProvider>
@@ -88,14 +49,12 @@ const NAV = [
 
 function AppShellLayout({
   children,
-  configuration,
   onRefresh,
   onCreate,
   createLabel,
 }: {
   children: ReactNode;
-  configuration: Configuration | null;
-  onRefresh: () => void;
+  onRefresh?: () => void;
   onCreate?: () => void;
   createLabel?: string;
 }) {
@@ -171,19 +130,23 @@ function AppShellLayout({
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-[var(--topbar-h)] shrink-0 items-center justify-between gap-3 border-b bg-card px-3">
-          <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">
             <div className="lg:hidden">
               <img src={logoMark} alt="" className="h-5 w-5" />
             </div>
-            <div className="min-w-0">{headerNode}</div>
+            {/* `flex-1` so a page whose own header content wants to centre
+                something (`ProjectDetailPage`'s stage tabs, via the same
+                three-column `minmax(0,1fr)_auto_minmax(0,1fr)` grid
+                `Transport` uses) gets the bar's true full width to centre
+                against, not just its own intrinsic content width. */}
+            <div className="min-w-0 flex-1">{headerNode}</div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <span className="mr-2 hidden text-[11px] text-muted-foreground sm:flex">
-              <CapabilityStatus configuration={configuration} />
-            </span>
-            <Button variant="ghost" size="icon" aria-label="Refresh" onClick={onRefresh}>
-              <RefreshCw />
-            </Button>
+            {onRefresh && (
+              <Button variant="ghost" size="icon" aria-label="Refresh" onClick={onRefresh}>
+                <RefreshCw />
+              </Button>
+            )}
             <div className="lg:hidden">
               <ThemeToggle />
             </div>

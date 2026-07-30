@@ -16,6 +16,10 @@ import { StoragePage } from "@/features/storage/StoragePage";
 export default function App() {
   const location = useLocation();
   const projectRoute = location.pathname.startsWith("/projects");
+  // The project view (an individual project's workspace) carries its own
+  // stage tabs and Save/Export actions in the top bar — the list page's
+  // Refresh/New project buttons would be redundant chrome there.
+  const projectDetailRoute = /^\/projects\/[^/]+/.test(location.pathname);
   const jobsRoute = location.pathname.startsWith("/jobs");
   const storageRoute = location.pathname.startsWith("/storage");
   const { jobs, configuration, loading, error, refresh, action } = useJobs(jobsRoute || storageRoute);
@@ -41,10 +45,14 @@ export default function App() {
   };
   return (
     <AppShell
-      configuration={effectiveConfiguration}
-      onRefresh={projectRoute ? () => void projectsState.refresh() : jobsRoute ? () => void refresh() : refreshAll}
-      onCreate={projectRoute ? () => setCreateProjectOpen(true) : jobsRoute ? createJob : undefined}
-      createLabel={projectRoute ? "New project" : jobsRoute ? "New job" : undefined}
+      onRefresh={
+        projectDetailRoute ? undefined
+        : projectRoute ? () => void projectsState.refresh()
+        : jobsRoute ? () => void refresh()
+        : refreshAll
+      }
+      onCreate={projectDetailRoute ? undefined : projectRoute ? () => setCreateProjectOpen(true) : jobsRoute ? createJob : undefined}
+      createLabel={projectDetailRoute ? undefined : projectRoute ? "New project" : jobsRoute ? "New job" : undefined}
     >
       <Routes>
         <Route path="/" element={<Navigate to="/projects" replace />} />

@@ -10,7 +10,7 @@ import {
   FolderOpen,
   Loader2,
   Package,
-  Save,
+  PanelLeft,
   Settings,
   SlidersHorizontal,
   UploadCloud,
@@ -23,7 +23,6 @@ import { EmptyState } from "@/app/EmptyState";
 import { InspectorGroup } from "@/app/InspectorRow";
 import { SegmentedControl } from "@/app/SegmentedControl";
 import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
-import { ToolbarSeparator } from "@/app/Toolbar";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
@@ -43,13 +42,15 @@ import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import { TimelineView } from "./TimelineView";
 import { Transport } from "./Transport";
-import { TrackSwitcher } from "./TrackSwitcher";
+import { TrackRail } from "./TrackRail";
 import {
   HAZE_MIN_WIDTH,
   METERS_DEFAULT_SHARE,
   METERS_MIN_WIDTH,
   PANE_DEFAULT_HEIGHT,
   PANE_MIN_HEIGHT,
+  readStoredTrackRailCollapsed,
+  trackRailStorageKey,
 } from "./projectDetailLayout";
 import { useColumnLayout } from "./useColumnLayout";
 import { usePaneLayout } from "./usePaneLayout";
@@ -277,6 +278,15 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     rowRef, rowSize, hazeExtra, setHazeExtra, elevationExtra, setElevationExtra,
     commitColumnExtra, hazeMaxWidth, hazeWidth, metersMaxWidth, metersWidth,
   } = useColumnLayout(projectId);
+  const [trackRailCollapsed, setTrackRailCollapsed] = React.useState(() => readStoredTrackRailCollapsed(projectId));
+  React.useEffect(() => setTrackRailCollapsed(readStoredTrackRailCollapsed(projectId)), [projectId]);
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem(trackRailStorageKey(projectId), trackRailCollapsed ? "1" : "0");
+    } catch {
+      // Storage being unavailable only costs the preference, not the view.
+    }
+  }, [projectId, trackRailCollapsed]);
   // strength/spectrum/rms come from the manifest (instant, no round-trip); the FIR
   // and RMS gain come from the server-precomputed asset — see Ledger D12.
   const previewMastering = React.useMemo(() => {
@@ -384,62 +394,74 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // `node` must stay referentially stable across renders — useHeaderTitle's
   // effect keys on it, so a fresh JSX element every render (e.g. inline
   // here) would re-fire the effect every render, which updates provider
-  // state, which re-renders this component, forever.
-  const headerTitle = React.useMemo(() => project ? <div className="flex min-w-0 items-center gap-1.5"><Link to="/projects" className="flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"><ChevronLeft className="h-3.5 w-3.5" />Projects</Link><span className="text-muted-foreground">/</span><span className="truncate text-[13px] font-semibold">{project.name}</span></div> : null, [project?.name]);
+  // state, which re-renders this component, forever. It's fine for the
+  // memo's own deps to include `activeTab`/`settingsView` now that the
+  // stage tabs live inside it — that's a real, bounded state change (a tab
+  // click), not a fresh element on every render, so the effect fires once
+  // per click and settles, the same as `project.name` changing.
+  //
+  // Three-column grid, the same `minmax(0,1fr)_auto_minmax(0,1fr)` trick
+  // `Transport` uses (see its own `leading` prop comment) so the stage tabs
+  // sit at the bar's true centre regardless of how long the project name or
+  // the settings segment gets, rather than merely centred in whatever space
+  // happens to be left over. The stage tabs are the app's workflow,
+  // deliberately condensed into one segmented control — Project settings is
+  // not a stage, so it sits on the right as its own one-segment
+  // `SegmentedControl` (identical look/press behavior, no fifth tab).
+  // Assets is reachable regardless of readiness — it's where readiness
+  // comes from — so these tabs stay visible instead of this being a
+  // full-page takeover the user can't navigate out of.
+  const headerTitle = React.useMemo(() => project ? (
+    <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+      <div className="flex min-w-0 items-center gap-1.5 justify-self-start">
+        <Link to="/projects" className="flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground">
+          <ChevronLeft className="h-3.5 w-3.5" />Projects
+        </Link>
+        <span className="text-muted-foreground">/</span>
+        <span className="truncate text-[13px] font-semibold">{project.name}</span>
+      </div>
+      <SegmentedControl
+        aria-label="Project stage"
+        segments={STAGES}
+        value={settingsView ? ("" as Stage) : activeTab}
+        onChange={(value) => {
+          setActiveTab(value);
+          setSettingsView(false);
+        }}
+        className="justify-self-center"
+      />
+      <SegmentedControl
+        aria-label="Project settings"
+        segments={SETTINGS_SEGMENT}
+        value={(settingsView ? "settings" : "") as "settings"}
+        onChange={() => setSettingsView(true)}
+        className="justify-self-end"
+      />
+    </div>
+  ) : null, [project?.name, activeTab, settingsView]);
   useHeaderTitle(headerTitle);
   if (!project) return <main className="grid h-full place-items-center p-5 text-sm text-muted-foreground">{error || "Loading project…"}</main>;
-  // Assets is reachable regardless of readiness — it's where readiness
-  // comes from. Mixing/Mastering/Delivery still gate on `ready` (below, per
-  // tab body), so the stage bar and track switcher stay visible instead of
-  // this being a full-page takeover the user can't navigate out of.
-  // The stage tabs are the app's workflow, deliberately condensed into one
-  // segmented control — Project settings is not a stage, so it sits outside
-  // that group entirely, past a `ToolbarSeparator`, as its own one-segment
-  // `SegmentedControl` (identical look/press behavior, no fourth tab).
-  const stageTabs = <>
-    <SegmentedControl
-      aria-label="Project stage"
-      segments={STAGES}
-      value={settingsView ? ("" as Stage) : activeTab}
-      onChange={(value) => {
-        setActiveTab(value);
-        setSettingsView(false);
-      }}
-    />
-    {activeTab !== "assets" && !settingsView && (
-      <>
-        <ToolbarSeparator />
-        <TrackSwitcher tracks={project.tracks} value={selectedTrack} onChange={setSelectedTrack} />
-      </>
-    )}
-    <ToolbarSeparator />
-    <SegmentedControl
-      aria-label="Project settings"
-      segments={SETTINGS_SEGMENT}
-      value={(settingsView ? "settings" : "") as "settings"}
-      onChange={() => setSettingsView(true)}
-    />
-    {project.tracks.length > 0 && (
-      <>
-        <ToolbarSeparator />
-        {/* DAW-style Save: a portable .upmix.zip re-importable to an
-            identical workspace — distinct from the Delivery tab's "Export
-            project", which renders a deliverable mix, not a re-editable
-            project. A non-workflow project action, so it sits here rather
-            than in the segmented group. */}
-        <Button variant="ghost" size="sm" asChild>
-          <a href={api.projectArchiveUrl(project.id)} download aria-label="Save project">
-            <Save />
-            <span className="hidden lg:inline">Save project</span>
-          </a>
-        </Button>
-      </>
-    )}
-  </>;
+  // What's left of the old merged stage/transport bar's leading slot once
+  // the stage tabs and Save moved up into the top bar (above): just the
+  // rail-reveal toggle.
+  const transportLeading = (
+    activeTab !== "assets" && !settingsView && (
+      // Reopens `TrackRail` once collapsed — collapsing takes the rail
+      // fully out of the layout (see TrackRail.tsx), so its own header
+      // button can't be what brings it back. This is the one place
+      // guaranteed to render whenever a rail-bearing stage is active.
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={trackRailCollapsed ? "Show tracks" : "Hide tracks"}
+        aria-pressed={!trackRailCollapsed}
+        onClick={() => setTrackRailCollapsed((current) => !current)}
+      >
+        <PanelLeft />
+      </Button>
+    )
+  );
   return <main className="flex h-[calc(100vh-var(--topbar-h))] w-full flex-col overflow-hidden">
-    {/* Merged with what used to be a separate stage-tabs toolbar above it —
-        one bar, always visible (including during Settings, unlike the
-        per-stage panels below), rather than two stacked rows. */}
     <Transport
       playing={preview.playing}
       currentTime={preview.currentTime}
@@ -455,7 +477,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       onSetVolume={preview.setVolume}
       onToggleMute={preview.toggleMute}
       headphoneLevels={preview.headphoneLevels}
-      leading={stageTabs}
+      leading={transportLeading}
     >
       <OutputModeSelect
         value={outputMode}
@@ -501,6 +523,14 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         className="flex-1"
       />
     ) : (() => {
+      const trackRail = (
+        <TrackRail
+          tracks={project.tracks}
+          value={selectedTrack}
+          onChange={setSelectedTrack}
+          collapsed={trackRailCollapsed}
+        />
+      );
       const previewPanel = <section ref={previewColumn} className="flex min-h-0 flex-col">
         <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
         {preview.error && <p className="shrink-0 text-[11px] text-destructive">{preview.error}</p>}
@@ -697,9 +727,16 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       // The stem rail was removed once the timeline pane's lanes took over
       // its exact job (select/mute/solo/reorder, see TimelineView.tsx) — one
       // list, shown wherever the bottom pane already is instead of a second
-      // copy beside it. Track switching moved into the toolbar (above),
-      // which the aside also used to carry.
-      if (activeTab === "mixing") return <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_320px]">
+      // copy beside it. Track switching lives in `trackRail` (left of the
+      // preview column, below), replacing the old toolbar dropdown.
+      // `TrackRail` stays mounted at `w-0` when collapsed rather than
+      // unmounting (see TrackRail.tsx), so this grid template stays fixed
+      // at 3 tracks regardless of collapse state — the first (`auto`) track
+      // just sizes to whatever width the rail is currently animating
+      // through, which is what makes the collapse/expand a smooth column
+      // resize instead of a CSS Grid auto-placement jump.
+      if (activeTab === "mixing") return <div className="grid min-h-0 flex-1 xl:grid-cols-[auto_minmax(0,1fr)_320px]">
+        {trackRail}
         {previewPanel}
         {effectiveManifest && <div className="flex min-h-0 flex-col overflow-y-auto border-l bg-card">
           <InspectorGroup
@@ -762,9 +799,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       // where those are defined). A project only ever reaches this branch
       // once ready, and `selectedTrack` auto-inits to the first track on
       // load, so `!selected` here means no track survived a delete —
-      // point back at the switcher rather than rendering panels with
-      // nothing to edit.
-      if (activeTab === "mastering") return trackManifest && (selected ? <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_460px]">
+      // point back at the rail rather than rendering panels with nothing to
+      // edit.
+      if (activeTab === "mastering") return trackManifest && (selected ? <div className="grid min-h-0 flex-1 xl:grid-cols-[auto_minmax(0,1fr)_460px]">
+        {trackRail}
         {previewPanel}
         <section className="min-h-0 overflow-auto border-l bg-card p-3">
           <MasteringSection
@@ -784,8 +822,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             onReferenceClear={() => { void saveReference(null); }}
           />
         </section>
-      </div> : <EmptyState icon={SlidersHorizontal} title="Select a track" description="Pick a track from the switcher above to edit its master." className="flex-1" />);
-      return trackManifest && (selected ? <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_460px]">
+      </div> : <EmptyState icon={SlidersHorizontal} title="Select a track" description="Pick a track from the rail to edit its master." className="flex-1" />);
+      return trackManifest && (selected ? <div className="grid min-h-0 flex-1 xl:grid-cols-[auto_minmax(0,1fr)_460px]">
+        {trackRail}
         {previewPanel}
         <section className="flex min-h-0 flex-col border-l bg-card">
           <div className="min-h-0 flex-1 overflow-auto p-3">
@@ -801,7 +840,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             </p>
           </div>
         </section>
-      </div> : <EmptyState icon={Package} title="Select a track" description="Pick a track from the switcher above to edit its delivery format." className="flex-1" />);
+      </div> : <EmptyState icon={Package} title="Select a track" description="Pick a track from the rail to edit its delivery format." className="flex-1" />);
     })()}
     <StatusBar>
       <StatusCell label="Layout" value={routingLayout} />

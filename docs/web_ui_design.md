@@ -598,32 +598,57 @@ though each bar still shows one channel's signal, because the meter as a
 whole is reading two channels together. Any new meter follows the same
 rule — check `bars.length`/`channels`, don't hardcode a floor.
 
-### 6.6 Merged stage/transport bar
+### 6.6 Project top bar and transport bar
 
-`ProjectDetailPage` used to stack two bars: a `Toolbar` (§5) holding the
-Mixing/Mastering/Delivery `SegmentedControl` plus "Project settings" and
-"Manifest JSON" buttons, directly above `Transport`'s own centred playback
-bar. They're one bar now — `Transport` gained a `leading` prop rendered in
-its grid's column 1 (previously always empty, kept that way only to mirror
-column 3's width for centring; col 1 and col 3 being equal `1fr` shares
-centres column 2 regardless of how much either side actually holds, so
-giving column 1 real content costs nothing). `ProjectDetailPage` passes its
-stage tabs there instead of rendering a separate `Toolbar` above.
+`ProjectDetailPage` used to stack a `Toolbar` (§5) holding the Mixing/
+Mastering/Delivery `SegmentedControl` above `Transport`'s own centred
+playback bar, then later merged that toolbar into `Transport`'s `leading`
+slot. The stage tabs have since moved again, up into the global top bar
+(`AppShell`'s `<header>`) beside the project's own breadcrumb and name —
+they're the project's identity and its workflow read as one unit, and it's
+the one bar that's *always* on screen (Settings used to swap `Transport`
+and everything under it out entirely; the merge fixed that once, moving up
+keeps it fixed). `ProjectDetailPage` builds this combined element itself
+and hands it to `useHeaderTitle`, since `HeaderSlot` only exposes a single
+slot — see the memo's own comment for why folding frequently-changing state
+(`activeTab`/`settingsView`) into that memo's deps is safe here (a bounded
+state change per click, not a fresh element every render).
 
+- **True centring, not leftover-space centring.** The header content is a
+  three-column grid, the same `minmax(0,1fr)_auto_minmax(0,1fr)` trick
+  `Transport` uses (see its own `leading` prop comment) — breadcrumb in col
+  1, stage tabs in col 2 (`justify-self-center`), Project settings in col 3
+  (`justify-self-end`). Equal flanking tracks are what keep col 2 pinned to
+  the bar's true centre regardless of how long the project name or the
+  settings segment gets; a flex row with a `flex-1` spacer would only centre
+  within whatever space happened to be left over. `AppShell`'s own header
+  gives the slot holding this content `flex-1` (see its own comment) so
+  there's a full bar width to centre against in the first place.
 - **The stage tabs are the workflow; Project settings is not one of its
-  steps.** The three stages stay condensed into one `SegmentedControl` —
-  that grouping *is* the point, it reads as "the sequence you follow." Project
-  settings sits past a `ToolbarSeparator` as a plain ghost `Button`, not a
-  fourth segment, precisely so it doesn't imply "next step after Delivery."
-  Any future non-workflow action on this bar (this page or another one that
-  adopts the same merged pattern) belongs on that side of the separator, not
-  folded into the segmented group.
-- **The bar is always visible, including during Settings.** Previously
-  `Transport` (and everything under it) was replaced outright while viewing
-  settings; merging put the stage tabs in the one place that was already
-  unconditionally rendered, so now Settings can be reached and left without
-  the bar disappearing, and playback controls stay reachable while adjusting
-  settings.
+  steps.** The four stages stay condensed into one `SegmentedControl` —
+  that grouping *is* the point, it reads as "the sequence you follow."
+  Project settings is its own one-segment `SegmentedControl` (identical
+  look/press behavior, no fifth tab) in col 3, precisely so it doesn't imply
+  "next step after Delivery."
+- **The top bar's right side empties out to make room.** `AppShell` renders
+  Refresh and the page's `onCreate` button only when their callbacks are
+  supplied; `App.tsx` withholds both (and the processing-capability status
+  that used to sit beside them) specifically on `/projects/:id`, since the
+  stage tabs need the width. The projects *list* route keeps all three.
+- **`Transport`'s `leading` slot now carries only the `TrackRail` reveal
+  toggle** (§4 — collapsing takes the rail out of the layout entirely, so
+  its own header button can't be what brings it back; this is the one place
+  guaranteed to render whenever a rail-bearing stage is active). Everything
+  else that used to live here (the stage tabs, then Save) has moved on.
+- **"Download project" lives inside the Settings view, not the top bar.**
+  It's a portable `.upmix.zip` re-importable to an identical workspace —
+  distinct from the Delivery tab's "Export project", which renders a
+  deliverable mix, not a re-editable project. It sits in
+  `ProjectSettingsSection` below the form fields, past a divider, with its
+  own one-line explanation (§6.3's "control text" rule: the label is the
+  documentation everywhere *except* where a constraint needs stating) —
+  gated on `project.tracks.length > 0` the same as the form fields above it
+  have something to act on.
 - **Manifest JSON is gone, not hidden.** The raw-JSON manifest editor
   (`AdvancedSection`) was a second, unfiltered way to edit project state
   alongside the structured `ProjectSettingsSection`/mastering/delivery forms;
