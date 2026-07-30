@@ -3,8 +3,8 @@ import pytest
 pytest.importorskip("fastapi")
 pytest.importorskip("sqlalchemy")
 
-from upmixer_web.separation import separation_capability
-from upmixer_web.storage import LocalObjectStorage
+from upmixer_web.shared.separation import separation_capability
+from upmixer_web.shared.storage import LocalObjectStorage
 
 
 def test_local_storage_rejects_parent_path(tmp_path):
@@ -44,7 +44,7 @@ def test_capability_uses_engine_selected_device(tmp_path, monkeypatch):
             return "mps"
 
     monkeypatch.setattr(
-        "upmixer_web.separation.importlib.util.find_spec",
+        "upmixer_web.shared.separation.importlib.util.find_spec",
         lambda _name: object(),
     )
     monkeypatch.setattr(
@@ -59,9 +59,9 @@ def test_capability_uses_engine_selected_device(tmp_path, monkeypatch):
 
 
 def test_capability_rejects_unsupported_torch_runtime(tmp_path, monkeypatch):
-    monkeypatch.setattr("upmixer_web.separation.sys.version_info", (3, 14, 0))
+    monkeypatch.setattr("upmixer_web.shared.separation.sys.version_info", (3, 14, 0))
     monkeypatch.setattr(
-        "upmixer_web.separation.importlib.util.find_spec",
+        "upmixer_web.shared.separation.importlib.util.find_spec",
         lambda _name: pytest.fail("torch must not load on Python 3.14"),
     )
 

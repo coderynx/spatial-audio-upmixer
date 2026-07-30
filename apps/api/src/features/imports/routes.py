@@ -10,12 +10,12 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, sta
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from upmixer_web.imports import ingest_mastering_reference, ingest_uploads
-from upmixer_web.models import ImportBatch, MediaAsset
-from upmixer_web.schemas import ImportView, MasteringReferenceView
+from upmixer_web.features.imports.schemas import ImportView, MasteringReferenceView
+from upmixer_web.features.imports.service import ingest_mastering_reference, ingest_uploads
+from upmixer_web.features.imports.views import import_view
 from upmixer_web.settings import Settings
-from upmixer_web.storage import ObjectStorage
-from upmixer_web.views import _import_view
+from upmixer_web.shared.models import ImportBatch, MediaAsset
+from upmixer_web.shared.storage import ObjectStorage
 
 
 def register_import_routes(
@@ -40,14 +40,14 @@ def register_import_routes(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return _import_view(batch, settings.root_path)
+        return import_view(batch, settings.root_path)
 
     @app.get("/api/v1/imports/{import_id}", response_model=ImportView, tags=["imports"])
     def read_import(import_id: str, session: Session = Depends(database_session)) -> ImportView:
         batch = session.get(ImportBatch, import_id)
         if not batch:
             raise HTTPException(status_code=404, detail="Import not found")
-        return _import_view(batch, settings.root_path)
+        return import_view(batch, settings.root_path)
 
     @app.post(
         "/api/v1/imports/{import_id}/mastering-references",

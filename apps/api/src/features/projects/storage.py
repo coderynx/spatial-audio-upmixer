@@ -13,7 +13,7 @@ from scipy.signal import resample_poly
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from upmixer_web.models import Project, ProjectStem, ProjectTrack
+from upmixer_web.shared.models import Project, ProjectStem, ProjectTrack
 
 REFERENCE_MATCH_FILENAME = "reference_match.wav"
 REFERENCE_MATCH_META_FILENAME = "reference_match.json"

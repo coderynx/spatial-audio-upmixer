@@ -31,7 +31,7 @@ def create_database_engine(database_url: str) -> Engine:
 
 def upgrade_database(database_url: str) -> None:
     """Apply committed migrations to the configured database."""
-    package_dir = Path(__file__).resolve().parent
+    package_dir = Path(__file__).resolve().parent.parent
     config = Config()
     config.attributes["database_url_configured"] = True
     config.set_main_option("script_location", str(package_dir / "migrations"))

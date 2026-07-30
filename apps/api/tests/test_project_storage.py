@@ -9,9 +9,7 @@ import soundfile as sf
 
 pytest.importorskip("sqlalchemy")
 
-from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectTrack
-from upmixer_web.project_storage import (
+from upmixer_web.features.projects.storage import (
     _PREVIEW_VORBIS_COMPRESSION_LEVEL,
     PEAK_BINS,
     PREVIEW_SAMPLE_RATE,
@@ -19,6 +17,8 @@ from upmixer_web.project_storage import (
     _compute_peaks,
     _write_preview,
 )
+from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectTrack
 
 
 @pytest.fixture

@@ -1,28 +1,27 @@
-"""FastAPI application and versioned external API."""
+"""FastAPI application factory: wires shared infrastructure and registers
+each feature slice's routes. See `docs/web_api_architecture.md`."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-from upmixer_web.manifests import configuration_schema
-from upmixer_web.models import Artifact
-from upmixer_web.project_storage import ProjectStemStorage
-from upmixer_web.routes_imports import register_import_routes
-from upmixer_web.routes_jobs import register_job_routes
-from upmixer_web.routes_projects import register_project_routes
-from upmixer_web.schemas import HealthResponse, ResolveStemRoutingRequest
-from upmixer_web.separation import separation_capability
+from upmixer_web.features.imports import register_import_routes
+from upmixer_web.features.jobs import register_job_routes
+from upmixer_web.features.projects import register_project_routes
+from upmixer_web.features.projects.storage import ProjectStemStorage
+from upmixer_web.features.system import register_system_routes
 from upmixer_web.settings import Settings
-from upmixer_web.storage import LocalObjectStorage, StorageAudioSink, StorageAudioSource
+from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+from upmixer_web.shared.separation import separation_capability
+from upmixer_web.shared.storage import LocalObjectStorage, StorageAudioSink, StorageAudioSource
 from upmixer_web.worker import WorkerManager
 
 
@@ -83,45 +82,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with sessions() as session:
             yield session
 
-    @app.get("/api/v1/health", response_model=HealthResponse, tags=["system"])
-    def health() -> HealthResponse:
-        return HealthResponse(workers=settings.worker_count)
-
-    @app.get("/api/v1/configuration", tags=["system"])
-    def get_configuration() -> dict:
-        return configuration_schema(stem_capability)
-
-    @app.post("/api/v1/stem-routing/resolve", tags=["system"])
-    def resolve_stem_routing(request: ResolveStemRoutingRequest) -> dict[str, dict[str, float]]:
-        from upmixer.formats import FORMAT_MAP
-        from upmixer.separation.stem_plan import normalize_stems
-        from upmixer.separation.stem_router import build_stem_routing
-
-        if request.channel_layout not in FORMAT_MAP:
-            raise HTTPException(status_code=422, detail="Unknown channel layout")
-        try:
-            stems = normalize_stems(request.stems)
-            return build_stem_routing(
-                stems, FORMAT_MAP[request.channel_layout], request.preset,
-                request.intensity,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
+    register_system_routes(app, settings, storage, stem_capability, database_session)
     register_import_routes(app, settings, storage, database_session)
     register_job_routes(app, settings, manager, stem_capability, database_session, sessions)
     register_project_routes(app, settings, storage, manager, stem_capability, database_session, sessions)
-
-    @app.get("/api/v1/artifacts/{artifact_id}/download", tags=["artifacts"])
-    def download_artifact(artifact_id: str, session: Session = Depends(database_session)) -> FileResponse:
-        artifact = session.get(Artifact, artifact_id)
-        if not artifact:
-            raise HTTPException(status_code=404, detail="Artifact not found")
-        return FileResponse(
-            storage.local_path(artifact.storage_key),
-            media_type=artifact.content_type,
-            filename=artifact.filename,
-        )
 
     frontend_dir = settings.frontend_dir
     if frontend_dir and (frontend_dir / "index.html").is_file():

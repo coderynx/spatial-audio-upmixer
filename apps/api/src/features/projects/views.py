@@ -1,45 +1,23 @@
-"""Response-view builders and small ORM helpers shared across API route groups."""
+"""Project response-view builder."""
 
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
 
-from upmixer_web.models import ImportBatch, Job, MasteringReference, Project
-from upmixer_web.project_storage import ProjectStemStorage
-from upmixer_web.schemas import ImportView, JobView, ProjectView, ReferenceMatchAssetView
-from upmixer_web.worker import WorkerManager
+from upmixer_web.features.projects.schemas import ProjectView, ReferenceMatchAssetView
+from upmixer_web.features.projects.storage import ProjectStemStorage
+from upmixer_web.shared.models import Project
 
-
-def _import_view(batch: ImportBatch, root_path: str = "") -> ImportView:
-    view = ImportView.model_validate(batch)
-    if batch.cover_key:
-        view.cover_url = f"{root_path}/api/v1/imports/{batch.id}/cover"
-    for asset in view.assets:
-        asset.audio_url = (
-            f"{root_path}/api/v1/imports/{batch.id}/assets/{asset.id}/audio"
-        )
-    return view
+if TYPE_CHECKING:
+    # Deferred: this module is reachable from upmixer_web.worker's import
+    # chain (via features.projects.routes), so a runtime import here would
+    # cycle back into a partially initialized upmixer_web.worker. PEP 563
+    # (see the __future__ import above) means the WorkerManager annotation
+    # below is never evaluated at runtime.
+    from upmixer_web.worker import WorkerManager
 
 
-def _job_view(job: Job, root_path: str = "") -> JobView:
-    view = JobView.model_validate(job)
-    artifact_urls = {
-        artifact.id: f"{root_path}/api/v1/artifacts/{artifact.id}/download"
-        for artifact in job.artifacts
-    }
-    for artifact in view.artifacts:
-        artifact.download_url = artifact_urls[artifact.id]
-    for track in view.tracks:
-        track.asset.audio_url = (
-            f"{root_path}/api/v1/imports/{job.import_id}/assets/"
-            f"{track.asset.id}/audio"
-        )
-        for artifact in track.artifacts:
-            artifact.download_url = artifact_urls[artifact.id]
-    return view
-
-
-def _project_view(
+def project_view(
     project: Project, root_path: str = "", project_stems: ProjectStemStorage | None = None,
     manager: WorkerManager | None = None,
 ) -> ProjectView:
@@ -94,16 +72,3 @@ def _project_view(
             sample_rate=meta.get("sample_rate", 0),
         )
     return view
-
-
-def job_mastering_reference(
-    session: Session,
-    import_batch: ImportBatch,
-    reference_id: str | None,
-) -> MasteringReference | None:
-    if reference_id is None:
-        return None
-    reference = session.get(MasteringReference, reference_id)
-    if not reference or reference.import_id != import_batch.id:
-        raise ValueError("Mastering reference does not belong to this import")
-    return reference

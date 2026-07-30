@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from upmixer_web.database import Base
+from upmixer_web.shared.database import Base
 
 
 def new_id() -> str:

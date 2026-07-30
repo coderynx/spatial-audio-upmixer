@@ -14,9 +14,9 @@ from upmixer.config import UpmixConfig
 from upmixer.manifest import apply_asset_job, parse_manifest
 from upmixer.mastering.match_reference import ReferenceMatchProcessor
 from upmixer.separation.stem_pipeline import PreMasterAbort, StemUpmixPipeline
-from upmixer_web.models import Project
-from upmixer_web.project_storage import ProjectStemStorage
-from upmixer_web.projects import get_project
+from upmixer_web.features.projects.service import get_project
+from upmixer_web.features.projects.storage import ProjectStemStorage
+from upmixer_web.shared.models import Project
 
 _log = logging.getLogger("upmixer_web")
 

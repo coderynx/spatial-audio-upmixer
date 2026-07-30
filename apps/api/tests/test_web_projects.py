@@ -19,7 +19,7 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
     )
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
-    monkeypatch.setattr("upmixer_web.routes_projects.ensure_stem_separation_available", lambda *_args: None)
+    monkeypatch.setattr("upmixer_web.features.projects.routes.ensure_stem_separation_available", lambda *_args: None)
     with TestClient(create_app(settings)) as client:
         imported = client.post(
             "/api/v1/imports",
@@ -68,7 +68,7 @@ def test_project_seeds_stem_routing_when_client_sends_empty_dict(tmp_path, monke
     )
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
-    monkeypatch.setattr("upmixer_web.routes_projects.ensure_stem_separation_available", lambda *_args: None)
+    monkeypatch.setattr("upmixer_web.features.projects.routes.ensure_stem_separation_available", lambda *_args: None)
     with TestClient(create_app(settings)) as client:
         imported = client.post(
             "/api/v1/imports",
@@ -92,8 +92,8 @@ def test_project_seeds_stem_routing_when_client_sends_empty_dict(tmp_path, monke
 
 
 def test_project_view_builds_stem_urls_from_catalogued_stems(tmp_path, monkeypatch):
-    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-    from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectStem, ProjectTrack
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectStem, ProjectTrack
 
     database_url = f"sqlite:///{tmp_path / 'stem-view.db'}"
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
@@ -137,9 +137,9 @@ def test_project_view_exposes_versioned_peaks_url_and_serves_the_envelope(tmp_pa
 
     import numpy as np
 
-    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-    from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectTrack
-    from upmixer_web.project_storage import PEAK_BINS, PEAKS_SCHEMA
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectTrack
+    from upmixer_web.features.projects.storage import PEAK_BINS, PEAKS_SCHEMA
 
     database_url = f"sqlite:///{tmp_path / 'peaks-view.db'}"
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
@@ -187,8 +187,8 @@ def test_project_view_exposes_versioned_peaks_url_and_serves_the_envelope(tmp_pa
 
 
 def test_project_peaks_returns_404_when_the_envelope_is_missing(tmp_path, monkeypatch):
-    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-    from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectTrack
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectTrack
 
     database_url = f"sqlite:///{tmp_path / 'peaks-missing.db'}"
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
@@ -220,10 +220,10 @@ def test_project_peaks_returns_404_when_the_envelope_is_missing(tmp_path, monkey
 def test_schedule_peaks_coalesces_repeat_calls_into_one_run(tmp_path, monkeypatch):
     import threading
 
-    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-    from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectStem, ProjectTrack
-    from upmixer_web.project_storage import ProjectStemStorage
-    from upmixer_web.storage import LocalObjectStorage, StorageAudioSink, StorageAudioSource
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectStem, ProjectTrack
+    from upmixer_web.features.projects.storage import ProjectStemStorage
+    from upmixer_web.shared.storage import LocalObjectStorage, StorageAudioSink, StorageAudioSource
     from upmixer_web.worker import WorkerManager
 
     database_url = f"sqlite:///{tmp_path / 'peaks-schedule.db'}"
@@ -285,8 +285,8 @@ def test_project_delete_returns_404_for_missing_project(web_client):
 
 
 def test_project_delete_removes_project_and_all_stem_data(tmp_path, monkeypatch):
-    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-    from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectStem, ProjectTrack
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectStem, ProjectTrack
 
     database_url = f"sqlite:///{tmp_path / 'delete.db'}"
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
@@ -329,8 +329,8 @@ def test_project_delete_removes_project_and_all_stem_data(tmp_path, monkeypatch)
 
 
 def test_project_delete_preserves_export_jobs_with_nulled_project_id(tmp_path, monkeypatch):
-    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-    from upmixer_web.models import ImportBatch, MediaAsset, Project, ProjectTrack
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectTrack
 
     database_url = f"sqlite:///{tmp_path / 'delete-export.db'}"
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)

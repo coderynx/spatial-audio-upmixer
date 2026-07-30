@@ -5,35 +5,47 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Iterator
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
-from upmixer_web.manifests import ensure_stem_separation_available
-from upmixer_web.models import ImportBatch, ProjectStem, ProjectTrack
-from upmixer_web.projects import (
-    create_project,
-    expand_project_stems,
-    get_project,
-    list_projects,
-    project_export_job,
-    update_project_settings,
-    update_track_settings,
-)
-from upmixer_web.schemas import (
+from upmixer_web.features.jobs.schemas import JobView
+from upmixer_web.features.jobs.service import job_mastering_reference
+from upmixer_web.features.jobs.views import job_view
+from upmixer_web.features.projects.schemas import (
     CreateProjectRequest,
     ExpandProjectStemsRequest,
-    JobView,
     ProjectView,
     UpdateProjectSettingsRequest,
     UpdateProjectTrackSettingsRequest,
 )
+from upmixer_web.features.projects.service import (
+    ProjectStateConflict,
+    create_project,
+    expand_project_stems,
+    get_project,
+    list_projects,
+    mark_project_deleting,
+    project_export_job,
+    retry_project,
+    update_project_settings,
+    update_track_settings,
+)
+from upmixer_web.features.projects.views import project_view
 from upmixer_web.settings import Settings
-from upmixer_web.storage import ObjectStorage
-from upmixer_web.views import _job_view, _project_view, job_mastering_reference
-from upmixer_web.worker import WorkerManager
+from upmixer_web.shared.manifests import ensure_stem_separation_available
+from upmixer_web.shared.models import ImportBatch, ProjectStem, ProjectTrack
+from upmixer_web.shared.storage import ObjectStorage
+
+if TYPE_CHECKING:
+    # Deferred: upmixer_web.worker imports this module's package (via the
+    # ProjectRunnerMixin it composes into WorkerManager) at import time, so a
+    # runtime import here would cycle back into a partially initialized
+    # upmixer_web.worker. PEP 563 (see the __future__ import above) means the
+    # WorkerManager annotation below is never evaluated at runtime.
+    from upmixer_web.worker import WorkerManager
 
 
 def register_project_routes(
@@ -67,7 +79,7 @@ def register_project_routes(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         manager.notify()
-        return _project_view(project, settings.root_path, app.state.project_stems, manager)
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.get("/api/v1/projects", response_model=list[ProjectView], tags=["projects"])
     def read_projects(
@@ -75,7 +87,7 @@ def register_project_routes(
         offset: int = Query(0, ge=0),
         session: Session = Depends(database_session),
     ) -> list[ProjectView]:
-        return [_project_view(project, settings.root_path, app.state.project_stems, manager) for project in list_projects(session, limit, offset)]
+        return [project_view(project, settings.root_path, app.state.project_stems, manager) for project in list_projects(session, limit, offset)]
 
     @app.get("/api/v1/projects/{project_id}", response_model=ProjectView, tags=["projects"])
     def read_project(project_id: str, session: Session = Depends(database_session)) -> ProjectView:
@@ -87,7 +99,7 @@ def register_project_routes(
         # `_peaks_needs_work` and coalesces, so a steady-state poll is a
         # cheap metadata check, not a run.
         manager.schedule_peaks(project_id)
-        return _project_view(project, settings.root_path, app.state.project_stems, manager)
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.put("/api/v1/projects/{project_id}/settings", response_model=ProjectView, tags=["projects"])
     def save_project_settings(project_id: str, request: UpdateProjectSettingsRequest, session: Session = Depends(database_session)) -> ProjectView:
@@ -125,7 +137,7 @@ def register_project_routes(
         manager.schedule_reference_match(project_id)
         if project.status == "queued":
             manager.notify()
-        return _project_view(project, settings.root_path, app.state.project_stems, manager)
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.put("/api/v1/projects/{project_id}/tracks/{track_id}/settings", response_model=ProjectView, tags=["projects"])
     def save_project_track_settings(project_id: str, track_id: str, request: UpdateProjectTrackSettingsRequest, session: Session = Depends(database_session)) -> ProjectView:
@@ -136,7 +148,7 @@ def register_project_routes(
             project = update_track_settings(session, project, track_id, request.manifest_overrides, request.scene_overrides)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return _project_view(project, settings.root_path, app.state.project_stems, manager)
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.post("/api/v1/projects/{project_id}/stems", response_model=ProjectView, tags=["projects"])
     def add_project_stems(project_id: str, request: ExpandProjectStemsRequest, session: Session = Depends(database_session)) -> ProjectView:
@@ -148,7 +160,7 @@ def register_project_routes(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         manager.notify()
-        return _project_view(project, settings.root_path, app.state.project_stems, manager)
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.post("/api/v1/projects/{project_id}/exports", response_model=JobView, status_code=status.HTTP_201_CREATED, tags=["projects"])
     def export_project(project_id: str, session: Session = Depends(database_session)) -> JobView:
@@ -160,37 +172,26 @@ def register_project_routes(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         manager.notify()
-        return _job_view(job, settings.root_path)
+        return job_view(job, settings.root_path)
 
     @app.post("/api/v1/projects/{project_id}/retry", response_model=ProjectView, tags=["projects"])
-    def retry_project(project_id: str, session: Session = Depends(database_session)) -> ProjectView:
+    def retry_project_route(project_id: str, session: Session = Depends(database_session)) -> ProjectView:
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        if project.status not in {"failed", "expansion_failed"}:
-            raise HTTPException(status_code=409, detail="Project is not retryable")
-        project.status = "expanding" if project.prepared_stems else "queued"
-        project.progress = 0.0
-        project.error = None
-        project.status_message = "Waiting for worker"
-        for track in project.tracks:
-            track.status = "queued"
-            track.progress = 0.0
-            track.error = None
-        session.commit()
+        try:
+            retry_project(session, project)
+        except ProjectStateConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         manager.notify()
-        return _project_view(project, settings.root_path, app.state.project_stems, manager)
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.delete("/api/v1/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["projects"])
-    def delete_project(project_id: str, session: Session = Depends(database_session)) -> Response:
+    def delete_project_route(project_id: str, session: Session = Depends(database_session)) -> Response:
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        if project.status in {"preparing", "expanding"}:
-            project.status = "deleting"
-            project.status_message = "Stopping worker before deletion"
-            session.commit()
-        else:
+        if mark_project_deleting(session, project):
             session.close()
             manager.delete_now_project(project_id)
         manager.notify()
@@ -276,7 +277,7 @@ def register_project_routes(
                     if not project:
                         yield "event: deleted\ndata: {}\n\n"
                         break
-                    payload = _project_view(project, settings.root_path, app.state.project_stems, manager).model_dump(mode="json")
+                    payload = project_view(project, settings.root_path, app.state.project_stems, manager).model_dump(mode="json")
                 encoded = json.dumps(payload, separators=(",", ":"))
                 if encoded != previous:
                     yield f"data: {encoded}\n\n"

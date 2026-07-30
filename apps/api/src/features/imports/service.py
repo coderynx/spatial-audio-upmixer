@@ -11,9 +11,9 @@ from pathlib import Path, PurePosixPath
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
-from upmixer_web.metadata import AUDIO_SUFFIXES, COVER_NAMES, find_directory_cover, read_audio_metadata
-from upmixer_web.models import ImportBatch, MasteringReference, MediaAsset
-from upmixer_web.storage import ObjectStorage
+from upmixer_web.shared.metadata import AUDIO_SUFFIXES, COVER_NAMES, find_directory_cover, read_audio_metadata
+from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset
+from upmixer_web.shared.storage import ObjectStorage
 
 
 MAX_ARCHIVE_ENTRIES = 10_000

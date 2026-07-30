@@ -1,4 +1,4 @@
-"""Project lifecycle, settings, and export snapshot operations."""
+"""Project lifecycle, settings, export snapshot, and state-machine operations."""
 
 from __future__ import annotations
 
@@ -12,10 +12,10 @@ from sqlalchemy.orm import Session, selectinload
 from upmixer.separation.stem_plan import normalize_stems
 from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_router import build_stem_routing
-from upmixer_web.jobs import create_job
-from upmixer_web.manifests import normalize_job_manifest
-from upmixer_web.models import ImportBatch, Job, MasteringReference, Project, ProjectStem, ProjectTrack
-from upmixer_web.project_storage import PREVIEW_QUALITY_LEVELS
+from upmixer_web.features.jobs.service import create_job
+from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS
+from upmixer_web.shared.manifests import normalize_job_manifest
+from upmixer_web.shared.models import ImportBatch, Job, MasteringReference, Project, ProjectStem, ProjectTrack
 
 
 PROJECT_LOAD_OPTIONS = (
@@ -37,6 +37,10 @@ _SEPARATION_ENGINE_KEYS = (
     "stem_model_cache_size", "stem_silence_skip", "stem_silence_threshold_db",
     "stem_silence_min_duration_s", "stem_silence_crossfade_ms", "stem_silence_pad_ms",
 )
+
+
+class ProjectStateConflict(ValueError):
+    """A project cannot transition from its current status."""
 
 
 def _separation_settings(manifest: dict[str, Any]) -> tuple[object, ...]:
@@ -277,3 +281,35 @@ def project_export_job(session: Session, project: Project) -> Job:
     job.project_snapshot = snapshot
     session.commit()
     return job
+
+
+def retry_project(session: Session, project: Project) -> Project:
+    """Requeue a failed project preparation, mirroring its current stage."""
+    if project.status not in {"failed", "expansion_failed"}:
+        raise ProjectStateConflict("Project is not retryable")
+    project.status = "expanding" if project.prepared_stems else "queued"
+    project.progress = 0.0
+    project.error = None
+    project.status_message = "Waiting for worker"
+    for track in project.tracks:
+        track.status = "queued"
+        track.progress = 0.0
+        track.error = None
+    session.commit()
+    return project
+
+
+def mark_project_deleting(session: Session, project: Project) -> bool:
+    """Mark an in-flight project for worker-side teardown, or signal the
+    caller to delete it immediately.
+
+    Returns ``True`` when the project is idle and the caller should delete it
+    right away (via ``WorkerManager.delete_now_project``); ``False`` when it
+    is in-flight and has been flagged ``deleting`` for the worker to tear down.
+    """
+    if project.status in {"preparing", "expanding"}:
+        project.status = "deleting"
+        project.status_message = "Stopping worker before deletion"
+        session.commit()
+        return False
+    return True

@@ -5,19 +5,36 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Iterator
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
-from upmixer_web.jobs import clone_job, create_job, get_job, list_jobs
-from upmixer_web.manifests import ensure_stem_separation_available
-from upmixer_web.models import ImportBatch, Job
-from upmixer_web.schemas import CloneJobRequest, CreateJobRequest, JobActionResponse, JobView
+from upmixer_web.features.jobs.schemas import CloneJobRequest, CreateJobRequest, JobActionResponse, JobView
+from upmixer_web.features.jobs.service import (
+    JobStateConflict,
+    clone_job,
+    create_job,
+    get_job,
+    job_mastering_reference,
+    list_jobs,
+    mark_job_deleting,
+    pause_job,
+    resume_job,
+)
+from upmixer_web.features.jobs.views import job_view
 from upmixer_web.settings import Settings
-from upmixer_web.views import _job_view, job_mastering_reference
-from upmixer_web.worker import WorkerManager
+from upmixer_web.shared.manifests import ensure_stem_separation_available
+from upmixer_web.shared.models import ImportBatch, Job
+
+if TYPE_CHECKING:
+    # Deferred: upmixer_web.worker imports this module's package (via the
+    # JobRunnerMixin it composes into WorkerManager) at import time, so a
+    # runtime import here would cycle back into a partially initialized
+    # upmixer_web.worker. PEP 563 (see the __future__ import above) means the
+    # WorkerManager annotation below is never evaluated at runtime.
+    from upmixer_web.worker import WorkerManager
 
 
 def register_job_routes(
@@ -51,7 +68,7 @@ def register_job_routes(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if request.start:
             manager.notify()
-        return _job_view(job, settings.root_path)
+        return job_view(job, settings.root_path)
 
     @app.get("/api/v1/jobs", response_model=list[JobView], tags=["jobs"])
     def read_jobs(
@@ -59,52 +76,37 @@ def register_job_routes(
         offset: int = Query(0, ge=0),
         session: Session = Depends(database_session),
     ) -> list[JobView]:
-        return [_job_view(job, settings.root_path) for job in list_jobs(session, limit, offset)]
+        return [job_view(job, settings.root_path) for job in list_jobs(session, limit, offset)]
 
     @app.get("/api/v1/jobs/{job_id}", response_model=JobView, tags=["jobs"])
     def read_job(job_id: str, session: Session = Depends(database_session)) -> JobView:
         job = get_job(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        return _job_view(job, settings.root_path)
+        return job_view(job, settings.root_path)
 
     @app.post("/api/v1/jobs/{job_id}/pause", response_model=JobActionResponse, tags=["jobs"])
-    def pause_job(job_id: str, session: Session = Depends(database_session)) -> JobActionResponse:
+    def pause_job_route(job_id: str, session: Session = Depends(database_session)) -> JobActionResponse:
         job = session.get(Job, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        if job.status == "queued":
-            job.status = "paused"
-            for track in job.tracks:
-                if track.status == "queued":
-                    track.status = "paused"
-        elif job.status == "running":
-            job.status = "pause_requested"
-        elif job.status not in {"paused", "pause_requested"}:
-            raise HTTPException(status_code=409, detail=f"Cannot pause {job.status} job")
-        job.status_message = "Pause requested"
-        session.commit()
+        try:
+            pause_job(session, job)
+        except JobStateConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return JobActionResponse(id=job.id, status=job.status)
 
     @app.post("/api/v1/jobs/{job_id}/resume", response_model=JobActionResponse, tags=["jobs"])
-    def resume_job(job_id: str, session: Session = Depends(database_session)) -> JobActionResponse:
+    def resume_job_route(job_id: str, session: Session = Depends(database_session)) -> JobActionResponse:
         job = session.get(Job, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        if job.status not in {"paused", "failed"}:
-            raise HTTPException(status_code=409, detail=f"Cannot resume {job.status} job")
         try:
-            ensure_stem_separation_available(job.manifest, stem_capability)
+            resume_job(session, job, stem_capability)
+        except JobStateConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        job.status = "queued"
-        job.error = None
-        job.status_message = "Waiting for worker"
-        for track in job.tracks:
-            if track.status != "completed":
-                track.status = "queued"
-                track.error = None
-        session.commit()
         manager.notify()
         return JobActionResponse(id=job.id, status=job.status)
 
@@ -139,18 +141,14 @@ def register_job_routes(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if request.start:
             manager.notify()
-        return _job_view(job, settings.root_path)
+        return job_view(job, settings.root_path)
 
     @app.delete("/api/v1/jobs/{job_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["jobs"])
-    def delete_job(job_id: str, session: Session = Depends(database_session)) -> Response:
+    def delete_job_route(job_id: str, session: Session = Depends(database_session)) -> Response:
         job = session.get(Job, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        if job.status in {"running", "pause_requested"}:
-            job.status = "deleting"
-            job.status_message = "Stopping worker before deletion"
-            session.commit()
-        else:
+        if mark_job_deleting(session, job):
             session.close()
             manager.delete_now(job_id)
         manager.notify()
@@ -166,7 +164,7 @@ def register_job_routes(
                     if not job:
                         yield "event: deleted\ndata: {}\n\n"
                         break
-                    payload = _job_view(job, settings.root_path).model_dump(mode="json")
+                    payload = job_view(job, settings.root_path).model_dump(mode="json")
                 encoded = json.dumps(payload, separators=(",", ":"))
                 if encoded != previous:
                     yield f"data: {encoded}\n\n"

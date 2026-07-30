@@ -1,12 +1,12 @@
-"""Job lifecycle operations shared by API routes and workers."""
+"""Job lifecycle and state-machine operations used by API routes and the worker."""
 
 from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from upmixer_web.manifests import normalize_job_manifest
-from upmixer_web.models import ImportBatch, Job, MasteringReference, JobTrack
+from upmixer_web.shared.manifests import ensure_stem_separation_available, normalize_job_manifest
+from upmixer_web.shared.models import ImportBatch, Job, JobTrack, MasteringReference
 
 
 JOB_LOAD_OPTIONS = (
@@ -16,6 +16,10 @@ JOB_LOAD_OPTIONS = (
     selectinload(Job.artifacts),
     selectinload(Job.mastering_reference),
 )
+
+
+class JobStateConflict(ValueError):
+    """A job cannot transition from its current status."""
 
 
 def get_job(session: Session, job_id: str) -> Job | None:
@@ -98,3 +102,64 @@ def reset_incomplete_jobs(session: Session) -> None:
             if track.status == "running":
                 track.status = "queued"
     session.commit()
+
+
+def job_mastering_reference(
+    session: Session,
+    import_batch: ImportBatch,
+    reference_id: str | None,
+) -> MasteringReference | None:
+    if reference_id is None:
+        return None
+    reference = session.get(MasteringReference, reference_id)
+    if not reference or reference.import_id != import_batch.id:
+        raise ValueError("Mastering reference does not belong to this import")
+    return reference
+
+
+def pause_job(session: Session, job: Job) -> Job:
+    """Transition a job toward paused, mirroring its current lifecycle stage."""
+    if job.status == "queued":
+        job.status = "paused"
+        for track in job.tracks:
+            if track.status == "queued":
+                track.status = "paused"
+    elif job.status == "running":
+        job.status = "pause_requested"
+    elif job.status not in {"paused", "pause_requested"}:
+        raise JobStateConflict(f"Cannot pause {job.status} job")
+    job.status_message = "Pause requested"
+    session.commit()
+    return job
+
+
+def resume_job(session: Session, job: Job, stem_capability: dict) -> Job:
+    """Requeue a paused or failed job, re-validating stem-separation support."""
+    if job.status not in {"paused", "failed"}:
+        raise JobStateConflict(f"Cannot resume {job.status} job")
+    ensure_stem_separation_available(job.manifest, stem_capability)
+    job.status = "queued"
+    job.error = None
+    job.status_message = "Waiting for worker"
+    for track in job.tracks:
+        if track.status != "completed":
+            track.status = "queued"
+            track.error = None
+    session.commit()
+    return job
+
+
+def mark_job_deleting(session: Session, job: Job) -> bool:
+    """Mark an in-flight job for worker-side teardown, or signal the caller
+    to delete it immediately.
+
+    Returns ``True`` when the job is idle and the caller should delete it
+    right away (via ``WorkerManager.delete_now``); ``False`` when it is
+    in-flight and has been flagged ``deleting`` for the worker to tear down.
+    """
+    if job.status in {"running", "pause_requested"}:
+        job.status = "deleting"
+        job.status_message = "Stopping worker before deletion"
+        session.commit()
+        return False
+    return True

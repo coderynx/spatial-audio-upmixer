@@ -23,8 +23,8 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
     algorithm itself is covered by test_match_reference.py."""
     from unittest.mock import patch
 
-    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-    from upmixer_web.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
 
     database_url = f"sqlite:///{tmp_path / 'refmatch.db'}"
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
@@ -204,8 +204,8 @@ def test_worker_schedule_reference_match_coalesces_and_reports_pending(tmp_path,
     from concurrent.futures import ThreadPoolExecutor
     from unittest.mock import patch
 
-    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-    from upmixer_web.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
 
     database_url = f"sqlite:///{tmp_path / 'refmatch-schedule.db'}"
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
@@ -317,8 +317,8 @@ def test_worker_schedule_reference_match_skips_pending_when_nothing_to_do(tmp_pa
     from concurrent.futures import ThreadPoolExecutor
     from unittest.mock import patch
 
-    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-    from upmixer_web.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
 
     database_url = f"sqlite:///{tmp_path / 'refmatch-skip.db'}"
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
@@ -431,8 +431,8 @@ def test_worker_schedule_reference_match_still_runs_to_clear_removed_reference(t
     from concurrent.futures import ThreadPoolExecutor
     from unittest.mock import patch
 
-    from upmixer_web.database import create_database_engine, create_session_factory, upgrade_database
-    from upmixer_web.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
 
     database_url = f"sqlite:///{tmp_path / 'refmatch-clear.db'}"
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)

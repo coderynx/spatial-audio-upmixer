@@ -23,8 +23,15 @@ def test_stem_jobs_fail_before_queue_when_dependency_is_missing(
     def unavailable(_manifest, _capability):
         raise ValueError("Stem separation is unavailable")
 
+    # submit_job's pre-check and resume_job's re-check each bind their own
+    # module-level reference to ensure_stem_separation_available, so both
+    # must be patched to stub out both call sites.
     monkeypatch.setattr(
-        "upmixer_web.routes_jobs.ensure_stem_separation_available",
+        "upmixer_web.features.jobs.routes.ensure_stem_separation_available",
+        unavailable,
+    )
+    monkeypatch.setattr(
+        "upmixer_web.features.jobs.service.ensure_stem_separation_available",
         unavailable,
     )
     payload = {

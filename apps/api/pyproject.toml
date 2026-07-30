@@ -46,6 +46,13 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = [
     "upmixer_web",
+    "upmixer_web.shared",
+    "upmixer_web.worker",
+    "upmixer_web.features",
+    "upmixer_web.features.system",
+    "upmixer_web.features.imports",
+    "upmixer_web.features.jobs",
+    "upmixer_web.features.projects",
     "upmixer_web.migrations",
     "upmixer_web.migrations.versions",
 ]

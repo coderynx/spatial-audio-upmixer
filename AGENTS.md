@@ -36,6 +36,8 @@ Do not change `packages/core` for a web feature unless a small, independently ju
 
 Stem inference is an in-core PyTorch engine under `packages/core/src/separation/inference/` (architectures, model registry, chunked demix, device management). Web code must not directly import or control Torch, model classes, device objects, or other inference-framework internals — call the public `StemSeparator`/`StemUpmixPipeline` surface only (e.g. `StemSeparator(...).backend` for capability reporting); actual jobs continue through `StemUpmixPipeline`.
 
+`apps/api` is organized as vertical slices (`features/<name>/{routes,service,views,schemas}`, plus shared `shared/` infrastructure and a composed `worker/`) rather than by technical layer. Read [Web API architecture](docs/web_api_architecture.md) before adding an endpoint, route, or background job, and add it to the owning feature slice rather than a new top-level `routes_*.py` or a shared `models.py`/`schemas.py` grab-bag.
+
 `apps/web` follows a fixed visual specification. Read [Web UI design specification](docs/web_ui_design.md) before adding a page, control, or visual state, and follow its tokens, layout primitives, and control sizes rather than introducing new ones. Colours come from the `index.css` tokens in both light and dark; the only sanctioned literal colours are in `apps/web/src/lib/canvasTheme.ts`.
 
 ## Commands

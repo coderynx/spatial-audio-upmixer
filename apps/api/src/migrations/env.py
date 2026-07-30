@@ -8,8 +8,8 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from upmixer_web.database import Base
-from upmixer_web import models  # noqa: F401
+from upmixer_web.shared.database import Base
+from upmixer_web.shared import models  # noqa: F401
 
 
 config = context.config

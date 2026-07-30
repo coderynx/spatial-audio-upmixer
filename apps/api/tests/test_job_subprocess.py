@@ -9,8 +9,8 @@ import time
 import pytest
 
 from upmixer.config import UpmixConfig
-from upmixer_web import job_subprocess
-from upmixer_web.job_subprocess import JobSubprocess, WorkItem, _run_work_items
+from upmixer_web.worker import subprocess as job_subprocess
+from upmixer_web.worker.subprocess import JobSubprocess, WorkItem, _run_work_items
 
 
 class _FakeQueue:
