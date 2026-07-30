@@ -36,6 +36,9 @@ web-postgres = [
 [project.scripts]
 upmixer-web = "upmixer_web.__main__:main"
 
+[tool.uv.sources]
+upmixer = { workspace = true }
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
