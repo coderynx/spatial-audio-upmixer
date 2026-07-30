@@ -168,7 +168,7 @@ export function ProjectDeliverySection({
                   },
                 })
               }
-              options={(choices?.transaural_profiles || ["stereo", "smart_speaker", "car"]).map(
+              options={(choices?.transaural_profiles || ["stereo", "smart_speaker", "car", "laptop", "phone"]).map(
                 (value) => ({ value, label: value.split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") }),
               )}
             />

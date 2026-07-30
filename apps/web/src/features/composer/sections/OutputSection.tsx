@@ -127,14 +127,14 @@ export function OutputSection({
                   ...manifest,
                   format: { ...manifest.format, transaural: { ...manifest.format.transaural, profile } },
                 })}
-                options={(choices?.transaural_profiles || ["stereo", "smart_speaker", "car"]).map((value) => ({
+                options={(choices?.transaural_profiles || ["stereo", "smart_speaker", "car", "laptop", "phone"]).map((value) => ({
                   value,
                   label: value
                     .split("_")
                     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
                     .join(" "),
                 }))}
-                hint="Stereo = standard hi-fi speaker pair. Smart speaker = narrow dual-driver cabinet. Car = off-center driver-seat position."
+                hint="Stereo = standard hi-fi speaker pair. Smart speaker = narrow dual-driver cabinet. Car = off-center driver-seat position. Laptop = built-in chassis speakers. Phone = built-in handset speakers."
               />
             )}
           </>

@@ -46,11 +46,16 @@ def test_resolve_profile_rejects_unknown():
 
 
 def test_crosstalk_profiles_registered():
-    assert set(CROSSTALK_PROFILES) == {"stereo", "smart_speaker", "car"}
+    assert set(CROSSTALK_PROFILES) == {"stereo", "smart_speaker", "car", "laptop", "phone"}
 
 
 def test_stereo_and_smart_speaker_are_symmetric_spans():
-    for profile in (CrosstalkProfile.STEREO, CrosstalkProfile.SMART_SPEAKER):
+    for profile in (
+        CrosstalkProfile.STEREO,
+        CrosstalkProfile.SMART_SPEAKER,
+        CrosstalkProfile.LAPTOP,
+        CrosstalkProfile.PHONE,
+    ):
         params = XTC_PARAMS[profile]
         assert params.azimuth_left_deg == pytest.approx(-params.azimuth_right_deg)
 
@@ -112,7 +117,7 @@ def test_render_crosstalk_silent_bed_is_silent():
     assert np.max(np.abs(right)) == pytest.approx(0.0, abs=1e-9)
 
 
-@pytest.mark.parametrize("profile", ["stereo", "smart_speaker"])
+@pytest.mark.parametrize("profile", ["stereo", "smart_speaker", "laptop", "phone"])
 def test_symmetric_profiles_are_left_right_balanced_for_a_centered_signal(profile):
     # Same regression class as binaural's mirror-symmetry test: a perfectly
     # centered/symmetric bed through a symmetric speaker span must not decode
@@ -188,6 +193,8 @@ def test_transaural_bed_formats_are_valid_output_formats():
         (CrosstalkProfile.STEREO, 15.0, 3.0),
         (CrosstalkProfile.SMART_SPEAKER, 6.0, 3.0),
         (CrosstalkProfile.CAR, 10.0, 3.0),
+        (CrosstalkProfile.LAPTOP, 7.0, 3.0),
+        (CrosstalkProfile.PHONE, 4.0, 3.0),
     ],
 )
 def test_xtc_reduces_contralateral_leakage_within_coloration_bound(profile, min_xtc_db, max_coloration_db):

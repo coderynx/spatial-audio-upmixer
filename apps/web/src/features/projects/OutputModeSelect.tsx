@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Building2, Car, ChevronDown, ChevronRight, Grid3x3, Headphones, Radio, Sofa, Speaker, Waves } from "lucide-react";
+import { Building2, Car, ChevronDown, ChevronRight, Grid3x3, Headphones, Laptop, Radio, Smartphone, Sofa, Speaker, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
@@ -29,13 +29,15 @@ const PROFILE_OPTIONS: { value: SpatialProfile; label: string; icon: React.Compo
   { value: "flat", label: "Flat", icon: Headphones },
 ];
 
-// Stereo/Smart speaker/Car picker for the crosstalk-cancellation (transaural)
-// render (docs/standards/transaural_speakers.md), same submenu pattern as
-// PROFILE_OPTIONS above, off the transaural row.
+// Stereo/Smart speaker/Car/Laptop/Phone picker for the crosstalk-cancellation
+// (transaural) render (docs/standards/transaural_speakers.md), same submenu
+// pattern as PROFILE_OPTIONS above, off the transaural row.
 const TRANSAURAL_PROFILE_OPTIONS: { value: TransauralProfile; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { value: "stereo", label: "Stereo", icon: Speaker },
   { value: "smart_speaker", label: "Smart speaker", icon: Radio },
   { value: "car", label: "Car", icon: Car },
+  { value: "laptop", label: "Laptop", icon: Laptop },
+  { value: "phone", label: "Phone", icon: Smartphone },
 ];
 
 // Grace period before the profile submenu closes on mouse-out.

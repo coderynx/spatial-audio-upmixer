@@ -449,7 +449,7 @@ export const ACN12_N3D_CORRECTION = 1 / Math.sqrt(7);
 // the browser's per-file multichannel decode stays under its 8ch cap.
 export const DECODE_FILTER_SPLITS = ["01-08ch", "09-16ch", "17-24ch", "25-32ch"] as const;
 
-// Stereo / Smart-speaker / Car crosstalk-cancellation (transaural) profiles.
+// Stereo / Smart-speaker / Car / Laptop / Phone crosstalk-cancellation (transaural) profiles.
 // Filter geometry/regularization contract lives in
 // docs/standards/transaural_speakers.md; this section carries the XTC asset
 // name and post-cancellation voicing parameters (reusing the same
@@ -457,12 +457,14 @@ export const DECODE_FILTER_SPLITS = ["01-08ch", "09-16ch", "17-24ch", "25-32ch"]
 // useStemPreview.ts's graph can match upmixer/crosstalk/ parameter-for-
 // parameter. upmixer/crosstalk/profiles.py XTC_FILTER_SET / VOICING_PARAMS.
 
-export type TransauralProfile = "stereo" | "smart_speaker" | "car";
+export type TransauralProfile = "stereo" | "smart_speaker" | "car" | "laptop" | "phone";
 
 export const XTC_FILTER_SET: Record<TransauralProfile, string> = {
   stereo: "stereo_xtc",
   smart_speaker: "smart_speaker_xtc",
   car: "car_xtc",
+  laptop: "laptop_xtc",
+  phone: "phone_xtc",
 };
 
 export const TRANSAURAL_VOICING_PARAMS: Record<TransauralProfile, VoicingParams> = {
@@ -477,6 +479,18 @@ export const TRANSAURAL_VOICING_PARAMS: Record<TransauralProfile, VoicingParams>
     bassShelfHz: 120, bassShelfGainDb: 2.5,
     presenceHz: 2500, presenceGainDb: 1.0, presenceQ: 0.9,
     stereoWiden: 0.10,
+  },
+  laptop: {
+    ...NEUTRAL_VOICING,
+    bassShelfHz: 160, bassShelfGainDb: 2.0,
+    presenceHz: 3000, presenceGainDb: 1.0, presenceQ: 0.9,
+    stereoWiden: 0.25,
+  },
+  phone: {
+    ...NEUTRAL_VOICING,
+    bassShelfHz: 180, bassShelfGainDb: 3.0,
+    presenceHz: 3000, presenceGainDb: 1.5, presenceQ: 0.9,
+    stereoWiden: 0.30,
   },
 };
 

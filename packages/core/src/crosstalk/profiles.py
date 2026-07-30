@@ -1,4 +1,4 @@
-"""Stereo / Smart-speaker / Car crosstalk-cancellation (transaural) profiles.
+"""Stereo / Smart-speaker / Car / Laptop / Phone crosstalk-cancellation (transaural) profiles.
 
 Each profile selects an XTC filter set (a regularized speaker-to-ear inverse,
 baked offline by ``scripts/build_crosstalk_filters.py``) and a voicing chain
@@ -22,6 +22,8 @@ class CrosstalkProfile(str, Enum):
     STEREO = "stereo"
     SMART_SPEAKER = "smart_speaker"
     CAR = "car"
+    LAPTOP = "laptop"
+    PHONE = "phone"
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,8 @@ XTC_FILTER_SET: dict[CrosstalkProfile, str] = {
     CrosstalkProfile.STEREO: "stereo_xtc",
     CrosstalkProfile.SMART_SPEAKER: "smart_speaker_xtc",
     CrosstalkProfile.CAR: "car_xtc",
+    CrosstalkProfile.LAPTOP: "laptop_xtc",
+    CrosstalkProfile.PHONE: "phone_xtc",
 }
 
 XTC_PARAMS: dict[CrosstalkProfile, XtcParams] = {
@@ -76,6 +80,20 @@ XTC_PARAMS: dict[CrosstalkProfile, XtcParams] = {
     CrosstalkProfile.CAR: XtcParams(
         azimuth_left_deg=22.0, azimuth_right_deg=-42.0, beta_mid=0.10,
     ),
+    # A laptop's two speakers sit near the chassis's front edge, only
+    # centimeters apart — narrower than a stereo pair but slightly wider than
+    # a soundbar cabinet's span. Thin, bass-poor drivers, so voicing leans on
+    # a bass shelf plus a presence lift in addition to widening.
+    CrosstalkProfile.LAPTOP: XtcParams(
+        azimuth_left_deg=14.0, azimuth_right_deg=-14.0, beta_mid=0.18,
+    ),
+    # A phone's two speakers are only ~5cm apart — the narrowest, most
+    # ill-conditioned span of any profile, so it earns the shallowest
+    # cancellation (highest beta_mid) and leans hardest on voicing to
+    # compensate: phone drivers have essentially no low end.
+    CrosstalkProfile.PHONE: XtcParams(
+        azimuth_left_deg=6.0, azimuth_right_deg=-6.0, beta_mid=0.30,
+    ),
 }
 
 VOICING_PARAMS: dict[CrosstalkProfile, VoicingParams] = {
@@ -91,6 +109,22 @@ VOICING_PARAMS: dict[CrosstalkProfile, VoicingParams] = {
         bass_shelf_gain_db=2.5,
         presence_hz=2500.0,
         presence_gain_db=1.0,
+        presence_q=0.9,
+    ),
+    CrosstalkProfile.LAPTOP: VoicingParams(
+        stereo_widen=0.25,
+        bass_shelf_hz=160.0,
+        bass_shelf_gain_db=2.0,
+        presence_hz=3000.0,
+        presence_gain_db=1.0,
+        presence_q=0.9,
+    ),
+    CrosstalkProfile.PHONE: VoicingParams(
+        stereo_widen=0.30,
+        bass_shelf_hz=180.0,
+        bass_shelf_gain_db=3.0,
+        presence_hz=3000.0,
+        presence_gain_db=1.5,
         presence_q=0.9,
     ),
 }

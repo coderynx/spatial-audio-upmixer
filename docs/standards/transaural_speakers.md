@@ -35,17 +35,22 @@ acoustic path, so after the real acoustic crosstalk happens, the signal that
 actually arrives at each ear is (approximately) the original uncancelled
 binaural signal again.
 
-Three profiles cover distinct real playback geometries:
+Five profiles cover distinct real playback geometries:
 
 | Profile | Purpose | Speaker span | XTC depth |
 |---|---|---|---|
 | `stereo` | Standard hi-fi speaker pair, symmetric listening position | Wide (±30°) | Deepest — a wide, symmetric span is the best-conditioned case for XTC |
 | `smart_speaker` | Single cabinet, narrow dual-driver span (soundbar / smart speaker) | Narrow (±12°) | Shallow, by design — a narrow span makes deep low-frequency cancellation expensive (see §4); voicing leans on stereo widening to compensate the narrower physical image instead |
 | `car` | Off-center driver-seat listening position | Wide, asymmetric (+22°/−42°) | Moderate — an asymmetric 2x2 matrix, not the symmetric shuffler simplification |
+| `laptop` | Built-in chassis speakers near the front edge, near-field desk listening | Narrow (±14°) | Shallow — slightly less regularized than `smart_speaker` since the span is a bit wider, but still far short of `stereo`'s depth |
+| `phone` | Built-in handset speakers, near-field handheld listening | Narrowest (±6°) | Shallowest of all five — the most ill-conditioned span, so cancellation depth is sacrificed hardest for coloration safety; voicing does the most compensating work |
 
 Unlike the binaural engine's three profiles (which vary *room coloration*
-on a fixed geometry), these three profiles vary *speaker geometry* — the
+on a fixed geometry), these five profiles vary *speaker geometry* — the
 physical layout is the whole story a transaural render has to correct for.
+`laptop` and `phone` follow the same narrow-span tradeoff `smart_speaker`
+established: geometry alone can't be fixed, so voicing (§6) compensates
+perceptually instead.
 
 ---
 
@@ -105,6 +110,8 @@ speaker-to-ear paths, not a mirror pair.
 | `stereo` | +30° | −30° |
 | `smart_speaker` | +12° | −12° |
 | `car` | +22° | −42° |
+| `laptop` | +14° | −14° |
+| `phone` | +6° | −6° |
 
 Source of truth: `upmixer/crosstalk/profiles.py::XTC_PARAMS` (`XtcParams`
 dataclass) and `upmixer/crosstalk/geometry.py::speaker_azimuths_rad`.
@@ -194,6 +201,8 @@ multichannel WAV decode cap (8 channels), so no multi-file split is needed.
 | `stereo` | `stereo_xtc` |
 | `smart_speaker` | `smart_speaker_xtc` |
 | `car` | `car_xtc` |
+| `laptop` | `laptop_xtc` |
+| `phone` | `phone_xtc` |
 
 Sample rate is the filter's native rate (48 kHz); both engines resample the
 taps to the session's sample rate if it differs (`resample_poly`). Core
@@ -212,11 +221,11 @@ and Web Audio topology as the binaural engine
 `spatial_audio_engine.md` §5 for the parameter definitions and DSP topology,
 not repeated here).
 
-| Parameter | Stereo | Smart speaker | Car |
-|---|---|---|---|
-| Bass shelf | — | +1.5 dB @ 150 Hz | +2.5 dB @ 120 Hz |
-| Presence peak | — | — | +1.0 dB @ 2500 Hz, Q 0.9 |
-| Stereo widen (M/S side scale) | 0 | +20% | +10% |
+| Parameter | Stereo | Smart speaker | Car | Laptop | Phone |
+|---|---|---|---|---|---|
+| Bass shelf | — | +1.5 dB @ 150 Hz | +2.5 dB @ 120 Hz | +2.0 dB @ 160 Hz | +3.0 dB @ 180 Hz |
+| Presence peak | — | — | +1.0 dB @ 2500 Hz, Q 0.9 | +1.0 dB @ 3000 Hz, Q 0.9 | +1.5 dB @ 3000 Hz, Q 0.9 |
+| Stereo widen (M/S side scale) | 0 | +20% | +10% | +25% | +30% |
 
 `stereo` is left neutral — its wide, well-conditioned span lets the XTC
 matrix itself carry the spatial effect without extra tonal help.
@@ -227,6 +236,13 @@ compensate perceptually. `car`'s bass lift and mild presence peak compensate
 typical car-speaker/cabin acoustics (weak bass response, road-noise masking
 in the presence band); its widen is milder than `smart_speaker`'s since the
 profile's own wide asymmetric span already contributes real width.
+`laptop`'s chassis speakers are thin and bass-poor, so its bass lift plus
+presence peak restore clarity and low end; its widen sits between
+`smart_speaker` and `phone` since its span (§3) is slightly wider than
+either. `phone`'s handset speakers are the narrowest and least capable of
+any profile — almost no bass response and the tightest physical span — so
+it carries the strongest bass lift and widen of the five, compensating
+perceptually for what the geometry and driver size can't provide.
 
 Source of truth: `upmixer/crosstalk/profiles.py::VOICING_PARAMS`. Web
 mirror: `TRANSAURAL_VOICING_PARAMS` in `masteringProfiles.ts`.

@@ -38,7 +38,7 @@ def render_crosstalk(
         channels: bed channel dict, channel_name -> 1D float64 array.
         bed_fmt: the discrete bed's OutputFormat (e.g. 7.1.4).
         sample_rate: sample rate shared by all channels.
-        profile: one of "stereo", "smart_speaker", "car".
+        profile: one of "stereo", "smart_speaker", "car", "laptop", "phone".
         lfe_gain: linear gain applied to the LFE before the ambisonic HOA
             decode (see :func:`upmixer.binaural.renderer.render_binaural`).
 

@@ -215,7 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--transaural-profile",
-        choices=["stereo", "smart_speaker", "car"],
+        choices=["stereo", "smart_speaker", "car", "laptop", "phone"],
         default=None,
         help="Spatial Audio Engine profile for --output-type transaural (default: stereo).",
     )

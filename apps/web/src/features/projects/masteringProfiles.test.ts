@@ -72,12 +72,28 @@ describe("TRANSAURAL_VOICING_PARAMS", () => {
     expect(car.presenceHz).toBeCloseTo(2500);
     expect(car.presenceGainDb).toBeCloseTo(1.0);
     expect(car.stereoWiden).toBeCloseTo(0.10);
+
+    const laptop = TRANSAURAL_VOICING_PARAMS.laptop;
+    expect(laptop.bassShelfHz).toBeCloseTo(160);
+    expect(laptop.bassShelfGainDb).toBeCloseTo(2.0);
+    expect(laptop.presenceHz).toBeCloseTo(3000);
+    expect(laptop.presenceGainDb).toBeCloseTo(1.0);
+    expect(laptop.stereoWiden).toBeCloseTo(0.25);
+
+    const phone = TRANSAURAL_VOICING_PARAMS.phone;
+    expect(phone.bassShelfHz).toBeCloseTo(180);
+    expect(phone.bassShelfGainDb).toBeCloseTo(3.0);
+    expect(phone.presenceHz).toBeCloseTo(3000);
+    expect(phone.presenceGainDb).toBeCloseTo(1.5);
+    expect(phone.stereoWiden).toBeCloseTo(0.30);
   });
 
   it("XTC_FILTER_SET names match the backend asset basenames", () => {
     expect(XTC_FILTER_SET.stereo).toBe("stereo_xtc");
     expect(XTC_FILTER_SET.smart_speaker).toBe("smart_speaker_xtc");
     expect(XTC_FILTER_SET.car).toBe("car_xtc");
+    expect(XTC_FILTER_SET.laptop).toBe("laptop_xtc");
+    expect(XTC_FILTER_SET.phone).toBe("phone_xtc");
   });
 
   it("CROSSTALK_LOUDNESS_MAX_GAIN_DB matches the backend ceiling", () => {
