@@ -6,34 +6,31 @@ filter sets (flat / studio / listening) from a parametric spherical-head HRTF
 model plus a synthesized room tail for the two room-emulation profiles, and
 writes them as the 4x8-channel WAV file layout ``docs/standards/
 spatial_audio_engine.md`` §4 documents. Also copies the results into
-``web/public/hrir/`` so the browser preview uses byte-identical filters.
+``apps/web/public/hrir/`` so the browser preview uses byte-identical filters.
 
 Usage:
-    python3 scripts/build_binaural_filters.py
+    uv run python scripts/build_binaural_filters.py
 """
 from __future__ import annotations
 
 import math
 import shutil
-import sys
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 from scipy.signal import butter, sosfilt
 
+from upmixer.binaural.ambisonics import N_ACN_CHANNELS, encoding_matrix
+from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
+from upmixer.binaural.head_model import synth_hrir
+from upmixer.formats import ChannelLabel
+
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-from upmixer.binaural.ambisonics import N_ACN_CHANNELS, encoding_matrix  # noqa: E402
-from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION  # noqa: E402
-from upmixer.binaural.head_model import synth_hrir  # noqa: E402
-from upmixer.formats import ChannelLabel  # noqa: E402
-
 SAMPLE_RATE = 48_000
 
-CORE_OUT_DIR = ROOT / "upmixer" / "binaural" / "hrir"
-WEB_OUT_DIR = ROOT / "web" / "public" / "hrir"
+CORE_OUT_DIR = ROOT / "packages" / "core" / "src" / "binaural" / "hrir"
+WEB_OUT_DIR = ROOT / "apps" / "web" / "public" / "hrir"
 
 DIRECT_TAPS = 128
 

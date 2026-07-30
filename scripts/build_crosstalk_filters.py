@@ -11,34 +11,31 @@ Cooper-Bauck shuffler lineage; BACCH-style frequency-dependent regularization
 trades cancellation depth for bounded spectral coloration, see
 ``docs/standards/transaural_speakers.md`` §4). Writes each profile's 4 FIR
 filters (H_LL, H_LR, H_RL, H_RR) as one 4-channel WAV file and copies the
-result into ``web/public/xtc/`` so the browser preview uses byte-identical
-filters.
+result into ``apps/web/public/xtc/`` so the browser preview uses
+byte-identical filters.
 
 Usage:
-    python3 scripts/build_crosstalk_filters.py
+    uv run python scripts/build_crosstalk_filters.py
 """
 from __future__ import annotations
 
 import shutil
-import sys
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
+from upmixer.binaural.head_model import synth_hrir
+from upmixer.crosstalk.geometry import speaker_azimuths_rad
+from upmixer.crosstalk.profiles import XTC_FILTER_SET, XTC_PARAMS, XtcParams
+
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
-
-from upmixer.binaural.head_model import synth_hrir  # noqa: E402
-from upmixer.crosstalk.geometry import speaker_azimuths_rad  # noqa: E402
-from upmixer.crosstalk.profiles import XTC_FILTER_SET, XTC_PARAMS, XtcParams  # noqa: E402
-
 SAMPLE_RATE = 48_000
 HRIR_TAPS = 256
 N_FFT = 4096
 
-CORE_OUT_DIR = ROOT / "upmixer" / "crosstalk" / "xtc"
-WEB_OUT_DIR = ROOT / "web" / "public" / "xtc"
+CORE_OUT_DIR = ROOT / "packages" / "core" / "src" / "crosstalk" / "xtc"
+WEB_OUT_DIR = ROOT / "apps" / "web" / "public" / "xtc"
 
 
 def _speaker_to_ear_matrix(params: XtcParams) -> np.ndarray:
