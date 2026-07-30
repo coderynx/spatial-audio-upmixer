@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from upmixer_web.shared.manifests import ensure_stem_separation_available, normalize_job_manifest
-from upmixer_web.shared.models import ImportBatch, Job, JobTrack, MasteringReference
+from upmixer_web.shared.models import ImportBatch, Job, JobTrack, MasteringReference, MediaAsset
 
 
 JOB_LOAD_OPTIONS = (
@@ -37,8 +39,16 @@ def create_job(
     start: bool,
     source_job_id: str | None = None,
     mastering_reference: MasteringReference | None = None,
+    assets: Iterable[MediaAsset] | None = None,
 ) -> Job:
-    """Create durable job and per-track state."""
+    """Create durable job and per-track state.
+
+    ``import_batch`` anchors the job's required FK; ``assets`` (default:
+    ``import_batch.assets``) is what actually gets cloned into `JobTrack`
+    rows. A project export passes the project's own tracks' assets, which
+    may span more than one import once assets are added to a project
+    incrementally — they no longer necessarily match ``import_batch.assets``.
+    """
     normalized = normalize_job_manifest(manifest)
     job = Job(
         import_id=import_batch.id,
@@ -51,11 +61,11 @@ def create_job(
     )
     session.add(job)
     session.flush()
-    for asset in import_batch.assets:
+    for position, asset in enumerate(assets if assets is not None else import_batch.assets):
         session.add(JobTrack(
             job_id=job.id,
             asset_id=asset.id,
-            position=asset.position,
+            position=position,
             status="queued" if start else "paused",
         ))
     session.commit()

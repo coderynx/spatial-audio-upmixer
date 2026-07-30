@@ -6,15 +6,16 @@ import {
   Music2,
   SlidersHorizontal,
   Trash2,
+  Upload,
 } from "lucide-react";
-import { Link } from "react-router-dom";
-import type { Project } from "@/api";
+import { Link, useNavigate } from "react-router-dom";
+import { api, type Project } from "@/api";
 import { EmptyState } from "@/app/EmptyState";
 import { useHeaderTitle } from "@/app/HeaderSlot";
 import { InspectorGroup, InspectorRow } from "@/app/InspectorRow";
 import { SegmentedControl } from "@/app/SegmentedControl";
 import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
-import { Toolbar, ToolbarSpacer } from "@/app/Toolbar";
+import { Toolbar, ToolbarSeparator, ToolbarSpacer } from "@/app/Toolbar";
 import { Workspace, WorkspaceScroll } from "@/app/Workspace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,17 +47,40 @@ export function ProjectsPage({
   loading,
   error,
   onDelete,
+  onCreate,
+  onImported,
 }: {
   projects: Project[];
   loading: boolean;
   error: string | null;
   onDelete: (project: Project) => void;
+  onCreate: () => void;
+  onImported: () => void;
 }) {
+  const navigate = useNavigate();
   const [view, setView] = React.useState<View>("grid");
   const [statusFilter, setStatusFilter] = React.useState<string | null>(null);
   const [layoutFilter, setLayoutFilter] = React.useState<string | null>(null);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [importing, setImporting] = React.useState(false);
+  const [importError, setImportError] = React.useState<string | null>(null);
+  const importInput = React.useRef<HTMLInputElement>(null);
   useHeaderTitle(React.useMemo(() => <span className="text-[13px] font-semibold">Projects</span>, []));
+
+  const importArchive = async (file: File | undefined) => {
+    if (!file) return;
+    setImporting(true);
+    setImportError(null);
+    try {
+      const project = await api.importProjectArchive(file);
+      onImported();
+      navigate(`/projects/${project.id}`);
+    } catch (reason) {
+      setImportError((reason as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const statusFacets = React.useMemo(() => {
     const counts = new Map<string, number>();
@@ -201,6 +225,26 @@ export function ProjectsPage({
           <span className="text-[11px] tabular-nums text-muted-foreground">
             {visible.length} of {projects.length}
           </span>
+          <ToolbarSeparator />
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={importing}
+            onClick={() => importInput.current?.click()}
+          >
+            <Upload />
+            {importing ? "Importing…" : "Import project"}
+          </Button>
+          <input
+            ref={importInput}
+            type="file"
+            accept=".zip"
+            className="hidden"
+            onChange={(event) => {
+              void importArchive(event.target.files?.[0]);
+              event.currentTarget.value = "";
+            }}
+          />
         </Toolbar>
       }
       rail={rail}
@@ -213,7 +257,7 @@ export function ProjectsPage({
           <StatusSeparator />
           <StatusCell label="On disk" value={formatBytes(totalBytes)} />
           <StatusSpacer />
-          {error && <span className="truncate text-destructive">{error}</span>}
+          {(error || importError) && <span className="truncate text-destructive">{error || importError}</span>}
         </StatusBar>
       }
     >
@@ -245,9 +289,7 @@ export function ProjectsPage({
                 Clear filters
               </Button>
             ) : (
-              <Button size="sm" asChild>
-                <Link to="/projects/new">New project</Link>
-              </Button>
+              <Button size="sm" onClick={onCreate}>New project</Button>
             )
           }
         />

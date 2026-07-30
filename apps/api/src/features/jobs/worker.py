@@ -58,7 +58,7 @@ class JobRunnerMixin:
                         track.status = "queued"
                 session.commit()
                 track_ids = [track.id for track in job.tracks]
-                source_keys = [asset.storage_key for asset in job.import_batch.assets]
+                source_keys = [track.asset.storage_key for track in job.tracks]
                 reference_key = (
                     job.mastering_reference.storage_key
                     if job.mastering_reference is not None
@@ -80,7 +80,7 @@ class JobRunnerMixin:
                     if not job:
                         raise JobDeleting()
                     manifest = materialize_manifest(
-                        job, job.import_batch, input_paths, work_dir, self.stem_cache_dir,
+                        job, input_paths, work_dir, self.stem_cache_dir,
                         reference_path,
                     )
                     if job.project_id and job.project_snapshot:

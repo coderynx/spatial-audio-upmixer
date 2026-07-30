@@ -13,7 +13,7 @@ const asset: Asset = {
 };
 
 const project: Project = {
-  id: "project-1", import_id: "import-1", name: "Editable master", status: "ready", progress: 1,
+  id: "project-1", import_id: "import-1", name: "Editable master", notes: null, status: "ready", progress: 1,
   status_message: "Project stems ready", progress_log: [], manifest: {}, scene: {}, requested_stems: ["Vocals"],
   prepared_stems: ["Vocals"], stem_generation: 1, preview_quality: "high", revision: 1, error: null,
   created_at: "2026-01-01T12:00:00Z", updated_at: "2026-01-01T12:01:00Z",
@@ -248,20 +248,19 @@ describe("ProjectDetailPage tabs", () => {
     expect(frontBackLabel.compareDocumentPosition(inspectorFader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("writes mastering edits to the project manifest even while the mixing tab is track-scoped", async () => {
+  it("writes mastering edits to the selected track, independent of the mixing tab's edit scope", async () => {
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
 
-    // Switch mixing edit scope to "track" first.
-    fireEvent.change(screen.getByLabelText("Edit scope"), { target: { value: "track" } });
-
+    // Mixing's edit scope stays on its default ("project") — mastering must
+    // still save per-track regardless, since it has no project-wide mode.
     await user.click(screen.getByRole("button", { name: /Mastering/ }));
     fireEvent.click(screen.getByRole("switch", { name: "Loudness" }));
 
-    await waitFor(() => expect(api.saveProject).toHaveBeenCalled());
-    const [, payload] = vi.mocked(api.saveProject).mock.calls.at(-1)!;
-    const savedManifest = payload.manifest as unknown as { mastering: { loudness: { normalize: boolean } } };
-    expect(savedManifest.mastering.loudness.normalize).toBe(false);
+    await waitFor(() => expect(api.saveProjectTrack).toHaveBeenCalled());
+    const [, , payload] = vi.mocked(api.saveProjectTrack).mock.calls.at(-1)!;
+    const savedOverrides = payload.manifest_overrides as unknown as { mastering: { loudness: { normalize: boolean } } };
+    expect(savedOverrides.mastering.loudness.normalize).toBe(false);
   });
 });

@@ -60,8 +60,15 @@ class ProjectRunnerMixin:
                     track.progress = 0.0
                     track.error = None
                 session.commit()
-                source_keys = [asset.storage_key for asset in project.import_batch.assets]
+                # Read each source through the track's own asset FK, not
+                # project.import_batch.assets — a project's tracks may span
+                # more than one import (or none, for an empty project) once
+                # assets are added incrementally.
+                source_keys = [track.asset.storage_key for track in project.tracks]
                 track_ids = [track.id for track in project.tracks]
+                track_overrides = {
+                    track.id: copy.deepcopy(track.manifest_overrides) for track in project.tracks
+                }
                 manifest = copy.deepcopy(project.manifest)
                 requested_stems = list(project.requested_stems)
                 preview_quality = project.preview_quality
@@ -76,6 +83,16 @@ class ProjectRunnerMixin:
                         "input": str(input_path),
                         "output": str(work_dir / f"{index:02d}-prepare.wav"),
                         "stem_cache_dir": str(self.project_stems.track_root(project_id, track_id)),
+                        # core's parse_manifest deep-merges any block key here
+                        # (engine/format/mixing/...) over the manifest's global
+                        # blocks per AssetJob — this is what makes a track's
+                        # own stems/sample_rate/subtype/channel_layout take
+                        # effect during preparation rather than only at mix time.
+                        **{
+                            block: value
+                            for block, value in track_overrides.get(track_id, {}).items()
+                            if isinstance(value, dict) and value
+                        },
                     }
                     for index, (input_path, track_id) in enumerate(zip(input_paths, track_ids, strict=True))
                 ]

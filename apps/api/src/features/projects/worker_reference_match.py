@@ -74,7 +74,7 @@ def _reference_match_needs_work(project: Project | None, project_stems: ProjectS
             project_stems.read_reference_match_meta(project.id) is not None
             or project_stems.reference_match_fir_path(project.id) is not None
         )
-    if not project.prepared_stems or not project.tracks or not project.import_batch.assets:
+    if not project.prepared_stems or not project.tracks:
         return False
     existing = project_stems.read_reference_match_meta(project.id)
     return not existing or existing.get("signature") != target_signature
@@ -171,7 +171,7 @@ class ReferenceMatchMixin:
             if target_signature is None:
                 self.project_stems.clear_reference_match(project_id)
                 return
-            if not project.prepared_stems or not project.tracks or not project.import_batch.assets:
+            if not project.prepared_stems or not project.tracks:
                 return
             existing = self.project_stems.read_reference_match_meta(project_id)
             if existing and existing.get("signature") == target_signature:
@@ -182,7 +182,7 @@ class ReferenceMatchMixin:
             manifest = copy.deepcopy(project.manifest)
             requested_stems = list(project.requested_stems)
             track_id = project.tracks[0].id
-            source_key = project.import_batch.assets[0].storage_key
+            source_key = project.tracks[0].asset.storage_key
             reference_key = reference.storage_key
 
         with ExitStack() as sources:

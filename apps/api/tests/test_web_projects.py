@@ -26,8 +26,7 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
             files=[("files", ("tone.wav", _wav_bytes(), "audio/wav"))],
             data={"relative_paths": "tone.wav"},
         ).json()
-        response = client.post("/api/v1/projects", json={
-            "import_id": imported["id"],
+        created = client.post("/api/v1/projects", json={
             "name": "Editable master",
             "manifest": {
                 "version": "1.0.0",
@@ -36,11 +35,18 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
             },
             "scene": {"stems": {"Vocals": {"azimuth_deg": 0, "elevation_deg": 0}}},
         })
+        assert created.status_code == 201
+        assert created.json()["status"] == "ready"
+        assert created.json()["tracks"] == []
+        response = client.post(f"/api/v1/projects/{created.json()['id']}/assets", json={
+            "import_id": imported["id"],
+        })
         assert response.status_code == 201
         project = response.json()
         assert project["status"] == "queued"
         assert project["manifest"]["engine"]["mode"] == "stem"
         assert project["requested_stems"] == ["Vocals", "Kick"]
+        assert len(project["tracks"]) == 1
 
         saved = client.put(f"/api/v1/projects/{project['id']}/settings", json={
             "name": "Editable master v2",
@@ -49,7 +55,7 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
         })
         assert saved.status_code == 200
         assert saved.json()["name"] == "Editable master v2"
-        assert saved.json()["revision"] == 2
+        assert saved.json()["revision"] == 3
 
         expanded = client.post(f"/api/v1/projects/{project['id']}/stems", json={"stems": ["Bass"]})
         assert expanded.status_code == 200
@@ -75,8 +81,7 @@ def test_project_seeds_stem_routing_when_client_sends_empty_dict(tmp_path, monke
             files=[("files", ("tone.wav", _wav_bytes(), "audio/wav"))],
             data={"relative_paths": "tone.wav"},
         ).json()
-        response = client.post("/api/v1/projects", json={
-            "import_id": imported["id"],
+        created = client.post("/api/v1/projects", json={
             "name": "Seeded routing",
             "manifest": {
                 "version": "1.0.0",
@@ -84,6 +89,10 @@ def test_project_seeds_stem_routing_when_client_sends_empty_dict(tmp_path, monke
                 "mixing": {"channel_layout": "7.1.4", "stem_routing": {}},
             },
             "scene": {},
+        })
+        assert created.status_code == 201
+        response = client.post(f"/api/v1/projects/{created.json()['id']}/assets", json={
+            "import_id": imported["id"],
         })
         assert response.status_code == 201
         stem_routing = response.json()["manifest"]["mixing"]["stem_routing"]
@@ -372,3 +381,112 @@ def test_project_delete_preserves_export_jobs_with_nulled_project_id(tmp_path, m
         job = client.get(f"/api/v1/jobs/{job_id}")
         assert job.status_code == 200
         assert job.json()["project_id"] is None
+
+
+def test_project_export_clones_tracks_spanning_multiple_imports(tmp_path, monkeypatch):
+    """A project's tracks can come from more than one import batch once
+    assets are added incrementally (the Assets tab uploads in separate
+    sessions) — project_export_job must clone JobTracks from the project's
+    own tracks, not project.import_batch.assets, or a second-import track
+    would be silently dropped from the export (or crash entirely for an
+    empty-created project whose import_batch is None)."""
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'multi-import-export.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+    with factory() as session:
+        first_batch = ImportBatch(kind="track", title="Song A")
+        second_batch = ImportBatch(kind="track", title="Song B")
+        first_asset = MediaAsset(
+            import_batch=first_batch, filename="a.wav", relative_path="a.wav",
+            storage_key="objects/a.wav", sha256="1" * 64, size_bytes=1,
+        )
+        second_asset = MediaAsset(
+            import_batch=second_batch, filename="b.wav", relative_path="b.wav",
+            storage_key="objects/b.wav", sha256="2" * 64, size_bytes=1,
+        )
+        manifest = {
+            "version": "1.0.0",
+            "engine": {"mode": "stem", "stems": ["Vocals"]},
+            "mixing": {"channel_layout": "5.1"},
+        }
+        # import_batch is None: mirrors a project created empty (no import
+        # at creation time) whose tracks were all added afterwards.
+        project = Project(
+            import_batch=None, name="Multi-import project", manifest=manifest,
+            status="ready", prepared_stems=["Vocals"], requested_stems=["Vocals"],
+        )
+        first_track = ProjectTrack(project=project, asset=first_asset, position=0)
+        second_track = ProjectTrack(project=project, asset=second_asset, position=1)
+        session.add_all([first_batch, second_batch, first_asset, second_asset, project, first_track, second_track])
+        session.commit()
+        project_id = project.id
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as client:
+        exported = client.post(f"/api/v1/projects/{project_id}/exports")
+        assert exported.status_code == 201
+        job = exported.json()
+        assert len(job["tracks"]) == 2
+        asset_ids = {track["asset"]["id"] for track in job["tracks"]}
+        assert asset_ids == {first_asset.id, second_asset.id}
+
+
+def test_add_project_assets_stores_per_file_overrides_and_unions_stems(tmp_path, monkeypatch):
+    """The Assets tab lets each uploaded file request its own stems/format —
+    add_project_assets must store that per-track (so worker._run_project
+    later separates that track with its own stem list) and widen the
+    project's own requested_stems to include any stem a file asks for that
+    the project didn't already have, rather than rejecting it."""
+    settings = Settings(
+        data_dir=tmp_path,
+        database_url=f"sqlite:///{tmp_path / 'assets.db'}",
+        worker_count=1,
+    )
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.features.projects.routes.ensure_stem_separation_available", lambda *_args: None)
+    with TestClient(create_app(settings)) as client:
+        created = client.post("/api/v1/projects", json={
+            "name": "Per-file settings",
+            "manifest": {
+                "version": "1.0.0",
+                "engine": {"mode": "stem", "stems": ["Vocals"]},
+                "mixing": {"channel_layout": "5.1"},
+            },
+        })
+        assert created.status_code == 201
+        project_id = created.json()["id"]
+
+        imported = client.post(
+            "/api/v1/imports",
+            files=[("files", ("tone.wav", _wav_bytes(), "audio/wav"))],
+            data={"relative_paths": "tone.wav"},
+        ).json()
+        asset_id = imported["assets"][0]["id"]
+
+        response = client.post(f"/api/v1/projects/{project_id}/assets", json={
+            "import_id": imported["id"],
+            "per_asset_overrides": {
+                asset_id: {
+                    "engine": {"stems": ["Bass"]},
+                    "format": {"sample_rate": 48000, "subtype": "PCM_24"},
+                    "mixing": {"channel_layout": "7.1.4"},
+                },
+            },
+        })
+        assert response.status_code == 201
+        project = response.json()
+        assert project["requested_stems"] == ["Vocals", "Bass"]
+        track = project["tracks"][0]
+        assert track["manifest_overrides"]["engine"]["stems"] == ["Bass"]
+        assert track["manifest_overrides"]["format"]["sample_rate"] == 48000
+        assert track["manifest_overrides"]["format"]["subtype"] == "PCM_24"
+        assert track["manifest_overrides"]["mixing"]["channel_layout"] == "7.1.4"

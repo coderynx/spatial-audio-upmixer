@@ -137,16 +137,18 @@ class Job(Base):
 
 
 class Project(Base):
-    """Editable web-only spatial mix project backed by one source import."""
+    """Editable web-only spatial mix project. Tracks are added incrementally
+    from one or more imports; a project may start with none."""
 
     __tablename__ = "projects"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    import_id: Mapped[str] = mapped_column(ForeignKey("import_batches.id"), index=True)
+    import_id: Mapped[str | None] = mapped_column(ForeignKey("import_batches.id"), index=True)
     mastering_reference_id: Mapped[str | None] = mapped_column(
         ForeignKey("mastering_references.id", ondelete="SET NULL"), index=True
     )
     name: Mapped[str] = mapped_column(String(512))
+    notes: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     progress: Mapped[float] = mapped_column(Float, default=0.0)
     status_message: Mapped[str] = mapped_column(String(1024), default="Waiting for worker")
@@ -162,7 +164,7 @@ class Project(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    import_batch: Mapped[ImportBatch] = relationship()
+    import_batch: Mapped[ImportBatch | None] = relationship()
     mastering_reference: Mapped[MasteringReference | None] = relationship(
         back_populates="projects"
     )

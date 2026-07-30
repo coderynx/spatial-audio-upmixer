@@ -2,18 +2,16 @@ import * as React from "react";
 import { Loader2, RotateCcw, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { InspectorGroup, InspectorRow } from "@/app/InspectorRow";
-import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
-import { Toolbar, ToolbarSpacer } from "@/app/Toolbar";
-import { Workspace, WorkspaceScroll } from "@/app/Workspace";
 import type { Project } from "@/api";
-import { formatDate } from "@/lib/format";
 import { gerundAt } from "./agentFlavor";
 
 const FAILED_STATUSES = new Set(["failed", "expansion_failed"]);
 
-/** Realtime "agent" log shown while a project's stems are being prepared. */
-export function PreparationView({ project, onRetry }: { project: Project; onRetry: () => void }) {
+/** Realtime "agent" log for a project's stem preparation — rendered inline
+ * as one state of the Assets tab (see `assets/AssetsTab.tsx`) rather than a
+ * full-page gate, so the stage bar and track tree stay reachable while
+ * preparation runs. */
+export function PreparationPanel({ project, onRetry }: { project: Project; onRetry: () => void }) {
   const [tick, setTick] = React.useState(0);
   const logRef = React.useRef<HTMLDivElement | null>(null);
   const failed = FAILED_STATUSES.has(project.status);
@@ -42,68 +40,30 @@ export function PreparationView({ project, onRetry }: { project: Project; onRetr
   }, [progressLog]);
 
   return (
-    <Workspace
-      toolbar={
-        <Toolbar>
-          <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          <span className="text-[13px] font-medium">Preparing stems</span>
-          <ToolbarSpacer />
-          {!failed && (
-            <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-              {gerundAt(tick)}…
-            </span>
-          )}
-        </Toolbar>
-      }
-      rail={
-        <>
-          <WorkspaceScroll>
-            <InspectorGroup title="Project">
-              <p className="mb-1.5 truncate text-[13px] font-semibold">{project.name}</p>
-              <InspectorRow label="Status" value={project.status.replace(/_/g, " ")} />
-              <InspectorRow label="Tracks" value={project.tracks.length} />
-              <InspectorRow label="Requested stems" value={project.requested_stems.length} />
-              <InspectorRow label="Prepared stems" value={project.prepared_stems.length} />
-              <InspectorRow label="Updated" value={formatDate(project.updated_at)} />
-            </InspectorGroup>
-            <InspectorGroup title="Progress">
-              <div className="flex items-center gap-2">
-                <Progress value={project.progress * 100} />
-                <span className="w-8 shrink-0 text-right text-[11px] tabular-nums">
-                  {Math.round(project.progress * 100)}%
-                </span>
-              </div>
-              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">{project.status_message}</p>
-            </InspectorGroup>
-            {project.error && (
-              <InspectorGroup title="Error">
-                <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-[11px] leading-relaxed text-destructive">
-                  {project.error}
-                </p>
-              </InspectorGroup>
-            )}
-          </WorkspaceScroll>
-          {failed && (
-            <div className="shrink-0 border-t p-2">
-              <Button className="w-full" onClick={onRetry}>
-                <RotateCcw />
-                Retry preparation
-              </Button>
-            </div>
-          )}
-        </>
-      }
-      status={
-        <StatusBar>
-          <StatusCell label="Progress" value={`${Math.round(project.progress * 100)}%`} />
-          <StatusSeparator />
-          <StatusCell label="Log lines" value={lines.length} />
-          <StatusSpacer />
-          <span className="truncate">{project.status_message}</span>
-        </StatusBar>
-      }
-    >
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-card">
+      <header className="flex h-8 shrink-0 items-center gap-2 border-b px-3">
+        <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        <span className="text-[13px] font-medium">Preparing stems</span>
+        <div className="min-w-0 flex-1" />
+        {!failed && (
+          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+            {gerundAt(tick)}…
+          </span>
+        )}
+      </header>
+      <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+        <Progress value={project.progress * 100} className="flex-1" />
+        <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
+          {Math.round(project.progress * 100)}%
+        </span>
+      </div>
+      <p className="shrink-0 border-b px-3 py-1.5 text-[11px] text-muted-foreground">{project.status_message}</p>
+      {project.error && (
+        <p className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-1.5 text-[11px] text-destructive">
+          {project.error}
+        </p>
+      )}
       <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto bg-background p-3 font-mono text-[11px] leading-relaxed">
         {lines.length === 0 && <p className="text-muted-foreground">Waiting for worker…</p>}
         {lines.map((entry, index) => (
@@ -113,6 +73,14 @@ export function PreparationView({ project, onRetry }: { project: Project; onRetr
           </p>
         ))}
       </div>
-    </Workspace>
+      {failed && (
+        <div className="shrink-0 border-t p-2">
+          <Button className="w-full" onClick={onRetry}>
+            <RotateCcw />
+            Retry preparation
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }

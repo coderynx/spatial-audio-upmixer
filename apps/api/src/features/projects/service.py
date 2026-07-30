@@ -152,28 +152,85 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
     return normalized, stems
 
 
-def create_project(
+def create_empty_project(
     session: Session,
-    import_batch: ImportBatch,
     name: str,
-    manifest: dict[str, Any],
-    scene: dict[str, Any],
-    mastering_reference: MasteringReference | None = None,
+    notes: str | None = None,
+    manifest: dict[str, Any] | None = None,
+    scene: dict[str, Any] | None = None,
 ) -> Project:
-    normalized, stems = _normalized_project_manifest(manifest)
+    """Create a project with no tracks. Assets are added afterwards via
+    ``add_project_assets``, one upload session at a time."""
+    normalized, stems = _normalized_project_manifest(manifest or {})
     project = Project(
-        import_id=import_batch.id,
+        import_id=None,
         name=name,
+        notes=notes,
         manifest=normalized,
-        scene=copy.deepcopy(scene),
-        mastering_reference=mastering_reference,
+        scene=copy.deepcopy(scene or {}),
         requested_stems=stems,
         prepared_stems=[],
+        status="ready",
+        status_message="No tracks yet",
     )
     session.add(project)
-    session.flush()
-    for asset in import_batch.assets:
-        session.add(ProjectTrack(project_id=project.id, asset_id=asset.id, position=asset.position))
+    session.commit()
+    return get_project(session, project.id)  # type: ignore[return-value]
+
+
+def add_project_assets(
+    session: Session,
+    project: Project,
+    import_batch: ImportBatch,
+    per_asset_overrides: dict[str, dict[str, Any]] | None = None,
+) -> Project:
+    """Add every asset in a freshly-ingested import batch to a project as new
+    tracks, queuing preparation. ``per_asset_overrides`` maps a `MediaAsset.id`
+    to that track's own `manifest_overrides` (stems/sample_rate/subtype/
+    channel_layout), validated the same way `update_track_settings` does.
+
+    Sets the project's own ``import_id`` when this is its first import, so an
+    empty project keeps one FK anchor once it has any tracks at all — later
+    calls (a project's second upload session) leave it untouched.
+    """
+    per_asset_overrides = per_asset_overrides or {}
+    start_position = max((track.position for track in project.tracks), default=-1) + 1
+
+    # Union every asset's requested stems into the project first, so a
+    # file's own stem picks don't need to already be a prepared project
+    # stem before `_validate_track_overrides` (below) checks against it —
+    # this is what lets per-file selection add new extraction targets.
+    added_stems: list[str] = []
+    for overrides in per_asset_overrides.values():
+        engine = overrides.get("engine", {}) if isinstance(overrides, dict) else {}
+        if isinstance(engine, dict):
+            added_stems.extend(engine.get("stems") or [])
+    if added_stems:
+        project.requested_stems = _normalize_project_stems([*project.requested_stems, *added_stems])
+        project.manifest = copy.deepcopy(project.manifest)
+        project.manifest.setdefault("engine", {})["stems"] = project.requested_stems
+
+    for offset, asset in enumerate(import_batch.assets):
+        overrides = per_asset_overrides.get(asset.id, {})
+        if overrides:
+            _validate_track_overrides(project, overrides)
+        # Append through the relationship, not a bare session.add(...): the
+        # caller's `project` was already loaded (with `tracks` selectinloaded,
+        # possibly empty) before this call, and expire_on_commit=False means
+        # a same-session re-query below won't refresh an already-populated
+        # collection — only appending keeps the in-memory list in sync.
+        project.tracks.append(ProjectTrack(
+            asset_id=asset.id,
+            position=start_position + offset,
+            manifest_overrides=copy.deepcopy(overrides),
+        ))
+    if project.import_id is None:
+        project.import_id = import_batch.id
+    project.status = "expanding" if project.prepared_stems else "queued"
+    project.progress = 0.0
+    project.error = None
+    project.status_message = "Waiting to prepare project stems"
+    project.revision += 1
     session.commit()
     return get_project(session, project.id)  # type: ignore[return-value]
 
@@ -184,6 +241,7 @@ def update_project_settings(
     manifest: dict[str, Any],
     scene: dict[str, Any],
     name: str | None = None,
+    notes: str | None = None,
     mastering_reference: MasteringReference | None = None,
     preview_quality: str | None = None,
 ) -> Project:
@@ -197,6 +255,8 @@ def update_project_settings(
     project.scene = copy.deepcopy(scene)
     if name is not None:
         project.name = name
+    if notes is not None:
+        project.notes = notes
     if preview_quality is not None:
         project.preview_quality = preview_quality
     project.mastering_reference = mastering_reference
@@ -258,6 +318,8 @@ def expand_project_stems(session: Session, project: Project, stems: Iterable[str
 def project_export_job(session: Session, project: Project) -> Job:
     if not project.prepared_stems or project.status not in {"ready", "expanding", "expansion_failed"}:
         raise ValueError("Project stems are not ready for export")
+    if not project.tracks:
+        raise ValueError("Project has no tracks to export")
     manifest = copy.deepcopy(project.manifest)
     manifest.setdefault("engine", {})["stems"] = list(project.prepared_stems)
     snapshot = {
@@ -272,9 +334,15 @@ def project_export_job(session: Session, project: Project) -> Job:
             for track in project.tracks
         },
     }
+    # A project's tracks may not all share project.import_batch (or it may be
+    # None, for an empty-created project) once assets are added incrementally
+    # — Job.import_id only needs an anchor for its FK, so any track's own
+    # import batch will do; the actual JobTracks are cloned from `assets=`.
+    anchor_import = project.import_batch or project.tracks[0].asset.import_batch
     job = create_job(
-        session, project.import_batch, f"{project.name} export", manifest, True,
+        session, anchor_import, f"{project.name} export", manifest, True,
         mastering_reference=project.mastering_reference,
+        assets=[track.asset for track in project.tracks],
     )
     job.project_id = project.id
     job.project_revision = project.revision

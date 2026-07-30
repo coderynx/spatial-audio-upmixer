@@ -130,8 +130,9 @@ export type StemRouting = Record<string, Record<string, number>>
 
 export type Project = {
   id: string
-  import_id: string
+  import_id: string | null
   name: string
+  notes: string | null
   status: string
   progress: number
   status_message: string
@@ -237,9 +238,11 @@ export const api = {
   pauseJob: (id: string) => request(`/api/v1/jobs/${id}/pause`, { method: "POST" }),
   resumeJob: (id: string) => request(`/api/v1/jobs/${id}/resume`, { method: "POST" }),
   deleteJob: (id: string) => request(`/api/v1/jobs/${id}`, { method: "DELETE" }),
-  createProject: (payload: { import_id: string; name: string; manifest: Record<string, unknown>; scene: Record<string, unknown>; mastering_reference_id?: string | null }) =>
+  createProject: (payload: { name: string; notes?: string | null; manifest?: Record<string, unknown>; scene?: Record<string, unknown> }) =>
     request<Project>("/api/v1/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
-  saveProject: (id: string, payload: { name?: string; manifest: Record<string, unknown>; scene: Record<string, unknown>; mastering_reference_id?: string | null; preview_quality?: string }) =>
+  addProjectAssets: (projectId: string, payload: { import_id: string; per_asset_overrides?: Record<string, Record<string, unknown>> }) =>
+    request<Project>(`/api/v1/projects/${projectId}/assets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+  saveProject: (id: string, payload: { name?: string; notes?: string | null; manifest: Record<string, unknown>; scene: Record<string, unknown>; mastering_reference_id?: string | null; preview_quality?: string }) =>
     request<Project>(`/api/v1/projects/${id}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   saveProjectTrack: (projectId: string, trackId: string, payload: { manifest_overrides: Record<string, unknown>; scene_overrides: Record<string, unknown> }) =>
     request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
@@ -248,4 +251,12 @@ export const api = {
   retryProject: (id: string) => request<Project>(`/api/v1/projects/${id}/retry`, { method: "POST" }),
   exportProject: (id: string) => request<Job>(`/api/v1/projects/${id}/exports`, { method: "POST" }),
   deleteProject: (id: string) => request(`/api/v1/projects/${id}`, { method: "DELETE" }),
+  // DAW-style Save/Open: a portable .upmix.zip, distinct from exportProject
+  // above (which renders a deliverable mix, not a re-editable workspace).
+  projectArchiveUrl: (id: string) => `${rootPath}/api/v1/projects/${id}/archive`,
+  importProjectArchive: async (file: File) => {
+    const data = new FormData()
+    data.append("file", file, file.name)
+    return request<Project>("/api/v1/projects/import", { method: "POST", body: data })
+  },
 }

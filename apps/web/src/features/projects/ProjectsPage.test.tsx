@@ -10,6 +10,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     id: "project-1",
     import_id: "import-1",
     name: "Editable master",
+    notes: null,
     status: "ready",
     progress: 1,
     status_message: "Project stems ready",
@@ -32,14 +33,23 @@ function makeProject(overrides: Partial<Project> = {}): Project {
 
 function renderPage(projects: Project[]) {
   const onDelete = vi.fn();
+  const onCreate = vi.fn();
+  const onImported = vi.fn();
   render(
     <MemoryRouter>
       <HeaderSlotProvider>
-        <ProjectsPage projects={projects} loading={false} error={null} onDelete={onDelete} />
+        <ProjectsPage
+          projects={projects}
+          loading={false}
+          error={null}
+          onDelete={onDelete}
+          onCreate={onCreate}
+          onImported={onImported}
+        />
       </HeaderSlotProvider>
     </MemoryRouter>,
   );
-  return { onDelete };
+  return { onDelete, onCreate, onImported };
 }
 
 describe("ProjectsPage", () => {

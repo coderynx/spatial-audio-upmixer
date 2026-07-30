@@ -26,9 +26,13 @@ def project_view(
         view.reference_match_pending = manager.reference_match_pending(project.id)
         view.peaks_pending = manager.peaks_pending(project.id)
     stem_by_id = {stem.id: stem for stem in project.stems}
-    for track in view.tracks:
+    # Each track's asset may belong to a different import batch than
+    # project.import_id once assets are added to a project incrementally —
+    # the audio route validates asset.import_id against the URL's import_id,
+    # so the URL must use the track's own asset, not the project's.
+    for track, track_orm in zip(view.tracks, project.tracks, strict=True):
         track.asset.audio_url = (
-            f"{root_path}/api/v1/imports/{project.import_id}/assets/{track.asset.id}/audio"
+            f"{root_path}/api/v1/imports/{track_orm.asset.import_id}/assets/{track.asset.id}/audio"
         )
         track.source_preview_url = (
             f"{root_path}/api/v1/projects/{project.id}/tracks/{track.id}/source-preview"

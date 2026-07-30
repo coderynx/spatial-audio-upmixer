@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from upmixer.manifest import parse_manifest, validate_manifest
-from upmixer_web.shared.models import ImportBatch, Job
+from upmixer_web.shared.models import Job
 
 # Import-time side effect: registers manifest block keys. MasteringChain only
 # imports these lazily inside process(), so without this validate_manifest
@@ -50,7 +50,6 @@ def normalize_job_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
 
 def materialize_manifest(
     job: Job,
-    import_batch: ImportBatch,
     input_paths: list[Path],
     work_dir: Path,
     stem_cache_dir: Path,
@@ -63,7 +62,12 @@ def materialize_manifest(
     # containers/codecs (ogg/opus, flac) are added.
     extension = ".wav"
     assets = []
-    for track, asset, input_path in zip(job.tracks, import_batch.assets, input_paths, strict=True):
+    # Read each source through the JobTrack's own asset FK rather than a
+    # positional zip against import_batch.assets — a project export's tracks
+    # may span more than one import once assets are added to a project
+    # incrementally, so the two lists are no longer guaranteed to align.
+    for track, input_path in zip(job.tracks, input_paths, strict=True):
+        asset = track.asset
         output = work_dir / f"{track.position + 1:02d}-{Path(asset.filename).stem}{extension}"
         assets.append({
             "input": str(input_path),

@@ -59,8 +59,9 @@ class ReferenceMatchAssetView(BaseModel):
 
 class ProjectView(ApiModel):
     id: str
-    import_id: str
+    import_id: str | None
     name: str
+    notes: str | None = None
     status: str
     progress: float
     status_message: str
@@ -84,15 +85,15 @@ class ProjectView(ApiModel):
 
 
 class CreateProjectRequest(BaseModel):
-    import_id: str
     name: str = Field(min_length=1, max_length=512)
-    manifest: dict[str, Any]
+    notes: str | None = Field(default=None, max_length=8192)
+    manifest: dict[str, Any] = Field(default_factory=dict)
     scene: dict[str, Any] = Field(default_factory=dict)
-    mastering_reference_id: str | None = None
 
 
 class UpdateProjectSettingsRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=512)
+    notes: str | None = None
     manifest: dict[str, Any]
     scene: dict[str, Any] = Field(default_factory=dict)
     mastering_reference_id: str | None = None
@@ -106,3 +107,13 @@ class UpdateProjectTrackSettingsRequest(BaseModel):
 
 class ExpandProjectStemsRequest(BaseModel):
     stems: list[str] = Field(min_length=1)
+
+
+class AddProjectAssetsRequest(BaseModel):
+    """Adds every asset from an already-ingested import batch to a project as
+    new tracks. ``per_asset_overrides`` carries per-file stems/sample-rate/
+    subtype/channel-layout, keyed by the `MediaAsset.id` returned from the
+    `/imports` ingestion the caller already performed."""
+
+    import_id: str
+    per_asset_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)

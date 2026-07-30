@@ -4,17 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import uuid
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, Callable
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from upmixer_web.features.jobs.schemas import JobView
 from upmixer_web.features.jobs.service import job_mastering_reference
 from upmixer_web.features.jobs.views import job_view
+from upmixer_web.features.projects.archive import export_project_archive, import_project_archive
 from upmixer_web.features.projects.schemas import (
+    AddProjectAssetsRequest,
     CreateProjectRequest,
     ExpandProjectStemsRequest,
     ProjectView,
@@ -23,7 +27,8 @@ from upmixer_web.features.projects.schemas import (
 )
 from upmixer_web.features.projects.service import (
     ProjectStateConflict,
-    create_project,
+    add_project_assets,
+    create_empty_project,
     expand_project_stems,
     get_project,
     list_projects,
@@ -59,9 +64,6 @@ def register_project_routes(
 ) -> None:
     @app.post("/api/v1/projects", response_model=ProjectView, status_code=status.HTTP_201_CREATED, tags=["projects"])
     def create_project_route(request: CreateProjectRequest, session: Session = Depends(database_session)) -> ProjectView:
-        batch = session.get(ImportBatch, request.import_id)
-        if not batch:
-            raise HTTPException(status_code=404, detail="Import not found")
         try:
             project_manifest = dict(request.manifest)
             project_manifest["engine"] = {
@@ -69,13 +71,21 @@ def register_project_routes(
                 "mode": "stem",
             }
             ensure_stem_separation_available(project_manifest, stem_capability)
-            reference = job_mastering_reference(
-                session, batch, request.mastering_reference_id
-            )
-            project = create_project(
-                session, batch, request.name, request.manifest, request.scene,
-                mastering_reference=reference,
-            )
+            project = create_empty_project(session, request.name, request.notes, request.manifest, request.scene)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
+
+    @app.post("/api/v1/projects/{project_id}/assets", response_model=ProjectView, status_code=status.HTTP_201_CREATED, tags=["projects"])
+    def add_project_assets_route(project_id: str, request: AddProjectAssetsRequest, session: Session = Depends(database_session)) -> ProjectView:
+        project = get_project(session, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        batch = session.get(ImportBatch, request.import_id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="Import not found")
+        try:
+            project = add_project_assets(session, project, batch, request.per_asset_overrides)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         manager.notify()
@@ -115,6 +125,7 @@ def register_project_routes(
             )
             project = update_project_settings(
                 session, project, request.manifest, request.scene, request.name,
+                notes=request.notes,
                 mastering_reference=reference,
                 preview_quality=request.preview_quality,
             )
@@ -183,6 +194,48 @@ def register_project_routes(
             retry_project(session, project)
         except ProjectStateConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        manager.notify()
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
+
+    @app.get("/api/v1/projects/{project_id}/archive", tags=["projects"])
+    def export_project_archive_route(
+        project_id: str, background_tasks: BackgroundTasks, session: Session = Depends(database_session),
+    ) -> FileResponse:
+        """DAW-style "Save": a portable .upmix.zip a user can re-import later
+        (here or on another server) to an identical workspace. See
+        `features.projects.archive` for what's inside."""
+        project = get_project(session, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if not project.tracks:
+            raise HTTPException(status_code=409, detail="Project has no tracks to export")
+        destination = manager.work_root / f"project-archive-{uuid.uuid4().hex}.zip"
+        try:
+            export_project_archive(project, storage, app.state.project_stems, destination)
+        except (OSError, FileNotFoundError) as exc:
+            destination.unlink(missing_ok=True)
+            raise HTTPException(status_code=409, detail=f"Project archive could not be built: {exc}") from exc
+        # FastAPI runs a BackgroundTasks parameter after the response is sent
+        # regardless of whether the returned Response references it — no
+        # need to also pass background=background_tasks to FileResponse.
+        background_tasks.add_task(destination.unlink, missing_ok=True)
+        safe_name = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in project.name) or "project"
+        return FileResponse(destination, media_type="application/zip", filename=f"{safe_name}.upmix.zip")
+
+    @app.post("/api/v1/projects/import", response_model=ProjectView, status_code=status.HTTP_201_CREATED, tags=["projects"])
+    async def import_project_route(file: UploadFile, session: Session = Depends(database_session)) -> ProjectView:
+        """DAW-style "Open": reconstruct a project from a .upmix.zip written
+        by the export route above."""
+        staging = manager.work_root / f"project-archive-upload-{uuid.uuid4().hex}.zip"
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with staging.open("wb") as handle:
+                shutil.copyfileobj(file.file, handle)
+            project = import_project_archive(session, storage, app.state.project_stems, manager.work_root, staging)
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid project archive: {exc}") from exc
+        finally:
+            staging.unlink(missing_ok=True)
         manager.notify()
         return project_view(project, settings.root_path, app.state.project_stems, manager)
 

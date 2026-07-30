@@ -6,8 +6,8 @@ import { JobsPage } from "@/features/jobs/JobsPage";
 import { useJobs } from "@/features/jobs/useJobs";
 import type { Job } from "@/api";
 import { StemCachePage } from "@/features/cache/StemCachePage";
+import { CreateProjectDialog } from "@/features/projects/CreateProjectDialog";
 import { ProjectDetailPage } from "@/features/projects/ProjectDetailPage";
-import { ProjectNewPage } from "@/features/projects/ProjectNewPage";
 import { ProjectsPage } from "@/features/projects/ProjectsPage";
 import { useProjects } from "@/features/projects/useProjects";
 import { SettingsPage } from "@/features/settings/SettingsPage";
@@ -22,6 +22,7 @@ export default function App() {
   const projectsState = useProjects();
   const navigate = useNavigate();
   const [composerOpen, setComposerOpen] = React.useState(false);
+  const [createProjectOpen, setCreateProjectOpen] = React.useState(false);
   const [remix, setRemix] = React.useState<Job | null>(null);
   const createJob = () => {
     setRemix(null);
@@ -42,7 +43,7 @@ export default function App() {
     <AppShell
       configuration={effectiveConfiguration}
       onRefresh={projectRoute ? () => void projectsState.refresh() : jobsRoute ? () => void refresh() : refreshAll}
-      onCreate={projectRoute ? () => navigate("/projects/new") : jobsRoute ? createJob : undefined}
+      onCreate={projectRoute ? () => setCreateProjectOpen(true) : jobsRoute ? createJob : undefined}
       createLabel={projectRoute ? "New project" : jobsRoute ? "New job" : undefined}
     >
       <Routes>
@@ -55,10 +56,11 @@ export default function App() {
               loading={projectsState.loading}
               error={projectsState.error}
               onDelete={(project) => void projectsState.deleteProject(project)}
+              onCreate={() => setCreateProjectOpen(true)}
+              onImported={() => void projectsState.refresh(true)}
             />
           }
         />
-        <Route path="/projects/new" element={<ProjectNewPage configuration={effectiveConfiguration} />} />
         <Route path="/projects/:projectId" element={<ProjectDetailPage configuration={effectiveConfiguration} />} />
         <Route
           path="/jobs"
@@ -102,6 +104,14 @@ export default function App() {
         remix={remix}
         configuration={configuration}
         onCreated={() => void refresh(true)}
+      />
+      <CreateProjectDialog
+        open={createProjectOpen}
+        onOpenChange={setCreateProjectOpen}
+        onCreated={(project) => {
+          void projectsState.refresh(true);
+          navigate(`/projects/${project.id}`);
+        }}
       />
     </AppShell>
   );

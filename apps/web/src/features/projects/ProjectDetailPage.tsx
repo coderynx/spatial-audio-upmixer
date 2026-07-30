@@ -7,15 +7,19 @@ import {
   ChevronLeft,
   ChevronUp,
   Download,
+  FolderOpen,
   Loader2,
   Package,
+  Save,
   Settings,
   SlidersHorizontal,
+  UploadCloud,
   Wand2,
 } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, type Configuration, type Project, type StemRouting } from "@/api";
 import { useHeaderTitle } from "@/app/HeaderSlot";
+import { EmptyState } from "@/app/EmptyState";
 import { InspectorGroup } from "@/app/InspectorRow";
 import { SegmentedControl } from "@/app/SegmentedControl";
 import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
@@ -27,6 +31,7 @@ import { MasteringSection } from "@/features/composer/sections/MasteringSection"
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
 import { getStemColor, getStemIcon, stemColors } from "@/lib/stems";
 import { cn } from "@/lib/utils";
+import { AssetsTab } from "./assets/AssetsTab";
 import HazeView from "./HazeView";
 import ChannelMeters from "./ChannelMeters";
 import ElevationView from "./ElevationView";
@@ -34,11 +39,11 @@ import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import { StemChannelStrip, StripResizeHandle } from "./ChannelStrip";
 import { MixerView } from "./MixerView";
 import { OutputModeSelect } from "./OutputModeSelect";
-import { PreparationView } from "./PreparationView";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import { TimelineView } from "./TimelineView";
 import { Transport } from "./Transport";
+import { TrackSwitcher } from "./TrackSwitcher";
 import {
   HAZE_MIN_WIDTH,
   METERS_DEFAULT_SHARE,
@@ -51,7 +56,7 @@ import { usePaneLayout } from "./usePaneLayout";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
 import { useTrackPeaks } from "./useTrackPeaks";
 
-type Stage = "mixing" | "mastering" | "delivery";
+type Stage = "assets" | "mixing" | "mastering" | "delivery";
 
 const PANE_SEGMENTS = [
   { value: "timeline" as const, label: "Timeline", icon: AudioWaveform },
@@ -59,6 +64,7 @@ const PANE_SEGMENTS = [
 ];
 
 const STAGES = [
+  { value: "assets" as const, label: "Assets", icon: FolderOpen },
   { value: "mixing" as const, label: "Mixing", icon: SlidersHorizontal },
   { value: "mastering" as const, label: "Mastering", icon: AudioWaveform },
   { value: "delivery" as const, label: "Delivery", icon: Package },
@@ -94,6 +100,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         initialized.current = true;
         setManifest(normalizeManifest(next.manifest));
         setSelectedTrack(next.tracks[0]?.id || null);
+        // A project with nothing prepared yet has nowhere else useful to
+        // land — Mixing/Mastering/Delivery all need a ready track.
+        if (next.tracks.length === 0 || !next.prepared_stems.length) setActiveTab("assets");
       }
       setError(null);
     } catch (reason) { setError((reason as Error).message); }
@@ -171,15 +180,43 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       scene_overrides: selected.scene_overrides,
     }).then(setProject).catch((reason) => setError((reason as Error).message));
   }, [editScope, projectId, selected, queueSave]);
-  // Mastering and delivery are whole-project concerns (one master, one
-  // deliverable) — always write straight to the project manifest regardless
-  // of the mixing tab's project/track edit scope. Track-scope saves
-  // (above) only persist `mixing` overrides today, so routing these through
-  // `updateManifest` while a track is selected would silently drop the edit.
+  // Project-wide settings (name, default speaker layout, preview quality) —
+  // ProjectSettingsSection only. This is the inherited default a new track
+  // starts from, distinct from `updateTrackManifest` below.
   const updateProjectManifest = (next: Manifest) => {
     setManifest(next);
     queueSave(next);
   };
+  // Mastering and Delivery are always per-track — each track carries its own
+  // master and delivery format independent of the Mixing tab's project/track
+  // edit-scope toggle (which only governs mixing/routing edits). Unlike
+  // `effectiveManifest`/`updateManifest` above, this ignores `editScope`
+  // entirely: there is no "one master for every track" mode for these two
+  // stages, only "this track's master."
+  const trackManifest = React.useMemo(() => {
+    if (!manifest || !selected) return manifest;
+    const overrides = selected.manifest_overrides as Partial<Manifest>;
+    return normalizeManifest({
+      ...manifest,
+      ...overrides,
+      engine: { ...manifest.engine, ...overrides.engine },
+      mixing: { ...manifest.mixing, ...overrides.mixing },
+      routing: { ...manifest.routing, ...overrides.routing },
+      mastering: { ...manifest.mastering, ...overrides.mastering },
+      processing: { ...manifest.processing, ...overrides.processing },
+      format: { ...manifest.format, ...overrides.format },
+    });
+  }, [manifest, selected]);
+  const updateTrackManifest = React.useCallback((next: Manifest) => {
+    if (!projectId || !selected) return;
+    void api.saveProjectTrack(projectId, selected.id, {
+      manifest_overrides: {
+        engine: next.engine, mixing: next.mixing, routing: next.routing,
+        mastering: next.mastering, processing: next.processing, format: next.format,
+      },
+      scene_overrides: selected.scene_overrides,
+    }).then(setProject).catch((reason) => setError((reason as Error).message));
+  }, [projectId, selected]);
   const saveReference = async (mastering_reference_id: string | null) => {
     if (!projectId || !project || !manifest) return;
     try {
@@ -351,7 +388,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const headerTitle = React.useMemo(() => project ? <div className="flex min-w-0 items-center gap-1.5"><Link to="/projects" className="flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"><ChevronLeft className="h-3.5 w-3.5" />Projects</Link><span className="text-muted-foreground">/</span><span className="truncate text-[13px] font-semibold">{project.name}</span></div> : null, [project?.name]);
   useHeaderTitle(headerTitle);
   if (!project) return <main className="grid h-full place-items-center p-5 text-sm text-muted-foreground">{error || "Loading project…"}</main>;
-  if (!ready) return <PreparationView project={project} onRetry={() => void retry()} />;
+  // Assets is reachable regardless of readiness — it's where readiness
+  // comes from. Mixing/Mastering/Delivery still gate on `ready` (below, per
+  // tab body), so the stage bar and track switcher stay visible instead of
+  // this being a full-page takeover the user can't navigate out of.
   // The stage tabs are the app's workflow, deliberately condensed into one
   // segmented control — Project settings is not a stage, so it sits outside
   // that group entirely, past a `ToolbarSeparator`, as its own one-segment
@@ -366,19 +406,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         setSettingsView(false);
       }}
     />
-    {activeTab === "mixing" && !settingsView && project.tracks.length > 1 && (
+    {activeTab !== "assets" && !settingsView && (
       <>
         <ToolbarSeparator />
-        <select
-          aria-label="Track"
-          className="h-6 rounded-md border bg-secondary px-1 text-[11px]"
-          value={selectedTrack ?? ""}
-          onChange={(event) => setSelectedTrack(event.target.value)}
-        >
-          {project.tracks.map((track) => (
-            <option key={track.id} value={track.id}>{track.asset.title || track.asset.filename}</option>
-          ))}
-        </select>
+        <TrackSwitcher tracks={project.tracks} value={selectedTrack} onChange={setSelectedTrack} />
       </>
     )}
     <ToolbarSeparator />
@@ -388,6 +419,22 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       value={(settingsView ? "settings" : "") as "settings"}
       onChange={() => setSettingsView(true)}
     />
+    {project.tracks.length > 0 && (
+      <>
+        <ToolbarSeparator />
+        {/* DAW-style Save: a portable .upmix.zip re-importable to an
+            identical workspace — distinct from the Delivery tab's "Export
+            project", which renders a deliverable mix, not a re-editable
+            project. A non-workflow project action, so it sits here rather
+            than in the segmented group. */}
+        <Button variant="ghost" size="sm" asChild>
+          <a href={api.projectArchiveUrl(project.id)} download aria-label="Save project">
+            <Save />
+            <span className="hidden lg:inline">Save project</span>
+          </a>
+        </Button>
+      </>
+    )}
   </>;
   return <main className="flex h-[calc(100vh-var(--topbar-h))] w-full flex-col overflow-hidden">
     {/* Merged with what used to be a separate stage-tabs toolbar above it —
@@ -435,6 +482,24 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           onPreviewQualityChange={(quality) => void savePreviewQuality(quality)}
         />
       </section>
+    ) : activeTab === "assets" ? (
+      <section className="flex min-h-0 flex-1 flex-col">
+        <AssetsTab
+          project={project}
+          configuration={configuration}
+          onProjectUpdate={setProject}
+          onOpenTrack={(trackId) => { setSelectedTrack(trackId); setActiveTab("mixing"); }}
+          onRetry={() => void retry()}
+        />
+      </section>
+    ) : !ready ? (
+      <EmptyState
+        icon={UploadCloud}
+        title="No prepared tracks yet"
+        description="Upload and prepare at least one track in Assets before mixing, mastering, or delivering."
+        action={<Button size="sm" variant="outline" onClick={() => setActiveTab("assets")}>Go to Assets</Button>}
+        className="flex-1"
+      />
     ) : (() => {
       const previewPanel = <section ref={previewColumn} className="flex min-h-0 flex-col">
         <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
@@ -691,18 +756,27 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           </InspectorGroup>
         </div>}
       </div>;
-      if (activeTab === "mastering") return manifest && <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_460px]">
+      // Mastering and Delivery are per-track: each track carries its own
+      // master and delivery format (`trackManifest`/`updateTrackManifest`,
+      // ignoring the Mixing tab's project/track edit-scope toggle — see
+      // where those are defined). A project only ever reaches this branch
+      // once ready, and `selectedTrack` auto-inits to the first track on
+      // load, so `!selected` here means no track survived a delete —
+      // point back at the switcher rather than rendering panels with
+      // nothing to edit.
+      if (activeTab === "mastering") return trackManifest && (selected ? <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_460px]">
         {previewPanel}
         <section className="min-h-0 overflow-auto border-l bg-card p-3">
           <MasteringSection
-            manifest={manifest}
-            setManifest={(update) => updateProjectManifest(typeof update === "function" ? update(manifest) : update)}
+            manifest={trackManifest}
+            setManifest={(update) => updateTrackManifest(typeof update === "function" ? update(trackManifest) : update)}
             configuration={configuration}
             masteringReference={project.mastering_reference || null}
             referenceUploading={false}
             referenceError={null}
             referencePending={Boolean(project.reference_match_pending)}
             onReferenceUpload={(file) => {
+              if (!project.import_id) { setError("Upload a track before attaching a mastering reference."); return; }
               void api.uploadMasteringReference(project.import_id, file)
                 .then((reference) => saveReference(reference.id))
                 .catch((reason) => setError((reason as Error).message));
@@ -710,18 +784,24 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             onReferenceClear={() => { void saveReference(null); }}
           />
         </section>
-      </div>;
-      return manifest && <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_460px]">
+      </div> : <EmptyState icon={SlidersHorizontal} title="Select a track" description="Pick a track from the switcher above to edit its master." className="flex-1" />);
+      return trackManifest && (selected ? <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr)_460px]">
         {previewPanel}
         <section className="flex min-h-0 flex-col border-l bg-card">
           <div className="min-h-0 flex-1 overflow-auto p-3">
-            <ProjectDeliverySection manifest={manifest} configuration={configuration} onChange={updateProjectManifest} />
+            <ProjectDeliverySection manifest={trackManifest} configuration={configuration} onChange={updateTrackManifest} />
           </div>
-          <div className="shrink-0 border-t p-2">
-            <Button className="w-full" disabled={exporting} onClick={() => void exportProject()}><Download />{exporting ? "Queueing" : "Export project"}</Button>
+          <div className="shrink-0 space-y-1.5 border-t p-2">
+            <Button className="w-full" disabled={exporting} onClick={() => void exportProject()}>
+              <Download />
+              {exporting ? "Queueing" : `Export project · ${project.tracks.length} track${project.tracks.length === 1 ? "" : "s"}`}
+            </Button>
+            <p className="text-center text-[11px] text-muted-foreground">
+              Renders every track with its own master{project.tracks.length > 1 ? ", bundled into one download" : ""}.
+            </p>
           </div>
         </section>
-      </div>;
+      </div> : <EmptyState icon={Package} title="Select a track" description="Pick a track from the switcher above to edit its delivery format." className="flex-1" />);
     })()}
     <StatusBar>
       <StatusCell label="Layout" value={routingLayout} />
