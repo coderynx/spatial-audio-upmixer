@@ -13,12 +13,8 @@ import {
 import { speakerDisplayLabel } from "@/lib/spatial";
 import type { MeterLevel, OutputMode } from "./useStemPreview";
 
-// Vertical dB-scale level meters beside the Haze view: one bar per channel of
-// the project's selected speaker layout (in `channels` order, LFE last),
-// plus a separated "Headphones" group showing the L/R signal actually
-// reaching the binaural preview output. Reads `channelLevels`/
-// `headphoneLevels` refs in its own rAF loop rather than subscribing to
-// React state, same pattern as HazeView/ElevationView reading `stemSpectrum`.
+// Reads channelLevels/headphoneLevels refs in its own rAF loop rather than
+// subscribing to React state, same pattern as HazeView/ElevationView.
 
 export type ChannelMetersProps = {
   channels: string[];
@@ -26,19 +22,12 @@ export type ChannelMetersProps = {
   headphoneLevels: React.MutableRefObject<{ left: MeterLevel; right: MeterLevel }>;
   speakerEnabled: Record<string, boolean>;
   onToggleSpeaker?: (channel: string) => void;
-  // Which of the three preview output modes is live — controls the trailing
-  // group: two bars with a headphone glyph for binaural, two bars labeled
-  // L/R for stereo, or nothing (the per-layout bars already show every
-  // discrete channel) for native.
+  // Controls the trailing group: headphone bars for binaural, L/R for stereo,
+  // nothing for native (per-layout bars already show every discrete channel).
   outputMode: OutputMode;
-  // True while preview audio is live-updating `channelLevels`/
-  // `headphoneLevels` (i.e. `preview.playing`). On pause/stop those refs are
-  // cleared to zero (see useStemPreview.ts's `stopSources`), and this
-  // component eases its displayed bars down toward that zero (`smoothLevel`)
-  // rather than snapping instantly, so the meters dissolve out on the same
-  // timing as HazeView/ElevationView. While inactive, the draw loop keeps
-  // running only until the bars + peak markers settle (see `SETTLE_FRAMES`
-  // below), then stops.
+  // True while preview audio is live-updating the level refs (preview.playing).
+  // On pause/stop the draw loop eases bars toward zero (smoothLevel) instead
+  // of snapping, then stops once settled (SETTLE_FRAMES below).
   active: boolean;
   className?: string;
 };
@@ -122,12 +111,8 @@ function ChannelMetersImpl({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
     resize();
-    // Resizing a canvas clears its pixel buffer, and a ResizeObserver fires
-    // after layout but before paint, so `wakeRef` repaints synchronously
-    // rather than scheduling a frame. Scheduling would let the browser paint
-    // the cleared buffer once per resize — which during an animated resize
-    // (the 150ms sidebar collapse resizes on every frame) leaves the display
-    // blank for the whole transition.
+    // Repaints synchronously rather than scheduling a frame: a resize clears the
+    // canvas, and scheduling would paint the cleared buffer during an animated resize.
     const observer = new ResizeObserver(() => {
       resize();
       wakeRef.current();
@@ -211,18 +196,14 @@ function ChannelMetersImpl({
         const meterLevel = channelLevels.current.get(channel);
         const level = meterState.current.smoothLevel(channel, meterLevel?.rms ?? 0, deltaSec);
         const currentDb = muted ? -60 : levelToDb(level);
-        // Peak-hold tracks the smoothed RMS bar itself (decay-held), not the
-        // raw instantaneous sample peak — real music's crest factor put the
-        // true peak far enough above RMS that the tick read as detached,
-        // floating well off the bar instead of riding just above its fill.
-        // The true instantaneous peak still drives the separate 0dBFS clip
-        // latch below, which is a different, fixed indicator, not this tick.
+        // Peak-hold tracks the smoothed RMS bar (decay-held), not the raw
+        // instantaneous peak — real music's crest factor made the tick read
+        // as detached, floating off the bar. The 0dBFS clip latch below still
+        // uses the true instantaneous peak.
         const peakDb = meterState.current.updatePeak(channel, currentDb, deltaSec);
         if (peakDb - currentDb > SETTLE_EPSILON_DB) settled = false;
         const redBottomY = dbToY(RED_ZONE_DB, meterTop, meterBottom);
-        // This display is always multi-channel — the full speaker layout,
-        // never a single isolated channel — so it always uses the later
-        // multi-channel yellow floor (§ meterScale.ts).
+        // Always multi-channel here, so the later multi-channel yellow floor applies.
         const yellowBottomY = dbToY(MULTI_CHANNEL_YELLOW_ZONE_DB, meterTop, meterBottom);
 
         drawMeterBar(
@@ -314,12 +295,9 @@ function ChannelMetersImpl({
     if (hit) onToggleSpeaker(hit.channel);
   };
 
-  // Sizing (width, min/max, flex vs fixed) is the caller's call — width used
-  // to be self-managed here (`min-w-[180px] max-w-[480px] flex-1`), but with
-  // Haze/Elevation/Meters all user-resizable now (§4.1), a fixed internal cap
-  // fought the caller's own explicit width, occasionally leaving unabsorbed
-  // space between this panel and its neighbour. The caller wraps this in a
-  // sized container and passes `w-full h-full`.
+  // Sizing is the caller's call (passes w-full h-full) — a fixed internal
+  // width cap fought the caller's own explicit width once Haze/Elevation/Meters
+  // became user-resizable.
   return (
     <div
       className={`relative flex flex-col overflow-hidden rounded-lg border ${className || ""}`}

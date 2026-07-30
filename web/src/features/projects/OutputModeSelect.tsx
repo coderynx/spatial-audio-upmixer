@@ -41,12 +41,7 @@ const TRANSAURAL_PROFILE_OPTIONS: { value: TransauralProfile; label: string; ico
 // Grace period before the profile submenu closes on mouse-out.
 const SUBMENU_CLOSE_DELAY_MS = 200;
 
-// Icon dropdown for the preview box's output-mode picker — plain <select>
-// (SelectField, components/forms/fields.tsx) can't render per-option icons,
-// so this is a small custom popover instead of a native <select>. Includes
-// a secondary system-device picker, shown only once native mode is chosen,
-// and a submenu on the binaural/transaural rows for their respective Spatial
-// Audio Engine profiles.
+// Custom popover, not a native <select>: SelectField can't render per-option icons.
 export function OutputModeSelect({
   value,
   onChange,
@@ -127,13 +122,8 @@ export function OutputModeSelect({
   const CurrentIcon = current.icon;
   const currentProfile = PROFILE_OPTIONS.find((option) => option.value === spatialProfile) ?? PROFILE_OPTIONS[0];
   const currentTransauralProfile = TRANSAURAL_PROFILE_OPTIONS.find((option) => option.value === transauralProfile) ?? TRANSAURAL_PROFILE_OPTIONS[0];
-  // The trigger sits directly beside Transport's dB readout (Transport.tsx)
-  // with no menu open — for binaural/transaural, the active Spatial Audio
-  // Engine profile is as glanceable a fact as that readout, so it's shown
-  // inline rather than left for the submenu alone to report. Native and
-  // stereo have no profile to show, so the mode's own label fills the same
-  // slot — an icon-only trigger next to two labelled ones read as broken
-  // rather than simply profile-less.
+  // Binaural/transaural show their active profile inline; native/stereo fall
+  // back to the mode's own label so the trigger never reads as broken.
   const currentModeProfile = value === "transaural" ? currentTransauralProfile : value === "binaural" ? currentProfile : null;
   const triggerLabel = currentModeProfile?.label ?? current.label;
 
@@ -151,24 +141,15 @@ export function OutputModeSelect({
         aria-label={`Preview output mode: ${current.label}${currentModeProfile ? `, ${currentModeProfile.label} profile` : ""}`}
         aria-expanded={open}
         onClick={() => {
-          // Left-aligned under the trigger overflows off the right edge of
-          // the window when this control sits at the bar's trailing
-          // edge (its usual spot) — flip to right-aligned whenever the
-          // menu's own width wouldn't fit, the same check the profile
-          // submenu already makes for its own overflow.
+          // Flips to right-aligned when left-aligned would overflow the window
+          // (this control usually sits at the bar's trailing edge).
           const rect = containerRef.current?.getBoundingClientRect();
           setMenuFlip(!!rect && rect.left + 256 > window.innerWidth);
           setOpen((next) => !next);
         }}
-        // Fixed width, sized to fit the icon, the longest label this trigger
-        // ever shows ("Stereo mixdown"), and the chevron together — this
-        // trigger sits packed against the mute button and volume fader (see
-        // Transport.tsx), so a width that changed with the mode/profile
-        // would drag those along with it every time. `justify-between`
-        // pins the icon+label to the left edge and the chevron to the right
-        // edge, both at a constant position — the button's default centred
-        // content would otherwise drift both of them sideways as the label
-        // text's own length changed between profiles.
+        // Fixed width (fits the longest label, "Stereo mixdown") so this trigger,
+        // packed against the mute button and volume fader, doesn't shift them
+        // as the label changes between modes/profiles.
         className="h-8 w-[156px] shrink-0 justify-between px-2.5"
       >
         <span className="flex min-w-0 items-center gap-1">

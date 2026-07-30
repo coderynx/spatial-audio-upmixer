@@ -27,11 +27,9 @@ from upmixer.config import UpmixConfig
 from upmixer.formats import INPUT_FORMAT_MAP
 from upmixer.pipeline import UpmixPipeline
 
-# These register their manifest block keys (register_block_keys) as an
-# import-time side effect; without them a fresh process rejects any manifest
-# using mastering.eq/compressor/bass/match_reference.* or routing.* fields
-# with "Unknown manifest field", since MasteringChain only imports them
-# lazily inside process() once a profile is actually selected.
+# Import-time side effect: registers manifest block keys. MasteringChain only
+# imports these lazily inside process(), so without this a fresh process
+# rejects mastering.*/routing.* manifest fields as "Unknown manifest field".
 import upmixer.mastering.bass  # noqa: F401
 import upmixer.mastering.compressor  # noqa: F401
 import upmixer.mastering.eq  # noqa: F401

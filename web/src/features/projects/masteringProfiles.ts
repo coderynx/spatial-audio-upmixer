@@ -88,17 +88,10 @@ export const MID_CUTOFF_HZ = 200.0;
 export const EXCITE_BLEND = 0.15;
 export const EXCITE_DRIVE = 3.0;
 
-// scipy.signal.butter's default Q for a 2nd-order Butterworth section.
-// Web Audio's BiquadFilterNode lowpass/highpass default Q=1 has a small
-// resonant peak (about +1dB near cutoff) a true Butterworth response
-// doesn't — set explicitly on any biquad standing in for a
-// `butter(2, ..., output="sos")` backend filter (bass mono-maker,
-// surround/height sends) so passband/stopband energy near the cutoff
-// tracks the backend more closely. Found via
-// docs/contracts/preview_export_parity.md's golden-diff harness: without
-// this, the bass mono-maker leaked enough extra energy near its cutoff to
-// flip its net level effect from a slight cut (backend) to a slight boost
-// (preview) on decorrelated multichannel content — see Ledger D9.
+// scipy.signal.butter's default Q for a 2nd-order Butterworth section — Web
+// Audio's default Q=1 has a small resonant peak a true Butterworth lacks.
+// Set explicitly on any biquad standing in for a butter(2, ..., "sos")
+// backend filter. Found via golden-diff — see Ledger D9.
 export const BUTTERWORTH_Q = 1 / Math.sqrt(2);
 
 // upmixer/mastering/bass.py STEREO_PAIRS — bass mono-maker operates on these
@@ -118,16 +111,9 @@ export const MONO_MAKER_STEREO_PAIRS: ReadonlyArray<readonly [string, string]> =
 // look-ahead limiter that replaced this on the native monitoring path.
 export const SOFT_LIMIT_THRESHOLD = 0.95;
 
-// upmixer/config.py limiter_lookahead_ms / limiter_release_ms —
-// upmixer/mastering/limiter.py::LookAheadLimiter, the bed-level look-ahead
-// true-peak limiter. Mirrored by web/public/limiter.worklet.js
-// ("limiter-processor"), wired in place of the native monitoring path's
-// `nativeSoftLimitNode` (useStemPreview.ts) — the binaural/stereo-downmix
-// path keeps the plain tanh `softLimitNode` above, matching
-// `render_binaural_delivery`'s own unchanged soft_limit call on the Python
-// side. Tier 1 (these two constants); the worklet's DSP realization
-// (causal streaming vs. the backend's whole-buffer batch processing) is
-// Tier 2 — see docs/contracts/preview_export_parity.md.
+// upmixer/mastering/limiter.py::LookAheadLimiter — mirrored by
+// web/public/limiter.worklet.js, native path only. Tier 1; the worklet's
+// causal-streaming realization is Tier 2 — see docs/contracts/preview_export_parity.md.
 export const LIMITER_LOOKAHEAD_MS = 5.0;
 export const LIMITER_RELEASE_MS = 50.0;
 
@@ -183,22 +169,12 @@ export function buildExciteCurve(drive: number = EXCITE_DRIVE, samples = 4096): 
   return curve;
 }
 
-// 4x-oversampled true-peak estimate: a short windowed-sinc upsample (not
-// upmixer/loudness.py's exact 48-tap polyphase kernel — a Tier-3
-// approximation bounded by docs/contracts/preview_export_parity.md §5's
-// 1.0 dBTP tolerance) followed by max |x|. Shared by the live preview's
-// post-mastering true-peak safety net (useStemPreview.ts's
-// measureOutputLoudness/apply) and the golden-diff harness's cross-engine
-// true-peak metric (render-preview-golden.mjs), so there is exactly one
-// implementation of this approximation, not two that could drift apart.
+// 4x-oversampled true-peak estimate: a windowed-sinc upsample, not upmixer/
+// loudness.py's exact 48-tap kernel — Tier-3, bounded by §5's 1.0 dBTP tolerance.
 const _TRUE_PEAK_UPSAMPLE_TAPS = 32;
 
-// Exported so `limiterWorklet.test.ts` can pin this against
-// `limiter.worklet.js`'s hand-duplicated copy of the same kernel (worklet
-// modules can't `import` this file — see that file's own comment) — a real
-// divergence between the two would otherwise only surface as a subtle
-// true-peak mismatch between the native limiter and everywhere else this
-// approximation is used, not a build/type error.
+// Exported so limiterWorklet.test.ts can pin this against limiter.worklet.js's
+// hand-duplicated copy (worklet modules can't import this file).
 export function buildTruePeakKernel(): Float64Array {
   const taps = _TRUE_PEAK_UPSAMPLE_TAPS;
   const kernel = new Float64Array(taps);
@@ -298,25 +274,8 @@ export function connectSeries(start: AudioNode, nodes: AudioNode[]): AudioNode {
   return previous;
 }
 
-// --- Channel-bed router (ported from upmixer/separation/stem_router.py) --
-//
-// The preview used to binauralize each stem as a point object via a Web
-// Audio HRTF PannerNode — that convolves every source with one generic,
-// non-personalized HRIR with a diffuse-field high-frequency rolloff, so
-// HRTF-panned sources read as duller than the dry final master (worse than
-// a single EQ shelf could fix), and the API exposes no way to load a
-// different HRTF. An earlier fix layered a fixed compensation EQ on the
-// HRTF bus and hard-switched some sources to a dry stereo pan to dodge the
-// comb filtering an undelayed dry copy causes against the panner's
-// unqueryable ITD — both hacks are gone now.
-//
-// The preview now mirrors the backend exactly: stems are routed into the
-// same 11-speaker channel bed `StemRouter.route` builds (this file's
-// constants below), and *that* channel bed — not the individual stems — is
-// what gets encoded to ambisonics and binauralized (see useStemPreview.ts).
-// This is the "virtual loudspeaker" rendering model (each output channel is
-// a fixed ambisonic point source), the same approach Apple's Spatial Audio
-// renderer uses, and it lets a user mute a speaker as well as a stem.
+// --- Channel-bed router (ported from upmixer/separation/stem_router.py) —
+// see docs/web_architecture.md "Preview audio graph" for why (not HRTF panning). --
 
 /** Per-channel-group gains — upmixer/config.py `center_gain`/`surround_gain`/
  * `back_gain`/`height_gain`. FL/FR always 1.0 (no group). */

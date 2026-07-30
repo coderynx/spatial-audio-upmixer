@@ -15,14 +15,8 @@ export type { OutputMode, MeterLevel, MixPreview } from "./audioEngine";
 export type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 export { applyTruePeakCeiling } from "./audioEngine";
 
-// This hook is a thin React binding over `PreviewAudioEngine` (audioEngine.ts):
-// the engine owns the AudioContext, the Web Audio graph, the transport clock,
-// DSP parameter application, and metering; this file's job is only to (a) sync
-// the latest props/state onto the engine's public fields every render — the
-// same role the old per-value refs played — and (b) wire React effects to call
-// the matching engine method when the relevant dependency actually changes.
-// See docs/standards/spatial_audio_engine.md and audioEngine.ts's own
-// docstring for the DSP/parity invariants the engine itself upholds.
+// Thin React binding over PreviewAudioEngine (audioEngine.ts): syncs props/state
+// onto the engine's fields and wires effects to the matching engine method.
 export function useStemPreview(
   stems: ProjectStem[],
   scene: { stems?: StemScene },

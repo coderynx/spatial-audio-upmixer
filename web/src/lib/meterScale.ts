@@ -68,13 +68,9 @@ export function createMeterState() {
   };
 }
 
-// Only floors at -60 — deliberately not clamped at 0dB on top, so a true
-// over (peak amplitude > 1.0) is still distinguishable from a peak that
-// merely touched 0dBFS exactly. `dbToY` (screen position) and `zoneColor`
-// (both already >= checks) handle values above 0 correctly on their own;
-// only the clip latch (`clipped`, computed in useStemPreview.ts from the
-// raw un-clamped sample amplitude) is the authoritative "did this clip"
-// signal — this function is for display placement, not detection.
+// Floors at -60 but not clamped at 0dB, so a true over stays distinguishable
+// from a peak that merely touched 0dBFS — the clip latch, not this function,
+// is the authoritative "did this clip" signal.
 export function levelToDb(level: number): number {
   return level > 0.0001 ? Math.max(-60, 20 * Math.log10(level)) : -60;
 }

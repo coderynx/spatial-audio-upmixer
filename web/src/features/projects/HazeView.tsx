@@ -44,15 +44,8 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-// User-facing "how visible is the effect" preference — a plain opacity
-// control on the whole melt/glow, not a reshaping of it (reach and blur stay
-// fixed; only alpha responds). A display taste, not project data, so it
-// lives in localStorage rather than the manifest and is shared across
-// projects like the theme toggle. Defaults to 0.5 (a middle ground, not the
-// full-strength look) until the user picks their own; 1 is full strength, 0
-// is floored at `MIN_ALPHA_SCALE` rather than fully transparent, so turning
-// it all the way down mutes the effect without erasing the stem's
-// position/level reading.
+// Display taste, not project data — lives in localStorage, shared across
+// projects like the theme toggle. Defaults to 0.5.
 const INTENSITY_STORAGE_KEY = "upmixer.hazeIntensity";
 /** Alpha multiplier at intensity 0 — low enough to read as "mostly off,"
  * high enough that a stem's position and level are still legible. */
@@ -361,17 +354,9 @@ function HazeViewImpl({
       blobCtx.clearRect(0, 0, width, height);
       blobCtx.globalCompositeOperation = "lighter";
 
-      // No tendrils: proximity alone now carries the "melting together" cue
-      // — each halo is large and soft enough that two nearby stems' fields
-      // overlap and additively brighten into a shared core on their own,
-      // rather than needing an explicit connecting line to say so.
-      //
-      // `currentIntensity` (the overlay slider, §IntensitySlider) is a plain
-      // opacity control on the whole effect, not a reshaping of it — the
-      // melt's reach and blur stay at their tuned values regardless, and only
-      // `alphaScale` dims every stop uniformly. Floored at `MIN_ALPHA_SCALE`
-      // rather than 0 so turning the slider all the way down mutes the effect
-      // without erasing it.
+      // No tendrils: soft halos overlap and additively brighten on their own.
+      // currentIntensity is a plain opacity control (alphaScale dims every
+      // stop uniformly); reach/blur stay fixed, floored at MIN_ALPHA_SCALE.
       const alphaScale = lerp(MIN_ALPHA_SCALE, 1, currentIntensity);
       for (const { point, blobRadius, emphasis, level, r, g, b } of resolved) {
         const meltRadius = blobRadius * 2.1;

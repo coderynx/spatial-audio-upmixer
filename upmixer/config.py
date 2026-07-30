@@ -67,26 +67,16 @@ class UpmixConfig:
     content_mix_strength: float = 1.0
     content_hf_analysis_hz: float = 4000.0
 
-    # Creative spatial adaptation. ``auto`` selects a content-led profile per
-    # file; live StreamingProcessor callers without a pre-analysis plan stay
-    # deliberately conservative.
+    # ``auto`` selects a content-led profile per file; live StreamingProcessor
+    # callers without a pre-analysis plan stay deliberately conservative.
     spatial_profile: str = "auto"
     spatial_intensity: float = 1.0
     spatial_preanalysis: bool = True
 
-    # Spatial Audio Engine (binaural headphone rendering), selected via
-    # ``output_type == "binaural"`` (which requires ``output_format`` to be
-    # one of ``upmixer.formats.BINAURAL_BED_FORMATS``): the pipeline upmixes
-    # and masters to that bed normally, then collapses it to stereo through
-    # the profile's virtual-loudspeaker HOA decode. See upmixer/binaural/.
+    # See docs/standards/spatial_audio_engine.md.
     binaural_profile: str = "studio"
 
-    # Spatial Audio Engine (crosstalk-cancellation speaker rendering),
-    # selected via ``output_type == "transaural"`` (which requires
-    # ``output_format`` to be one of ``upmixer.formats.TRANSAURAL_BED_FORMATS``):
-    # the pipeline upmixes and masters to that bed normally, then collapses it
-    # to stereo through the profile's 2x2 crosstalk-cancellation filter. See
-    # upmixer/crosstalk/.
+    # See docs/standards/transaural_speakers.md.
     transaural_profile: str = "stereo"
 
     surround_downmix_coeff: float = 0.7071

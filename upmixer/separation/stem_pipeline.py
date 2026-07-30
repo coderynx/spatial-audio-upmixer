@@ -527,7 +527,9 @@ class StemUpmixPipeline:
             )
             _preview_stereo_forced_array = True
 
-        # Why this matters: a 192 kHz / 408 s input with ADM-BWF output produces
+        # Resolved early (before separation) so a 192kHz input bound for 48kHz
+        # ADM-BWF output runs every post-separation step at 48kHz instead of
+        # carrying ~7.5GB of float64 192kHz channel data through the pipeline.
         out_sr: int = cfg.output_sample_rate or sr
         if cfg.output_type == "adm-bwf":
             if cfg.output_sample_rate is None:

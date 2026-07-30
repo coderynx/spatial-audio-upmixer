@@ -13,14 +13,9 @@ export type Timeline = { offset: number; contextTime: number };
 // Web Audio context stub.
 export type AudioClock = { readonly currentTime: number };
 
-// Base lookahead: how far into the future every source in a play/seek pass
-// shares a single start instant. Must comfortably exceed how long it takes
-// to construct and `.start()` every `AudioBufferSourceNode` in the pass —
-// if it doesn't, sources scheduled later in the same pass can find their
-// shared instant already elapsed by the time their own `.start()` call
-// lands, starting them immediately instead of in step with the ones
-// already scheduled. 80ms is generous for the common case (a handful of
-// stems).
+// How far ahead every source in a play/seek pass shares one start instant.
+// Must exceed construction+.start() time for the whole pass, or later sources
+// find the shared instant already elapsed and start immediately instead of in step.
 const BASE_LOOKAHEAD_SECONDS = 0.08;
 
 // Ceiling for the adaptive margin — bounds the worst case (many stems, or

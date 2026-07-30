@@ -1,39 +1,16 @@
-// Framework-free preview mastering graph — the parity-critical extraction
-// from useStemPreview.ts's `buildMasteringTopology`, pulled out so it can
-// run under any BaseAudioContext (a live AudioContext for the React preview,
-// or an OfflineAudioContext for the headless cross-engine golden-diff
-// harness, see docs/contracts/preview_export_parity.md §5 and
-// tests/test_preview_export_golden.py) instead of only inside the React
-// hook. This module has no React dependency and no browser-only globals
-// beyond the Web Audio API itself, so it also runs under Node's
-// `node-web-audio-api` polyfill without a browser.
-//
-// Mirrors upmixer/mastering/chain.py's stage order (EQ -> compression ->
-// bass control) on the discrete channel bed — see that module's docstring
-// and docs/contracts/preview_export_parity.md §1 for the pipeline map this
-// implements.
-//
-// Also carries `buildBinauralGraph`, the equivalent extraction of the
-// ambisonic-encode -> HOA-decode -> voicing stage from `useStemPreview.ts`'s
-// `initialize()` (see that function's per-speaker-bus loop, which owns the
-// per-channel `AmbiMonoEncoder`s and connects their outputs into this
-// graph's `hoaBus`) — mirrors `upmixer/binaural/renderer.py::render_binaural`.
+// Framework-free preview mastering + binaural graph, extracted from
+// audioEngine.ts so it also runs under an OfflineAudioContext (Node's
+// node-web-audio-api polyfill) for the golden-diff harness — see
+// docs/contracts/preview_export_parity.md §5 and tests/test_preview_export_golden.py.
 import numericLib from "numeric";
-// `ambi-monoEncoder`'s shared SH util calls the `numeric` library as a bare
-// global instead of importing it (see useStemPreview.ts's identical setup
-// comment) — set once here too so this module works standalone under the
-// Node golden-diff harness, which bundles only this file.
+// ambi-monoEncoder's shared SH util expects `numeric` as a bare global, not an
+// import — set once so this module also works standalone (golden-diff harness).
 (globalThis as typeof globalThis & { numeric?: unknown }).numeric ??= numericLib;
 import AmbiMonoEncoderImport from "ambisonics/dist/ambi-monoEncoder";
 
-// Vite (the live app) unwraps this package's Babel-style `exports.default`
-// down to the class itself, but esbuild's Node-platform CJS interop (used
-// by the golden-diff harness's standalone bundle, see
-// web/scripts/render-preview-golden.mjs) treats the whole CJS `exports`
-// object as `.default` without re-unwrapping its own nested `.default`,
-// leaving a `{ __esModule, default: monoEncoder }` wrapper instead of the
-// class. This runtime check makes the same import work under both bundlers
-// rather than needing two different import forms.
+// Vite unwraps this package's CJS `exports.default` to the class itself, but
+// esbuild's Node interop (golden-diff harness bundle) leaves it wrapped as
+// `{ __esModule, default: monoEncoder }` — this makes both bundlers work.
 const AmbiMonoEncoder = (
   typeof AmbiMonoEncoderImport === "function"
     ? AmbiMonoEncoderImport
@@ -76,14 +53,8 @@ import {
 export type MasterPreview = {
   loudness?: { normalize?: boolean; target?: number; max_tp?: number };
   eq?: { profile?: string | null; strength?: number };
-  // Server-precomputed reference-match FIR asset — see
-  // upmixer_web/worker.py::WorkerManager.prepare_reference_match and
-  // docs/contracts/preview_export_parity.md Ledger D12. `fir_url` points at
-  // a multichannel WAV (one channel per bed-channel FIR, fixed order given
-  // by `channels`); absent/null when no reference is attached or the asset
-  // hasn't been computed yet. Unlike `eq`'s named-profile FIR (a static
-  // asset shipped with the app), this one is per-project and can change
-  // when the reference, layout, or match params change.
+  // Server-precomputed FIR asset, unlike eq's static named-profile FIR — see
+  // docs/contracts/preview_export_parity.md Ledger D12.
   match_reference?: {
     fir_url?: string | null;
     channels?: string[];
@@ -451,14 +422,8 @@ export function buildMasteringGraph(
     }
   }
 
-  // Bass mono-maker: for each stereo pair with both sides deferred above,
-  // lowpass each side at monoCutoffHz, average the two lowpassed copies to
-  // mono, and swap each side's own low band for that shared mono band —
-  // out_L = L + 0.5*(lowR - lowL), out_R = R + 0.5*(lowL - lowR) — the same
-  // identity upmixer/mastering/bass.py's BassController.process computes
-  // as `mono_bass + (channel - own_low_band)`. A pair with only one side
-  // present just passes that side through unprocessed, same as the
-  // backend's `if l_key not in out or r_key not in out: continue` guard.
+  // out_L = L + 0.5*(lowR - lowL), out_R = R + 0.5*(lowL - lowR) — same identity
+  // as upmixer/mastering/bass.py's `mono_bass + (channel - own_low_band)`.
   if (monoCutoffHz != null) {
     for (const [leftKey, rightKey] of MONO_MAKER_STEREO_PAIRS) {
       const leftChain = pendingMonoChain.get(leftKey);
@@ -467,15 +432,10 @@ export function buildMasteringGraph(
       const rightPort = channelPorts.get(rightKey);
       if (!leftChain || !rightChain || !leftPort || !rightPort) continue;
 
-      // Cascaded pair (not a single biquad): the backend applies this
-      // lowpass via `sosfiltfilt` (forward + backward, zero-phase) once
-      // buffers exceed 15 samples — magnitude-wise that squares the
-      // single-pass response, i.e. an effective 4th-order roll-off, not
-      // 2nd-order. A single BiquadFilterNode here leaks noticeably more
-      // energy near the cutoff than that, which on decorrelated
-      // multichannel content was enough to flip the mono-maker's net level
-      // effect from a slight cut (backend) to a slight boost (single-stage
-      // preview) — found via the golden-diff harness, Ledger D9.
+      // Cascaded pair, not a single biquad: the backend's sosfiltfilt is
+      // zero-phase (forward+backward), squaring the response to an effective
+      // 4th-order rolloff — a single stage flipped the net level effect from
+      // a cut to a boost on decorrelated content. Found via golden-diff, Ledger D9.
       const lowL = ctx.createBiquadFilter();
       lowL.type = "lowpass";
       lowL.frequency.value = monoCutoffHz;
@@ -538,13 +498,8 @@ export function buildMasteringGraph(
     comp.attack.value = (compCfg?.attack_ms ?? preset.attack_ms) / 1000;
     comp.release.value = (compCfg?.release_ms ?? preset.release_ms) / 1000;
     comp.knee.value = compCfg?.knee_db ?? preset.knee_db;
-    // `sum` is a raw fan-in of every channel's post-EQ signal, so for N
-    // correlated channels its level is ~N times a single channel's — up to
-    // +20dB too hot into the detector for an 11-channel bed.
-    // upmixer/mastering/compressor.py detects on
-    // sqrt(sum(ch^2)/n_ch) (an RMS *average* across channels), not a raw
-    // sum — this gain brings the sidechain back down to that same
-    // per-channel-average level before it reaches the detector.
+    // `sum` is a raw N-channel fan-in (~+20dB too hot for 11ch); this brings it
+    // back to compressor.py's sqrt(sum(ch^2)/n_ch) per-channel-average level.
     const detectorScale = ctx.createGain();
     detectorScale.gain.value = 1 / Math.sqrt(Math.max(channelPorts.size, 1));
     created.push(detectorScale);
@@ -567,13 +522,8 @@ export function buildMasteringGraph(
   const capturedMakeup = compMakeupGain;
   const applyCompressorReduction = () => {
     if (!capturedCompressor || newCompGains.length === 0) return;
-    // `.reduction` must be <= 0 dB per the Web Audio spec (it never applies
-    // makeup gain on its own) — clamped defensively since it's the one
-    // input here this module doesn't fully control, and at least one
-    // non-browser Web Audio implementation (node-web-audio-api, used by
-    // the golden-diff harness, see docs/contracts/preview_export_parity.md
-    // Ledger D8) has been observed returning small positive values for a
-    // sub-threshold signal instead of 0.
+    // Clamped defensively: node-web-audio-api (golden-diff harness) has been
+    // observed returning small positive values instead of 0 — Ledger D8.
     const reductionDb = Math.min(0, capturedCompressor.reduction);
     const gain = 10 ** (reductionDb / 20) * capturedMakeup;
     for (const node of newCompGains) node.gain.value = gain;
@@ -594,28 +544,11 @@ export function buildMasteringGraph(
 
 // --- Binaural collapse graph (ambisonic encode -> HOA decode -> voicing) --
 //
-// `buildBinauralGraph` extracts everything downstream of the per-speaker
-// encoders in `useStemPreview.ts`'s `initialize()`: the shared 16-channel
-// HOA bus, the per-ACN decode convolver bank (with the ACN12 N3D
-// correction), and the post-decode voicing chain. It does **not** create the
-// per-speaker `AmbiMonoEncoder`s themselves — those stay owned by the
-// caller (one per positional channel, alongside that channel's mute/master
-// gain wiring in the live hook's `SpeakerBus`), each connecting its own
-// `.out` into this graph's returned `hoaBus`. This mirrors
-// `upmixer/binaural/renderer.py::render_binaural`'s signal graph: bed
-// channels -> per-speaker order-3 SH encode -> sum to 16ch HOA bus ->
-// convolve with profile decode filters -> stereo -> voicing.
-//
-// LFE is not created here (this function has no LFE input parameter of its
-// own), but a pre-voicing insertion point is exposed for it — see
-// `preVoicing` below. The caller (audioEngine.ts) sums its LFE bus in there,
-// mirroring `render_binaural`'s order exactly: decode to binaural -> +lfe ->
-// apply_voicing. This used to instead be added at `mergePoint`, after this
-// graph's `output` (post-voicing) — numerically inert at the Studio/Flat
-// profiles (all-zero/identity voicing) but a real signal difference at
-// Listening's non-identity voicing chain, and it also leaked LFE into the
-// BS.775 stereo downmix (which excludes LFE by standard) — both fixed;
-// see Ledger D11 in docs/contracts/preview_export_parity.md.
+// Extracts everything downstream of the per-speaker encoders in
+// audioEngine.ts's `initialize()` (which still owns the AmbiMonoEncoders
+// themselves). Mirrors upmixer/binaural/renderer.py::render_binaural's signal
+// graph. LFE has no input parameter here; see `preVoicing` below and
+// docs/contracts/preview_export_parity.md Ledger D11 for why it connects there.
 export type BinauralGraphHandle = {
   /** Feed each positional channel's `AmbiMonoEncoder.out` into this. */
   hoaBus: GainNode;

@@ -137,14 +137,10 @@ class SeparationEngine:
 
     def _demix_one(self, mix: np.ndarray) -> dict[str, np.ndarray]:
         if self._arch in _ARCH_ROFORMER:
-            # Roformer chunks span 8-11s of audio; batching them multiplies
-            # peak activation memory linearly. CUDA/ROCm have isolated VRAM
-            # and a proven OOM-retry ladder, so they use the auto-tuned or
-            # caller-supplied batch size. Every other backend (CPU, MPS,
-            # CoreML-as-CPU) shares memory with the OS and stays at 1 —
-            # confirmed the hard way: batch=2 on MPS for the 11s karaoke
-            # chunk froze a real M3 Pro (unified-memory pressure, not a
-            # catchable OOM exception).
+            # CUDA/ROCm have isolated VRAM and an OOM-retry ladder, so they
+            # use the tuned/caller batch size. Every other backend shares
+            # memory with the OS and stays at 1 — batch=2 on MPS froze a real
+            # M3 Pro (unified-memory pressure, not a catchable OOM).
             roformer_batch_size = (
                 self._batch_size if self._device.torch_device.type == "cuda" else 1
             )

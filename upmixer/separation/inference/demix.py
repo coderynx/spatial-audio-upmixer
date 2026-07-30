@@ -80,13 +80,9 @@ def demix_roformer(
         mix_t = torch.nn.functional.pad(mix_t, (0, chunk_size - orig_n_samples))
     n_samples = mix_t.shape[1]
 
-    # Pinning lets each chunk's host->device copy overlap with prior GPU work
-    # instead of blocking the host thread; the model's forward call is
-    # enqueued on the same stream right after, so it still waits for the
-    # copy to land before reading it. Device->host transfers below stay
-    # synchronous (read on the host immediately after), which non_blocking
-    # would race. CUDA/ROCm only: MPS ignores non_blocking, and CPU never
-    # copies at all.
+    # Pinning overlaps each chunk's host->device copy with prior GPU work; the
+    # device->host reads below stay synchronous, since non_blocking there
+    # would race. CUDA/ROCm only: MPS ignores non_blocking, CPU never copies.
     use_async_transfer = device.type == "cuda"
     if use_async_transfer:
         mix_t = mix_t.pin_memory()

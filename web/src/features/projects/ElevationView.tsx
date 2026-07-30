@@ -127,12 +127,8 @@ function ElevationViewImpl({
       initializedSize.current = false;
     };
     resize();
-    // Resizing a canvas clears its pixel buffer, and a ResizeObserver fires
-    // after layout but before paint, so `wakeRef` repaints synchronously
-    // rather than scheduling a frame. Scheduling would let the browser paint
-    // the cleared buffer once per resize — which during an animated resize
-    // (the 150ms sidebar collapse resizes on every frame) leaves the display
-    // blank for the whole transition.
+    // Repaints synchronously rather than scheduling a frame: a resize clears the
+    // canvas, and scheduling would paint the cleared buffer during an animated resize.
     const observer = new ResizeObserver(() => {
       resize();
       wakeRef.current();
@@ -146,16 +142,10 @@ function ElevationViewImpl({
       const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled, intensity: currentIntensity } = propsRef.current;
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
-      // One uniform gap on all four sides between the canvas edge (or, on
-      // top, the intensity chip's own bottom edge) and the plot's actual
-      // content — not the guide line itself, but the topmost thing drawn,
-      // which is the height-channel name labels 8px *above* the top guide
-      // (`padTop - 8`, see below). Solving `(padTop - 8) - chipBottom = pad`
-      // for `padTop` is what makes that gap mathematically identical to the
-      // `pad` on the other three sides, rather than an eyeballed number.
-      // CHIP_TOP/CHIP_HEIGHT are IntensitySlider's actual rendered geometry
-      // (`top-2` + its border/padding/content box, absolute top-left,
-      // §IntensitySlider) — update both together if that component resizes.
+      // padTop solves (padTop - 8) - chipBottom = pad, so the gap above the
+      // topmost label matches `pad` on the other three sides exactly, not an
+      // eyeballed number. CHIP_TOP/CHIP_HEIGHT mirror IntensitySlider's actual
+      // rendered geometry — update both together if that component resizes.
       const pad = 40;
       const CHIP_TOP = 8;
       const CHIP_HEIGHT = 22;
@@ -168,17 +158,8 @@ function ElevationViewImpl({
       const toX = (x: number) => padX + ((x + 1) / 2) * plotWidth;
       const toY = (y: number) => floorY - Math.min(1, y / MAX_HEIGHT) * plotHeight;
 
-      // Deep-navy plot field with a systemBlue wash rising off the floor —
-      // the same shaded-region treatment Logic gives the area under a Channel
-      // EQ curve, oriented to this plot's floor-to-height axis. Painted
-      // through globalAlpha so the motion-trail fade doesn't flatten the
-      // gradient out over successive frames.
-      //
-      // Both gradients span the full canvas rather than the padded plot rect:
-      // a gradient clamped to the plot bounds leaves flat bands above and
-      // below it, and the wash confined to a rect draws its own hard edges.
-      // Full-bleed, with a mid stop easing the wash out, keeps the falloff
-      // continuous from floor to top.
+      // Full-bleed gradients, not clamped to the padded plot rect: a clamped
+      // gradient leaves flat bands and hard edges at the rect boundary.
       const field = ctx.createLinearGradient(0, 0, 0, height);
       field.addColorStop(0, canvasTheme.plotField);
       field.addColorStop(1, canvasTheme.plotFieldCore);
@@ -326,23 +307,11 @@ function ElevationViewImpl({
       blobCtx.clearRect(0, 0, width, height);
       blobCtx.globalCompositeOperation = "lighter";
 
-      // No tendrils: proximity alone carries the "melting together" cue —
-      // large, soft halos overlap and additively brighten into a shared
-      // core on their own, same reasoning as the Haze view. The reach here
-      // is bigger than Haze's own multiplier: this plot spreads stems by
-      // real stereo pan across its full width, a much wider spread than
-      // Haze's radial layout produces, so bridging the gaps between
-      // adjacent stems takes a larger, fainter tail.
-      //
-      // `currentIntensity` (the overlay slider) is a plain opacity control,
-      // not a reshaping — reach and blur stay fixed, `alphaScale` just dims
-      // every stop uniformly, floored at `MIN_ALPHA_SCALE` so the pinned Y
-      // position never fully disappears.
-      //
-      // The alpha stops themselves are the exact values HazeView uses — only
-      // `meltRadius`'s multiplier and the blur factor below differ between
-      // the two views (justified by this plot's wider pan-based spread).
-      // Brightness has to match between the two displays; reach doesn't.
+      // No tendrils: proximity alone carries "melting together", same as Haze —
+      // but this plot's wider pan-based spread needs a larger, fainter tail
+      // (meltRadius multiplier) than Haze's radial layout. Alpha stops match
+      // HazeView exactly; only reach/blur differ. currentIntensity just dims
+      // every stop uniformly (alphaScale), floored at MIN_ALPHA_SCALE.
       const alphaScale = lerp(MIN_ALPHA_SCALE, 1, currentIntensity);
       for (const { point, blobRadius, emphasis, level, r, g, b } of resolved) {
         const meltRadius = blobRadius * 3.6;

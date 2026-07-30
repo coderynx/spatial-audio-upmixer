@@ -8,21 +8,10 @@ import { STEM_GAIN_MAX_DB, STEM_GAIN_MIN_DB, STEM_GAIN_STEP_DB } from "./Channel
 import type { MeterLevel } from "./useStemPreview";
 import type { TrackPeaks } from "./useTrackPeaks";
 
-// Logic's track area: one lane per stem, each holding a colour-coded region
-// with its waveform inside, a time ruler pinned above them, and a playhead
-// that follows transport.
-//
-// This is chrome, not an instrument display: unlike Haze/Elevation/
-// ChannelMeters it follows the app theme in both light and dark, so its
-// colours are read from the CSS tokens (`useThemeTokens`) rather than from
-// `canvasTheme`. Region and waveform colour is stem identity (`stems.ts`),
-// the same hue the stem carries everywhere else.
-//
-// Two canvases: the lane canvas redraws only when peaks, mute state,
-// selection or size change; the playhead has its own overlay and is the only
-// surface touched per frame, positioned from `currentTimeRef` in this
-// component's own rAF loop (subscribing to `currentTime` state would
-// re-render the whole page 60x/sec — see Transport.tsx's same pattern).
+// Chrome, not an instrument display: follows the app theme via useThemeTokens,
+// not canvasTheme. Two canvases: the lane canvas redraws on data/size change;
+// the playhead is a separate per-frame overlay positioned from currentTimeRef
+// (subscribing to currentTime state would re-render the page 60x/sec).
 
 // Two-line row (name, then M/S/fader) plus a full-height instrument-icon
 // swatch, matching iPad Logic's own track-header shape — grown from a
@@ -391,19 +380,10 @@ function TimelineViewImpl({
                   dragFromHandle.current = Boolean((event.target as HTMLElement).closest("[data-drag-handle]"));
                 }}
                 onDragStart={(event) => {
-                  // The row's native HTML5 drag (for reordering) fires on a
-                  // mousedown+move starting anywhere in the row — including
-                  // the fader, whose own pointermove-based dragging is a
-                  // "mousedown then move" gesture too and would otherwise
-                  // lose the rest of its events to the row's drag once the
-                  // browser commits to it. Restricting the drag source to the
-                  // grip icon makes that the one deliberate way to reorder a
-                  // row, leaving every other gesture on it — the fader, M/S,
-                  // the name — to its own handlers. Gated on `dragFromHandle`
-                  // (set on `mousedown`, see above) rather than this event's
-                  // own `event.target`, which native drag always sets to the
-                  // draggable row itself, never the descendant the pointer
-                  // actually landed on.
+                  // Restricted to the grip icon: native drag would otherwise steal
+                  // events from the fader's own pointermove-based dragging. Gated on
+                  // dragFromHandle since native drag always sets event.target to the
+                  // row itself, never the descendant the pointer landed on.
                   if (!dragFromHandle.current) { event.preventDefault(); return; }
                   event.dataTransfer.effectAllowed = "move"; onDragStart(stem);
                 }}

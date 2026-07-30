@@ -163,16 +163,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       setError(null);
     } catch (reason) { setError((reason as Error).message); }
   }, [projectId]);
-  // Polling stops once the project reaches a terminal status — the SSE
-  // stream below covers live progress while preparing, and once ready there
-  // is nothing server-side left to pick up on this page (saves/exports all
-  // come back through their own API responses) — except two asynchronous
-  // precomputes: a reference-match recompute after a settings save (see
-  // upmixer_web/worker.py::WorkerManager.schedule_reference_match) and a
-  // waveform-peaks backfill for a project catalogued before peaks existed
-  // (`schedule_peaks`). Keep polling while either is pending so the asset
-  // refreshes once it lands. Re-subscribes on `status` and both pending
-  // flags so a retry or a pending precompute resumes polling.
+  // Polling stops at a terminal status unless a reference-match recompute or
+  // peaks backfill is still pending server-side (schedule_reference_match/schedule_peaks).
   React.useEffect(() => {
     void load();
     if (
@@ -358,34 +350,21 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     event.preventDefault();
     resizePaneTo(paneHeight + moves[event.key]);
   };
-  // Spatial row column sizing. Haze and Meters are both "natural size + a
-  // user delta" (`hazeExtra`/`elevationExtra`, persisted per project) — 0
-  // reproduces today's default look exactly (Haze square, Meters at a
-  // reasonable point in its own range) — the same "extra on top of a
-  // live-computed minimum" pattern `StripResizeHandle` already uses for
-  // mixer strips, reused verbatim here rather than a second resize
-  // implementation. Elevation has no width of its own to store: it is a
-  // genuine `flex-1`, so it always renders as exactly whatever Haze and
-  // Meters don't use — the row can't develop a gap nothing is sized to
-  // fill, unlike an approach where all three carry explicit widths that
-  // have to be kept summing to the container's own width by hand.
-  // A callback ref, not a plain useRef + useEffect(…, []) — the row only
-  // enters the DOM once `ready` flips true (see the early return below), so
-  // a mount-only effect would find `rowRef.current` still null on the
-  // render where it registers and never retry once the node actually
-  // appears. A callback ref re-fires exactly when the node changes,
-  // including from null to real, so the observer attaches whenever the row
-  // is actually there.
+  // Haze/Meters are "natural size + user delta" (hazeExtra/elevationExtra), the
+  // same pattern StripResizeHandle uses for mixer strips. Elevation stays flex-1
+  // with no stored width, so the row can't develop an unfilled gap.
+  //
+  // Callback ref, not useRef + useEffect([]): the row only enters the DOM once
+  // `ready` flips true, so a mount-only effect would find rowRef.current still
+  // null and never retry.
   const rowObserver = React.useRef<ResizeObserver | null>(null);
   const [rowSize, setRowSize] = React.useState({ width: 0, height: 0 });
   const rowRef = React.useCallback((node: HTMLDivElement | null) => {
     rowObserver.current?.disconnect();
     rowObserver.current = null;
     if (!node) return;
-    // Read the size synchronously on attach, the same way HazeView's own
-    // resize handling does — don't rely solely on the observer's first
-    // callback for the initial measurement, since it isn't guaranteed to
-    // land promptly.
+    // Read synchronously on attach — the observer's first callback isn't
+    // guaranteed to land promptly (same as HazeView's resize handling).
     setRowSize({ width: node.clientWidth, height: node.clientHeight });
     const observer = new ResizeObserver(([entry]) => {
       setRowSize({ width: entry.contentRect.width, height: entry.contentRect.height });
@@ -407,29 +386,15 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       // See `changePane`.
     }
   };
-  // Clamped every render against the row's *live* measured size (not just on
-  // drag) — same reasoning as the pane's own headroom clamp: a window
-  // resize between drags must not leave a stale width that no longer fits.
+  // Clamped every render against the row's live measured size (not just on drag),
+  // so a window resize between drags can't leave a stale width that no longer fits.
   const hazeMaxWidth = Math.max(HAZE_MIN_WIDTH, rowSize.width - ROW_GAP * 2 - ELEVATION_MIN_WIDTH - METERS_MIN_WIDTH);
   const hazeWidth = Math.min(hazeMaxWidth, Math.max(HAZE_MIN_WIDTH, rowSize.height + hazeExtra));
-  // Meters gets the explicit width now (Elevation is a true `flex-1`, below)
-  // — `elevationExtra` still means "how much wider than its default share
-  // Elevation is," it just expresses that by shrinking Meters' width by the
-  // same amount rather than by setting Elevation's own width directly.
-  // Elevation's actual rendered width is whatever flexbox leaves it after
-  // Haze and Meters take these two explicit widths — guaranteed to be
-  // exactly the remaining space, never more or less, so the row can't
-  // develop a gap no display is sized to fill.
+  // Elevation is flex-1 with no stored width; elevationExtra shrinks Meters' width instead.
   const metersMaxWidth = Math.min(METERS_MAX_WIDTH, Math.max(METERS_MIN_WIDTH, rowSize.width - hazeWidth - ROW_GAP * 2 - ELEVATION_MIN_WIDTH));
   const metersWidth = Math.min(metersMaxWidth, Math.max(METERS_MIN_WIDTH, METERS_DEFAULT_SHARE - elevationExtra));
-  // Live strength/spectrum/rms toggles come from the manifest (instant, no
-  // server round-trip needed — they're just a wet/dry blend and an RMS gate,
-  // same as the named-EQ `strength` slider); the FIR itself and the
-  // computed RMS gain value come from the project's server-precomputed
-  // asset (`project.reference_match`), which only changes when the
-  // reference, layout, or match params are saved (see
-  // upmixer_web/worker.py::WorkerManager.prepare_reference_match and
-  // docs/contracts/preview_export_parity.md Ledger D12).
+  // strength/spectrum/rms come from the manifest (instant, no round-trip); the FIR
+  // and RMS gain come from the server-precomputed asset — see Ledger D12.
   const previewMastering = React.useMemo(() => {
     if (!effectiveManifest?.mastering) return effectiveManifest?.mastering;
     const asset = project?.reference_match;

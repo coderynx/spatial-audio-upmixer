@@ -44,7 +44,17 @@ Target Python 3.11+ and use four-space indentation, standard type hints, `snake_
 
 Prefer direct implementations over speculative abstractions, feature flags, hypothetical error handling, or compatibility aliases. Validate at system boundaries (user input, external APIs, and file I/O) and trust internal invariants. New modules must be imported by production code or have a documented public-API purpose. Remove unused functions, classes, constants, parameters, branches, and modules; before deleting uncertain code, search both `upmixer/` and `tests/`.
 
-Keep public module, class, and function docstrings intact. Avoid explanatory inline comments. Use comments only for non-obvious DSP or standards constraints, model-specific quirks, or necessary workarounds. Do not add TODO/FIXME comments or commented-out code. The three public re-export shim modules are the intentional exception to ordinary unused-import rules and retain their `# noqa: F401` imports.
+## Comment Policy
+
+Keep public module, class, and function docstrings intact.
+
+Comments are allowed **only** for: non-obvious DSP or standards constraints, model-specific quirks, necessary workarounds/hacks, or genuinely strange behavior — and must stay a few lines at most. No walls of text.
+
+Forbidden: comments that restate what the code already says, bare section-label banners, architecture/design/rationale prose, TODO/FIXME, and commented-out code.
+
+Architecture, design rationale, and cross-system parity notes do not belong in comments. Move them to `docs/` (repo-specific architecture and contracts, e.g. `docs/web_architecture.md`, `docs/contracts/`) or to `~/Projects/upmixer-knowledge/` when the content is separation-model, technique, or mastering/restoration domain intelligence (see Knowledge Base below). When trimming such a comment, first make sure its substance exists in the right doc, then leave at most a one-line pointer (e.g. `// see docs/contracts/preview_export_parity.md §1`).
+
+Exemptions: `# noqa: F401` / `# type: ignore` pragmas; the three public re-export shim modules, which retain their `# noqa: F401` imports; and vendored code under `upmixer/separation/inference/archs/`, which tracks upstream and keeps its own comment style as-is.
 
 ## Testing and Change Validation
 

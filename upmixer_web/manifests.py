@@ -11,12 +11,9 @@ from upmixer.config import UpmixConfig
 from upmixer.manifest import parse_manifest, validate_manifest
 from upmixer_web.models import ImportBatch, Job
 
-# These register their manifest block keys (register_block_keys) as an
-# import-time side effect; without them, validate_manifest rejects
-# mastering.eq/compressor/bass/match_reference.* fields with "Unknown
-# manifest field" unless something else already imported the module first
-# (MasteringChain only imports them lazily inside process(), once each
-# stage actually runs).
+# Import-time side effect: registers manifest block keys. MasteringChain only
+# imports these lazily inside process(), so without this validate_manifest
+# rejects mastering.*/match_reference.* fields as "Unknown manifest field".
 import upmixer.mastering.bass  # noqa: F401 E402
 import upmixer.mastering.compressor  # noqa: F401 E402
 import upmixer.mastering.eq  # noqa: F401 E402

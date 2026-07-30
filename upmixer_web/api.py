@@ -125,11 +125,8 @@ def _project_view(
         fir_url = None
         if meta.get("channels"):
             fir_url = f"{root_path}/api/v1/projects/{project.id}/reference-match/fir"
-            # Version the URL with the asset's signature so the browser's
-            # fir_url-keyed decode cache (useStemPreview.ts's
-            # refMatchBufferCache) is naturally busted by a real recompute
-            # instead of serving a stale FIR for the rest of the AudioContext's
-            # lifetime — the route itself ignores this query param.
+            # Signature-versioned so the browser's fir_url-keyed decode cache
+            # busts on a real recompute; the route itself ignores this param.
             if meta.get("signature"):
                 fir_url = f"{fir_url}?v={meta['signature']}"
         view.reference_match = ReferenceMatchAssetView(
@@ -417,14 +414,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ):
             app.state.project_stems.regenerate_previews(project, project.preview_quality, storage)
             session.commit()
-        # Scheduled on a background executor rather than run inline: the
-        # underlying mix+PSD pass is heavy, and settings saves are debounced
-        # at 350ms in the browser, so a slider drag would otherwise fire one
-        # full-song pass per tick on this request thread (see
-        # docs/contracts/preview_export_parity.md Ledger D12). The scheduler
-        # itself no-ops unless the reference, layout, or match params
-        # actually changed, and coalesces rapid repeat calls into one
-        # trailing run.
+        # Backgrounded: the mix+PSD pass is heavy and settings saves debounce
+        # at 350ms, so inline would fire one full-song pass per slider tick
+        # (see docs/contracts/preview_export_parity.md Ledger D12).
         manager.schedule_reference_match(project_id)
         if project.status == "queued":
             manager.notify()
