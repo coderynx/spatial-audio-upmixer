@@ -133,9 +133,9 @@ Temporary Items
 
 ### upmixer-specific
 # Web frontend build and dependency artifacts
-web/node_modules/
-web/dist/
-web/.vite/
+apps/web/node_modules/
+apps/web/dist/
+apps/web/.vite/
 
 # Web backend runtime state
 data/
@@ -169,7 +169,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-# Anchored to the repo root: unanchored, these also matched web/src/lib/,
+# Anchored to the repo root: unanchored, these also matched apps/web/src/lib/,
 # silently excluding the whole frontend lib directory from version control.
 /lib/
 /lib64/

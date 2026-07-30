@@ -21,7 +21,7 @@
 //      tests/fixtures/preview_export_golden/web_bed_metrics.json in the
 //      shape `test_preview_export_golden.py::_metrics` produces.
 //
-// Run: `node web/scripts/render-preview-golden.mjs` (or via
+// Run: `node apps/web/scripts/render-preview-golden.mjs` (or via
 // `npm run golden:render` from `web/`).
 import { fileURLToPath } from "node:url";
 import path from "node:path";

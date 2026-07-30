@@ -3,7 +3,7 @@
 //
 // See docs/contracts/preview_export_parity.md and
 // tests/test_contract_parity.py (the Python side of this comparison).
-// Bundles web/src/lib/contract.ts with esbuild (same pattern as
+// Bundles apps/web/src/lib/contract.ts with esbuild (same pattern as
 // render-preview-golden.mjs), calls its canonicalConstants(), and writes the
 // result to tests/fixtures/contract/web_constants.json. That fixture is
 // committed; test_contract_parity.py loads it and diffs it directly against
@@ -11,7 +11,7 @@
 // but this JSON file, and re-running this script after a deliberate
 // both-sides constant change is exactly the "regenerate" step.
 //
-// Run: `node web/scripts/dump-constants.mjs` (or `npm run constants:dump`
+// Run: `node apps/web/scripts/dump-constants.mjs` (or `npm run constants:dump`
 // from `web/`).
 import { fileURLToPath } from "node:url";
 import path from "node:path";
