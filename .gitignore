@@ -139,7 +139,7 @@ web/.vite/
 
 # Web backend runtime state
 data/
-upmixer_web/data/
+apps/api/data/
 
 # Separation model cache (auto-downloaded, can be large)
 upmixer-models/
