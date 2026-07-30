@@ -96,6 +96,11 @@ class JobRunnerMixin:
                             asset_data["stem_cache_dir"] = str(
                                 self.project_stems.track_root(project.id, project_track.id)
                             )
+                            # Same stable identity project preparation used to key
+                            # this track's cache — see projects/worker.py — so an
+                            # export reuses already-separated stems even if the
+                            # data directory moved since preparation ran.
+                            asset_data["stem_cache_key"] = f"project:{project.id}:track:{project_track.id}"
                             overrides = snapshot_tracks.get(project_track.id, {}).get("manifest_overrides", {})
                             for block, value in overrides.items():
                                 if isinstance(value, dict):

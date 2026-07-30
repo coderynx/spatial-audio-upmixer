@@ -79,6 +79,36 @@ class TestCacheKey:
         key = _cache_key(wav, "model", 44100)
         int(key, 16)  # raises ValueError if not hex
 
+    def test_path_key_overrides_resolved_path(self, tmp_path):
+        wav = str(tmp_path / "x.wav")
+        _write_dummy_wav(wav)
+        k1 = _cache_key(wav, "model", 44100, path_key="stable-id")
+        k2 = _cache_key(wav, "model", 44100, path_key="stable-id")
+        assert k1 == k2
+
+    def test_path_key_ignores_where_the_file_actually_lives(self, tmp_path):
+        """The whole point of path_key: two different resolved input paths
+        (e.g. the same asset materialized under a relocated data directory)
+        produce the same key as long as path_key and mtime/size match."""
+        import shutil
+
+        wav_a = tmp_path / "a" / "x.wav"
+        wav_a.parent.mkdir()
+        _write_dummy_wav(str(wav_a))
+        wav_b = tmp_path / "b" / "x.wav"
+        wav_b.parent.mkdir()
+        shutil.copy2(wav_a, wav_b)  # preserves mtime, as a real file relocation would
+        k1 = _cache_key(str(wav_a), "model", 44100, path_key="stable-id")
+        k2 = _cache_key(str(wav_b), "model", 44100, path_key="stable-id")
+        assert k1 == k2
+
+    def test_different_path_key_different_key(self, tmp_path):
+        wav = str(tmp_path / "x.wav")
+        _write_dummy_wav(wav)
+        k1 = _cache_key(wav, "model", 44100, path_key="track-1")
+        k2 = _cache_key(wav, "model", 44100, path_key="track-2")
+        assert k1 != k2
+
 
 # ---------------------------------------------------------------------------
 # _stem_filename
@@ -226,6 +256,32 @@ class TestStemCacheSaveLoad:
         loaded_stems, _ = cache.load(wav, "model", 44100)
         for arr in loaded_stems.values():
             assert arr.dtype == np.float32
+
+    def test_path_key_survives_relocated_input_path(self, tmp_path):
+        """Reproduces the web project-export bug: stems separated while the
+        asset resolved under one absolute path (e.g. before a data-dir move)
+        must still be found once the same asset resolves under a different
+        absolute path, as long as callers key by a stable identity."""
+        pytest.importorskip("soundfile")
+        import shutil
+
+        old_dir = tmp_path / "old-data-dir"
+        old_dir.mkdir()
+        old_wav = old_dir / "src.wav"
+        _write_dummy_wav(str(old_wav), n=4096)
+        cache = StemCache(str(tmp_path / "cache"))
+        stems = _make_stems()
+        cache.save(str(old_wav), "model", 44100, stems, 44100, path_key="project:p1:track:t1")
+
+        new_dir = tmp_path / "new-data-dir"
+        new_dir.mkdir()
+        new_wav = new_dir / "src.wav"
+        shutil.copy2(old_wav, new_wav)  # copy2 preserves mtime, as a real file move would
+
+        result = cache.load(str(new_wav), "model", 44100, path_key="project:p1:track:t1")
+        assert result is not None
+        loaded_stems, _ = result
+        assert set(loaded_stems.keys()) == set(stems.keys())
 
 
 # ---------------------------------------------------------------------------

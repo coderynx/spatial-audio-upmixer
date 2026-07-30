@@ -38,7 +38,7 @@ path fields are automation-only.
 Canonical processing paths are:
 
 - `engine.mode`, `engine.stem_model_dir`, `engine.input_format`,
-  `engine.stem_cache_dir`, `engine.stem_batch_size`,
+  `engine.stem_cache_dir`, `engine.stem_cache_key`, `engine.stem_batch_size`,
   `engine.stem_segment_size`, `engine.stem_chunk_duration_s`,
   `engine.stem_model_cache_size`, `engine.stems`, `engine.stem_silence_skip`,
   `engine.stem_silence_threshold_db`, `engine.stem_silence_min_duration_s`,

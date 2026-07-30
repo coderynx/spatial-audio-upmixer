@@ -27,6 +27,7 @@ from upmixer_web.features.projects.schemas import (
 )
 from upmixer_web.features.projects.service import (
     ProjectStateConflict,
+    TrackNotFoundError,
     add_project_assets,
     create_empty_project,
     expand_project_stems,
@@ -157,8 +158,10 @@ def register_project_routes(
             raise HTTPException(status_code=404, detail="Project not found")
         try:
             project = update_track_settings(session, project, track_id, request.manifest_overrides, request.scene_overrides)
-        except ValueError as exc:
+        except TrackNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.post("/api/v1/projects/{project_id}/stems", response_model=ProjectView, tags=["projects"])

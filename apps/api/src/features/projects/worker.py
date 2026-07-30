@@ -83,6 +83,12 @@ class ProjectRunnerMixin:
                         "input": str(input_path),
                         "output": str(work_dir / f"{index:02d}-prepare.wav"),
                         "stem_cache_dir": str(self.project_stems.track_root(project_id, track_id)),
+                        # Keys the on-disk cache entry by project/track identity
+                        # rather than this asset's resolved local path, so
+                        # relocating UPMIXER_DATA_DIR (or the process's working
+                        # directory) between preparation and a later export
+                        # doesn't orphan already-separated stems.
+                        "stem_cache_key": f"project:{project_id}:track:{track_id}",
                         # core's parse_manifest deep-merges any block key here
                         # (engine/format/mixing/...) over the manifest's global
                         # blocks per AssetJob — this is what makes a track's

@@ -76,10 +76,11 @@ def _legacy_cache_key(
     silence_min_duration_s: float = 2.0,
     silence_crossfade_ms: float = 10.0,
     silence_pad_ms: float = 200.0,
+    path_key: str | None = None,
 ) -> str:
     """Return pre-v2 key for backward-compatible cache reads."""
-    abs_path = str(Path(input_path).resolve())
-    mtime = os.path.getmtime(abs_path)
+    abs_path = path_key if path_key is not None else str(Path(input_path).resolve())
+    mtime = os.path.getmtime(str(Path(input_path).resolve()))
     tag = _preview_tag(is_preview, preview_duration, preview_start)
     silence_tag = (
         f"skip={silence_skip}"
@@ -117,6 +118,7 @@ def _cache_key(
     silence_min_duration_s: float = 2.0,
     silence_crossfade_ms: float = 10.0,
     silence_pad_ms: float = 200.0,
+    path_key: str | None = None,
 ) -> str:
     """Return a 20-char hex cache key for the given separation parameters.
 
@@ -128,10 +130,18 @@ def _cache_key(
     Args:
         stems_hash: 20-char inference-plan digest. The argument name remains
                     for source compatibility with cache v1 callers.
+        path_key:   Stable identity to hash instead of ``input_path``'s
+                    resolved filesystem path. A caller that already isolates
+                    one cache entry per logical source (e.g. one directory per
+                    project track) can pass a deployment-independent identity
+                    here so relocating the data directory or working directory
+                    doesn't orphan the cache; ``mtime``/``size`` staleness
+                    checks still read the real file at ``input_path``.
     """
-    abs_path = str(Path(input_path).resolve())
-    stat = os.stat(abs_path)
+    resolved = str(Path(input_path).resolve())
+    stat = os.stat(resolved)
     mtime = stat.st_mtime
+    abs_path = path_key if path_key is not None else resolved
     tag = _preview_tag(is_preview, preview_duration, preview_start)
     silence_tag = (
         f"skip={silence_skip}"
@@ -181,6 +191,7 @@ class StemCache:
         silence_min_duration_s: float = 2.0,
         silence_crossfade_ms: float = 10.0,
         silence_pad_ms: float = 200.0,
+        path_key: str | None = None,
     ) -> tuple[dict[str, np.ndarray], int] | None:
         """Try to load cached stems for the given parameters.
 
@@ -196,6 +207,8 @@ class StemCache:
             silence_min_duration_s: Minimum silent run duration used.
             silence_crossfade_ms:   Crossfade length used at span boundaries.
             silence_pad_ms:         Span padding used.
+            path_key:               Stable identity to key the cache entry by,
+                                     in place of ``input_path``'s resolved path.
 
         Returns:
             ``(stems_dict, sample_rate)`` on cache hit, or ``None`` on miss.
@@ -205,7 +218,7 @@ class StemCache:
             input_path, stems_hash, sep_sr,
             is_preview, preview_duration, preview_start,
             silence_skip, silence_threshold_db, silence_min_duration_s,
-            silence_crossfade_ms, silence_pad_ms,
+            silence_crossfade_ms, silence_pad_ms, path_key,
         )
         entry_dir = self._root / key
         if not entry_dir.exists():
@@ -213,7 +226,7 @@ class StemCache:
                 input_path, stems_hash, sep_sr,
                 is_preview, preview_duration, preview_start,
                 silence_skip, silence_threshold_db, silence_min_duration_s,
-                silence_crossfade_ms, silence_pad_ms,
+                silence_crossfade_ms, silence_pad_ms, path_key,
             )
             entry_dir = self._root / legacy_key
             if not entry_dir.exists():
@@ -285,6 +298,7 @@ class StemCache:
         silence_min_duration_s: float = 2.0,
         silence_crossfade_ms: float = 10.0,
         silence_pad_ms: float = 200.0,
+        path_key: str | None = None,
     ) -> None:
         """Write stems to the cache.
 
@@ -305,6 +319,8 @@ class StemCache:
             silence_min_duration_s: Minimum silent run duration used.
             silence_crossfade_ms:   Crossfade length used at span boundaries.
             silence_pad_ms:         Span padding used.
+            path_key:               Stable identity to key the cache entry by,
+                                     in place of ``input_path``'s resolved path.
         """
         if is_preview:
             _log.debug("  StemCache: preview mode — skipping cache write")
@@ -323,7 +339,7 @@ class StemCache:
             input_path, stems_hash, sep_sr,
             is_preview, preview_duration, preview_start,
             silence_skip, silence_threshold_db, silence_min_duration_s,
-            silence_crossfade_ms, silence_pad_ms,
+            silence_crossfade_ms, silence_pad_ms, path_key,
         )
         entry_dir = self._root / key
         entry_dir.mkdir(parents=True, exist_ok=True)
@@ -350,6 +366,7 @@ class StemCache:
             "cache_schema": _CACHE_SCHEMA,
             "engine_version": _engine_version(),
             "input_path": abs_path,
+            "path_key": path_key,
             "mtime": round(mtime, 6),
             "size": source_stat.st_size,
             "stems_hash": stems_hash,

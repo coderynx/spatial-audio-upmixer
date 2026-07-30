@@ -43,6 +43,10 @@ class ProjectStateConflict(ValueError):
     """A project cannot transition from its current status."""
 
 
+class TrackNotFoundError(ValueError):
+    """A referenced project track does not exist."""
+
+
 def _separation_settings(manifest: dict[str, Any]) -> tuple[object, ...]:
     engine = manifest.get("engine", {})
     return tuple(engine.get(key) if isinstance(engine, dict) else None for key in _SEPARATION_ENGINE_KEYS)
@@ -284,7 +288,7 @@ def update_track_settings(
 ) -> Project:
     track = next((item for item in project.tracks if item.id == track_id), None)
     if not track:
-        raise ValueError("Project track not found")
+        raise TrackNotFoundError("Project track not found")
     _validate_track_overrides(project, manifest_overrides)
     track.manifest_overrides = copy.deepcopy(manifest_overrides)
     track.scene_overrides = copy.deepcopy(scene_overrides)

@@ -109,10 +109,13 @@ def parse_manifest(data: dict) -> tuple[ManifestMeta | None, list[AssetJob]]:
             if k in all_block_keys and isinstance(v, dict)
         }
 
-        # Asset-level shortcut: stem_cache_dir → engine.stem_cache_dir
-        if asset.get("stem_cache_dir") is not None:
+        # Asset-level shortcut: stem_cache_dir/stem_cache_key → engine.*
+        if asset.get("stem_cache_dir") is not None or asset.get("stem_cache_key") is not None:
             engine_ov = dict(asset_blocks.get("engine", {}))
-            engine_ov.setdefault("stem_cache_dir", asset["stem_cache_dir"])
+            if asset.get("stem_cache_dir") is not None:
+                engine_ov.setdefault("stem_cache_dir", asset["stem_cache_dir"])
+            if asset.get("stem_cache_key") is not None:
+                engine_ov.setdefault("stem_cache_key", asset["stem_cache_key"])
             asset_blocks["engine"] = engine_ov
 
         effective = _deep_merge(global_blocks, asset_blocks)

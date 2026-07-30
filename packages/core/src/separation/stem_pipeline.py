@@ -555,6 +555,7 @@ class StemUpmixPipeline:
                 silence_min_duration_s=cfg.stem_silence_min_duration_s,
                 silence_crossfade_ms=cfg.stem_silence_crossfade_ms,
                 silence_pad_ms=cfg.stem_silence_pad_ms,
+                path_key=cfg.stem_cache_key,
             )
             # Read caches created before model-plan keys were introduced.
             if (
@@ -572,6 +573,7 @@ class StemUpmixPipeline:
                     silence_min_duration_s=cfg.stem_silence_min_duration_s,
                     silence_crossfade_ms=cfg.stem_silence_crossfade_ms,
                     silence_pad_ms=cfg.stem_silence_pad_ms,
+                    path_key=cfg.stem_cache_key,
                 )
             _log.debug("  Timing cache-read=%.3fs", time.monotonic() - cache_started)
             if _cache_result is not None:
@@ -686,6 +688,7 @@ class StemUpmixPipeline:
                     silence_min_duration_s=cfg.stem_silence_min_duration_s,
                     silence_crossfade_ms=cfg.stem_silence_crossfade_ms,
                     silence_pad_ms=cfg.stem_silence_pad_ms,
+                    path_key=cfg.stem_cache_key,
                 )
                 _log.debug("  Timing cache-write=%.3fs", time.monotonic() - cache_started)
 

@@ -174,7 +174,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     if (!projectId || !selected) return;
     void api.saveProjectTrack(projectId, selected.id, {
       manifest_overrides: {
-        engine: next.engine, mixing: next.mixing, routing: next.routing,
+        engine: { stems: next.engine.stems }, mixing: next.mixing, routing: next.routing,
         mastering: next.mastering, processing: next.processing, format: next.format,
       },
       scene_overrides: selected.scene_overrides,
@@ -211,7 +211,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     if (!projectId || !selected) return;
     void api.saveProjectTrack(projectId, selected.id, {
       manifest_overrides: {
-        engine: next.engine, mixing: next.mixing, routing: next.routing,
+        engine: { stems: next.engine.stems }, mixing: next.mixing, routing: next.routing,
         mastering: next.mastering, processing: next.processing, format: next.format,
       },
       scene_overrides: selected.scene_overrides,

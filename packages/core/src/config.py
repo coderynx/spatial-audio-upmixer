@@ -136,6 +136,13 @@ class UpmixConfig:
 
     stem_cache_dir: str | None = None
 
+    # Stable identity to key stem-cache entries by instead of the input file's
+    # resolved filesystem path. A caller whose stem_cache_dir already isolates
+    # one cache entry per logical source (e.g. one directory per project
+    # track) can set this so relocating the data/working directory doesn't
+    # orphan previously separated stems.
+    stem_cache_key: str | None = None
+
     # None selects conservative backend-aware inference batching.
     stem_batch_size: int | None = None
     stem_segment_size: int | None = None
