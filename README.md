@@ -13,19 +13,65 @@ An optional web application adds interactive track and album workflows without c
 
 ## Web application
 
-Install and start the API:
+The stack is two processes: the FastAPI server (`apps/api`) and the React client (`apps/web`). Stem separation
+needs Python 3.11, 3.12, or 3.13 and one of the `separation-cpu`/`separation-gpu` extras, chosen per platform below.
+
+### 1. Install the API
+
+Pick a CPU/GPU extra for your platform, then sync the workspace:
+
+| Platform | Extra | Notes |
+|---|---|---|
+| macOS (Apple Silicon) | `separation-cpu` | The in-core inference engine selects MPS acceleration automatically — there is no separate "GPU" package for Apple Silicon. |
+| macOS (Intel) | `separation-cpu` | CPU only; no MPS or CUDA path exists on Intel Macs. |
+| Linux, NVIDIA GPU | `separation-gpu` | Install a CUDA-enabled `torch` build **first** (see below), then the extra. |
+| Linux, CPU only | `separation-cpu` | |
+| Windows, NVIDIA GPU | `separation-gpu` | Install a CUDA-enabled `torch` build **first** (see below), then the extra. |
+| Windows, CPU only | `separation-cpu` | |
+
+**uv (recommended):**
 
 ```bash
-uv sync --all-packages --extra dev --extra web-dev --extra separation-cpu
-uv run upmixer-web
+# CPU / Apple Silicon MPS / macOS Intel:
+uv sync --all-packages --extra dev --extra web-dev --extra manifest --extra separation-cpu
+
+# NVIDIA CUDA (Linux/Windows) — install the matching CUDA torch build first,
+# then sync so separation-gpu doesn't pull the CPU-only wheel over it:
+uv sync --all-packages --extra dev --extra web-dev --extra manifest
+uv pip install torch --index-url https://download.pytorch.org/whl/cu121  # match your CUDA version, see pytorch.org/get-started/locally
+uv sync --all-packages --extra dev --extra web-dev --extra manifest --extra separation-gpu
 ```
 
-Stem separation requires Python 3.11, 3.12, or 3.13. The `separation-cpu`
-extra is also the correct choice for Apple Silicon Macs — the in-core
-inference engine selects MPS acceleration when available. Use
-`separation-gpu` only on NVIDIA CUDA hosts.
+**Plain pip alternative** (from the repository root, editable install — do not `pip install upmixer` by name, it
+is not published):
 
-Start the React client in another terminal:
+```bash
+# CPU / Apple Silicon MPS / macOS Intel:
+python3 -m pip install -e "packages/core[separation-cpu]" -e apps/api
+
+# NVIDIA CUDA (Linux/Windows):
+python3 -m pip install torch --index-url https://download.pytorch.org/whl/cu121  # match your CUDA version
+python3 -m pip install -e "packages/core[separation-gpu]" -e apps/api
+```
+
+Without stem separation (mastering/routing only, no `torch` dependency), drop the extra entirely:
+
+```bash
+uv sync --all-packages --extra dev --extra web-dev --extra manifest
+```
+
+### 2. Run the API
+
+```bash
+cd apps/api
+uv run upmixer-web       # or: python3 -m upmixer_web, with a plain-pip install
+```
+
+`UPMIXER_DATA_DIR` defaults to `./data` relative to the process's working directory — run with cwd `apps/api`, or
+set it explicitly. Copy `.env.example` at the repository root to `apps/api/.env` (or export the variables) to
+configure `UPMIXER_HOST`, `UPMIXER_PORT`, `UPMIXER_DATABASE_URL`, `UPMIXER_ALLOWED_ORIGINS`, and related settings.
+
+### 3. Run the web client
 
 ```bash
 cd apps/web
