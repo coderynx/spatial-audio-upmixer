@@ -139,7 +139,7 @@ function AppShellLayout({
                 three-column `minmax(0,1fr)_auto_minmax(0,1fr)` grid
                 `Transport` uses) gets the bar's true full width to centre
                 against, not just its own intrinsic content width. */}
-            <div className="min-w-0 flex-1">{headerNode}</div>
+            <div className="min-w-0 flex-1 self-stretch">{headerNode}</div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             {onRefresh && (

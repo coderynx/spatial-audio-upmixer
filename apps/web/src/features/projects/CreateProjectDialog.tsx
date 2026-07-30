@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 /** Empty-project creation: name and notes only. Assets, stems, and format
- * are chosen afterwards in the project's own Assets tab — see
+ * are chosen afterwards in the project's own Prepare tab — see
  * `features/projects/assets/AssetsTab.tsx` — rather than up front here,
  * which is what let a project only ever start from one upload. */
 export function CreateProjectDialog({

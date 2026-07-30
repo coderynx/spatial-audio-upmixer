@@ -630,6 +630,22 @@ state change per click, not a fresh element every render).
   Project settings is its own one-segment `SegmentedControl` (identical
   look/press behavior, no fifth tab) in col 3, precisely so it doesn't imply
   "next step after Delivery."
+- **The stage tabs alone deviate from `SegmentedControl`'s default `h-7`,
+  `bg-card` active pill, and cross-fade** (the `SegmentedControl` row further
+  below still documents that as the default). Passing `fill` stretches the
+  control to the header's full height instead of sitting as a fixed-height
+  pill inside it — this is the workflow's primary selector, the one thing on
+  screen that should read as "which stage am I on" at a glance, so
+  `activeClassName`/`activeTextClassName` swap its active state to
+  `bg-primary`/`text-primary-foreground` instead of the card pill. It also
+  passes `slideIndicator`, so the primary pill glides between segments
+  instead of cross-fading in place — one continuous "selector moving," not
+  four segments independently blinking. That indicator is a `fill`-only
+  behavior: when `value` matches no stage (switching to Project settings,
+  a sibling control), it fades out in place rather than sliding toward
+  settings' own one-segment control, since there's nowhere shared to slide
+  to. Project settings and every other `SegmentedControl` in the app keep
+  the default fixed height, card-pill active state, and cross-fade.
 - **The top bar's right side empties out to make room.** `AppShell` renders
   Refresh and the page's `onCreate` button only when their callbacks are
   supplied; `App.tsx` withholds both (and the processing-capability status

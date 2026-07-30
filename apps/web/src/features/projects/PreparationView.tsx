@@ -8,7 +8,7 @@ import { gerundAt } from "./agentFlavor";
 const FAILED_STATUSES = new Set(["failed", "expansion_failed"]);
 
 /** Realtime "agent" log for a project's stem preparation — rendered inline
- * as one state of the Assets tab (see `assets/AssetsTab.tsx`) rather than a
+ * as one state of the Prepare tab (see `assets/AssetsTab.tsx`) rather than a
  * full-page gate, so the stage bar and track tree stay reachable while
  * preparation runs. */
 export function PreparationPanel({ project, onRetry }: { project: Project; onRetry: () => void }) {

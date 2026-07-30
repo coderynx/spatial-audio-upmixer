@@ -65,7 +65,7 @@ const PANE_SEGMENTS = [
 ];
 
 const STAGES = [
-  { value: "assets" as const, label: "Assets", icon: FolderOpen },
+  { value: "assets" as const, label: "Prepare", icon: FolderOpen },
   { value: "mixing" as const, label: "Mixing", icon: SlidersHorizontal },
   { value: "mastering" as const, label: "Mastering", icon: AudioWaveform },
   { value: "delivery" as const, label: "Delivery", icon: Package },
@@ -408,11 +408,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // deliberately condensed into one segmented control — Project settings is
   // not a stage, so it sits on the right as its own one-segment
   // `SegmentedControl` (identical look/press behavior, no fifth tab).
-  // Assets is reachable regardless of readiness — it's where readiness
-  // comes from — so these tabs stay visible instead of this being a
-  // full-page takeover the user can't navigate out of.
+  // Prepare (the "assets" stage) is reachable regardless of readiness —
+  // it's where readiness comes from — so these tabs stay visible instead of
+  // this being a full-page takeover the user can't navigate out of.
   const headerTitle = React.useMemo(() => project ? (
-    <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
+    <div className="grid h-full w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3">
       <div className="flex min-w-0 items-center gap-1.5 justify-self-start">
         <Link to="/projects" className="flex shrink-0 items-center gap-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground">
           <ChevronLeft className="h-3.5 w-3.5" />Projects
@@ -428,14 +428,22 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           setActiveTab(value);
           setSettingsView(false);
         }}
-        className="justify-self-center"
+        className="justify-self-center self-stretch"
+        fill
+        slideIndicator
+        activeClassName="bg-primary shadow-sm"
+        activeTextClassName="text-primary-foreground"
       />
       <SegmentedControl
         aria-label="Project settings"
         segments={SETTINGS_SEGMENT}
         value={(settingsView ? "settings" : "") as "settings"}
         onChange={() => setSettingsView(true)}
-        className="justify-self-end"
+        // -mr-4 pulls this flush with Transport's col-3 right edge below:
+        // AppShell's header reserves px-3 vs Transport's px-2 (4px), plus a
+        // gap-3 before its own trailing icon slot, which this page leaves
+        // empty (no onRefresh/onCreate) but which still claims the gap.
+        className="justify-self-end -mr-4"
       />
     </div>
   ) : null, [project?.name, activeTab, settingsView]);
@@ -453,7 +461,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8 [&_svg]:size-4"
+        className="h-8 w-8 bg-muted [&_svg]:size-4"
         aria-label={trackRailCollapsed ? "Show tracks" : "Hide tracks"}
         aria-pressed={!trackRailCollapsed}
         onClick={() => setTrackRailCollapsed((current) => !current)}
@@ -463,36 +471,38 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     )
   );
   return <main className="flex h-[calc(100vh-var(--topbar-h))] w-full flex-col overflow-hidden">
-    <Transport
-      playing={preview.playing}
-      currentTime={preview.currentTime}
-      currentTimeRef={preview.currentTimeRef}
-      duration={preview.duration}
-      volume={preview.volume}
-      muted={preview.muted}
-      loop={preview.loop}
-      disabled={!preview.supported || !preview.ready || !previewStems.length}
-      onPlayPause={() => void preview.playPause()}
-      onStop={preview.stop}
-      onToggleLoop={preview.toggleLoop}
-      onSetVolume={preview.setVolume}
-      onToggleMute={preview.toggleMute}
-      headphoneLevels={preview.headphoneLevels}
-      leading={transportLeading}
-    >
-      <OutputModeSelect
-        value={outputMode}
-        onChange={setOutputMode}
-        nativeSupported={preview.nativeSupported}
-        devices={preview.outputDevices}
-        deviceId={preview.outputDeviceId}
-        onDeviceChange={(deviceId) => void preview.setOutputDeviceId(deviceId)}
-        spatialProfile={spatialProfile}
-        onSpatialProfileChange={setSpatialProfile}
-        transauralProfile={transauralProfile}
-        onTransauralProfileChange={setTransauralProfile}
-      />
-    </Transport>
+    {activeTab !== "assets" && (
+      <Transport
+        playing={preview.playing}
+        currentTime={preview.currentTime}
+        currentTimeRef={preview.currentTimeRef}
+        duration={preview.duration}
+        volume={preview.volume}
+        muted={preview.muted}
+        loop={preview.loop}
+        disabled={!preview.supported || !preview.ready || !previewStems.length}
+        onPlayPause={() => void preview.playPause()}
+        onStop={preview.stop}
+        onToggleLoop={preview.toggleLoop}
+        onSetVolume={preview.setVolume}
+        onToggleMute={preview.toggleMute}
+        headphoneLevels={preview.headphoneLevels}
+        leading={transportLeading}
+      >
+        <OutputModeSelect
+          value={outputMode}
+          onChange={setOutputMode}
+          nativeSupported={preview.nativeSupported}
+          devices={preview.outputDevices}
+          deviceId={preview.outputDeviceId}
+          onDeviceChange={(deviceId) => void preview.setOutputDeviceId(deviceId)}
+          spatialProfile={spatialProfile}
+          onSpatialProfileChange={setSpatialProfile}
+          transauralProfile={transauralProfile}
+          onTransauralProfileChange={setTransauralProfile}
+        />
+      </Transport>
+    )}
     {error && <p className="flex-none border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
     {settingsView && manifest ? (
       <section className="min-h-0 flex-1 overflow-auto p-3">
@@ -519,8 +529,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       <EmptyState
         icon={UploadCloud}
         title="No prepared tracks yet"
-        description="Upload and prepare at least one track in Assets before mixing, mastering, or delivering."
-        action={<Button size="sm" variant="outline" onClick={() => setActiveTab("assets")}>Go to Assets</Button>}
+        description="Upload and prepare at least one track in Prepare before mixing, mastering, or delivering."
+        action={<Button size="sm" variant="outline" onClick={() => setActiveTab("assets")}>Go to Prepare</Button>}
         className="flex-1"
       />
     ) : (() => {

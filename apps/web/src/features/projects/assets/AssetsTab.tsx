@@ -20,10 +20,12 @@ function nextStagingId() {
 
 type Defaults = Omit<StagedAsset, "localId" | "file">;
 
-/** Project-level Assets tab: upload one or more files with per-file
- * extraction settings, then watch/browse the prepared Track → Stem → Zone
- * tree. Assets is project-wide (unlike Mixing/Mastering/Delivery, which are
- * per-track), so it carries no track switcher of its own. */
+/** Project-level Prepare tab (stage value `"assets"`): upload one or more
+ * files with per-file extraction settings, then watch/browse the prepared
+ * Track → Stem → Zone tree. Prepare is project-wide (unlike Mixing/
+ * Mastering/Delivery, which are per-track), so it carries no track switcher
+ * of its own. No `Transport` bar either — there's no preview to play until
+ * a track's stems exist. */
 export function AssetsTab({
   project,
   configuration,
