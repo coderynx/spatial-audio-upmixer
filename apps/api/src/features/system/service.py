@@ -17,10 +17,13 @@ def engine_constants() -> dict[str, Any]:
     bootstrap instead of hand-mirroring these numbers. See
     ``docs/contracts/preview_export_parity.md``.
     """
+    from upmixer.binaural.profiles import DECODE_FILTER_SET
     from upmixer.binaural.profiles import VOICING_PARAMS as BINAURAL_VOICING
     from upmixer.binaural.renderer import BINAURAL_LOUDNESS_MAX_GAIN_DB
+    from upmixer.crosstalk.profiles import XTC_FILTER_SET
     from upmixer.crosstalk.profiles import VOICING_PARAMS as TRANSAURAL_VOICING
     from upmixer.crosstalk.renderer import CROSSTALK_LOUDNESS_MAX_GAIN_DB
+    from upmixer.mastering.eq import EQ_FIR_ASSETS
     from upmixer.mastering.bass import (
         BASS_PROFILES,
         EXCITE_BLEND,
@@ -29,6 +32,7 @@ def engine_constants() -> dict[str, Any]:
         SUB_CUTOFF_HZ,
     )
     from upmixer.mastering.compressor import COMP_PROFILES
+    from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
     from upmixer.separation.stem_router import (
         HEIGHT_HAAS_DELAY_MS_L,
         HEIGHT_HAAS_DELAY_MS_R,
@@ -71,6 +75,10 @@ def engine_constants() -> dict[str, Any]:
         "crosstalk_loudness_max_gain_db": CROSSTALK_LOUDNESS_MAX_GAIN_DB,
         "voicing_params": {p.value: asdict(v) for p, v in BINAURAL_VOICING.items()},
         "transaural_voicing_params": {p.value: asdict(v) for p, v in TRANSAURAL_VOICING.items()},
+        "eq_fir_assets": EQ_FIR_ASSETS,
+        "stem_eq_fir_assets": STEM_EQ_FIR_ASSETS,
+        "decode_filter_set": {p.value: name for p, name in DECODE_FILTER_SET.items()},
+        "xtc_filter_set": {p.value: name for p, name in XTC_FILTER_SET.items()},
     }
 
 

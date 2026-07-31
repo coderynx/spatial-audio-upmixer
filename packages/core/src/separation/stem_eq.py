@@ -72,6 +72,15 @@ STEM_EQ_PROFILES: dict[str, list[tuple[float, float]]] = {
 
 STEM_EQ_PROFILE_NAMES: tuple[str, ...] = tuple(sorted(STEM_EQ_PROFILES.keys()))
 
+STEM_EQ_FIR_ASSET_PREFIX = "stem_"
+
+STEM_EQ_FIR_ASSETS: dict[str, str] = {
+    profile: f"{STEM_EQ_FIR_ASSET_PREFIX}{profile}" for profile in STEM_EQ_PROFILE_NAMES
+}
+"""Per-stem profile -> precomputed FIR asset basename. Single source for the
+WAV names ``scripts/build_eq_filters.py`` writes and the web preview convolves
+against (see docs/contracts/preview_export_parity.md §4)."""
+
 _FIR_CACHE: dict[tuple[str, int, int], np.ndarray] = {}
 
 

@@ -20,9 +20,9 @@ from pathlib import Path
 
 import soundfile as sf
 
-from upmixer.mastering.eq import EQ_PROFILES
+from upmixer.mastering.eq import EQ_FIR_ASSETS
 from upmixer.mastering.eq import _build_fir as build_master_fir
-from upmixer.separation.stem_eq import STEM_EQ_PROFILES
+from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
 from upmixer.separation.stem_eq import _build_fir as build_stem_fir
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -36,15 +36,15 @@ WEB_OUT_DIR = ROOT / "apps" / "web" / "public" / "eq_fir"
 def main() -> None:
     WEB_OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    for profile in EQ_PROFILES:
+    for profile, basename in EQ_FIR_ASSETS.items():
         ir = build_master_fir(profile, SAMPLE_RATE, MASTER_N_TAPS)
-        path = WEB_OUT_DIR / f"master_{profile}.wav"
+        path = WEB_OUT_DIR / f"{basename}.wav"
         sf.write(str(path), ir, SAMPLE_RATE, subtype="FLOAT")
         print(f"  wrote {path.relative_to(ROOT)}  ({len(ir)} taps)")
 
-    for profile in STEM_EQ_PROFILES:
+    for profile, basename in STEM_EQ_FIR_ASSETS.items():
         ir = build_stem_fir(profile, SAMPLE_RATE, STEM_N_TAPS)
-        path = WEB_OUT_DIR / f"stem_{profile}.wav"
+        path = WEB_OUT_DIR / f"{basename}.wav"
         sf.write(str(path), ir, SAMPLE_RATE, subtype="FLOAT")
         print(f"  wrote {path.relative_to(ROOT)}  ({len(ir)} taps)")
 

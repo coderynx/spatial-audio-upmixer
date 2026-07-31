@@ -18,7 +18,7 @@ Both are cross-referenced, not repeated, below.
 
 | Stage | Python (export) | TypeScript (preview) |
 |---|---|---|
-| Per-stem EQ (pre-routing) | `upmixer/separation/stem_eq.py::StemEQ` | `STEM_EQ_FIR_ASSETS` + `buildFirEqNode` in `masteringProfiles.ts`, wired in `useStemPreview.ts` |
+| Per-stem EQ (pre-routing) | `upmixer/separation/stem_eq.py::StemEQ` (asset names: `STEM_EQ_FIR_ASSETS`) | `EngineConstants.stemEqFirAssets` (served, see §4) + `buildFirEqNode`, wired in `audioEngine.ts`/`useStemPreview.ts` |
 | Stem → speaker-bed routing | `upmixer/separation/stem_router.py::StemRouter.route` | `createStemSends` in `useStemPreview.ts`, using `channelGroupGain`/`buildSurroundSend`/`buildHeightSend`/`buildDiffuseSend` from `masteringProfiles.ts` |
 | Multichannel channel derivation (non-stem path) | `upmixer/upmix/multichannel.py::MultichannelUpmixer` | Not previewed — multichannel pass-through input has no stem-preview path |
 | Ambisonic encode (order-3 ACN/N3D) | `upmixer/binaural/ambisonics.py::encode_gains` | `createPositionalEncoder` (wraps `AmbiMonoEncoder`/JSAmbisonics) + `ACN12_N3D_CORRECTION` in `previewGraph.ts`, called per speaker from `useStemPreview.ts` — see `spatial_audio_engine.md` §3 |
@@ -27,7 +27,7 @@ Both are cross-referenced, not repeated, below.
 | Binaural voicing chain | `upmixer/binaural/voicing.py::apply_voicing` | `buildVoicingChain`/`applyVoicingParams` in `masteringProfiles.ts`, wired inside `buildBinauralGraph` (`previewGraph.ts`) — see `spatial_audio_engine.md` §5 |
 | Crosstalk-cancellation (transaural) | `upmixer/crosstalk/renderer.py::render_crosstalk` (reuses `render_binaural` "flat" + `apply_xtc` + `apply_voicing`) | `buildCrosstalkGraph` (`previewGraph.ts`, reuses `buildBinauralGraph("flat")` + a 4-convolver 2x2 XTC matrix + `buildVoicingChain`), wired inside `initialize()` (`useStemPreview.ts`) — see `transaural_speakers.md` §1 |
 | Reference match (spectral + RMS) | `upmixer/mastering/match_reference.py::ReferenceMatchProcessor` | Server-precomputed per-channel FIR bank + RMS gain (`ReferenceMatchProcessor.compute_channel_filters`, `upmixer_web/worker.py::WorkerManager.prepare_reference_match`), served as a project asset and convolved via `buildFirEqNode` inside `buildMasteringGraph` (`previewGraph.ts`), before the named-EQ stage — see **Ledger D12** |
-| Spectral (mastering) EQ | `upmixer/mastering/eq.py::SpectralShaper` | `EQ_FIR_ASSETS` + `buildFirEqNode` in `masteringProfiles.ts` (same asset scheme as stem EQ, applied post-routing) |
+| Spectral (mastering) EQ | `upmixer/mastering/eq.py::SpectralShaper` (asset names: `EQ_FIR_ASSETS`) | `EngineConstants.eqFirAssets` (served, see §4) + `buildFirEqNode` in `buildMasteringGraph` (same asset scheme as stem EQ, applied post-routing) |
 | Bus compression | `upmixer/mastering/compressor.py::BusCompressor` | Linked `DynamicsCompressorNode` detector + polled `.reduction` in `buildMasteringTopology` (`useStemPreview.ts`) |
 | Bass control | `upmixer/mastering/bass.py::BassController` | Bass shelves/exciter/mono-maker in `buildMasteringTopology` (**Ledger D5**) |
 | BS.1770 loudness normalization | `upmixer/loudness.py::normalize_loudness` (bed) / `render_binaural_delivery`'s own pass (collapse) | `measureOutputLoudness`/`loudnessGainFor` (`useStemPreview.ts`) — approximate, see **Tier 3**; the collapse-stage pass is now golden-diff-covered, see **Ledger D10** |
@@ -252,12 +252,23 @@ rather than tested. What still verifies the *end-to-end* result is the
 golden render diff (§5), which renders the real web graph and diffs it
 against the core engine.
 
+The FIR/filter asset-name maps are also served the same way (Ledger **D17**):
+`engine_constants()` reads them from their core sources — `EQ_FIR_ASSETS`
+(`mastering/eq.py`), `STEM_EQ_FIR_ASSETS` (`separation/stem_eq.py`),
+`DECODE_FILTER_SET` (`binaural/profiles.py`), `XTC_FILTER_SET`
+(`crosstalk/profiles.py`) — and the web consumes them as
+`EngineConstants.eqFirAssets` / `.stemEqFirAssets` / `.decodeFilterSet` /
+`.xtcFilterSet`. The physical WAVs still ship web-side under
+`apps/web/public/{eq_fir,hrir,xtc}`; only the names are served. The
+`master_`/`stem_` EQ naming is single-sourced in core so
+`scripts/build_eq_filters.py` and the endpoint agree, and
+`test_served_filter_assets_have_shipped_wavs` guards that every served name
+has a shipped WAV.
+
 Constants the web still owns locally (not served — these never drift in
 practice): structural/mathematical values (`BUTTERWORTH_Q`, `AMBISONIC_ORDER`,
-the ACN-12 1/√7 correction, the true-peak kernel taps) and web-owned asset
-filenames (`EQ_FIR_ASSETS`, `STEM_EQ_FIR_ASSETS`, `DECODE_FILTER_SET`,
-`XTC_FILTER_SET`). The worklet true-peak kernel + safety margin stay pinned
-bit-for-bit by `limiterWorklet.test.ts`.
+the ACN-12 1/√7 correction, the true-peak kernel taps). The worklet true-peak
+kernel + safety margin stay pinned bit-for-bit by `limiterWorklet.test.ts`.
 
 ### Changing a served constant
 
@@ -409,6 +420,8 @@ table above is — extending the harness to cover both is future work.
 | D15 | New feature, not a discrepancy: the Spatial Audio Engine gained a second delivery target, `transaural` (crosstalk-cancelled stereo speaker playback), alongside the existing `binaural` (headphone) target — see `transaural_speakers.md`. Recorded here because the parity mechanism this contract defines had to be extended to a whole new stage, not just a new constant. | Implemented core↔web in one pass, no gap opened. Core: `upmixer/crosstalk/` (renderer reuses `render_binaural(profile="flat")` + a new 2x2 XTC FIR matrix + the existing `apply_voicing`), `scripts/build_crosstalk_filters.py` bakes the XTC filter assets from the same parametric head model (`upmixer/binaural/head_model.py`, promoted out of the binaural build script so both targets share one model) with a frequency-dependent Tikhonov-regularized inverse. Web: `buildCrosstalkGraph` (`previewGraph.ts`) reuses `buildBinauralGraph("flat")` internally, adds a 4-convolver 2x2 XTC matrix, then the shared `buildVoicingChain` — wired as a fourth parallel gated bus in `initialize()`/`applyOutputMode` (`audioEngine.ts`) alongside binaural/stereo/native, same "always built, gate picks which reaches the destination" pattern the other three already use. `CROSSTALK_LOUDNESS_MAX_GAIN_DB` added to both `canonical_constants()`/`canonicalConstants()` (§3, §4). One accepted cost from reusing the always-eager-build pattern: the crosstalk graph's internal "flat" HRIR decode now fetches unconditionally on every `initialize()`, regardless of `outputMode` (previously only the selected `spatialProfile`'s 4-part set fetched) — instant switching into transaural mode was judged worth this, matching how binaural/stereo/native are already all eagerly built today. Not yet covered by the golden-diff harness (§5) — same open item as binaural's Listening profile (D10): only a hand-rolled objective crosstalk-suppression/coloration check (`tests/test_crosstalk.py`) exists on the Python side so far, no cross-engine render comparison. |
 
 | D16 | Not a discrepancy: the Tier-1 tunable DSP constants (§3) were hand-mirrored in `masteringProfiles.ts` and kept honest by a live value cross-check (`contract.py`/`contract.ts` → `web_constants.json` fixture → `test_contract_parity.py`), so every tuning change was a two-sided edit plus a fixture re-dump. Reducing that duplication ahead of a possible future Rust port. | Made core the single owner: `apps/api` `engine_constants()` (`features/system/service.py`) reads the values straight from their core source modules and serves them as the `constants` block of `GET /api/v1/configuration`. The web fetches them once at bootstrap, normalizes via `resolveEngineConstants` (`masteringProfiles.ts`) into an `EngineConstants` object, and threads it into the graph builders (`previewGraph.ts`/`audioEngine.ts`); the value literals and the whole cross-check (`contract.py`, `contract.ts`, `dump-constants.mjs`, the fixture, `test_contract_parity.py`) were deleted — nothing to diff when there is one source. Scope: the tunable acoustic constants only (comp/bass profiles, gains, cutoffs, haas, loudness ceilings, limiter times, binaural + transaural voicing params). Kept web-local (never drift): structural/math constants (`BUTTERWORTH_Q`, ambisonic order, ACN-12 1/√7, true-peak kernel) and asset filenames. Parity of these constants is now structural (one source); the end-to-end golden render diff (§5) still guards actual output, fed the shared test fixture `engineConstants.fixture.ts`. See §4. |
+
+| D17 | Not a discrepancy: extending D16's served-constants pattern. Four profile→asset-filename maps (`EQ_FIR_ASSETS`, `STEM_EQ_FIR_ASSETS`, `DECODE_FILTER_SET`, `XTC_FILTER_SET`) were still hand-mirrored in `masteringProfiles.ts`. `DECODE_FILTER_SET`/`XTC_FILTER_SET` already existed identically in core (`binaural/profiles.py`, `crosstalk/profiles.py`), and the `master_`/`stem_` EQ naming was duplicated between the TS literals and `scripts/build_eq_filters.py` — so a served name could silently drift from the shipped WAVs. | Made core the single owner. The `master_`/`stem_` naming is now centralized as `EQ_FIR_ASSETS` (`mastering/eq.py`) / `STEM_EQ_FIR_ASSETS` (`separation/stem_eq.py`), which `build_eq_filters.py` and `engine_constants()` both consume — the build script and the endpoint can no longer disagree. `engine_constants()` serves all four maps (the decode/XTC ones keyed by enum `.value`); the web drops the literals and reads `EngineConstants.eqFirAssets`/`.stemEqFirAssets`/`.decodeFilterSet`/`.xtcFilterSet` (fixture `engineConstants.fixture.ts` carries them for the golden harness). The physical WAVs stay web-side under `apps/web/public/{eq_fir,hrir,xtc}` — only the names moved. New backend tests: `test_configuration_serves_filter_asset_maps` (served == core sources) and `test_served_filter_assets_have_shipped_wavs` (every served basename has a shipped WAV — the safety net replacing the old hand-sync). See §4. |
 
 Add new rows here when a discrepancy is found; do not delete resolved rows,
 mark them fixed so the history of what was found and corrected stays

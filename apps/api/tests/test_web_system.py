@@ -51,6 +51,7 @@ def test_configuration_serves_engine_constants(web_client):
         "comp_profiles", "bass_profiles", "bass_sub_cutoff_hz", "bass_mid_cutoff_hz",
         "bass_excite_blend", "bass_excite_drive", "binaural_loudness_max_gain_db",
         "crosstalk_loudness_max_gain_db", "voicing_params", "transaural_voicing_params",
+        "eq_fir_assets", "stem_eq_fir_assets", "decode_filter_set", "xtc_filter_set",
     }
     assert set(constants) == expected_keys
 
@@ -69,6 +70,42 @@ def test_configuration_serves_engine_constants(web_client):
     assert set(constants["transaural_voicing_params"]) == {
         "stereo", "smart_speaker", "car", "laptop", "phone",
     }
+
+
+def test_configuration_serves_filter_asset_maps(web_client):
+    from upmixer.binaural.profiles import DECODE_FILTER_SET
+    from upmixer.crosstalk.profiles import XTC_FILTER_SET
+    from upmixer.mastering.eq import EQ_FIR_ASSETS
+    from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
+
+    response = web_client.get("/api/v1/configuration")
+    assert response.status_code == 200
+    constants = response.json()["constants"]
+
+    assert constants["eq_fir_assets"] == EQ_FIR_ASSETS
+    assert constants["stem_eq_fir_assets"] == STEM_EQ_FIR_ASSETS
+    assert constants["decode_filter_set"] == {p.value: n for p, n in DECODE_FILTER_SET.items()}
+    assert constants["xtc_filter_set"] == {p.value: n for p, n in XTC_FILTER_SET.items()}
+
+
+def test_served_filter_assets_have_shipped_wavs(web_client):
+    from pathlib import Path
+
+    response = web_client.get("/api/v1/configuration")
+    constants = response.json()["constants"]
+
+    repo_root = Path(__file__).resolve().parents[3]
+    public = repo_root / "apps" / "web" / "public"
+    checks = [
+        ("eq_fir_assets", "eq_fir"),
+        ("stem_eq_fir_assets", "eq_fir"),
+        ("decode_filter_set", "hrir"),
+        ("xtc_filter_set", "xtc"),
+    ]
+    for key, subdir in checks:
+        for basename in constants[key].values():
+            matches = list((public / subdir).glob(f"{basename}*.wav"))
+            assert matches, f"no shipped WAV for {basename} under {subdir}/"
 
 
 def test_capability_uses_engine_selected_device(tmp_path, monkeypatch):

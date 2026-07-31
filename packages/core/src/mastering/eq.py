@@ -128,6 +128,15 @@ EQ_PROFILES: dict[str, list[tuple[float, float]]] = {
 
 EQ_PROFILE_NAMES: tuple[str, ...] = tuple(sorted(EQ_PROFILES.keys()))
 
+EQ_FIR_ASSET_PREFIX = "master_"
+
+EQ_FIR_ASSETS: dict[str, str] = {
+    profile: f"{EQ_FIR_ASSET_PREFIX}{profile}" for profile in EQ_PROFILE_NAMES
+}
+"""Profile -> precomputed FIR asset basename. Single source for the WAV names
+``scripts/build_eq_filters.py`` writes and the web preview convolves against
+(see docs/contracts/preview_export_parity.md §4)."""
+
 _FIR_CACHE: dict[tuple[str, int, int], np.ndarray] = {}
 
 

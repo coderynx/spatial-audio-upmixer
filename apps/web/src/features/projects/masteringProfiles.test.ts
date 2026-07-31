@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { computeRealSH } from "spherical-harmonic-transform";
 import {
-  EQ_FIR_ASSETS,
-  STEM_EQ_FIR_ASSETS,
-  XTC_FILTER_SET,
   buildFirEqNode,
   fetchEqFirBuffer,
   measureBufferTruePeakDbtp,
@@ -36,19 +33,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("XTC_FILTER_SET", () => {
-  // Asset basenames are web-owned (the WAVs live under web/public/xtc/), so
-  // these stay pinned here; the transaural voicing *values* are now fetched
-  // (EngineConstants.transauralVoicingParams) and no longer live in TS.
-  it("names match the backend asset basenames", () => {
-    expect(XTC_FILTER_SET.stereo).toBe("stereo_xtc");
-    expect(XTC_FILTER_SET.smart_speaker).toBe("smart_speaker_xtc");
-    expect(XTC_FILTER_SET.car).toBe("car_xtc");
-    expect(XTC_FILTER_SET.laptop).toBe("laptop_xtc");
-    expect(XTC_FILTER_SET.phone).toBe("phone_xtc");
-  });
-});
-
 describe("ACN 12 N3D correction", () => {
   it("scaling computeRealSH's ACN 12 by 1/sqrt(7) matches the backend encoder", () => {
     // upmixer/binaural/ambisonics.py::encode_gains's ACN 12 (Y3^0)
@@ -76,15 +60,6 @@ describe("FIR EQ (real backend filter, not a biquad approximation)", () => {
   // asset scripts/build_eq_filters.py generates by calling
   // upmixer.mastering.eq._build_fir / upmixer.separation.stem_eq._build_fir
   // directly, shipped under web/public/eq_fir/.
-
-  it("names an asset for every known master and stem EQ profile", () => {
-    for (const name of Object.values(EQ_FIR_ASSETS)) {
-      expect(name).toMatch(/^master_/);
-    }
-    for (const name of Object.values(STEM_EQ_FIR_ASSETS)) {
-      expect(name).toMatch(/^stem_/);
-    }
-  });
 
   it("fetchEqFirBuffer fetches /eq_fir/<asset>.wav and decodes it", async () => {
     const decodeAudioData = vi.fn(async () => ({ duration: 1 }) as unknown as AudioBuffer);

@@ -1,10 +1,7 @@
 import type { ProjectStem, StemScene } from "@/api";
 import { positionToAzimuthElevation, routingFromAzimuthElevation, speakerCoordinates } from "@/lib/spatial";
 import {
-  DECODE_FILTER_SET,
   N_ACN_CHANNELS,
-  STEM_EQ_FIR_ASSETS,
-  XTC_FILTER_SET,
   applyVoicingParams,
   buildDiffuseSend,
   buildFirEqNode,
@@ -340,7 +337,7 @@ export class PreviewAudioEngine {
   private stemEqNodes: Map<string, AudioNode[]> = new Map();
   // Decoded EQ FIR asset cache (asset name -> pending/loaded AudioBuffer),
   // keyed independently of profile scope (master vs stem asset names never
-  // collide, see EQ_FIR_ASSETS/STEM_EQ_FIR_ASSETS) so the same profile
+  // collide, see EngineConstants.eqFirAssets/stemEqFirAssets) so the same profile
   // reused across many stems or across a rebuild fetches/decodes once. Tied
   // to the single AudioContext this engine creates once per lifetime (see
   // `initialize`) — never needs invalidating within that lifetime.
@@ -667,17 +664,17 @@ export class PreviewAudioEngine {
       if (this.outputMode === "binaural") {
         binaural = buildBinauralGraph(offlineCtx, this.spatialProfile, this.constants);
         const decodeChannels = await loadCachedDecodeFilterChannels(
-          this.decodeFilterCache, offlineCtx, DECODE_FILTER_SET[this.spatialProfile], fetchDecodeFilterPart,
+          this.decodeFilterCache, offlineCtx, this.constants.decodeFilterSet[this.spatialProfile], fetchDecodeFilterPart,
         );
         assignDecodeFilterBuffers(offlineCtx, binaural.convolverPairs, decodeChannels);
       } else if (this.outputMode === "transaural") {
         crosstalk = buildCrosstalkGraph(offlineCtx, this.transauralProfile, this.constants);
         const decodeChannels = await loadCachedDecodeFilterChannels(
-          this.decodeFilterCache, offlineCtx, DECODE_FILTER_SET.flat, fetchDecodeFilterPart,
+          this.decodeFilterCache, offlineCtx, this.constants.decodeFilterSet.flat, fetchDecodeFilterPart,
         );
         assignDecodeFilterBuffers(offlineCtx, crosstalk.binaural.convolverPairs, decodeChannels);
         const xtcChannels = await loadCachedXtcFilterChannels(
-          this.xtcFilterCache, offlineCtx, XTC_FILTER_SET[this.transauralProfile], fetchXtcFilterSet,
+          this.xtcFilterCache, offlineCtx, this.constants.xtcFilterSet[this.transauralProfile], fetchXtcFilterSet,
         );
         assignXtcFilterBuffers(offlineCtx, crosstalk.xtcConvolvers, xtcChannels);
       } else {
@@ -767,8 +764,8 @@ export class PreviewAudioEngine {
         if (!stemNode || !plan) continue;
         const base = stem.stem_key.split("@", 1)[0];
         const profile = this.mix?.stem_eq?.[stem.stem_key] || this.mix?.stem_eq?.[base];
-        const assetName = profile && profile in STEM_EQ_FIR_ASSETS
-          ? STEM_EQ_FIR_ASSETS[profile as StemEqProfileName]
+        const assetName = profile && profile in this.constants.stemEqFirAssets
+          ? this.constants.stemEqFirAssets[profile as StemEqProfileName]
           : null;
 
         // One shared downstream chain per stem, fed by one source per
@@ -1117,8 +1114,8 @@ export class PreviewAudioEngine {
       node.stemGain.disconnect();
       (this.stemEqNodes.get(stem.id) || []).forEach((eqNode) => eqNode.disconnect());
 
-      const assetName = profile && profile in STEM_EQ_FIR_ASSETS
-        ? STEM_EQ_FIR_ASSETS[profile as StemEqProfileName]
+      const assetName = profile && profile in this.constants.stemEqFirAssets
+        ? this.constants.stemEqFirAssets[profile as StemEqProfileName]
         : null;
       if (assetName) {
         const firEq = buildFirEqNode(ctx, 1);
@@ -1226,7 +1223,7 @@ export class PreviewAudioEngine {
     if (this.assignedDecodeProfile === profile) return true;
     try {
       const channels = await loadCachedDecodeFilterChannels(
-        this.decodeFilterCache, ctx, DECODE_FILTER_SET[profile], fetchDecodeFilterPart,
+        this.decodeFilterCache, ctx, this.constants.decodeFilterSet[profile], fetchDecodeFilterPart,
       );
       // Convolvers may have been rebuilt (or the profile reassigned again)
       // while this fetch/decode was in flight — re-check both before assigning.
@@ -1253,7 +1250,7 @@ export class PreviewAudioEngine {
     if (!ctx || convolvers.length !== N_ACN_CHANNELS) return false;
     try {
       const channels = await loadCachedDecodeFilterChannels(
-        this.decodeFilterCache, ctx, DECODE_FILTER_SET.flat, fetchDecodeFilterPart,
+        this.decodeFilterCache, ctx, this.constants.decodeFilterSet.flat, fetchDecodeFilterPart,
       );
       if (this.context !== ctx || this.crosstalkDecodeConvolvers !== convolvers) return false;
       assignDecodeFilterBuffers(ctx, convolvers, channels);
@@ -1273,7 +1270,7 @@ export class PreviewAudioEngine {
     if (this.assignedXtcProfile === profile) return true;
     try {
       const channels = await loadCachedXtcFilterChannels(
-        this.xtcFilterCache, ctx, XTC_FILTER_SET[profile], fetchXtcFilterSet,
+        this.xtcFilterCache, ctx, this.constants.xtcFilterSet[profile], fetchXtcFilterSet,
       );
       if (this.context !== ctx || this.xtcConvolvers !== convolvers) return false;
       if (this.assignedXtcProfile === profile) return true;

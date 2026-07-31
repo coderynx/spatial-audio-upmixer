@@ -79,6 +79,34 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
     laptop: { ...neutral, bass_shelf_hz: 160, bass_shelf_gain_db: 2.0, presence_hz: 3000, presence_gain_db: 1.0, stereo_widen: 0.25 },
     phone: { ...neutral, bass_shelf_hz: 180, bass_shelf_gain_db: 3.0, presence_hz: 3000, presence_gain_db: 1.5, stereo_widen: 0.3 },
   },
+  eq_fir_assets: {
+    "spatial-transparent": "master_spatial-transparent",
+    "spatial-air": "master_spatial-air",
+    "spatial-warm": "master_spatial-warm",
+    "spatial-present": "master_spatial-present",
+    "atmos-streaming": "master_atmos-streaming",
+  },
+  stem_eq_fir_assets: {
+    "vocal-presence": "stem_vocal-presence",
+    "vocal-warmth": "stem_vocal-warmth",
+    "bass-warmth": "stem_bass-warmth",
+    "bass-cut": "stem_bass-cut",
+    "drums-punch": "stem_drums-punch",
+    "other-air": "stem_other-air",
+    flat: "stem_flat",
+  },
+  decode_filter_set: {
+    flat: "flat_o3_decode",
+    studio: "studio_o3_decode",
+    listening: "listening_o3_decode",
+  },
+  xtc_filter_set: {
+    stereo: "stereo_xtc",
+    smart_speaker: "smart_speaker_xtc",
+    car: "car_xtc",
+    laptop: "laptop_xtc",
+    phone: "phone_xtc",
+  },
 };
 
 export const TEST_ENGINE_CONSTANTS = resolveEngineConstants(TEST_SERVED_CONSTANTS);

@@ -26,7 +26,6 @@ import {
   applyVoicingParams,
   BUTTERWORTH_Q,
   DECODE_FILTER_SPLITS,
-  EQ_FIR_ASSETS,
   fetchEqFirBuffer,
   MONO_MAKER_STEREO_PAIRS,
   N_ACN_CHANNELS,
@@ -300,8 +299,8 @@ export function buildMasteringGraph(
     : null;
 
   const eqCfg = mastering?.eq;
-  const eqAssetName = eqCfg?.profile && eqCfg.profile in EQ_FIR_ASSETS
-    ? EQ_FIR_ASSETS[eqCfg.profile as EqProfileName]
+  const eqAssetName = eqCfg?.profile && eqCfg.profile in constants.eqFirAssets
+    ? constants.eqFirAssets[eqCfg.profile as EqProfileName]
     : null;
   const eqStrength = eqCfg?.strength ?? 1;
 
@@ -672,7 +671,7 @@ export async function loadDecodeFilterChannels(
 }
 
 /** Dedupes concurrent/repeat fetches of the same profile's decode filter set
- * by `name` — only three possible keys (`DECODE_FILTER_SET`'s values), so
+ * by `name` — only three possible keys (the decode filter set's values), so
  * this makes an A->B->A profile switch free after the first load. Same
  * cache-by-key pattern as `loadCachedEqBuffer`. */
 export function loadCachedDecodeFilterChannels(
