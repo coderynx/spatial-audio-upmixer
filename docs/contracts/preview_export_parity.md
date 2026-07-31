@@ -222,7 +222,7 @@ the separate mechanism in `docs/project_manifest_parity.md`.
 |---|---|---|
 | `BINAURAL_BED_FORMATS` | `("5.1.4", "7.1.2", "7.1.4")` | `GET /api/v1/configuration` |
 | `TRANSAURAL_BED_FORMATS` | `("5.1.4", "7.1.2", "7.1.4")` | `GET /api/v1/configuration` |
-| `SURROUND_714` channel order | FL, FR, C, LFE, **BL, BR, SL, SR**, TFL, TFR, TBL, TBR (back before side — differs from 7.1/7.1.2 order) | `GET /api/v1/configuration` `layout_channels["7.1.4"]`; `ProjectDetailPage.tsx` has a hardcoded 7.1.4 fallback if config is unavailable — keep that fallback in sync by hand, it is not covered by any automated check |
+| `SURROUND_714` channel order | FL, FR, C, LFE, **BL, BR, SL, SR**, TFL, TFR, TBL, TBR (back before side — differs from 7.1/7.1.2 order) | `GET /api/v1/configuration` `layout_channels["7.1.4"]`; `ProjectDetailPage.tsx` sources the order solely from that value (empty list until config loads, no client-side copy) |
 | Per-layout channel sets | `FORMAT_MAP` | `GET /api/v1/configuration` `layout_channels` |
 
 ---

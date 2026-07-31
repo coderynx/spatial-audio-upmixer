@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type Asset, type Project } from "@/api";
+import { api, type Asset, type Configuration, type Project } from "@/api";
 import { HeaderSlotProvider, useHeaderSlot } from "@/app/HeaderSlot";
 import { ProjectDetailPage } from "./ProjectDetailPage";
 
@@ -50,17 +50,21 @@ function HeaderOutlet() {
   return <>{node}</>;
 }
 
-function renderPage() {
+function renderPage(configuration: Configuration | null = null) {
   return render(
     <HeaderSlotProvider>
       <MemoryRouter initialEntries={["/projects/project-1"]}>
         <HeaderOutlet />
         <Routes>
-          <Route path="/projects/:projectId" element={<ProjectDetailPage configuration={null} />} />
+          <Route path="/projects/:projectId" element={<ProjectDetailPage configuration={configuration} />} />
         </Routes>
       </MemoryRouter>
     </HeaderSlotProvider>,
   );
+}
+
+function channelCount() {
+  return screen.getByText("Channels").parentElement?.textContent?.replace("Channels", "").trim();
 }
 
 // Saves are debounced, so calls recorded by one test would otherwise still be
@@ -262,5 +266,26 @@ describe("ProjectDetailPage tabs", () => {
     const [, , payload] = vi.mocked(api.saveProjectTrack).mock.calls.at(-1)!;
     const savedOverrides = payload.manifest_overrides as unknown as { mastering: { loudness: { normalize: boolean } } };
     expect(savedOverrides.mastering.loudness.normalize).toBe(false);
+  });
+
+  it("sources the channel list solely from configuration — none before it loads, the served set after", async () => {
+    // Backend order for 7.1.4 is back-before-side (upmixer/formats.py::FORMAT_MAP),
+    // deliberately unlike the old hardcoded fallback's side-before-back literal.
+    const config = {
+      choices: {
+        layout_channels: {
+          "7.1.4": ["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR"],
+        },
+      },
+    } as unknown as Configuration;
+
+    const withoutConfig = renderPage(null);
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+    expect(channelCount()).toBe("0");
+    withoutConfig.unmount();
+
+    renderPage(config);
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+    expect(channelCount()).toBe("12");
   });
 });
