@@ -89,7 +89,9 @@ class TestCacheKey:
     def test_path_key_ignores_where_the_file_actually_lives(self, tmp_path):
         """The whole point of path_key: two different resolved input paths
         (e.g. the same asset materialized under a relocated data directory)
-        produce the same key as long as path_key and mtime/size match."""
+        produce the same key. mtime/size are excluded from a path_key entry's
+        key, so even a re-materialization that does not preserve mtime hits."""
+        import os
         import shutil
 
         wav_a = tmp_path / "a" / "x.wav"
@@ -97,10 +99,36 @@ class TestCacheKey:
         _write_dummy_wav(str(wav_a))
         wav_b = tmp_path / "b" / "x.wav"
         wav_b.parent.mkdir()
-        shutil.copy2(wav_a, wav_b)  # preserves mtime, as a real file relocation would
+        shutil.copy(wav_a, wav_b)  # does NOT preserve mtime, unlike copy2
+        os.utime(wav_b, (os.stat(wav_b).st_atime, os.stat(wav_b).st_mtime + 120))
         k1 = _cache_key(str(wav_a), "model", 44100, path_key="stable-id")
         k2 = _cache_key(str(wav_b), "model", 44100, path_key="stable-id")
         assert k1 == k2
+
+    def test_path_key_key_independent_of_mtime(self, tmp_path):
+        """A path_key entry's key must not change when only the source mtime
+        drifts — this is what lets a project export reuse prepared stems."""
+        import os
+
+        wav = str(tmp_path / "x.wav")
+        _write_dummy_wav(wav)
+        before = _cache_key(wav, "model", 44100, path_key="stable-id")
+        stat = os.stat(wav)
+        os.utime(wav, (stat.st_atime, stat.st_mtime + 3600))
+        after = _cache_key(wav, "model", 44100, path_key="stable-id")
+        assert before == after
+
+    def test_no_path_key_still_binds_mtime(self, tmp_path):
+        """Without path_key the legacy behavior stands: mtime is part of the key."""
+        import os
+
+        wav = str(tmp_path / "x.wav")
+        _write_dummy_wav(wav)
+        before = _cache_key(wav, "model", 44100)
+        stat = os.stat(wav)
+        os.utime(wav, (stat.st_atime, stat.st_mtime + 3600))
+        after = _cache_key(wav, "model", 44100)
+        assert before != after
 
     def test_different_path_key_different_key(self, tmp_path):
         wav = str(tmp_path / "x.wav")
@@ -217,6 +245,83 @@ class TestStemCacheSaveLoad:
         loaded_stems, sr = result
         assert sr == 44100
         assert set(loaded_stems.keys()) == set(stems.keys())
+
+    def test_path_key_load_survives_mtime_drift(self, tmp_path):
+        """A project export re-materializes the source (fresh mtime); a
+        path_key entry saved at preparation must still load."""
+        pytest.importorskip("soundfile")
+        import os
+
+        wav = str(tmp_path / "src.wav")
+        _write_dummy_wav(wav)
+        cache = StemCache(str(tmp_path / "cache"))
+        stems = _make_stems()
+        cache.save(wav, "model", 44100, stems, 44100, path_key="project:p:track:t")
+        stat = os.stat(wav)
+        os.utime(wav, (stat.st_atime, stat.st_mtime + 300))
+
+        result = cache.load(wav, "model", 44100, path_key="project:p:track:t")
+        assert result is not None
+        assert set(result[0].keys()) == set(stems.keys())
+
+    def test_path_key_recovers_legacy_mtime_keyed_entry(self, tmp_path):
+        """An entry written before mtime/size left the path_key formula must
+        still load — an already-prepared project must not re-separate on export."""
+        sf = pytest.importorskip("soundfile")
+        import hashlib
+        import json
+        import os
+
+        from upmixer.separation.stem_cache import (
+            _CACHE_SCHEMA, _engine_version, _preview_tag, _stem_filename,
+        )
+
+        wav = str(tmp_path / "src.wav")
+        _write_dummy_wav(wav, n=4096)
+        root = tmp_path / "cache"
+        root.mkdir()
+        pk = "project:p:track:t"
+        stems = _make_stems()
+        stat = os.stat(wav)
+        tag = _preview_tag(False, None, None)
+        silence_tag = "skip=True|thr=-90.0|min=2.000|xfade=10.0|pad=200.0"
+        legacy_raw = (
+            f"v{_CACHE_SCHEMA}|{pk}|{stat.st_mtime:.6f}|{stat.st_size}|model|"
+            f"44100|{tag}|{silence_tag}|engine={_engine_version()}"
+        )
+        legacy_key = hashlib.sha256(legacy_raw.encode()).hexdigest()[:20]
+        entry = root / legacy_key
+        entry.mkdir()
+        for name, audio in stems.items():
+            sf.write(str(entry / _stem_filename(name)), audio, 44100, subtype="PCM_24")
+        (entry / "metadata.json").write_text(json.dumps({
+            "cache_schema": _CACHE_SCHEMA, "engine_version": _engine_version(),
+            "input_path": wav, "path_key": pk, "mtime": round(stat.st_mtime, 6),
+            "size": stat.st_size, "stems_hash": "model", "sep_sr": 44100,
+            "stem_keys": list(stems), "silence_skip": True,
+            "silence_threshold_db": -90.0, "silence_min_duration_s": 2.0,
+            "silence_crossfade_ms": 10.0, "silence_pad_ms": 200.0,
+        }))
+        os.utime(wav, (stat.st_atime, stat.st_mtime + 50))  # re-materialized
+
+        cache = StemCache(str(root))
+        result = cache.load(wav, "model", 44100, path_key=pk)
+        assert result is not None
+        assert set(result[0].keys()) == set(stems.keys())
+        assert cache.load(wav, "model", 44100, path_key="project:other:track:x") is None
+        assert cache.load(wav, "other-model", 44100, path_key=pk) is None
+
+    def test_path_key_load_invalidates_on_size_change(self, tmp_path):
+        """A genuinely different source (changed size) must still cold-miss."""
+        pytest.importorskip("soundfile")
+
+        wav = str(tmp_path / "src.wav")
+        _write_dummy_wav(wav, n=4096)
+        cache = StemCache(str(tmp_path / "cache"))
+        cache.save(wav, "model", 44100, _make_stems(), 44100, path_key="project:p:track:t")
+        _write_dummy_wav(wav, n=20000)  # different content and size
+
+        assert cache.load(wav, "model", 44100, path_key="project:p:track:t") is None
 
     def test_roundtrip_values_close(self, tmp_path):
         pytest.importorskip("soundfile")

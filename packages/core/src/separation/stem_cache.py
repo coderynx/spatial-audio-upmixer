@@ -14,7 +14,10 @@ Cache structure on disk::
 
 Cache key: SHA-256 of
 ``schema|abs_path|mtime|size|inference_hash|sep_sr|preview_tag|silence_params|engine_version``
-(first 20 hex chars).
+(first 20 hex chars). When a caller supplies a stable ``path_key`` (``abs_path``
+becomes that key), ``mtime`` and ``size`` are dropped from the key so a source
+re-materialized to a fresh path/mtime still hits — ``load`` then validates the
+stored ``size`` from metadata to catch a genuinely changed source.
 
 ``inference_hash`` identifies model sequence and intermediate lineage. Requests
 using the same models share entries; every stem emitted at no extra inference
@@ -80,7 +83,6 @@ def _legacy_cache_key(
 ) -> str:
     """Return pre-v2 key for backward-compatible cache reads."""
     abs_path = path_key if path_key is not None else str(Path(input_path).resolve())
-    mtime = os.path.getmtime(str(Path(input_path).resolve()))
     tag = _preview_tag(is_preview, preview_duration, preview_start)
     silence_tag = (
         f"skip={silence_skip}"
@@ -89,7 +91,15 @@ def _legacy_cache_key(
         f"|xfade={silence_crossfade_ms:.1f}"
         f"|pad={silence_pad_ms:.1f}"
     )
-    raw = f"{abs_path}|{mtime:.6f}|{stems_hash}|{sep_sr}|{tag}|{silence_tag}"
+    # A path_key caller owns a stable logical identity, so mtime — which
+    # changes whenever the source is re-materialized (relocation, copy,
+    # object-store download) — must stay out of the key; staleness is
+    # validated against stored size/mtime in load() instead.
+    if path_key is not None:
+        raw = f"{abs_path}|{stems_hash}|{sep_sr}|{tag}|{silence_tag}"
+    else:
+        mtime = os.path.getmtime(str(Path(input_path).resolve()))
+        raw = f"{abs_path}|{mtime:.6f}|{stems_hash}|{sep_sr}|{tag}|{silence_tag}"
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -139,8 +149,6 @@ def _cache_key(
                     checks still read the real file at ``input_path``.
     """
     resolved = str(Path(input_path).resolve())
-    stat = os.stat(resolved)
-    mtime = stat.st_mtime
     abs_path = path_key if path_key is not None else resolved
     tag = _preview_tag(is_preview, preview_duration, preview_start)
     silence_tag = (
@@ -150,10 +158,24 @@ def _cache_key(
         f"|xfade={silence_crossfade_ms:.1f}"
         f"|pad={silence_pad_ms:.1f}"
     )
-    raw = (
-        f"v{_CACHE_SCHEMA}|{abs_path}|{mtime:.6f}|{stat.st_size}|{stems_hash}|"
-        f"{sep_sr}|{tag}|{silence_tag}|engine={_engine_version()}"
-    )
+    # A path_key caller owns a stable logical identity, so the source's
+    # mtime/size — which change whenever it is re-materialized (data-dir
+    # relocation, copy, object-store download) — are excluded from the key.
+    # This keeps a project's prepared stems reusable at export time even
+    # though the file was materialized afresh; load() still validates size
+    # (and mtime within tolerance) from stored metadata to catch a genuinely
+    # changed source.
+    if path_key is not None:
+        raw = (
+            f"v{_CACHE_SCHEMA}|{abs_path}|{stems_hash}|"
+            f"{sep_sr}|{tag}|{silence_tag}|engine={_engine_version()}"
+        )
+    else:
+        stat = os.stat(resolved)
+        raw = (
+            f"v{_CACHE_SCHEMA}|{abs_path}|{stat.st_mtime:.6f}|{stat.st_size}|{stems_hash}|"
+            f"{sep_sr}|{tag}|{silence_tag}|engine={_engine_version()}"
+        )
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -177,6 +199,41 @@ class StemCache:
         self._root = Path(cache_dir)
         self._root.mkdir(parents=True, exist_ok=True)
 
+    def _find_path_key_entry(
+        self,
+        path_key: str,
+        stems_hash: str,
+        sep_sr: int,
+        silence_skip: bool,
+        silence_threshold_db: float,
+        silence_min_duration_s: float,
+        silence_crossfade_ms: float,
+        silence_pad_ms: float,
+    ) -> Path | None:
+        """Find a cached entry for ``path_key`` by scanning stored metadata.
+
+        Recovers entries written under an older key formula (mtime/size once
+        formed part of the key) by matching the output-affecting components
+        recorded in each entry's metadata. Preview entries are never written,
+        so only ``full`` entries exist to match here.
+        """
+        for meta_path in self._root.glob(f"*/{_METADATA_FILE}"):
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if (
+                meta.get("path_key") == path_key
+                and meta.get("stems_hash") == stems_hash
+                and meta.get("sep_sr") == sep_sr
+                and bool(meta.get("silence_skip", True)) == silence_skip
+                and float(meta.get("silence_threshold_db", -90.0)) == silence_threshold_db
+                and float(meta.get("silence_min_duration_s", 2.0)) == silence_min_duration_s
+                and float(meta.get("silence_crossfade_ms", 10.0)) == silence_crossfade_ms
+                and float(meta.get("silence_pad_ms", 200.0)) == silence_pad_ms
+            ):
+                return meta_path.parent
+        return None
 
     def load(
         self,
@@ -230,7 +287,19 @@ class StemCache:
             )
             entry_dir = self._root / legacy_key
             if not entry_dir.exists():
-                return None
+                # Entries written before mtime/size left the path_key formula
+                # (see _cache_key) are keyed by a hash this build no longer
+                # computes. The cache root is the caller's per-track directory,
+                # so scan its handful of entries for a metadata match instead of
+                # forcing an already-prepared project to re-separate.
+                scanned = self._find_path_key_entry(
+                    path_key, stems_hash, sep_sr,
+                    silence_skip, silence_threshold_db, silence_min_duration_s,
+                    silence_crossfade_ms, silence_pad_ms,
+                ) if path_key is not None else None
+                if scanned is None:
+                    return None
+                entry_dir = scanned
 
         meta_path = entry_dir / _METADATA_FILE
         if not meta_path.exists():
@@ -244,16 +313,28 @@ class StemCache:
             return None
 
         try:
-            current_mtime = os.path.getmtime(str(Path(input_path).resolve()))
+            current_stat = os.stat(str(Path(input_path).resolve()))
         except OSError:
             return None
-        stored_mtime = float(meta.get("mtime", 0.0))
-        if abs(current_mtime - stored_mtime) > _MTIME_TOLERANCE:
-            _log.debug(
-                "  StemCache: mtime mismatch (stored=%.3f, current=%.3f)",
-                stored_mtime, current_mtime,
-            )
-            return None
+        if path_key is not None:
+            # Identity is the caller's stable path_key, not the file's mtime
+            # (which drifts on re-materialization). Validate size — a changed
+            # size means the logical source's content actually differs.
+            stored_size = meta.get("size")
+            if stored_size is not None and int(stored_size) != current_stat.st_size:
+                _log.debug(
+                    "  StemCache: size mismatch (stored=%s, current=%d)",
+                    stored_size, current_stat.st_size,
+                )
+                return None
+        else:
+            stored_mtime = float(meta.get("mtime", 0.0))
+            if abs(current_stat.st_mtime - stored_mtime) > _MTIME_TOLERANCE:
+                _log.debug(
+                    "  StemCache: mtime mismatch (stored=%.3f, current=%.3f)",
+                    stored_mtime, current_stat.st_mtime,
+                )
+                return None
 
         try:
             import soundfile as sf  # type: ignore[import-untyped]
