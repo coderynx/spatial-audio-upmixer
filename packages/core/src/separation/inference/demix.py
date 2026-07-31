@@ -26,7 +26,7 @@ def _secondary_name(config: ModelConfig) -> str:
     return next(n for n in config.instruments if n != config.target_instrument)
 
 
-def _match_length(source: np.ndarray, n_samples: int) -> np.ndarray:
+def match_length(source: np.ndarray, n_samples: int) -> np.ndarray:
     """Trim or zero-pad ``source`` along the time axis to ``n_samples``."""
     current = source.shape[-1]
     if current == n_samples:
@@ -44,7 +44,7 @@ def demix_roformer(
     config: ModelConfig,
     device: torch.device,
     segment_size: int | None,
-    overlap_seconds: float = 8.0,
+    overlap: int = 2,
     batch_size: int = 1,
 ) -> dict[str, np.ndarray]:
     """Chunked inference for BS-Roformer / Mel-Band Roformer models.
@@ -53,10 +53,10 @@ def demix_roformer(
         mix: ``(2, n_samples)`` float32 mix, already peak-normalized.
         segment_size: STFT frames per chunk (``dim_t``). ``None`` uses the
             model's own default from the config.
-        overlap_seconds: Desired step between chunk starts, in seconds of
-            audio. Clamped to at most the chunk length — with the default
-            (8s) and a chunk shorter than that, the loop advances one full
-            chunk at a time, i.e. no actual overlap for these models.
+        overlap: Overlapping windows per chunk length (community default 2;
+            ``1`` disables overlap and advances one full chunk per step).
+            Higher values blend chunk boundaries more but cost linearly more
+            compute.
         batch_size: Chunks processed per forward pass — a memory/speed
             knob. Chunks are independent (no cross-item norm or state) and
             are always accumulated back in the same left-to-right order
@@ -87,8 +87,7 @@ def demix_roformer(
     if use_async_transfer:
         mix_t = mix_t.pin_memory()
 
-    desired_step = int(overlap_seconds * config.sample_rate)
-    step = chunk_size if desired_step <= 0 else min(desired_step, chunk_size)
+    step = max(1, chunk_size // max(1, overlap))
 
     window = torch.tensor(signal.windows.hamming(chunk_size), dtype=torch.float32)
 
@@ -123,10 +122,10 @@ def demix_roformer(
     inferenced = (result / counter.clamp(min=1e-10)).numpy()
 
     if num_stems == 1:
-        primary = _match_length(inferenced, orig_n_samples)
+        primary = match_length(inferenced, orig_n_samples)
         return {config.target_instrument: primary, _secondary_name(config): mix - primary}
 
-    trimmed = _match_length(inferenced, orig_n_samples) if n_samples != orig_n_samples else inferenced
+    trimmed = match_length(inferenced, orig_n_samples) if n_samples != orig_n_samples else inferenced
     return dict(zip(config.instruments, trimmed))
 
 
@@ -199,7 +198,7 @@ def demix_tfc_tdf(
     if num_stems > 1:
         return dict(zip(config.instruments, inferenced))
 
-    primary = _match_length(inferenced, n_samples)
+    primary = match_length(inferenced, n_samples)
     if config.target_instrument:
         return {config.target_instrument: primary, _secondary_name(config): mix - primary}
     return {config.instruments[0]: primary}

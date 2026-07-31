@@ -285,6 +285,19 @@ def test_stem_cache_identity_changes_for_inference_overrides():
             stem_chunk_duration_s=300.0,
         ),
     )
+    overlap_identity = _stem_cache_identity(
+        plan, UpmixConfig(stem_overlap=8)
+    )
+    tta_identity = _stem_cache_identity(
+        plan, UpmixConfig(stem_tta=True)
+    )
+    pitch_identity = _stem_cache_identity(
+        plan, UpmixConfig(stem_pitch_shift=0.75)
+    )
 
     assert default_identity == plan.inference_hash
     assert tuned_identity != default_identity
+    assert overlap_identity != default_identity
+    assert tta_identity != default_identity
+    assert pitch_identity != default_identity
+    assert len({overlap_identity, tta_identity, pitch_identity, tuned_identity}) == 4

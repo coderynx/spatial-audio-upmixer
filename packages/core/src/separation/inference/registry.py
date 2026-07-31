@@ -32,12 +32,18 @@ class ModelSpec:
                      on it for a cold deployment, since community
                      checkpoints move between hosts more often than
                      published packages.
+        default_chunk_samples: Community-published sweet-spot chunk length
+                     in samples, or ``None`` to use the model's own YAML
+                     ``dim_t`` default. Only applied when the caller leaves
+                     ``segment_size`` unset (see ``docs/`` model catalogs in
+                     ``upmixer-knowledge`` for provenance).
     """
 
     filename: str
     arch: Arch
     config_name: str
     weights_url: str
+    default_chunk_samples: int | None = None
 
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
@@ -46,6 +52,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         arch="bs_roformer",
         config_name="BS-Roformer-SW",
         weights_url="https://huggingface.co/jarredou/BS-ROFO-SW-Fixed",
+        default_chunk_samples=882000,
     ),
     "mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt": ModelSpec(
         filename="mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt",
@@ -82,6 +89,9 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         arch="mel_band_roformer",
         config_name="becruily_deux",
         weights_url="https://huggingface.co/becruily/mel-band-roformer-deux",
+        # Community sweet spot for instrumental targets is 661500-749700
+        # samples; 705600 (16s @ 44.1kHz) lands mid-range at an exact dim_t.
+        default_chunk_samples=705600,
     ),
     "kimmel_unwa_ft2_bleedless.ckpt": ModelSpec(
         filename="kimmel_unwa_ft2_bleedless.ckpt",

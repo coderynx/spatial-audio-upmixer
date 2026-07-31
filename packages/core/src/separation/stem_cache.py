@@ -60,7 +60,7 @@ _CACHE_SCHEMA = 3
 # output (architecture code, demix numerics, model registry). This — not a
 # third-party package version — is now what identifies "what produced this
 # cached audio."
-_ENGINE_VERSION = "upmixer-sep-1"
+_ENGINE_VERSION = "upmixer-sep-2"
 
 
 def _engine_version() -> str:

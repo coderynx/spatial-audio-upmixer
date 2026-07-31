@@ -91,10 +91,16 @@ def _stem_cache_identity(plan: SeparationPlan, config: UpmixConfig) -> str:
         config.stem_batch_size,
         config.stem_segment_size,
         config.stem_chunk_duration_s,
+        config.stem_overlap,
+        config.stem_tta,
+        config.stem_pitch_shift,
     )
-    if all(value is None for value in options):
+    if all(value in (None, False) for value in options):
         return base
-    raw = f"{base}|batch={options[0]}|segment={options[1]}|chunk={options[2]}"
+    raw = (
+        f"{base}|batch={options[0]}|segment={options[1]}|chunk={options[2]}"
+        f"|overlap={options[3]}|tta={options[4]}|pitch={options[5]}"
+    )
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -166,11 +172,21 @@ class StemUpmixPipeline:
         requested_cache_size = self.config.stem_model_cache_size
         if requested_cache_size is not None and requested_cache_size < 1:
             raise ValueError("stem_model_cache_size must be at least 1")
+        requested_overlap = self.config.stem_overlap
+        if requested_overlap is not None and requested_overlap < 1:
+            raise ValueError("stem_overlap must be at least 1")
+        requested_tta = self.config.stem_tta
+        requested_pitch_shift = self.config.stem_pitch_shift
+        if requested_pitch_shift is not None and requested_pitch_shift <= 0:
+            raise ValueError("stem_pitch_shift must be greater than 0")
         requested_settings = (
             requested_batch,
             requested_segment,
             requested_chunk,
             requested_cache_size,
+            requested_overlap,
+            requested_tta,
+            requested_pitch_shift,
         )
         if (
             self._separator_sr != sep_sr
@@ -195,6 +211,9 @@ class StemUpmixPipeline:
                 batch_size=requested_batch,
                 segment_size=requested_segment,
                 chunk_duration_s=requested_chunk,
+                overlap=requested_overlap,
+                tta=requested_tta,
+                pitch_shift=requested_pitch_shift,
             )
             cache_size = requested_cache_size
             if cache_size is None and separator.backend == "cpu":
@@ -538,10 +557,13 @@ class StemUpmixPipeline:
             _stem_cache = StemCache(cfg.stem_cache_dir)
             cache_identity = _stem_cache_identity(plan, cfg)
             custom_inference_tuning = any(
-                value is not None for value in (
+                value not in (None, False) for value in (
                     cfg.stem_batch_size,
                     cfg.stem_segment_size,
                     cfg.stem_chunk_duration_s,
+                    cfg.stem_overlap,
+                    cfg.stem_tta,
+                    cfg.stem_pitch_shift,
                 )
             )
             cache_started = time.monotonic()

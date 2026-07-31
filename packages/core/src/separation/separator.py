@@ -202,6 +202,14 @@ class StemSeparator:
             CPU value and keeps the model's own default on accelerators.
         chunk_duration_s: Long-file chunk duration. ``None`` enables bounded
             chunks on low-memory CPU systems and disables them elsewhere.
+        overlap: Overlapping windows per demix chunk. ``None`` selects the
+            community-default (2). These are quality knobs, not memory
+            knobs, so the OOM back-off ladder never adjusts them.
+        tta: Test-time augmentation (average predictions over polarity and
+            channel-swap variants). Off by default; ~3x slower when on.
+        pitch_shift: Optional pitch-register rescue trick — resamples the
+            mix by this ratio before separation and back afterward. ``None``
+            disables it.
     """
 
     def __init__(
@@ -213,6 +221,9 @@ class StemSeparator:
         batch_size: int | None = None,
         segment_size: int | None = None,
         chunk_duration_s: float | None = None,
+        overlap: int | None = None,
+        tta: bool = False,
+        pitch_shift: float | None = None,
     ) -> None:
         if batch_size is not None and batch_size < 1:
             raise ValueError("batch_size must be at least 1")
@@ -220,6 +231,10 @@ class StemSeparator:
             raise ValueError("segment_size must be at least 1")
         if chunk_duration_s is not None and chunk_duration_s <= 0:
             raise ValueError("chunk_duration_s must be greater than 0")
+        if overlap is not None and overlap < 1:
+            raise ValueError("overlap must be at least 1")
+        if pitch_shift is not None and pitch_shift <= 0:
+            raise ValueError("pitch_shift must be greater than 0")
         self._model = model
         self._model_dir = model_dir or str(
             Path.home() / ".cache" / "upmixer-models"
@@ -243,6 +258,9 @@ class StemSeparator:
         self._chunk_duration_s = (
             chunk_duration_s if chunk_duration_s is not None else auto_chunk
         )
+        self._overlap = overlap
+        self._tta = tta
+        self._pitch_shift = pitch_shift
         self._device_manager: DeviceManager | None = None
         self._engine: SeparationEngine | None = None
         self._tmp_dir: str | None = None
@@ -302,6 +320,10 @@ class StemSeparator:
                 batch_size=self._batch_size,
                 segment_size=self._segment_size,
                 chunk_duration_s=self._chunk_duration_s,
+                overlap=self._overlap,
+                default_chunk_samples=spec.default_chunk_samples,
+                tta=self._tta,
+                pitch_shift=self._pitch_shift,
             )
 
         return self._engine

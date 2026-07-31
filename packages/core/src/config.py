@@ -149,6 +149,15 @@ class UpmixConfig:
     stem_chunk_duration_s: float | None = None
     stem_model_cache_size: int | None = None
 
+    # None selects the community-default overlap (2 windows per chunk).
+    stem_overlap: int | None = None
+    # Test-time augmentation: average predictions over polarity/channel
+    # variants. Off by default (~3x inference cost when enabled).
+    stem_tta: bool = False
+    # Pitch-register rescue trick: resample by this ratio before separation
+    # and back afterward. None disables it.
+    stem_pitch_shift: float | None = None
+
     stems: list[str] | None = None
 
     stem_silence_skip: bool = True

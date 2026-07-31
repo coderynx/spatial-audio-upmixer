@@ -85,6 +85,36 @@ def test_cpu_oom_retries_with_smaller_segment():
     assert separator._segment_size == 64
 
 
+def test_cpu_oom_retries_with_quality_knobs_set():
+    """Overlap/TTA/pitch-shift are quality knobs, not memory knobs — the OOM
+    ladder must still reduce batch/segment/chunk and leave them untouched."""
+    separator = StemSeparator(
+        model="model.ckpt", batch_size=1,
+        segment_size=128, chunk_duration_s=120.0,
+        overlap=8, tta=True, pitch_shift=0.75,
+    )
+    separator._backend = "cpu"
+
+    class FakeSeparator:
+        calls = 0
+
+        def separate(self, _):
+            self.calls += 1
+            if self.calls == 1:
+                raise MemoryError("out of memory")
+            return []
+
+    fake = FakeSeparator()
+    with patch.object(separator, "_get_separator", return_value=fake):
+        assert separator._separate_paths("input.wav") == []
+
+    assert fake.calls == 2
+    assert separator._segment_size == 64
+    assert separator._overlap == 8
+    assert separator._tta is True
+    assert separator._pitch_shift == 0.75
+
+
 def test_cpu_oom_propagates_after_minimum_settings():
     separator = StemSeparator(
         model="model.ckpt", batch_size=1,
@@ -131,6 +161,7 @@ def test_separator_receives_full_precision_batch_options(tmp_path):
     fake_spec = ModelSpec(
         filename="model.ckpt", arch="bs_roformer",
         config_name="unused", weights_url="",
+        default_chunk_samples=882000,
     )
 
     with (
@@ -147,6 +178,7 @@ def test_separator_receives_full_precision_batch_options(tmp_path):
             model="model.ckpt", model_dir=str(tmp_path),
             sample_rate=96000, batch_size=4,
             segment_size=128, chunk_duration_s=300.0,
+            overlap=4, tta=True, pitch_shift=0.75,
         )
         engine = separator._get_separator()
         separator.close()
@@ -164,6 +196,10 @@ def test_separator_receives_full_precision_batch_options(tmp_path):
     assert engine._batch_size == 4
     assert engine._segment_size == 128
     assert engine._chunk_duration_s == 300.0
+    assert engine._overlap == 4
+    assert engine._tta is True
+    assert engine._pitch_shift == 0.75
+    assert engine._default_chunk_samples == 882000
 
 
 def test_karaoke_output_names_map_to_vocal_children():
