@@ -18,8 +18,8 @@
 //      config `_mastering_config()` uses.
 //   4. Measures BS.1770-ish integrated loudness, an approximate true peak,
 //      and per-channel RMS, and writes them to
-//      tests/fixtures/preview_export_golden/web_bed_metrics.json in the
-//      shape `test_preview_export_golden.py::_metrics` produces.
+//      packages/core/tests/fixtures/preview_export_golden/web_bed_metrics.json
+//      in the shape `test_preview_export_golden.py::_metrics` produces.
 //
 // Run: `node apps/web/scripts/render-preview-golden.mjs` (or via
 // `npm run golden:render` from `web/`).
@@ -31,7 +31,9 @@ import { OfflineAudioContext } from "node-web-audio-api";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(webRoot, "..");
+// Monorepo root (apps/web -> repo root), so the fixtures land where
+// packages/core/tests/test_preview_export_golden.py reads them.
+const repoRoot = path.resolve(webRoot, "..", "..");
 
 const SR = 48000;
 const DURATION_S = 5; // must match tests/test_preview_export_golden.py::_DURATION_S
@@ -199,6 +201,20 @@ async function loadMasteringProfilesModule() {
   return loadBundledModule(path.join(webRoot, "src/features/projects/masteringProfiles.ts"), "masteringProfiles");
 }
 
+// The preview graph builders take their tunable DSP constants as a parameter
+// (the live app fetches them from GET /api/v1/configuration). This harness is
+// test infrastructure, so it feeds them the shared web test fixture — the same
+// values the backend serves. Any drift from the real core values is caught by
+// the golden diff in tests/test_preview_export_golden.py (which renders with
+// the real core constants), so this fixture never silently diverges.
+async function loadEngineConstantsFixture() {
+  const { TEST_ENGINE_CONSTANTS } = await loadBundledModule(
+    path.join(webRoot, "src/features/projects/engineConstants.fixture.ts"),
+    "engineConstants",
+  );
+  return TEST_ENGINE_CONSTANTS;
+}
+
 // --- Disk-based EQ FIR loader (harness has no browser `fetch`) ---------
 async function loadFirFromDisk(ctx, assetName) {
   const filePath = path.join(webRoot, "public/eq_fir", `${assetName}.wav`);
@@ -215,17 +231,11 @@ async function loadDecodeFilterPartFromDisk(ctx, partName) {
   return ctx.decodeAudioData(arrayBuffer);
 }
 
-// upmixer/binaural/renderer.py BINAURAL_LOUDNESS_MAX_GAIN_DB — the binaural
-// collapse's own loudness correction is capped small since the bed is
-// already loudness-matched before collapse (see masteringProfiles.ts).
-const BINAURAL_LOUDNESS_MAX_GAIN_DB = 6.0;
 // upmixer/config.py loudness_target_lkfs default — the Studio/Flat profiles'
-// own VOICING_PARAMS.loudnessTargetLkfs is null, so `apply()` in
-// useStemPreview.ts falls back to this same default in the live preview.
+// own voicing loudnessTargetLkfs is null, so `apply()` in useStemPreview.ts
+// falls back to this same default in the live preview. Not part of the served
+// engine constants (a UpmixConfig default), so it stays local here.
 const LOUDNESS_TARGET_LKFS = -18.0;
-// upmixer/config.py lfe_gain default (-10 dB) — see masteringProfiles.ts LFE_GAIN.
-const LFE_GAIN = 0.31622776601683794;
-const LFE_LOWPASS_HZ = 120;
 const BINAURAL_PROFILE = "studio";
 // masteringProfiles.ts DECODE_FILTER_SET[BINAURAL_PROFILE] — only the
 // "studio" entry is needed since this harness is fixed to that profile.
@@ -245,6 +255,7 @@ function loudnessGainFor(measuredLkfs, targetLkfs, maxGainDb) {
 async function main() {
   const { buildMasteringGraph } = await loadPreviewGraphModule();
   const { buildSoftLimitCurve, measureBufferTruePeakDbtp } = await loadMasteringProfilesModule();
+  const constants = await loadEngineConstantsFixture();
 
   const { n, channels: bedSamples } = deterministicBed(SR, DURATION_S);
   const ctx = new OfflineAudioContext(CHANNELS.length, n, SR);
@@ -272,7 +283,7 @@ async function main() {
     bass: { profile: "enhance" },
   };
 
-  const handle = buildMasteringGraph(ctx, channelPorts, masterConfig, new Map(), {
+  const handle = buildMasteringGraph(ctx, channelPorts, masterConfig, new Map(), constants, {
     firLoader: loadFirFromDisk,
   });
 
@@ -319,7 +330,7 @@ async function main() {
     channel_rms: Object.fromEntries(CHANNELS.map((name) => [name, rms(outputChannels[name])])),
   };
 
-  const outDir = path.join(repoRoot, "tests/fixtures/preview_export_golden");
+  const outDir = path.join(repoRoot, "packages/core/tests/fixtures/preview_export_golden");
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, "web_bed_metrics.json");
   fs.writeFileSync(outPath, JSON.stringify(metrics, null, 2));
@@ -347,7 +358,7 @@ async function main() {
   const tailMargin = SR;
   const stageBCtx = new OfflineAudioContext(2, n + tailMargin, SR);
 
-  const binaural = buildBinauralGraph(stageBCtx, BINAURAL_PROFILE);
+  const binaural = buildBinauralGraph(stageBCtx, BINAURAL_PROFILE, constants);
   positionalChannels.forEach((name) => {
     const buffer = stageBCtx.createBuffer(1, n, SR);
     buffer.copyToChannel(outputChannels[name], 0);
@@ -371,9 +382,9 @@ async function main() {
   lfeSource.buffer = lfeBuffer;
   const lfeLowpass = stageBCtx.createBiquadFilter();
   lfeLowpass.type = "lowpass";
-  lfeLowpass.frequency.value = LFE_LOWPASS_HZ;
+  lfeLowpass.frequency.value = constants.lfeLowpassHz;
   const lfeGainNode = stageBCtx.createGain();
-  lfeGainNode.gain.value = LFE_GAIN;
+  lfeGainNode.gain.value = constants.lfeGain;
   lfeSource.connect(lfeLowpass).connect(lfeGainNode);
   lfeGainNode.connect(binaural.preVoicing, 0, 0);
   lfeGainNode.connect(binaural.preVoicing, 0, 1);
@@ -394,7 +405,7 @@ async function main() {
   const rawRight = stageBRendered.getChannelData(1).slice(0, n);
 
   const preGainLkfs = measureIntegratedLkfs({ FL: rawLeft, FR: rawRight }, SR);
-  const gain = loudnessGainFor(preGainLkfs, LOUDNESS_TARGET_LKFS, BINAURAL_LOUDNESS_MAX_GAIN_DB);
+  const gain = loudnessGainFor(preGainLkfs, LOUDNESS_TARGET_LKFS, constants.binauralLoudnessMaxGainDb);
 
   // Stage 3: gain -> soft-limit, in that order (see the "Limiting the raw
   // pre-gain sum would bake in saturation..." comment on this same ordering
@@ -410,7 +421,7 @@ async function main() {
   const gainNode = stageCCtx.createGain();
   gainNode.gain.value = gain;
   const softLimitNode = stageCCtx.createWaveShaper();
-  softLimitNode.curve = buildSoftLimitCurve();
+  softLimitNode.curve = buildSoftLimitCurve(constants.softLimitThreshold);
   softLimitNode.oversample = "4x";
   stageCSource.connect(gainNode).connect(softLimitNode).connect(stageCCtx.destination);
   stageCSource.start(0);

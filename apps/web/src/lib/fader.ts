@@ -4,11 +4,11 @@
  * audio/IEC-60268-17-style taper) instead of concentrating nearly all of the
  * audible range in the top third of the travel, as a raw linear gain does.
  *
- * Web-only monitor-UI concern, deliberately kept out of masteringProfiles.ts
- * — that module holds the Tier-1 DSP constants cross-checked against
- * upmixer/contract.py::canonical_constants(), and monitor gain never reaches
- * the exported render (see useStemPreview.ts's PROGRAM/MONITOR gain split),
- * so it has no parity contract to keep. */
+ * Web-only monitor-UI concern, deliberately kept out of the preview engine's
+ * DSP path — the Tier-1 DSP constants are single-sourced from core (served via
+ * GET /api/v1/configuration, see docs/contracts/preview_export_parity.md §4),
+ * and monitor gain never reaches the exported render (see useStemPreview.ts's
+ * PROGRAM/MONITOR gain split), so it has no parity contract to keep. */
 
 /** Position 0 is true silence; position 1 is unity (0 dB). The program
  * signal reaching the monitor stage is already true-peak-limited and

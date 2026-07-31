@@ -1,22 +1,9 @@
 import type { ProjectStem, StemScene } from "@/api";
 import { positionToAzimuthElevation, routingFromAzimuthElevation, speakerCoordinates } from "@/lib/spatial";
 import {
-  BINAURAL_LOUDNESS_MAX_GAIN_DB,
-  CROSSTALK_LOUDNESS_MAX_GAIN_DB,
   DECODE_FILTER_SET,
-  ITU_CENTER_COEFF,
-  LFE_GAIN,
-  LFE_LOWPASS_HZ,
-  LIMITER_LOOKAHEAD_MS,
-  LIMITER_RELEASE_MS,
-  LOUDNESS_MAX_GAIN_DB,
   N_ACN_CHANNELS,
   STEM_EQ_FIR_ASSETS,
-  SURROUND_DOWNMIX_COEFF,
-  SURROUND_HAAS_MS,
-  HEIGHT_HAAS_MS,
-  TRANSAURAL_VOICING_PARAMS,
-  VOICING_PARAMS,
   XTC_FILTER_SET,
   applyVoicingParams,
   buildDiffuseSend,
@@ -27,6 +14,7 @@ import {
   channelGroupGain,
   estimateRouteScale,
   measureBufferTruePeakDbtp,
+  type EngineConstants,
   type SpatialProfile,
   type StemEqProfileName,
   type TransauralProfile,
@@ -73,15 +61,19 @@ function engineRef<T>(value: T): EngineRef<T> {
 export type OutputMode = "binaural" | "transaural" | "stereo" | "native";
 
 // Mirrors upmixer/utils.py::itu_downmix_stereo — see docs/web_architecture.md.
-const STEREO_DOWNMIX_GAINS: Partial<Record<string, { left: number; right: number }>> = {
-  FL: { left: 1, right: 0 },
-  FR: { left: 0, right: 1 },
-  C: { left: ITU_CENTER_COEFF, right: ITU_CENTER_COEFF },
-  SL: { left: SURROUND_DOWNMIX_COEFF, right: 0 },
-  SR: { left: 0, right: SURROUND_DOWNMIX_COEFF },
-  BL: { left: SURROUND_DOWNMIX_COEFF * ITU_CENTER_COEFF, right: 0 },
-  BR: { left: 0, right: SURROUND_DOWNMIX_COEFF * ITU_CENTER_COEFF },
-};
+function stereoDownmixGains(c: EngineConstants): Partial<Record<string, { left: number; right: number }>> {
+  const itu = c.ituCenterCoeff;
+  const surround = c.surroundDownmixCoeff;
+  return {
+    FL: { left: 1, right: 0 },
+    FR: { left: 0, right: 1 },
+    C: { left: itu, right: itu },
+    SL: { left: surround, right: 0 },
+    SR: { left: 0, right: surround },
+    BL: { left: surround * itu, right: 0 },
+    BR: { left: 0, right: surround * itu },
+  };
+}
 
 // See docs/web_architecture.md "Preview audio graph" — Routing.
 const CHANNEL_SIGNAL: Record<string, keyof StemSignals> = {
@@ -161,6 +153,7 @@ function createStemSends(
   input: AudioNode,
   speakerBuses: Map<string, { muteGain: GainNode }>,
   channels: string[],
+  c: EngineConstants,
 ): { sends: Partial<Record<string, GainNode>>; ownNodes: AudioNode[] } {
   const splitter = ctx.createChannelSplitter(2);
   input.connect(splitter);
@@ -177,12 +170,12 @@ function createStemSends(
   leftTap.connect(monoLeftHalf).connect(monoSum);
   rightTap.connect(monoRightHalf).connect(monoSum);
 
-  const surroundLeft = buildSurroundSend(ctx, leftTap, SURROUND_HAAS_MS.left);
-  const surroundRight = buildSurroundSend(ctx, rightTap, SURROUND_HAAS_MS.right);
-  const heightShapedLeft = buildHeightSend(ctx, leftTap);
-  const heightShapedRight = buildHeightSend(ctx, rightTap);
-  const heightLeft = buildDiffuseSend(ctx, heightShapedLeft.output, HEIGHT_HAAS_MS.left);
-  const heightRight = buildDiffuseSend(ctx, heightShapedRight.output, HEIGHT_HAAS_MS.right);
+  const surroundLeft = buildSurroundSend(ctx, leftTap, c.surroundHaasMs.left, c.surroundBassCutoffHz, c.diffuseSendBlend);
+  const surroundRight = buildSurroundSend(ctx, rightTap, c.surroundHaasMs.right, c.surroundBassCutoffHz, c.diffuseSendBlend);
+  const heightShapedLeft = buildHeightSend(ctx, leftTap, c.heightShaping);
+  const heightShapedRight = buildHeightSend(ctx, rightTap, c.heightShaping);
+  const heightLeft = buildDiffuseSend(ctx, heightShapedLeft.output, c.heightHaasMs.left, c.diffuseSendBlend);
+  const heightRight = buildDiffuseSend(ctx, heightShapedRight.output, c.heightHaasMs.right, c.diffuseSendBlend);
 
   const signals: StemSignals = {
     left: leftTap,
@@ -254,6 +247,10 @@ export class PreviewAudioEngine {
   outputMode: OutputMode = "binaural";
   spatialProfile: SpatialProfile = "studio";
   transauralProfile: TransauralProfile = "stereo";
+  // Backend-served tunable DSP constants (see masteringProfiles.ts). Synced
+  // from the hook before any graph is built; graph methods early-return until
+  // it is set (see useStemPreview's constants gating).
+  constants!: EngineConstants;
   positionalChannels: string[] = [];
   speakerEnabled: Record<string, boolean> = {};
 
@@ -668,13 +665,13 @@ export class PreviewAudioEngine {
       let crosstalk: ReturnType<typeof buildCrosstalkGraph> | null = null;
       let stereoMerger: ChannelMergerNode | null = null;
       if (this.outputMode === "binaural") {
-        binaural = buildBinauralGraph(offlineCtx, this.spatialProfile);
+        binaural = buildBinauralGraph(offlineCtx, this.spatialProfile, this.constants);
         const decodeChannels = await loadCachedDecodeFilterChannels(
           this.decodeFilterCache, offlineCtx, DECODE_FILTER_SET[this.spatialProfile], fetchDecodeFilterPart,
         );
         assignDecodeFilterBuffers(offlineCtx, binaural.convolverPairs, decodeChannels);
       } else if (this.outputMode === "transaural") {
-        crosstalk = buildCrosstalkGraph(offlineCtx, this.transauralProfile);
+        crosstalk = buildCrosstalkGraph(offlineCtx, this.transauralProfile, this.constants);
         const decodeChannels = await loadCachedDecodeFilterChannels(
           this.decodeFilterCache, offlineCtx, DECODE_FILTER_SET.flat, fetchDecodeFilterPart,
         );
@@ -709,7 +706,7 @@ export class PreviewAudioEngine {
           encoder.out.connect(crosstalk.hoaBus);
         }
         if (stereoMerger) {
-          const coeffs = STEREO_DOWNMIX_GAINS[channel];
+          const coeffs = stereoDownmixGains(this.constants)[channel];
           if (coeffs) {
             const gainL = offlineCtx.createGain();
             gainL.gain.value = coeffs.left;
@@ -722,7 +719,7 @@ export class PreviewAudioEngine {
       }
 
       const handle = buildMasteringGraph(
-        offlineCtx, channelPorts, this.mastering, this.firEqBufferCache,
+        offlineCtx, channelPorts, this.mastering, this.firEqBufferCache, this.constants,
         { refMatchBufferCache: this.refMatchBufferCache },
       );
 
@@ -790,7 +787,7 @@ export class PreviewAudioEngine {
         }
         const postEqGain = offlineCtx.createGain();
         postEqInput.connect(postEqGain);
-        const built = createStemSends(offlineCtx, postEqGain, offlineBuses, this.positionalChannels);
+        const built = createStemSends(offlineCtx, postEqGain, offlineBuses, this.positionalChannels, this.constants);
         for (const [channel, sendGain] of Object.entries(built.sends)) {
           if (sendGain) sendGain.gain.value = plan.sends[channel] || 0;
         }
@@ -799,10 +796,10 @@ export class PreviewAudioEngine {
         lfeGain.gain.value = plan.lfeGainValue;
         const lfeFilter1 = offlineCtx.createBiquadFilter();
         lfeFilter1.type = "lowpass";
-        lfeFilter1.frequency.value = LFE_LOWPASS_HZ;
+        lfeFilter1.frequency.value = this.constants.lfeLowpassHz;
         const lfeFilter2 = offlineCtx.createBiquadFilter();
         lfeFilter2.type = "lowpass";
-        lfeFilter2.frequency.value = LFE_LOWPASS_HZ;
+        lfeFilter2.frequency.value = this.constants.lfeLowpassHz;
         lfeGain.connect(lfeFilter1).connect(lfeFilter2).connect(lfeBus);
 
         for (const excerpt of excerpts) {
@@ -817,7 +814,7 @@ export class PreviewAudioEngine {
         const anchorNode = this.nodes.get("__source_anchor__");
         if (anchorNode) {
           const input = offlineCtx.createGain();
-          const built = createStemSends(offlineCtx, input, offlineBuses, this.positionalChannels);
+          const built = createStemSends(offlineCtx, input, offlineBuses, this.positionalChannels, this.constants);
           if (built.sends.FL) built.sends.FL.gain.value = anchor;
           if (built.sends.FR) built.sends.FR.gain.value = anchor;
           for (const excerpt of excerpts) {
@@ -1061,7 +1058,7 @@ export class PreviewAudioEngine {
       channelPorts.set(channel, { input: bus.masterIn, output: bus.masterOut });
     }
 
-    const handle = buildMasteringGraph(ctx, channelPorts, this.mastering, this.firEqBufferCache, {
+    const handle = buildMasteringGraph(ctx, channelPorts, this.mastering, this.firEqBufferCache, this.constants, {
       sidechain: this.sidechainSum && this.sidechainSink
         ? { sum: this.sidechainSum, sink: this.sidechainSink }
         : undefined,
@@ -1208,13 +1205,13 @@ export class PreviewAudioEngine {
   // Profile switch: retune the already-built voicing chain immediately
   // (cheap, no graph rebuild — see buildVoicingChain).
   retuneVoicing(profile: SpatialProfile) {
-    if (this.voicingChain) applyVoicingParams(this.voicingChain, VOICING_PARAMS[profile]);
+    if (this.voicingChain) applyVoicingParams(this.voicingChain, this.constants.voicingParams[profile]);
   }
 
   // Transaural profile switch: same immediate-retune contract as
   // retuneVoicing above, for the crosstalk-cancellation voicing chain.
   retuneCrosstalkVoicing(profile: TransauralProfile) {
-    if (this.crosstalkVoicingChain) applyVoicingParams(this.crosstalkVoicingChain, TRANSAURAL_VOICING_PARAMS[profile]);
+    if (this.crosstalkVoicingChain) applyVoicingParams(this.crosstalkVoicingChain, this.constants.transauralVoicingParams[profile]);
   }
 
   // Loads a profile's decode filter set and assigns each ACN/ear filter into
@@ -1296,9 +1293,9 @@ export class PreviewAudioEngine {
     // (listening is level-matched to studio/flat), so this falls back to the
     // mastering block's target; the override stays wired for future use.
     const profileLoudnessTarget = this.outputMode === "binaural"
-      ? VOICING_PARAMS[this.spatialProfile].loudnessTargetLkfs
+      ? this.constants.voicingParams[this.spatialProfile].loudnessTargetLkfs
       : this.outputMode === "transaural"
-      ? TRANSAURAL_VOICING_PARAMS[this.transauralProfile].loudnessTargetLkfs
+      ? this.constants.transauralVoicingParams[this.transauralProfile].loudnessTargetLkfs
       : null;
     const targetLkfs = profileLoudnessTarget ?? this.mastering?.loudness?.target ?? -18;
     const normalize = this.mastering?.loudness?.normalize ?? true;
@@ -1308,10 +1305,10 @@ export class PreviewAudioEngine {
     // for the collapse's own level shift instead of re-running a full match
     // that would inflate loudness.
     const maxGainDb = this.outputMode === "binaural"
-      ? BINAURAL_LOUDNESS_MAX_GAIN_DB
+      ? this.constants.binauralLoudnessMaxGainDb
       : this.outputMode === "transaural"
-      ? CROSSTALK_LOUDNESS_MAX_GAIN_DB
-      : LOUDNESS_MAX_GAIN_DB;
+      ? this.constants.crosstalkLoudnessMaxGainDb
+      : this.constants.loudnessMaxGainDb;
     const loudnessGain = normalize ? loudnessGainFor(this.measuredLkfs, targetLkfs, maxGainDb) : 1;
     // Mirrors normalize_loudness's second gain reduction (upmixer/loudness.py)
     // — gated on the same `normalize` flag as the loudness correction itself:
@@ -1432,13 +1429,13 @@ export class PreviewAudioEngine {
         || this.mix?.stem_enabled?.[base] === false || value.enabled === false;
       const gainDb = this.mix?.stem_rebalance?.[base] || 0;
       const stemGainValue = muted ? 0 : (1.0 - anchor * frontFraction) * 10 ** (gainDb / 20);
-      const lfeGainValue = muted ? 0 : LFE_GAIN * lfeWeight * 10 ** (this.resolvedBass.lfeGainDb / 20);
+      const lfeGainValue = muted ? 0 : this.constants.lfeGain * lfeWeight * 10 ** (this.resolvedBass.lfeGainDb / 20);
 
-      const routeScale = estimateRouteScale(route);
+      const routeScale = estimateRouteScale(route, this.constants.channelGains);
       const sends: Partial<Record<string, number>> = {};
       for (const channel of this.positionalChannels) {
         const weight = route[channel] || 0;
-        sends[channel] = weight > 0 ? routeScale * weight * channelGroupGain(channel) : 0;
+        sends[channel] = weight > 0 ? routeScale * weight * channelGroupGain(channel, this.constants.channelGains) : 0;
       }
       perStem.set(stem.id, { stemGainValue, lfeGainValue, sends });
     }
@@ -1472,14 +1469,14 @@ export class PreviewAudioEngine {
     const mergePointNode = ctx.createGain();
 
     // See docs/web_architecture.md "Preview audio graph" — Engine gain domains and buses.
-    const binaural = buildBinauralGraph(ctx, this.spatialProfile);
+    const binaural = buildBinauralGraph(ctx, this.spatialProfile, this.constants);
     // Crosstalk-cancellation (transaural) render — its own anechoic "flat"
     // binaural sub-decode plus a 2x2 XTC matrix and voicing chain, entirely
     // independent of `binaural` above (which decodes whatever
     // `spatialProfile` the headphone preview has selected). See
     // `buildCrosstalkGraph` (previewGraph.ts) and
     // docs/standards/transaural_speakers.md §1.
-    const crosstalk = buildCrosstalkGraph(ctx, this.transauralProfile);
+    const crosstalk = buildCrosstalkGraph(ctx, this.transauralProfile, this.constants);
 
     // Binaural/transaural/stereo are alternate render stages that all feed
     // `preMasterBus` through their own gate — see `applyOutputMode`, which
@@ -1521,14 +1518,14 @@ export class PreviewAudioEngine {
           channelInterpretation: "discrete",
           processorOptions: {
             ceilingDb: this.mastering?.loudness?.max_tp ?? -1,
-            lookaheadMs: LIMITER_LOOKAHEAD_MS,
-            releaseMs: LIMITER_RELEASE_MS,
+            lookaheadMs: this.constants.limiterLookaheadMs,
+            releaseMs: this.constants.limiterReleaseMs,
             numberOfChannels: Math.max(1, layoutChannelList.length),
           },
         })
       : (() => {
           const fallback = ctx.createWaveShaper();
-          fallback.curve = buildSoftLimitCurve();
+          fallback.curve = buildSoftLimitCurve(this.constants.softLimitThreshold);
           fallback.oversample = "4x";
           return fallback;
         })();
@@ -1572,7 +1569,7 @@ export class PreviewAudioEngine {
       encoder.out.connect(binaural.hoaBus);
       encoder.out.connect(crosstalk.hoaBus);
 
-      const stereoCoeffs = STEREO_DOWNMIX_GAINS[channel];
+      const stereoCoeffs = stereoDownmixGains(this.constants)[channel];
       let stereoSend: SpeakerBus["stereoSend"] = null;
       if (stereoCoeffs) {
         const gainL = ctx.createGain();
@@ -1606,7 +1603,7 @@ export class PreviewAudioEngine {
     // Mirrors render_binaural_delivery's soft_limit(x, 0.95) tanh saturator, run
     // after the volume gain so it only engages as a safety net (upmixer/utils.py).
     const softLimitNode = ctx.createWaveShaper();
-    softLimitNode.curve = buildSoftLimitCurve();
+    softLimitNode.curve = buildSoftLimitCurve(this.constants.softLimitThreshold);
     softLimitNode.oversample = "4x";
     // MONITOR domain — see docs/web_architecture.md "Preview audio graph".
     const monitorGainNode = ctx.createGain();
@@ -1730,7 +1727,7 @@ export class PreviewAudioEngine {
 
         if (entry.anchor) {
           const stemInput = ctx.createGain();
-          const built = createStemSends(ctx, stemInput, busesMap, this.positionalChannels);
+          const built = createStemSends(ctx, stemInput, busesMap, this.positionalChannels, this.constants);
           this.nodes.set(entry.id, {
             buffer, source: null, stemGain: null, postEqGain: null, sends: built.sends,
             ownNodes: [stemInput, ...built.ownNodes],
@@ -1743,14 +1740,14 @@ export class PreviewAudioEngine {
           // directly — `buildStemEqChains` wires the (rebuildable)
           // stem_eq filter chain between them, initially as a bypass.
           const postEqGain = ctx.createGain();
-          const built = createStemSends(ctx, postEqGain, busesMap, this.positionalChannels);
+          const built = createStemSends(ctx, postEqGain, busesMap, this.positionalChannels, this.constants);
           const lfeGain = ctx.createGain();
           const lfeFilter1 = ctx.createBiquadFilter();
           const lfeFilter2 = ctx.createBiquadFilter();
           lfeFilter1.type = "lowpass";
-          lfeFilter1.frequency.value = LFE_LOWPASS_HZ;
+          lfeFilter1.frequency.value = this.constants.lfeLowpassHz;
           lfeFilter2.type = "lowpass";
-          lfeFilter2.frequency.value = LFE_LOWPASS_HZ;
+          lfeFilter2.frequency.value = this.constants.lfeLowpassHz;
           lfeGain.connect(lfeFilter1).connect(lfeFilter2).connect(lfeBusNode);
           // No output connection — a pure tap for the 3D scene's halos,
           // cannot affect the audible signal.

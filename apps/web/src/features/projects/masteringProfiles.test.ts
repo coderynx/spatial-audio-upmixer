@@ -1,11 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { computeRealSH } from "spherical-harmonic-transform";
 import {
-  CROSSTALK_LOUDNESS_MAX_GAIN_DB,
   EQ_FIR_ASSETS,
   STEM_EQ_FIR_ASSETS,
-  TRANSAURAL_VOICING_PARAMS,
-  VOICING_PARAMS,
   XTC_FILTER_SET,
   buildFirEqNode,
   fetchEqFirBuffer,
@@ -39,65 +36,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("VOICING_PARAMS.listening", () => {
-  it("matches the backend upmixer/binaural/profiles.py values exactly", () => {
-    // Pins the values docs/standards/spatial_audio_engine.md §5 and
-    // upmixer/binaural/profiles.py specify — a prior hand-sync drift
-    // doubled analogous values on the web side with nothing catching it.
-    const listening = VOICING_PARAMS.listening;
-    expect(listening.crossfeedAmount).toBeCloseTo(0.10);
-    expect(listening.bassShelfGainDb).toBeCloseTo(1.0);
-    expect(listening.airShelfGainDb).toBeCloseTo(4.0);
-    expect(listening.presenceGainDb).toBeCloseTo(2.0);
-    expect(listening.stereoWiden).toBeCloseTo(0.15);
-    expect(listening.loudnessTargetLkfs).toBeNull();
-  });
-});
-
-describe("TRANSAURAL_VOICING_PARAMS", () => {
-  it("matches the backend upmixer/crosstalk/profiles.py values exactly", () => {
-    // Same drift-guard as VOICING_PARAMS.listening above, for the
-    // crosstalk-cancellation (transaural) speaker profiles.
-    expect(TRANSAURAL_VOICING_PARAMS.stereo.crossfeedAmount).toBe(0);
-    expect(TRANSAURAL_VOICING_PARAMS.stereo.stereoWiden).toBe(0);
-
-    const smartSpeaker = TRANSAURAL_VOICING_PARAMS.smart_speaker;
-    expect(smartSpeaker.bassShelfHz).toBeCloseTo(150);
-    expect(smartSpeaker.bassShelfGainDb).toBeCloseTo(1.5);
-    expect(smartSpeaker.stereoWiden).toBeCloseTo(0.20);
-
-    const car = TRANSAURAL_VOICING_PARAMS.car;
-    expect(car.bassShelfHz).toBeCloseTo(120);
-    expect(car.bassShelfGainDb).toBeCloseTo(2.5);
-    expect(car.presenceHz).toBeCloseTo(2500);
-    expect(car.presenceGainDb).toBeCloseTo(1.0);
-    expect(car.stereoWiden).toBeCloseTo(0.10);
-
-    const laptop = TRANSAURAL_VOICING_PARAMS.laptop;
-    expect(laptop.bassShelfHz).toBeCloseTo(160);
-    expect(laptop.bassShelfGainDb).toBeCloseTo(2.0);
-    expect(laptop.presenceHz).toBeCloseTo(3000);
-    expect(laptop.presenceGainDb).toBeCloseTo(1.0);
-    expect(laptop.stereoWiden).toBeCloseTo(0.25);
-
-    const phone = TRANSAURAL_VOICING_PARAMS.phone;
-    expect(phone.bassShelfHz).toBeCloseTo(180);
-    expect(phone.bassShelfGainDb).toBeCloseTo(3.0);
-    expect(phone.presenceHz).toBeCloseTo(3000);
-    expect(phone.presenceGainDb).toBeCloseTo(1.5);
-    expect(phone.stereoWiden).toBeCloseTo(0.30);
-  });
-
-  it("XTC_FILTER_SET names match the backend asset basenames", () => {
+describe("XTC_FILTER_SET", () => {
+  // Asset basenames are web-owned (the WAVs live under web/public/xtc/), so
+  // these stay pinned here; the transaural voicing *values* are now fetched
+  // (EngineConstants.transauralVoicingParams) and no longer live in TS.
+  it("names match the backend asset basenames", () => {
     expect(XTC_FILTER_SET.stereo).toBe("stereo_xtc");
     expect(XTC_FILTER_SET.smart_speaker).toBe("smart_speaker_xtc");
     expect(XTC_FILTER_SET.car).toBe("car_xtc");
     expect(XTC_FILTER_SET.laptop).toBe("laptop_xtc");
     expect(XTC_FILTER_SET.phone).toBe("phone_xtc");
-  });
-
-  it("CROSSTALK_LOUDNESS_MAX_GAIN_DB matches the backend ceiling", () => {
-    expect(CROSSTALK_LOUDNESS_MAX_GAIN_DB).toBe(6.0);
   });
 });
 

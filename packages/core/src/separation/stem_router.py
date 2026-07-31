@@ -54,8 +54,8 @@ _VOCAL_STEM_NAMES: frozenset[str] = frozenset({
 })
 
 # Per-side Haas delays (ms) for surround/back and height diffuse sends.
-# Different per side so L/R don't comb-filter. Public so
-# upmixer/contract.py can import the exact values instead of re-typing them
+# Different per side so L/R don't comb-filter. Public so the web
+# engine-constants endpoint (apps/api system slice) can serve the exact values
 # — see docs/contracts/preview_export_parity.md.
 SURROUND_HAAS_DELAY_MS_L: float = 31.0
 SURROUND_HAAS_DELAY_MS_R: float = 37.0

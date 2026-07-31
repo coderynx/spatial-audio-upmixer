@@ -20,25 +20,19 @@ import {
   ACN12_INDEX,
   ACN12_N3D_CORRECTION,
   AMBISONIC_ORDER,
-  BASS_PROFILES,
   buildExciteCurve,
   buildFirEqNode,
   buildVoicingChain,
   applyVoicingParams,
   BUTTERWORTH_Q,
-  COMP_PROFILES,
   DECODE_FILTER_SPLITS,
   EQ_FIR_ASSETS,
-  EXCITE_BLEND,
   fetchEqFirBuffer,
-  MID_CUTOFF_HZ,
   MONO_MAKER_STEREO_PAIRS,
   N_ACN_CHANNELS,
-  SUB_CUTOFF_HZ,
-  TRANSAURAL_VOICING_PARAMS,
-  VOICING_PARAMS,
   type BassProfileName,
   type CompProfileName,
+  type EngineConstants,
   type EqProfileName,
   type SpatialProfile,
   type TransauralProfile,
@@ -273,6 +267,7 @@ export function buildMasteringGraph(
   channelPorts: Map<string, MasteringChannelPort>,
   mastering: MasterPreview | undefined,
   firBufferCache: Map<string, Promise<AudioBuffer>>,
+  constants: EngineConstants,
   options: BuildMasteringGraphOptions = {},
 ): MasteringGraphHandle {
   const created: AudioNode[] = [];
@@ -311,13 +306,13 @@ export function buildMasteringGraph(
   const eqStrength = eqCfg?.strength ?? 1;
 
   const compCfg = mastering?.compressor;
-  const compPreset = compCfg?.profile && compCfg.profile in COMP_PROFILES
-    ? COMP_PROFILES[compCfg.profile as CompProfileName]
+  const compPreset = compCfg?.profile && compCfg.profile in constants.compProfiles
+    ? constants.compProfiles[compCfg.profile as CompProfileName]
     : null;
 
   const bassCfg = mastering?.bass;
-  const bassPreset = bassCfg?.profile && bassCfg.profile in BASS_PROFILES
-    ? BASS_PROFILES[bassCfg.profile as BassProfileName]
+  const bassPreset = bassCfg?.profile && bassCfg.profile in constants.bassProfiles
+    ? constants.bassProfiles[bassCfg.profile as BassProfileName]
     : undefined;
   const bassActive = Boolean(bassPreset) || Boolean(
     bassCfg && (
@@ -388,12 +383,12 @@ export function buildMasteringGraph(
     const bassNodes: AudioNode[] = [];
     let chainEnd: AudioNode = compGain;
     if (bassActive && subGainDb !== 0) {
-      const stage = buildAdditiveBandGain(ctx, chainEnd, SUB_CUTOFF_HZ, subGainDb);
+      const stage = buildAdditiveBandGain(ctx, chainEnd, constants.subCutoffHz, subGainDb);
       bassNodes.push(...stage.nodes);
       chainEnd = stage.output;
     }
     if (bassActive && midGainDb !== 0) {
-      const stage = buildAdditiveBandGain(ctx, chainEnd, MID_CUTOFF_HZ, midGainDb, SUB_CUTOFF_HZ);
+      const stage = buildAdditiveBandGain(ctx, chainEnd, constants.midCutoffHz, midGainDb, constants.subCutoffHz);
       bassNodes.push(...stage.nodes);
       chainEnd = stage.output;
     }
@@ -409,11 +404,11 @@ export function buildMasteringGraph(
     if (exciteActive) {
       const lowpass = ctx.createBiquadFilter();
       lowpass.type = "lowpass";
-      lowpass.frequency.value = SUB_CUTOFF_HZ;
+      lowpass.frequency.value = constants.subCutoffHz;
       const shaper = ctx.createWaveShaper();
-      shaper.curve = buildExciteCurve();
+      shaper.curve = buildExciteCurve(constants.exciteDrive);
       const blend = ctx.createGain();
-      blend.gain.value = EXCITE_BLEND;
+      blend.gain.value = constants.exciteBlend;
       compGain.connect(lowpass);
       lowpass.connect(shaper);
       shaper.connect(blend);
@@ -573,7 +568,7 @@ export type BinauralGraphHandle = {
   nodes: AudioNode[];
 };
 
-export function buildBinauralGraph(ctx: BaseAudioContext, profile: SpatialProfile): BinauralGraphHandle {
+export function buildBinauralGraph(ctx: BaseAudioContext, profile: SpatialProfile, constants: EngineConstants): BinauralGraphHandle {
   const nodes: AudioNode[] = [];
 
   const hoaBus = ctx.createGain();
@@ -624,7 +619,7 @@ export function buildBinauralGraph(ctx: BaseAudioContext, profile: SpatialProfil
   nodes.push(voicingSplitter, voicingLeftTap, voicingRightTap);
 
   const voicing = buildVoicingChain(ctx, voicingLeftTap, voicingRightTap);
-  applyVoicingParams(voicing, VOICING_PARAMS[profile]);
+  applyVoicingParams(voicing, constants.voicingParams[profile]);
   const voicingMerger = ctx.createChannelMerger(2);
   voicing.left.connect(voicingMerger, 0, 0);
   voicing.right.connect(voicingMerger, 0, 1);
@@ -757,10 +752,10 @@ export type CrosstalkGraphHandle = {
   nodes: AudioNode[];
 };
 
-export function buildCrosstalkGraph(ctx: BaseAudioContext, profile: TransauralProfile): CrosstalkGraphHandle {
+export function buildCrosstalkGraph(ctx: BaseAudioContext, profile: TransauralProfile, constants: EngineConstants): CrosstalkGraphHandle {
   const nodes: AudioNode[] = [];
 
-  const binaural = buildBinauralGraph(ctx, "flat");
+  const binaural = buildBinauralGraph(ctx, "flat", constants);
 
   const earSplitter = ctx.createChannelSplitter(2);
   binaural.output.connect(earSplitter);
@@ -805,7 +800,7 @@ export function buildCrosstalkGraph(ctx: BaseAudioContext, profile: TransauralPr
   nodes.push(voicingSplitter, voicingLeftTap, voicingRightTap);
 
   const voicing = buildVoicingChain(ctx, voicingLeftTap, voicingRightTap);
-  applyVoicingParams(voicing, TRANSAURAL_VOICING_PARAMS[profile]);
+  applyVoicingParams(voicing, constants.transauralVoicingParams[profile]);
   const voicingMerger = ctx.createChannelMerger(2);
   voicing.left.connect(voicingMerger, 0, 0);
   voicing.right.connect(voicingMerger, 0, 1);

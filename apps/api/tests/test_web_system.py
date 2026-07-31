@@ -34,6 +34,43 @@ def test_configuration_lists_every_stem_and_runtime_capability(web_client):
     assert capability["platform"]
 
 
+def test_configuration_serves_engine_constants(web_client):
+    from upmixer.config import UpmixConfig
+    from upmixer.mastering.compressor import COMP_PROFILES
+
+    response = web_client.get("/api/v1/configuration")
+    assert response.status_code == 200
+    constants = response.json()["constants"]
+
+    expected_keys = {
+        "channel_group_gains", "lfe_gain", "lfe_lowpass_hz", "surround_bass_cutoff_hz",
+        "height_low_rolloff_hz", "height_low_rolloff_gain", "height_crossover_hz",
+        "height_high_shelf_gain", "soft_limit_threshold", "limiter_lookahead_ms",
+        "limiter_release_ms", "loudness_max_gain_db", "surround_downmix_coeff",
+        "itu_center_coeff", "diffuse_send_blend", "surround_haas_ms", "height_haas_ms",
+        "comp_profiles", "bass_profiles", "bass_sub_cutoff_hz", "bass_mid_cutoff_hz",
+        "bass_excite_blend", "bass_excite_drive", "binaural_loudness_max_gain_db",
+        "crosstalk_loudness_max_gain_db", "voicing_params", "transaural_voicing_params",
+    }
+    assert set(constants) == expected_keys
+
+    # Served straight from core source modules (never re-typed): a couple of
+    # spot-checks that the assembler reads the real values.
+    cfg = UpmixConfig()
+    assert constants["lfe_gain"] == cfg.lfe_gain
+    assert constants["channel_group_gains"]["center"] == cfg.center_gain
+    assert constants["comp_profiles"]["transparent"]["threshold_db"] == (
+        COMP_PROFILES["transparent"]["threshold_db"]
+    )
+    # Voicing tables serialize the frozen dataclass in snake_case.
+    listening = constants["voicing_params"]["listening"]
+    assert listening["crossfeed_amount"] == 0.10
+    assert listening["loudness_target_lkfs"] is None
+    assert set(constants["transaural_voicing_params"]) == {
+        "stereo", "smart_speaker", "car", "laptop", "phone",
+    }
+
+
 def test_capability_uses_engine_selected_device(tmp_path, monkeypatch):
     class FakeStemSeparator:
         def __init__(self, **_kwargs):

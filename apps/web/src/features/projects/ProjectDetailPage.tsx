@@ -55,6 +55,7 @@ import {
 import { useColumnLayout } from "./useColumnLayout";
 import { usePaneLayout } from "./usePaneLayout";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
+import { resolveEngineConstants } from "./masteringProfiles";
 import { useTrackPeaks } from "./useTrackPeaks";
 
 type Stage = "assets" | "mixing" | "mastering" | "delivery";
@@ -306,7 +307,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       },
     };
   }, [effectiveManifest?.mastering, project?.reference_match]);
-  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, previewMastering, channels, outputMode, spatialProfile, transauralProfile);
+  const engineConstants = React.useMemo(
+    () => (configuration?.constants ? resolveEngineConstants(configuration.constants) : null),
+    [configuration],
+  );
+  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, previewMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants);
   // One cached fetch per track, independent of stem decode — the envelope and
   // the track's duration arrive together, so the timeline can draw its ruler
   // and lanes while playback is still loading.

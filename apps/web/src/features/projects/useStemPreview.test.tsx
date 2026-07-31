@@ -3,6 +3,7 @@ import { act, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectStem } from "@/api";
 import { applyTruePeakCeiling, useStemPreview, type OutputMode, type SpatialProfile } from "./useStemPreview";
+import { TEST_ENGINE_CONSTANTS } from "./engineConstants.fixture";
 
 class FakeAudioParam {
   value = 0;
@@ -295,7 +296,7 @@ function Harness({
   outputMode?: OutputMode;
   spatialProfile?: SpatialProfile;
 }) {
-  preview = useStemPreview(stems, {}, mix, null, mastering, layoutChannels, outputMode, spatialProfile);
+  preview = useStemPreview(stems, {}, mix, null, mastering, layoutChannels, outputMode, spatialProfile, undefined, TEST_ENGINE_CONSTANTS);
   return null;
 }
 

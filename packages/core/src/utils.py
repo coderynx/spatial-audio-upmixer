@@ -5,8 +5,8 @@ from scipy.signal import butter, sosfilt
 
 ITU_CENTER_COEFF: float = 1.0 / math.sqrt(2)
 
-# Public so upmixer/contract.py can import the exact default instead of
-# re-typing it — see docs/contracts/preview_export_parity.md.
+# Public so the web engine-constants endpoint (apps/api system slice) can
+# serve the exact default — see docs/contracts/preview_export_parity.md.
 DIFFUSE_SEND_BLEND: float = 0.55
 
 

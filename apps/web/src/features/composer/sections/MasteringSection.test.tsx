@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { defaultManifest } from "@/lib/manifest";
 import type { Configuration } from "@/api";
+import { TEST_SERVED_CONSTANTS } from "@/features/projects/engineConstants.fixture";
 import { MasteringSection } from "./MasteringSection";
 
 const configuration: Configuration = {
@@ -20,6 +21,7 @@ const configuration: Configuration = {
     stem_eq_profiles: [],
     stems: [],
   },
+  constants: TEST_SERVED_CONSTANTS,
   capabilities: {
     stem_separation: {
       available: true,

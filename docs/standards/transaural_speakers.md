@@ -256,10 +256,11 @@ Same three-tier structure as the binaural contract
 (§3), the XTC filter files (§5), and voicing **parameters** (§6) — is
 specified exactly and must match bit-for-bit between core and web. The
 **DSP realization** (SciPy `sosfilt` vs. Web Audio `BiquadFilterNode`/
-`ConvolverNode`) is not required to be sample-identical, verified instead at
-the parameter-table level via the signed constants contract
-(`docs/contracts/preview_export_parity.md`) plus
-`tests/test_contract_parity.py`. The **XTC convolution** itself, like the
+`ConvolverNode`) is not required to be sample-identical. The voicing
+**parameters** are single-sourced from core and served to the web at runtime
+(`docs/contracts/preview_export_parity.md` §4), so there is no second copy to
+drift; the cross-engine result is held within tolerance by
+`tests/test_preview_export_golden.py`. The **XTC convolution** itself, like the
 binaural decode convolution, is a plain linear FIR bank applied to the same
 files on both sides, so it *is* expected to match closely (within
 floating-point/resampling tolerance) — any drift there indicates a bug.

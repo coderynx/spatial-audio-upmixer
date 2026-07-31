@@ -1,5 +1,3 @@
-import { LOUDNESS_MAX_GAIN_DB } from "./masteringProfiles";
-
 // See docs/web_architecture.md "Preview audio graph" — Offline pre-playback analysis.
 export const CORRECTION_STEP_MS = 16;
 
@@ -22,7 +20,7 @@ export function buildAnalysisExcerpts(durationSeconds: number): { excerpts: Anal
   return { excerpts, totalSeconds: ANALYSIS_MAX_SECONDS };
 }
 
-export function loudnessGainFor(measuredLkfs: number, targetLkfs: number, maxGainDb: number = LOUDNESS_MAX_GAIN_DB): number {
+export function loudnessGainFor(measuredLkfs: number, targetLkfs: number, maxGainDb: number): number {
   if (measuredLkfs <= -70) return 1;
   const gainDb = Math.min(targetLkfs - measuredLkfs, maxGainDb);
   return 10 ** (gainDb / 20);

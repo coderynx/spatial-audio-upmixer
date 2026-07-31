@@ -1,7 +1,7 @@
 import * as React from "react";
 import type { ProjectStem, StemScene } from "@/api";
 import { speakerCoordinates } from "@/lib/spatial";
-import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
+import type { EngineConstants, SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import type { MasterPreview } from "./previewGraph";
 import {
   PreviewAudioEngine,
@@ -41,6 +41,11 @@ export function useStemPreview(
   // docs/standards/transaural_speakers.md. Session-only, like outputMode;
   // only meaningful when outputMode === "transaural".
   transauralProfile: TransauralProfile = "stereo",
+  // Backend-served tunable DSP constants (resolveEngineConstants). Null until
+  // the bootstrap GET /api/v1/configuration fetch resolves; the preview's
+  // Web Audio graph is not built until it is set — every graph-building effect
+  // below is gated on it.
+  constants: EngineConstants | null = null,
 ) {
   const layoutChannelsKey = layoutChannels.join(",");
   // Stable-identity, layout-scoped speaker list: drives the ambisonic
@@ -117,6 +122,7 @@ export function useStemPreview(
   engine.outputMode = outputMode;
   engine.spatialProfile = spatialProfile;
   engine.transauralProfile = transauralProfile;
+  if (constants) engine.constants = constants;
   engine.positionalChannels = positionalChannels;
   engine.speakerEnabled = speakerEnabled;
 
@@ -140,14 +146,16 @@ export function useStemPreview(
   const stemEqKey = JSON.stringify(mix?.stem_eq ?? null);
 
   React.useEffect(() => {
+    if (!constants) return;
     engine.buildMasteringTopology();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on masteringKey, not `mastering` (see masteringKey comment above)
-  }, [masteringKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on masteringKey + constants readiness, not `mastering` (see masteringKey comment above)
+  }, [masteringKey, constants]);
 
   React.useEffect(() => {
+    if (!constants) return;
     engine.buildStemEqChains();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on stemEqKey, not `mix` (see stemEqKey comment above)
-  }, [stemEqKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on stemEqKey + constants readiness, not `mix` (see stemEqKey comment above)
+  }, [stemEqKey, constants]);
 
   React.useEffect(() => {
     engine.applySpeakerMute();
@@ -159,9 +167,10 @@ export function useStemPreview(
   }, []);
 
   React.useEffect(() => {
+    if (!constants) return;
     engine.applyOutputMode(outputMode);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [outputMode, ready]);
+  }, [outputMode, ready, constants]);
 
   React.useEffect(() => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -193,36 +202,40 @@ export function useStemPreview(
   const loadXtcFilterSet = React.useCallback((profile: TransauralProfile) => engine.loadXtcFilterSet(profile), [engine]);
 
   React.useEffect(() => {
+    if (!constants) return;
     engine.apply();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [mix, scene.stems, mastering]);
+  }, [mix, scene.stems, mastering, constants]);
 
   // Profile switch: retune the already-built voicing chain immediately
   // (cheap, no graph rebuild), and swap in the new profile's decode filter
   // set in the background.
   React.useEffect(() => {
+    if (!constants) return;
     engine.retuneVoicing(spatialProfile);
     engine.apply();
     void engine.loadDecodeFilterSet(spatialProfile);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [spatialProfile, ready]);
+  }, [spatialProfile, ready, constants]);
 
   // Transaural profile switch: same pattern as the binaural effect above —
   // retune the already-built crosstalk voicing chain immediately, swap in
   // the new profile's XTC filter set in the background.
   React.useEffect(() => {
+    if (!constants) return;
     engine.retuneCrosstalkVoicing(transauralProfile);
     engine.apply();
     void engine.loadXtcFilterSet(transauralProfile);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [transauralProfile, ready]);
+  }, [transauralProfile, ready, constants]);
 
   React.useEffect(() => {
+    if (!constants) return;
     engine.initialize().catch(() => {
       // error state already set inside initialize
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [key]);
+  }, [key, constants]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
   React.useEffect(() => () => engine.reset(), [key]);

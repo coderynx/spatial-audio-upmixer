@@ -1,6 +1,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Configuration, Job } from "@/api";
+import { TEST_SERVED_CONSTANTS } from "@/features/projects/engineConstants.fixture";
 import { useJobs } from "./useJobs";
 
 vi.mock("@/api", async (importOriginal) => {
@@ -19,6 +20,7 @@ vi.mock("@/api", async (importOriginal) => {
           stem_eq_profiles: [], stems: [],
           eq_profiles: [], compressor_profiles: [], bass_profiles: [],
         },
+        constants: TEST_SERVED_CONSTANTS,
         capabilities: {
           stem_separation: {
             available: false, backend: null, accelerated: false,

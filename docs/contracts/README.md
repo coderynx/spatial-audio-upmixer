@@ -48,28 +48,25 @@ Where a contracted constant exists because a standard requires it (e.g. LFE
 
 ## Change protocol — binding on human and AI contributors
 
-This directory is **cross-checked**: `preview_export_parity.md`'s
-constants catalog is verified by comparing the real constants on both
-sides directly (see below) — no hash, nothing to regenerate but a JSON
-fixture. Changing anything the contract covers means:
+The tunable DSP constants in `preview_export_parity.md`'s catalog are
+**single-sourced from core** and served to the web (see the mechanism section
+below and that document's §4) — the web has no second copy to keep in sync.
+Changing a served constant means:
 
-1. Update the Python source (`upmixer/...`).
-2. Update the TypeScript source (`web/src/...`).
-3. Update the constants catalog / tier / threshold in
-   `preview_export_parity.md`, then run `npm run constants:dump` (from
-   `web/`) to refresh `tests/fixtures/contract/web_constants.json`.
-4. Re-run the value cross-check (`tests/test_contract_parity.py`,
-   `web/src/lib/contract.test.ts`) and the golden render diff
+1. Update the Python source (`upmixer/...`) — the only place the value lives.
+2. Update the constants catalog / tier / threshold in
+   `preview_export_parity.md` to describe the new value.
+3. Update the web test fixture
+   `apps/web/src/features/projects/engineConstants.fixture.ts` to match (it
+   feeds the golden harness), then re-run the golden render diff
    (`tests/test_preview_export_golden.py`, which runs by default — refresh
    its fixtures with `npm run golden:render` first) until green.
 
-**Changing only one side is a contract violation.** It is not a style
-preference — `tests/test_contract_parity.py` loads the constants each side
-actually computes (never re-typed literals) and diffs them directly, so an
-unmatched change fails that test and names the specific diverging key(s).
-Do not silence, skip, or loosen a tolerance to make a failing test pass; fix
-the divergent side, or if the contract itself should change, follow all
-four steps above.
+For a DSP change that alters the *realization* on only one side (Tier 2/3, or
+a web-local structural constant), the golden render diff is what holds the
+result within tolerance. Do not silence, skip, or loosen a tolerance to make
+a failing test pass; fix the divergent side, or if the contract itself should
+change, follow the steps above.
 
 If you are an AI agent asked to change DSP behavior anywhere in `upmixer/`
 or in the preview graph, **read `preview_export_parity.md` first** to find
@@ -77,20 +74,18 @@ out whether the value you're touching is contracted, and if so, at which
 parity tier — that determines whether the other side must also change and
 how tightly re-verification must hold.
 
-## Value cross-check mechanism
+## Single-source constants mechanism
 
-`upmixer/contract.py::canonical_constants()` and `web/src/lib/
-contract.ts::canonicalConstants()` each build a normalized structure from
-their real constants — same key set by construction. `web/scripts/
-dump-constants.mjs` (`npm run constants:dump`) dumps the TypeScript side's
-structure to the committed `tests/fixtures/contract/web_constants.json`;
-`tests/test_contract_parity.py` loads that fixture and diffs it directly
-against the live Python structure (normalizing both through
-`upmixer.contract._canonical_value` so number-formatting differences
-between the two languages never cause a false mismatch). If either side's
-underlying constants change without the other following, the diff names
-the exact diverging key. This does **not** prove the two engines compute
-the same signal — only that the documented shared constants agree. Actual
-signal-level equivalence is the job of the golden render diff (`tests/
-test_preview_export_golden.py`), which runs by default (not opt-in) and is
-described in `preview_export_parity.md`'s tolerance-thresholds section.
+`apps/api/src/features/system/service.py::engine_constants()` reads the
+tunable DSP constants straight from their real core source modules (never
+re-typed) and serves them as the `constants` block of
+`GET /api/v1/configuration`. The web fetches them once at bootstrap and
+normalizes them through `resolveEngineConstants` (`masteringProfiles.ts`)
+into the `EngineConstants` object its graph builders consume. Because core is
+the only source, there is no value cross-check to run — the former
+`contract.py`/`contract.ts`/`dump-constants.mjs`/`web_constants.json`/
+`test_contract_parity.py` machinery was removed (see `preview_export_parity.md`
+Ledger D16). Signal-level equivalence — the thing that actually matters — is
+the job of the golden render diff (`tests/test_preview_export_golden.py`),
+which runs by default (not opt-in) and is described in
+`preview_export_parity.md`'s tolerance-thresholds section.

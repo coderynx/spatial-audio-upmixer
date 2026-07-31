@@ -53,7 +53,9 @@ in the preview (not ordering-only) — see **Ledger D12**.
 
 - **Tier 1 — bit-for-bit.** Scalar constants, tables, and file assets: both
   sides must carry the exact same numeric value or byte-identical file.
-  Drift here is always a bug. Covered by the live value cross-check (§4).
+  Drift here is always a bug. The tunable numeric constants are single-sourced
+  from core and served to the web (§4), so there is nothing to drift; file
+  assets stay byte-identical by build provenance.
 - **Tier 2 — parameter-level only.** The DSP *realization* may legitimately
   differ (SciPy `sosfilt` IIR vs. Web Audio `BiquadFilterNode`/`Convolver
   Node`/`DynamicsCompressorNode`) as long as every parameter feeding it is
@@ -86,9 +88,11 @@ edited mix.
 
 ## 3. Canonical constants catalog
 
-One row per constant shared between export and preview. "TS" column gives
-the export/mirror symbol in `web/src/features/projects/masteringProfiles.ts`
-unless noted. All verified in sync by the live value cross-check (§4).
+One row per constant shared between export and preview. The "TS" column
+names the field of the web's `EngineConstants` object (`masteringProfiles.ts`)
+the value lands in — served from core, not a hardcoded mirror (§4). The
+symbol names below are historical (the former hardcoded constants); the
+values and tiers are the contract.
 
 ### Channel-group gains, LFE, cutoffs — `upmixer/config.py::UpmixConfig`
 
@@ -187,7 +191,7 @@ a whole-file peak.
 
 These constants live only in `upmixer/mastering/match_reference.py` — the
 web never re-derives the algorithm, only convolves with the FIR bytes the
-server already computed (§2), so none of them enter `canonical_constants()`
+server already computed (§2), so none of them are served as engine constants
 (§4), the same rationale as the loudness K-weighting rows above. `strength`,
 `spectrum`, and `rms` *are* read live from the manifest by the preview
 (`ProjectDetailPage.tsx`'s `previewMastering`) — they gate/blend the
@@ -210,9 +214,9 @@ preview does the same).
 
 ### Channel layouts / formats — `upmixer/formats.py`
 
-Out of scope for `canonical_constants()` (§4): the web has no static copy of
-these to cross-check against, only a runtime fetch. Listed here for completeness,
-parity enforced by the separate mechanism in `docs/project_manifest_parity.md`.
+Out of scope for the served engine constants (§4): these already reach the
+web only by runtime fetch. Listed here for completeness, parity enforced by
+the separate mechanism in `docs/project_manifest_parity.md`.
 
 | Constant | Value | How web gets it |
 |---|---|---|
@@ -223,33 +227,47 @@ parity enforced by the separate mechanism in `docs/project_manifest_parity.md`.
 
 ---
 
-## 4. Live value cross-check
+## 4. Single source of truth for the constants (§3)
 
-`upmixer/contract.py::canonical_constants()` and `web/src/lib/
-contract.ts::canonicalConstants()` each build a normalized structure from
-the Tier-1 constants above (imported from their real source modules, never
-re-typed). There is no hash and no pinned literal: `web/scripts/
-dump-constants.mjs` (`npm run constants:dump` from `web/`) dumps the
-TypeScript side's `canonicalConstants()` to the committed fixture
-`tests/fixtures/contract/web_constants.json`, and `tests/
-test_contract_parity.py` loads that fixture and diffs it directly against
-the live Python `canonical_constants()` — normalizing both sides through
-`upmixer.contract._canonical_value` first so Python-vs-JS number formatting
-(`30.0` vs `30`) never causes a false mismatch. A real drift fails with the
-specific diverging key(s) and both values, not an opaque hash mismatch.
-`web/src/lib/contract.test.ts` covers the TypeScript-side sanity checks
-(determinism, no NaN/Infinity) independently.
+The web preview holds **no** hardcoded copy of the Tier-1 tunable DSP
+constants in §3. They are owned solely by the core engine
+(`upmixer/config.py` plus the mastering/routing/voicing profile tables) and
+served to the browser at bootstrap:
 
-### Regenerating the fixture
+- `apps/api/src/features/system/service.py::engine_constants()` reads every
+  value straight from its real core source module (never re-typed) and
+  returns them as the `constants` block of `GET /api/v1/configuration`.
+- The web fetches that block once (`api.getConfiguration()`), normalizes it
+  through `resolveEngineConstants` (`masteringProfiles.ts`) into an
+  `EngineConstants` object, and threads it into the preview graph builders
+  (`previewGraph.ts` / `audioEngine.ts`). The "TS" column in §3 names the
+  field of that object (formerly a hardcoded `masteringProfiles.ts`
+  constant of the same name).
 
-After a deliberate, both-sides-updated change to any Tier-1 constant:
+Because there is exactly one source, there is nothing to cross-check: the
+former `contract.py` / `contract.ts` / `dump-constants.mjs` /
+`web_constants.json` / `test_contract_parity.py` value-diff mechanism has
+been **removed**. Parity of these constants is now structural (one source)
+rather than tested. What still verifies the *end-to-end* result is the
+golden render diff (§5), which renders the real web graph and diffs it
+against the core engine.
 
-```bash
-cd web && npm run constants:dump
-```
+Constants the web still owns locally (not served — these never drift in
+practice): structural/mathematical values (`BUTTERWORTH_Q`, `AMBISONIC_ORDER`,
+the ACN-12 1/√7 correction, the true-peak kernel taps) and web-owned asset
+filenames (`EQ_FIR_ASSETS`, `STEM_EQ_FIR_ASSETS`, `DECODE_FILTER_SET`,
+`XTC_FILTER_SET`). The worklet true-peak kernel + safety margin stay pinned
+bit-for-bit by `limiterWorklet.test.ts`.
 
-Then update the constants catalog (§3) to describe the new value, and
-re-run `tests/test_contract_parity.py` and the golden render diff (§5).
+### Changing a served constant
+
+Edit the value in its core source module only — it flows to the web at the
+next fetch, with no TS edit and no fixture regeneration. Then update the
+constants catalog (§3) to describe the new value and re-run the golden render
+diff (§5). One test-only follow-up: the web fixture
+`apps/web/src/features/projects/engineConstants.fixture.ts` (used by vitest
+and the golden harness for render input) carries a copy of these values;
+update it to match — the golden diff fails if it drifts from core.
 
 ---
 
@@ -389,6 +407,8 @@ table above is — extending the harness to cover both is future work.
 | D14 | Roadmap Phase 1.1 replaced `MasteringChain`'s bed-level final stage — the memoryless `soft_limit` tanh saturator plus `normalize_loudness`'s separate scalar True-Peak gain step — with `upmixer/mastering/limiter.py::LookAheadLimiter`, a linked look-ahead brickwall limiter, to fix audible ISP overshoot the old scalar approach let through. Because a look-ahead limiter changes output level/character versus a memoryless saturator (louder average level from tighter True-Peak margins, different transient behavior), leaving the preview on the old `softLimitNode` for every mode would have been an audible, not just numeric, preview/export mismatch. | Fixed for the native (discrete multichannel bed) monitoring path — the one preview mode that actually mirrors `MasteringChain`'s bed output with no further collapse/downmix. `web/public/limiter.worklet.js` (a new `"limiter-processor"` AudioWorklet — the first in this codebase) ports the same algorithm as a genuinely causal streaming processor: linked cross-channel 4x-oversampled detection (reusing `masteringProfiles.ts`'s existing `_upsampleTruePeak4x` kernel, not `limiter.py`'s exact BS.1770 FIR — Tier 2), a monotonic-deque sliding-window minimum (the streaming equivalent of `limiter.py`'s single `scipy.ndimage.minimum_filter1d` call) covering both the look-ahead window and the FIR-kernel dilation margin in one pass, then the same fast-attack/slow-release smoothing. Unlike the offline backend (which needs no output latency — see `limiter.py`'s module docstring), the worklet is genuinely real-time and therefore introduces a real, constant ~5ms delay line while active — a normal, expected cost of real-time look-ahead limiting. Wired into `initialize()` (`useStemPreview.ts`) in place of `nativeSoftLimitNode`, with a same-tanh-WaveShaper fallback if `audioWorklet.addModule` fails to load. `LIMITER_LOOKAHEAD_MS`/`LIMITER_RELEASE_MS` (`masteringProfiles.ts`) are Tier 1, added to `contract_signature()`/`contractSignature()` (§4). The binaural/stereo-downmix monitoring path (`softLimitNode`, shared) deliberately keeps the plain tanh `soft_limit` unchanged — it mirrors `render_binaural_delivery`'s own untouched `soft_limit` call and the CLI downmix path's scalar True-Peak correction (`pipeline.py`/`stem_pipeline.py`), neither of which Phase 1.1 touched. Not yet exercised by the golden diff (§5): the native path isn't in that harness's scope at all today (only the bed EQ/comp/bass stage and the binaural-collapse stage are), so this AudioWorkletNode's behavior is covered by its own manual validation (impulse/near-Nyquist-tone/dense-noise synthetic signals, causal-vs-whole-buffer equivalence) during development and by `useStemPreview.test.tsx`'s wiring tests, not a cross-engine signal-level diff — extending the golden harness to the native path is future work, same open item `test_preview_export_golden.py`'s scope note already flags for the bed-level limiter generally. |
 
 | D15 | New feature, not a discrepancy: the Spatial Audio Engine gained a second delivery target, `transaural` (crosstalk-cancelled stereo speaker playback), alongside the existing `binaural` (headphone) target — see `transaural_speakers.md`. Recorded here because the parity mechanism this contract defines had to be extended to a whole new stage, not just a new constant. | Implemented core↔web in one pass, no gap opened. Core: `upmixer/crosstalk/` (renderer reuses `render_binaural(profile="flat")` + a new 2x2 XTC FIR matrix + the existing `apply_voicing`), `scripts/build_crosstalk_filters.py` bakes the XTC filter assets from the same parametric head model (`upmixer/binaural/head_model.py`, promoted out of the binaural build script so both targets share one model) with a frequency-dependent Tikhonov-regularized inverse. Web: `buildCrosstalkGraph` (`previewGraph.ts`) reuses `buildBinauralGraph("flat")` internally, adds a 4-convolver 2x2 XTC matrix, then the shared `buildVoicingChain` — wired as a fourth parallel gated bus in `initialize()`/`applyOutputMode` (`audioEngine.ts`) alongside binaural/stereo/native, same "always built, gate picks which reaches the destination" pattern the other three already use. `CROSSTALK_LOUDNESS_MAX_GAIN_DB` added to both `canonical_constants()`/`canonicalConstants()` (§3, §4). One accepted cost from reusing the always-eager-build pattern: the crosstalk graph's internal "flat" HRIR decode now fetches unconditionally on every `initialize()`, regardless of `outputMode` (previously only the selected `spatialProfile`'s 4-part set fetched) — instant switching into transaural mode was judged worth this, matching how binaural/stereo/native are already all eagerly built today. Not yet covered by the golden-diff harness (§5) — same open item as binaural's Listening profile (D10): only a hand-rolled objective crosstalk-suppression/coloration check (`tests/test_crosstalk.py`) exists on the Python side so far, no cross-engine render comparison. |
+
+| D16 | Not a discrepancy: the Tier-1 tunable DSP constants (§3) were hand-mirrored in `masteringProfiles.ts` and kept honest by a live value cross-check (`contract.py`/`contract.ts` → `web_constants.json` fixture → `test_contract_parity.py`), so every tuning change was a two-sided edit plus a fixture re-dump. Reducing that duplication ahead of a possible future Rust port. | Made core the single owner: `apps/api` `engine_constants()` (`features/system/service.py`) reads the values straight from their core source modules and serves them as the `constants` block of `GET /api/v1/configuration`. The web fetches them once at bootstrap, normalizes via `resolveEngineConstants` (`masteringProfiles.ts`) into an `EngineConstants` object, and threads it into the graph builders (`previewGraph.ts`/`audioEngine.ts`); the value literals and the whole cross-check (`contract.py`, `contract.ts`, `dump-constants.mjs`, the fixture, `test_contract_parity.py`) were deleted — nothing to diff when there is one source. Scope: the tunable acoustic constants only (comp/bass profiles, gains, cutoffs, haas, loudness ceilings, limiter times, binaural + transaural voicing params). Kept web-local (never drift): structural/math constants (`BUTTERWORTH_Q`, ambisonic order, ACN-12 1/√7, true-peak kernel) and asset filenames. Parity of these constants is now structural (one source); the end-to-end golden render diff (§5) still guards actual output, fed the shared test fixture `engineConstants.fixture.ts`. See §4. |
 
 Add new rows here when a discrepancy is found; do not delete resolved rows,
 mark them fixed so the history of what was found and corrected stays

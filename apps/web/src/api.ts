@@ -1,3 +1,5 @@
+import type { ServedEngineConstants } from "@/features/projects/masteringProfiles"
+
 export type Asset = {
   id: string
   position: number
@@ -184,6 +186,7 @@ export type Configuration = {
     stems: string[]
     preview_qualities?: string[]
   }
+  constants: ServedEngineConstants
   capabilities: {
     stem_separation: {
       available: boolean

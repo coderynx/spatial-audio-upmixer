@@ -70,8 +70,9 @@ BASS_PROFILES: dict[str, dict] = {
 
 BASS_PROFILE_NAMES: tuple[str, ...] = tuple(sorted(BASS_PROFILES.keys()))
 
-# Public (not module-private) so upmixer/contract.py can import the exact
-# values instead of re-typing them — see docs/contracts/preview_export_parity.md.
+# Public (not module-private) so the web engine-constants endpoint (apps/api
+# system slice) can serve the exact values — see
+# docs/contracts/preview_export_parity.md.
 STEREO_PAIRS: list[tuple[str, str]] = [
     ("FL", "FR"),
     ("SL", "SR"),

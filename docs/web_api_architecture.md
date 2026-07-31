@@ -104,7 +104,11 @@ and expected, not violations to eliminate:
   `features.projects.storage`** (for the preview-quality choices it
   surfaces) — the one place a "system" concern reaches into a feature's
   internals, because the configuration endpoint is a cross-feature
-  aggregator by nature.
+  aggregator by nature. `configuration_schema` also embeds a `constants`
+  block from the sibling `engine_constants()` — the tunable DSP constants the
+  web preview engine consumes, read straight from core source modules so the
+  browser fetches one authoritative copy instead of hand-mirroring them (see
+  `docs/contracts/preview_export_parity.md` §4).
 
 If you find yourself adding a new cross-slice import, prefer the direction
 that already exists here (routes may depend on another slice's `service`/

@@ -1,7 +1,10 @@
-// Ported constants from the backend mastering chain (upmixer/mastering/*.py) and
-// stem router (upmixer/separation/stem_router.py) so the preview's Web Audio graph
-// can approximate the same tone/dynamics/loudness shaping as the delivered mix.
-// Keep these numbers in sync with the Python source — they are not derived at runtime.
+// Preview mastering + stem-router graph helpers. The tunable DSP *values* the
+// backend engine uses (compressor/bass profiles, gains, cutoffs, haas,
+// loudness ceilings, voicing params) are NOT defined here — they are fetched
+// once at bootstrap from GET /api/v1/configuration's `constants` block and
+// threaded in as `EngineConstants` (see resolveEngineConstants below and
+// docs/contracts/preview_export_parity.md). This module keeps only the pure
+// graph-building functions and the structural/asset constants the web owns.
 
 export type EqProfileName =
   | "spatial-transparent"
@@ -58,13 +61,6 @@ export type CompProfile = {
   makeup_db: number;
 };
 
-// upmixer/mastering/compressor.py COMP_PROFILES.
-export const COMP_PROFILES: Record<CompProfileName, CompProfile> = {
-  transparent: { threshold_db: -22.0, ratio: 1.5, attack_ms: 30.0, release_ms: 300.0, knee_db: 9.0, makeup_db: 0.0 },
-  glue: { threshold_db: -18.0, ratio: 2.0, attack_ms: 20.0, release_ms: 200.0, knee_db: 6.0, makeup_db: 0.0 },
-  warm: { threshold_db: -15.0, ratio: 2.0, attack_ms: 40.0, release_ms: 400.0, knee_db: 12.0, makeup_db: 0.0 },
-};
-
 export type BassProfileName = "boost" | "cut" | "mono" | "enhance";
 
 export type BassProfile = {
@@ -74,19 +70,6 @@ export type BassProfile = {
   excite: boolean;
   lfe_gain_db: number;
 };
-
-// upmixer/mastering/bass.py BASS_PROFILES.
-export const BASS_PROFILES: Record<BassProfileName, BassProfile> = {
-  boost: { sub_gain_db: 2.0, mid_gain_db: 1.0, mono_cutoff_hz: null, excite: false, lfe_gain_db: 1.5 },
-  cut: { sub_gain_db: -2.5, mid_gain_db: -1.5, mono_cutoff_hz: null, excite: false, lfe_gain_db: -1.0 },
-  mono: { sub_gain_db: 0.0, mid_gain_db: 0.0, mono_cutoff_hz: 100.0, excite: false, lfe_gain_db: 0.0 },
-  enhance: { sub_gain_db: 1.5, mid_gain_db: 0.5, mono_cutoff_hz: 80.0, excite: true, lfe_gain_db: 1.0 },
-};
-
-export const SUB_CUTOFF_HZ = 80.0;
-export const MID_CUTOFF_HZ = 200.0;
-export const EXCITE_BLEND = 0.15;
-export const EXCITE_DRIVE = 3.0;
 
 // scipy.signal.butter's default Q for a 2nd-order Butterworth section — Web
 // Audio's default Q=1 has a small resonant peak a true Butterworth lacks.
@@ -104,48 +87,9 @@ export const MONO_MAKER_STEREO_PAIRS: ReadonlyArray<readonly [string, string]> =
   ["TBL", "TBR"],
 ];
 
-// upmixer/config.py peak_limit_threshold — not manifest-editable, fixed
-// default. Still live for the binaural/stereo-downmix monitoring path's
-// tanh safety net (`softLimitNode` in useStemPreview.ts) and the native
-// path's own safety net — see LIMITER_LOOKAHEAD_MS below for the bed-level
-// look-ahead limiter that replaced this on the native monitoring path.
-export const SOFT_LIMIT_THRESHOLD = 0.95;
-
-// upmixer/mastering/limiter.py::LookAheadLimiter — mirrored by
-// web/public/limiter.worklet.js, native path only. Tier 1; the worklet's
-// causal-streaming realization is Tier 2 — see docs/contracts/preview_export_parity.md.
-export const LIMITER_LOOKAHEAD_MS = 5.0;
-export const LIMITER_RELEASE_MS = 50.0;
-
-// upmixer/config.py lfe_gain (-10 dB) and stem_router LFE lowpass.
-export const LFE_GAIN = 0.31622776601683794;
-export const LFE_LOWPASS_HZ = 120;
-
-// upmixer/config.py loudness_max_gain_db.
-export const LOUDNESS_MAX_GAIN_DB = 30.0;
-
-// upmixer/utils.py _ITU_C_COEFF (1/sqrt(2), exact) — the fixed center-channel
-// downmix coefficient ITU-R BS.775-4 Annex 4 Table 2 uses for the C-term and
-// the back->side fold, distinct from the user-configurable surround
-// coefficient below even though they default to (nearly) the same number.
-export const ITU_CENTER_COEFF = 1 / Math.sqrt(2);
-
-// upmixer/config.py surround_downmix_coeff default. User-configurable via
-// format.downmix.surround_coeff (see manifest.ts); 0.7071 is a truncated
-// approximation of 1/sqrt(2), not the exact value — matching the backend's
-// own truncated default exactly, not a rounding error to "fix".
-export const SURROUND_DOWNMIX_COEFF = 0.7071;
-
-// upmixer/binaural/renderer.py BINAURAL_LOUDNESS_MAX_GAIN_DB. The bed is
-// already loudness-normalized before binaural collapse, so this pass only
-// lightly corrects for the level shift the HOA/HRTF collapse introduces
-// instead of re-running a full loudness match — a small ceiling keeps a
-// quiet collapse from being cranked back up past the mastered bed's level.
-export const BINAURAL_LOUDNESS_MAX_GAIN_DB = 6.0;
-
 /** WaveShaper curve for the backend's tanh soft-limit: identity below
  * `threshold`, tanh saturation above it. Mirrors upmixer/utils.py soft_limit. */
-export function buildSoftLimitCurve(threshold: number = SOFT_LIMIT_THRESHOLD, samples = 4096): Float32Array {
+export function buildSoftLimitCurve(threshold: number, samples = 4096): Float32Array {
   const curve = new Float32Array(samples);
   const margin = 1.0 - threshold;
   for (let i = 0; i < samples; i++) {
@@ -160,7 +104,7 @@ export function buildSoftLimitCurve(threshold: number = SOFT_LIMIT_THRESHOLD, sa
 
 /** WaveShaper curve for the bass exciter: tanh(x * drive). Mirrors the
  * harmonic-exciter stage in upmixer/mastering/bass.py. */
-export function buildExciteCurve(drive: number = EXCITE_DRIVE, samples = 4096): Float32Array {
+export function buildExciteCurve(drive: number, samples = 4096): Float32Array {
   const curve = new Float32Array(samples);
   for (let i = 0; i < samples; i++) {
     const x = (i / (samples - 1)) * 2 - 1;
@@ -278,40 +222,27 @@ export function connectSeries(start: AudioNode, nodes: AudioNode[]): AudioNode {
 // see docs/web_architecture.md "Preview audio graph" for why (not HRTF panning). --
 
 /** Per-channel-group gains — upmixer/config.py `center_gain`/`surround_gain`/
- * `back_gain`/`height_gain`. FL/FR always 1.0 (no group). */
-export const CENTER_GAIN = 0.85;
-export const SURROUND_GAIN = 0.6;
-export const BACK_GAIN = 0.55;
-export const HEIGHT_GAIN = 0.55;
+ * `back_gain`/`height_gain`. Fetched, not hardcoded (see EngineConstants). */
+export type ChannelGroupGains = { center: number; surround: number; back: number; height: number };
 
-export function channelGroupGain(channel: string): number {
-  if (channel === "C") return CENTER_GAIN;
-  if (channel === "BL" || channel === "BR") return BACK_GAIN;
-  if (channel === "SL" || channel === "SR") return SURROUND_GAIN;
-  if (channel === "TFL" || channel === "TFR" || channel === "TBL" || channel === "TBR") return HEIGHT_GAIN;
+/** Resolve a channel to its group gain. FL/FR always 1.0 (no group). */
+export function channelGroupGain(channel: string, gains: ChannelGroupGains): number {
+  if (channel === "C") return gains.center;
+  if (channel === "BL" || channel === "BR") return gains.back;
+  if (channel === "SL" || channel === "SR") return gains.surround;
+  if (channel === "TFL" || channel === "TFR" || channel === "TBL" || channel === "TBR") return gains.height;
   return 1.0;
 }
 
-/** upmixer/config.py `surround_bass_cutoff_hz` — highpass applied to a
- * stem's surround/back send before its Haas decorrelation delay. */
-export const SURROUND_BASS_CUTOFF_HZ = 250.0;
-
-/** upmixer/config.py height-send shaping (`_height_send` in
- * stem_router.py, same formula as `upmixer/utils.py` `elevation_eq`):
- * attenuate below `HEIGHT_LOW_ROLLOFF_HZ` to `HEIGHT_LOW_ROLLOFF_GAIN`,
- * then boost above `HEIGHT_CROSSOVER_HZ` by `HEIGHT_HIGH_SHELF_GAIN`. */
-export const HEIGHT_LOW_ROLLOFF_HZ = 150.0;
-export const HEIGHT_LOW_ROLLOFF_GAIN = 0.15;
-export const HEIGHT_CROSSOVER_HZ = 3000.0;
-export const HEIGHT_HIGH_SHELF_GAIN = 1.5;
-
-/** upmixer/utils.py `diffuse_send` default wet blend. */
-export const DIFFUSE_SEND_BLEND = 0.55;
-
-/** stem_router.py `route()` — per-side Haas delays (ms) for surround/back
- * and height sends. Different per side so L/R don't comb-filter. */
-export const SURROUND_HAAS_MS = { left: 31, right: 37 };
-export const HEIGHT_HAAS_MS = { left: 23, right: 29 };
+/** upmixer/separation/stem_router.py height-send shaping (`_height_send`, same
+ * formula as `upmixer/utils.py` `elevation_eq`): attenuate below `lowRolloffHz`
+ * to `lowRolloffGain`, then boost above `crossoverHz` by `highShelfGain`. */
+export type HeightShaping = {
+  lowRolloffHz: number;
+  lowRolloffGain: number;
+  crossoverHz: number;
+  highShelfGain: number;
+};
 
 /** Web Audio version of `upmixer/utils.py` `diffuse_send`: blends a signal
  * with a delayed copy of itself for early-reflection decorrelation. */
@@ -319,7 +250,7 @@ export function buildDiffuseSend(
   ctx: BaseAudioContext,
   input: AudioNode,
   delayMs: number,
-  blend: number = DIFFUSE_SEND_BLEND,
+  blend: number,
 ): { output: AudioNode; nodes: AudioNode[] } {
   const delay = ctx.createDelay(1);
   delay.delayTime.value = delayMs / 1000;
@@ -335,26 +266,30 @@ export function buildDiffuseSend(
 
 /** Web Audio version of `stem_router.py` `_height_send` /
  * `upmixer/utils.py` `elevation_eq`: sub-bass rolloff (kept at
- * `HEIGHT_LOW_ROLLOFF_GAIN`, not fully removed) plus a top-end shelf boost
+ * `shaping.lowRolloffGain`, not fully removed) plus a top-end shelf boost
  * above the crossover. Implemented as the additive identity the Python
  * `sosfilt` version reduces to: `shaped = x - low·(1-g); out = shaped +
  * high(shaped)·(shelfGain-1)`. */
-export function buildHeightSend(ctx: BaseAudioContext, input: AudioNode): { output: AudioNode; nodes: AudioNode[] } {
+export function buildHeightSend(
+  ctx: BaseAudioContext,
+  input: AudioNode,
+  shaping: HeightShaping,
+): { output: AudioNode; nodes: AudioNode[] } {
   const lowpass = ctx.createBiquadFilter();
   lowpass.type = "lowpass";
-  lowpass.frequency.value = HEIGHT_LOW_ROLLOFF_HZ;
+  lowpass.frequency.value = shaping.lowRolloffHz;
   const lowComp = ctx.createGain();
-  lowComp.gain.value = -(1 - HEIGHT_LOW_ROLLOFF_GAIN);
+  lowComp.gain.value = -(1 - shaping.lowRolloffGain);
   const shaped = ctx.createGain();
   input.connect(shaped);
   input.connect(lowpass).connect(lowComp).connect(shaped);
 
   const highpass = ctx.createBiquadFilter();
   highpass.type = "highpass";
-  highpass.frequency.value = HEIGHT_CROSSOVER_HZ;
+  highpass.frequency.value = shaping.crossoverHz;
   highpass.Q.value = BUTTERWORTH_Q;
   const highGain = ctx.createGain();
-  highGain.gain.value = HEIGHT_HIGH_SHELF_GAIN - 1;
+  highGain.gain.value = shaping.highShelfGain - 1;
   const output = ctx.createGain();
   shaped.connect(output);
   shaped.connect(highpass).connect(highGain).connect(output);
@@ -363,19 +298,21 @@ export function buildHeightSend(ctx: BaseAudioContext, input: AudioNode): { outp
 }
 
 /** Web Audio version of `stem_router.py`'s surround send: a highpass at
- * `SURROUND_BASS_CUTOFF_HZ` (keeps rhythmic low end out of the diffuse
- * surround/back layer) followed by the Haas diffuse send. */
+ * `bassCutoffHz` (keeps rhythmic low end out of the diffuse surround/back
+ * layer) followed by the Haas diffuse send. */
 export function buildSurroundSend(
   ctx: BaseAudioContext,
   input: AudioNode,
   delayMs: number,
+  bassCutoffHz: number,
+  diffuseBlend: number,
 ): { output: AudioNode; nodes: AudioNode[] } {
   const highpass = ctx.createBiquadFilter();
   highpass.type = "highpass";
-  highpass.frequency.value = SURROUND_BASS_CUTOFF_HZ;
+  highpass.frequency.value = bassCutoffHz;
   highpass.Q.value = BUTTERWORTH_Q;
   input.connect(highpass);
-  const diffuse = buildDiffuseSend(ctx, highpass, delayMs);
+  const diffuse = buildDiffuseSend(ctx, highpass, delayMs, diffuseBlend);
   return { output: diffuse.output, nodes: [highpass, ...diffuse.nodes] };
 }
 
@@ -383,9 +320,8 @@ export function buildSurroundSend(
 //
 // Studio/Listening/Flat binaural profiles. Filter geometry/SH/decode-filter
 // contract lives in docs/standards/spatial_audio_engine.md; this section
-// only carries the post-decode "voicing" parameters (Listening's
-// Apple-Music-style enhance chain) so useStemPreview.ts's Web Audio graph
-// can match upmixer/binaural/voicing.py parameter-for-parameter.
+// only carries the post-decode voicing chain topology. The per-profile
+// voicing *values* are fetched (EngineConstants.voicingParams).
 
 export type SpatialProfile = "studio" | "listening" | "flat";
 
@@ -407,25 +343,6 @@ export type VoicingParams = {
   presenceQ: number;
   stereoWiden: number;
   loudnessTargetLkfs: number | null;
-};
-
-const NEUTRAL_VOICING: VoicingParams = {
-  crossfeedAmount: 0, crossfeedCutoffHz: 700, bassShelfHz: 120, bassShelfGainDb: 0,
-  airShelfHz: 9000, airShelfGainDb: 0, presenceHz: 3000, presenceGainDb: 0, presenceQ: 0.9,
-  stereoWiden: 0, loudnessTargetLkfs: null,
-};
-
-// upmixer/binaural/profiles.py VOICING_PARAMS.
-export const VOICING_PARAMS: Record<SpatialProfile, VoicingParams> = {
-  flat: NEUTRAL_VOICING,
-  studio: NEUTRAL_VOICING,
-  listening: {
-    crossfeedAmount: 0.10, crossfeedCutoffHz: 700,
-    bassShelfHz: 100, bassShelfGainDb: 1.0,
-    airShelfHz: 10000, airShelfGainDb: 4.0,
-    presenceHz: 3000, presenceGainDb: 2.0, presenceQ: 0.9,
-    stereoWiden: 0.15, loudnessTargetLkfs: null,
-  },
 };
 
 // Ambisonic order for the virtual-loudspeaker renderer shared by the live
@@ -452,10 +369,9 @@ export const DECODE_FILTER_SPLITS = ["01-08ch", "09-16ch", "17-24ch", "25-32ch"]
 // Stereo / Smart-speaker / Car / Laptop / Phone crosstalk-cancellation (transaural) profiles.
 // Filter geometry/regularization contract lives in
 // docs/standards/transaural_speakers.md; this section carries the XTC asset
-// name and post-cancellation voicing parameters (reusing the same
-// VoicingParams shape and Web Audio chain binaural profiles use) so
-// useStemPreview.ts's graph can match upmixer/crosstalk/ parameter-for-
-// parameter. upmixer/crosstalk/profiles.py XTC_FILTER_SET / VOICING_PARAMS.
+// name only. The post-cancellation voicing *values* are fetched
+// (EngineConstants.transauralVoicingParams), reusing the same VoicingParams
+// shape and Web Audio chain the binaural profiles use.
 
 export type TransauralProfile = "stereo" | "smart_speaker" | "car" | "laptop" | "phone";
 
@@ -467,44 +383,11 @@ export const XTC_FILTER_SET: Record<TransauralProfile, string> = {
   phone: "phone_xtc",
 };
 
-export const TRANSAURAL_VOICING_PARAMS: Record<TransauralProfile, VoicingParams> = {
-  stereo: NEUTRAL_VOICING,
-  smart_speaker: {
-    ...NEUTRAL_VOICING,
-    bassShelfHz: 150, bassShelfGainDb: 1.5,
-    stereoWiden: 0.20,
-  },
-  car: {
-    ...NEUTRAL_VOICING,
-    bassShelfHz: 120, bassShelfGainDb: 2.5,
-    presenceHz: 2500, presenceGainDb: 1.0, presenceQ: 0.9,
-    stereoWiden: 0.10,
-  },
-  laptop: {
-    ...NEUTRAL_VOICING,
-    bassShelfHz: 160, bassShelfGainDb: 2.0,
-    presenceHz: 3000, presenceGainDb: 1.0, presenceQ: 0.9,
-    stereoWiden: 0.25,
-  },
-  phone: {
-    ...NEUTRAL_VOICING,
-    bassShelfHz: 180, bassShelfGainDb: 3.0,
-    presenceHz: 3000, presenceGainDb: 1.5, presenceQ: 0.9,
-    stereoWiden: 0.30,
-  },
-};
-
 // XTC filter set contract (docs/standards/transaural_speakers.md §4): 4 FIR
 // filters (H_LL, H_LR, H_RL, H_RR) in one 4-channel WAV — unlike the 32ch
 // binaural decode bank, 4 channels fits well inside the browser's 8ch cap,
 // so no multi-file split is needed.
 export const XTC_FILTER_CHANNELS = 4;
-
-// upmixer/crosstalk/renderer.py CROSSTALK_LOUDNESS_MAX_GAIN_DB. Same
-// rationale as BINAURAL_LOUDNESS_MAX_GAIN_DB above: the bed is already
-// loudness-matched before the crosstalk-cancellation collapse, so this only
-// corrects for the collapse's own level shift.
-export const CROSSTALK_LOUDNESS_MAX_GAIN_DB = 6.0;
 
 export type VoicingChain = {
   left: AudioNode;
@@ -640,12 +523,152 @@ export function applyVoicingParams(chain: VoicingChain, params: VoicingParams): 
  * every contributing send as comparable energy — good enough to keep a
  * widely-routed stem from reading louder than a narrowly-routed one, not an
  * exact energy match (the real value needs the decoded buffers' energy). */
-export function estimateRouteScale(route: Record<string, number>): number {
+export function estimateRouteScale(route: Record<string, number>, gains: ChannelGroupGains): number {
   let sumSquares = 0;
   for (const [channel, weight] of Object.entries(route)) {
     if (channel === "LFE" || weight <= 0) continue;
-    const scaled = weight * channelGroupGain(channel);
+    const scaled = weight * channelGroupGain(channel, gains);
     sumSquares += scaled * scaled;
   }
   return sumSquares > 1e-10 ? 1 / Math.sqrt(sumSquares) : 1;
+}
+
+// --- Backend-served engine constants ------------------------------------
+//
+// The web preview engine holds no hardcoded copy of the tunable DSP values;
+// it fetches them from GET /api/v1/configuration's `constants` block (see
+// apps/api system slice `engine_constants()`). `ServedEngineConstants` is the
+// wire shape (snake_case, matching the backend); `EngineConstants` is the
+// normalized shape the graph builders consume. resolveEngineConstants maps
+// between them — the only place voicing params get their snake->camel rename.
+
+/** Wire shape of one voicing profile (backend snake_case). */
+export type ServedVoicingParams = {
+  crossfeed_amount: number;
+  crossfeed_cutoff_hz: number;
+  bass_shelf_hz: number;
+  bass_shelf_gain_db: number;
+  air_shelf_hz: number;
+  air_shelf_gain_db: number;
+  presence_hz: number;
+  presence_gain_db: number;
+  presence_q: number;
+  stereo_widen: number;
+  loudness_target_lkfs: number | null;
+};
+
+/** Wire shape of the `constants` block from GET /api/v1/configuration. */
+export type ServedEngineConstants = {
+  channel_group_gains: ChannelGroupGains;
+  lfe_gain: number;
+  lfe_lowpass_hz: number;
+  surround_bass_cutoff_hz: number;
+  height_low_rolloff_hz: number;
+  height_low_rolloff_gain: number;
+  height_crossover_hz: number;
+  height_high_shelf_gain: number;
+  soft_limit_threshold: number;
+  limiter_lookahead_ms: number;
+  limiter_release_ms: number;
+  loudness_max_gain_db: number;
+  surround_downmix_coeff: number;
+  itu_center_coeff: number;
+  diffuse_send_blend: number;
+  surround_haas_ms: { left: number; right: number };
+  height_haas_ms: { left: number; right: number };
+  comp_profiles: Record<string, CompProfile>;
+  bass_profiles: Record<string, BassProfile>;
+  bass_sub_cutoff_hz: number;
+  bass_mid_cutoff_hz: number;
+  bass_excite_blend: number;
+  bass_excite_drive: number;
+  binaural_loudness_max_gain_db: number;
+  crosstalk_loudness_max_gain_db: number;
+  voicing_params: Record<string, ServedVoicingParams>;
+  transaural_voicing_params: Record<string, ServedVoicingParams>;
+};
+
+/** Normalized engine constants the preview graph builders consume. */
+export type EngineConstants = {
+  channelGains: ChannelGroupGains;
+  lfeGain: number;
+  lfeLowpassHz: number;
+  surroundBassCutoffHz: number;
+  heightShaping: HeightShaping;
+  softLimitThreshold: number;
+  limiterLookaheadMs: number;
+  limiterReleaseMs: number;
+  loudnessMaxGainDb: number;
+  surroundDownmixCoeff: number;
+  ituCenterCoeff: number;
+  diffuseSendBlend: number;
+  surroundHaasMs: { left: number; right: number };
+  heightHaasMs: { left: number; right: number };
+  compProfiles: Record<CompProfileName, CompProfile>;
+  bassProfiles: Record<BassProfileName, BassProfile>;
+  subCutoffHz: number;
+  midCutoffHz: number;
+  exciteBlend: number;
+  exciteDrive: number;
+  binauralLoudnessMaxGainDb: number;
+  crosstalkLoudnessMaxGainDb: number;
+  voicingParams: Record<SpatialProfile, VoicingParams>;
+  transauralVoicingParams: Record<TransauralProfile, VoicingParams>;
+};
+
+function voicingFromServed(v: ServedVoicingParams): VoicingParams {
+  return {
+    crossfeedAmount: v.crossfeed_amount,
+    crossfeedCutoffHz: v.crossfeed_cutoff_hz,
+    bassShelfHz: v.bass_shelf_hz,
+    bassShelfGainDb: v.bass_shelf_gain_db,
+    airShelfHz: v.air_shelf_hz,
+    airShelfGainDb: v.air_shelf_gain_db,
+    presenceHz: v.presence_hz,
+    presenceGainDb: v.presence_gain_db,
+    presenceQ: v.presence_q,
+    stereoWiden: v.stereo_widen,
+    loudnessTargetLkfs: v.loudness_target_lkfs,
+  };
+}
+
+function mapVoicing<K extends string>(served: Record<string, ServedVoicingParams>): Record<K, VoicingParams> {
+  const out: Record<string, VoicingParams> = {};
+  for (const [key, value] of Object.entries(served)) out[key] = voicingFromServed(value);
+  return out as Record<K, VoicingParams>;
+}
+
+/** Normalize the wire `constants` block into `EngineConstants`. */
+export function resolveEngineConstants(s: ServedEngineConstants): EngineConstants {
+  return {
+    channelGains: s.channel_group_gains,
+    lfeGain: s.lfe_gain,
+    lfeLowpassHz: s.lfe_lowpass_hz,
+    surroundBassCutoffHz: s.surround_bass_cutoff_hz,
+    heightShaping: {
+      lowRolloffHz: s.height_low_rolloff_hz,
+      lowRolloffGain: s.height_low_rolloff_gain,
+      crossoverHz: s.height_crossover_hz,
+      highShelfGain: s.height_high_shelf_gain,
+    },
+    softLimitThreshold: s.soft_limit_threshold,
+    limiterLookaheadMs: s.limiter_lookahead_ms,
+    limiterReleaseMs: s.limiter_release_ms,
+    loudnessMaxGainDb: s.loudness_max_gain_db,
+    surroundDownmixCoeff: s.surround_downmix_coeff,
+    ituCenterCoeff: s.itu_center_coeff,
+    diffuseSendBlend: s.diffuse_send_blend,
+    surroundHaasMs: s.surround_haas_ms,
+    heightHaasMs: s.height_haas_ms,
+    compProfiles: s.comp_profiles as Record<CompProfileName, CompProfile>,
+    bassProfiles: s.bass_profiles as Record<BassProfileName, BassProfile>,
+    subCutoffHz: s.bass_sub_cutoff_hz,
+    midCutoffHz: s.bass_mid_cutoff_hz,
+    exciteBlend: s.bass_excite_blend,
+    exciteDrive: s.bass_excite_drive,
+    binauralLoudnessMaxGainDb: s.binaural_loudness_max_gain_db,
+    crosstalkLoudnessMaxGainDb: s.crosstalk_loudness_max_gain_db,
+    voicingParams: mapVoicing<SpatialProfile>(s.voicing_params),
+    transauralVoicingParams: mapVoicing<TransauralProfile>(s.transaural_voicing_params),
+  };
 }
