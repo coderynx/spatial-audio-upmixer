@@ -32,6 +32,7 @@ def engine_constants() -> dict[str, Any]:
         SUB_CUTOFF_HZ,
     )
     from upmixer.mastering.compressor import COMP_PROFILES
+    from upmixer.mastering.limiter import _SAFETY_MARGIN_DB
     from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
     from upmixer.separation.stem_router import (
         HEIGHT_HAAS_DELAY_MS_L,
@@ -59,6 +60,7 @@ def engine_constants() -> dict[str, Any]:
         "soft_limit_threshold": cfg.peak_limit_threshold,
         "limiter_lookahead_ms": cfg.limiter_lookahead_ms,
         "limiter_release_ms": cfg.limiter_release_ms,
+        "safety_margin_db": _SAFETY_MARGIN_DB,
         "loudness_max_gain_db": cfg.loudness_max_gain_db,
         "surround_downmix_coeff": cfg.surround_downmix_coeff,
         "itu_center_coeff": ITU_CENTER_COEFF,

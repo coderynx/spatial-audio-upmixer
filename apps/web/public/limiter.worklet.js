@@ -19,13 +19,12 @@
 // normal and expected for any real-time look-ahead limiter — hardware and
 // software mastering limiters alike pay this same cost.
 //
-// Detection reuses the same 32-tap Hann-windowed-sinc 4x oversample kernel
-// as masteringProfiles.ts's `buildTruePeakKernel` (that function's own
-// comment documents this as the one shared true-peak approximation for the
-// whole preview, Tier-3 bounded by the parity contract's 1.0 dBTP
-// tolerance) rather than inventing a third approximation — imported from
-// truePeakKernel.js, the one worklet-side copy also used by
-// loudness.worklet.js, rather than each worklet hand-duplicating it.
+// Detection reuses masteringProfiles.ts's `buildTruePeakKernel` (the single
+// true-peak approximation for the whole preview, Tier-3 bounded by the parity
+// contract's 1.0 dBTP tolerance): the computed kernel and the ceiling safety
+// margin arrive as `processorOptions` data, so this worklet holds no
+// kernel-building or margin copy of its own. See
+// docs/contracts/preview_export_parity.md Ledger D18.
 //
 // Linked (cross-channel) detection: every input channel's oversampled
 // envelope is combined with a running max, so one shared gain curve is
@@ -35,10 +34,7 @@
 // tone/dense-noise test signals during development; see the PR this
 // shipped in for that validation.
 
-import { KERNEL, OVERSAMPLE, TAPS } from "./truePeakKernel.js";
-
-const SAFETY_MARGIN_DB = 0.1;
-const KERNEL_DELAY = Math.floor(TAPS / 2);
+const OVERSAMPLE = 4;
 
 /** Monotonic-deque sliding-window minimum: O(1) amortized per push, holding
  * the minimum value pushed within the trailing `window` indices. Standard
@@ -81,7 +77,14 @@ class LimiterProcessor extends AudioWorkletProcessor {
     const ceilingDb = opts.ceilingDb ?? -1.0;
     const lookaheadMs = opts.lookaheadMs ?? 5.0;
     const releaseMs = opts.releaseMs ?? 50.0;
+    const safetyMarginDb = opts.safetyMarginDb ?? 0.1;
     this._numberOfChannels = Math.max(1, opts.numberOfChannels ?? 2);
+
+    this._kernel = Float64Array.from(opts.truePeakKernel ?? []);
+    const TAPS = this._kernel.length;
+    this._taps = TAPS;
+    const KERNEL_DELAY = Math.floor(TAPS / 2);
+    this._kernelDelay = KERNEL_DELAY;
 
     const overSr = sampleRate * OVERSAMPLE;
     const lookaheadSamples = Math.max(1, Math.round((lookaheadMs / 1000) * overSr));
@@ -102,7 +105,7 @@ class LimiterProcessor extends AudioWorkletProcessor {
     // [p - dilateHalfOver, p + lookaheadSamples + dilateHalfOver - 1].
     this._offset = lookaheadSamples + dilateHalfOver - 1;
 
-    this._ceilingLinear = Math.pow(10, (ceilingDb - SAFETY_MARGIN_DB) / 20);
+    this._ceilingLinear = Math.pow(10, (ceilingDb - safetyMarginDb) / 20);
     this._alphaRelease = 1 - Math.exp(-1 / ((releaseMs / 1000) * overSr));
     this._slowNeedDb = 0;
 
@@ -135,6 +138,9 @@ class LimiterProcessor extends AudioWorkletProcessor {
   process(inputs, outputs) {
     const input = inputs[0];
     const output = outputs[0];
+    const KERNEL = this._kernel;
+    const TAPS = this._taps;
+    const KERNEL_DELAY = this._kernelDelay;
     const nCh = this._numberOfChannels;
     const blockLen = (output[0] && output[0].length) || 128;
 
@@ -213,8 +219,3 @@ class LimiterProcessor extends AudioWorkletProcessor {
 }
 
 registerProcessor("limiter-processor", LimiterProcessor);
-
-// Re-exported (from the `import` above) for `limiterWorklet.test.ts`'s drift
-// guard only — harmless in the real worklet, `registerProcessor` above
-// doesn't care what else this module exports.
-export { KERNEL, TAPS, OVERSAMPLE };

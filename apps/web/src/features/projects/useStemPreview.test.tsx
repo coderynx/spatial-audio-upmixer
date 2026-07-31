@@ -486,6 +486,13 @@ describe("output-path hearing safety", () => {
     expect(lastContext().waveShapers.length).toBe(1);
     expect(FakeAudioWorkletNode.instances.length).toBe(1);
     expect(FakeAudioWorkletNode.instances[0].name).toBe("limiter-processor");
+    // The true-peak kernel is passed as data (masteringProfiles.ts is the
+    // single source); the worklet builds no kernel of its own.
+    const limiterOptions = FakeAudioWorkletNode.instances[0].options as {
+      processorOptions: { truePeakKernel: number[]; safetyMarginDb: number };
+    };
+    expect(limiterOptions.processorOptions.truePeakKernel.length).toBe(32);
+    expect(limiterOptions.processorOptions.safetyMarginDb).toBe(0.1);
   });
 
   it("falls back to a tanh soft-limit WaveShaper on the native path if the limiter worklet module fails to load", async () => {

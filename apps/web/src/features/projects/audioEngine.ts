@@ -8,6 +8,7 @@ import {
   buildHeightSend,
   buildSoftLimitCurve,
   buildSurroundSend,
+  buildTruePeakKernel,
   channelGroupGain,
   estimateRouteScale,
   measureBufferTruePeakDbtp,
@@ -1517,6 +1518,8 @@ export class PreviewAudioEngine {
             ceilingDb: this.mastering?.loudness?.max_tp ?? -1,
             lookaheadMs: this.constants.limiterLookaheadMs,
             releaseMs: this.constants.limiterReleaseMs,
+            safetyMarginDb: this.constants.safetyMarginDb,
+            truePeakKernel: Array.from(buildTruePeakKernel()),
             numberOfChannels: Math.max(1, layoutChannelList.length),
           },
         })

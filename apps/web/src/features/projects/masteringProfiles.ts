@@ -540,6 +540,7 @@ export type ServedEngineConstants = {
   soft_limit_threshold: number;
   limiter_lookahead_ms: number;
   limiter_release_ms: number;
+  safety_margin_db: number;
   loudness_max_gain_db: number;
   surround_downmix_coeff: number;
   itu_center_coeff: number;
@@ -572,6 +573,7 @@ export type EngineConstants = {
   softLimitThreshold: number;
   limiterLookaheadMs: number;
   limiterReleaseMs: number;
+  safetyMarginDb: number;
   loudnessMaxGainDb: number;
   surroundDownmixCoeff: number;
   ituCenterCoeff: number;
@@ -632,6 +634,7 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     softLimitThreshold: s.soft_limit_threshold,
     limiterLookaheadMs: s.limiter_lookahead_ms,
     limiterReleaseMs: s.limiter_release_ms,
+    safetyMarginDb: s.safety_margin_db,
     loudnessMaxGainDb: s.loudness_max_gain_db,
     surroundDownmixCoeff: s.surround_downmix_coeff,
     ituCenterCoeff: s.itu_center_coeff,

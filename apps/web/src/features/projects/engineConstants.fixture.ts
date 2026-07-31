@@ -32,6 +32,7 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
   soft_limit_threshold: 0.95,
   limiter_lookahead_ms: 5.0,
   limiter_release_ms: 50.0,
+  safety_margin_db: 0.1,
   loudness_max_gain_db: 30.0,
   surround_downmix_coeff: 0.7071,
   itu_center_coeff: 1 / Math.sqrt(2),
