@@ -229,9 +229,9 @@ Applied **after** decode + LFE re-add, in this order: crossfeed → bass shelf
 |---|---|---|---|
 | Crossfeed amount | 0 | 0 | 0.10 |
 | Crossfeed cutoff | — | — | 700 Hz |
-| Bass shelf | — | — | +2.0 dB @ 100 Hz (low-shelf) |
-| Air shelf | — | — | +3.0 dB @ 10000 Hz (high-shelf) |
-| Presence peak | — | — | +1.5 dB @ 3000 Hz, Q 0.9 |
+| Bass shelf | — | — | +1.0 dB @ 100 Hz (low-shelf) |
+| Air shelf | — | — | +4.0 dB @ 10000 Hz (high-shelf) |
+| Presence peak | — | — | +2.0 dB @ 3000 Hz, Q 0.9 |
 | Stereo widen (M/S side scale) | 0 | 0 | +15% |
 | Loudness target | −18.0 LKFS (config default) | −18.0 LKFS | −18.0 LKFS (config default) |
 
@@ -240,7 +240,7 @@ deliberately **flattering "hi-fi enhance"** voicing — its job is to make
 headphone playback sound like an impressive hi-fi system, not to be neutral.
 It shares Studio's room amount (§4, warmer cinema tail) and layers an
 obvious, consumer-style enhancement on top: a Harman-style tonal tilt
-(+2 dB low-end warmth, +3 dB air, +1.5 dB presence for clarity), a
+(+1 dB low-end warmth, +4 dB air, +2.0 dB presence for clarity), a
 cinema-width soundstage (+15% side), and light crossfeed (0.10) for
 externalization. It is **loudness-matched** to `studio` (no target of its
 own — an earlier revision added a +2 dB lift, but that inflated perceived

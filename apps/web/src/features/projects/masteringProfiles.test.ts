@@ -46,9 +46,9 @@ describe("VOICING_PARAMS.listening", () => {
     // doubled analogous values on the web side with nothing catching it.
     const listening = VOICING_PARAMS.listening;
     expect(listening.crossfeedAmount).toBeCloseTo(0.10);
-    expect(listening.bassShelfGainDb).toBeCloseTo(2.0);
-    expect(listening.airShelfGainDb).toBeCloseTo(3.0);
-    expect(listening.presenceGainDb).toBeCloseTo(1.5);
+    expect(listening.bassShelfGainDb).toBeCloseTo(1.0);
+    expect(listening.airShelfGainDb).toBeCloseTo(4.0);
+    expect(listening.presenceGainDb).toBeCloseTo(2.0);
     expect(listening.stereoWiden).toBeCloseTo(0.15);
     expect(listening.loudnessTargetLkfs).toBeNull();
   });

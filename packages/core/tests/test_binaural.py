@@ -55,9 +55,9 @@ def test_listening_voicing_params_exact():
     # doubled these values on the web side is caught here too.
     params = VOICING_PARAMS[BinauralProfile.LISTENING]
     assert params.crossfeed_amount == pytest.approx(0.10)
-    assert params.bass_shelf_gain_db == pytest.approx(2.0)
-    assert params.air_shelf_gain_db == pytest.approx(3.0)
-    assert params.presence_gain_db == pytest.approx(1.5)
+    assert params.bass_shelf_gain_db == pytest.approx(1.0)
+    assert params.air_shelf_gain_db == pytest.approx(4.0)
+    assert params.presence_gain_db == pytest.approx(2.0)
     assert params.stereo_widen == pytest.approx(0.15)
     assert params.loudness_target_lkfs is None
 

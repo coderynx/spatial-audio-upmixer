@@ -421,9 +421,9 @@ export const VOICING_PARAMS: Record<SpatialProfile, VoicingParams> = {
   studio: NEUTRAL_VOICING,
   listening: {
     crossfeedAmount: 0.10, crossfeedCutoffHz: 700,
-    bassShelfHz: 100, bassShelfGainDb: 2.0,
-    airShelfHz: 10000, airShelfGainDb: 3.0,
-    presenceHz: 3000, presenceGainDb: 1.5, presenceQ: 0.9,
+    bassShelfHz: 100, bassShelfGainDb: 1.0,
+    airShelfHz: 10000, airShelfGainDb: 4.0,
+    presenceHz: 3000, presenceGainDb: 2.0, presenceQ: 0.9,
     stereoWiden: 0.15, loudnessTargetLkfs: null,
   },
 };
