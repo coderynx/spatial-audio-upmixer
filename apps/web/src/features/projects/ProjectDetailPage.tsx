@@ -288,15 +288,21 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       // Storage being unavailable only costs the preference, not the view.
     }
   }, [projectId, trackRailCollapsed]);
+  // Mastering is always per-track (see trackManifest below): the Mastering tab
+  // edits the selected track's master and saves it to that track's overrides,
+  // never the project-level default. The preview must render that same
+  // per-track master — sourcing it from `effectiveManifest` instead would read
+  // the project-level block in the default project edit-scope, so per-track
+  // mastering edits would never reach the audio engine.
   // strength/spectrum/rms come from the manifest (instant, no round-trip); the FIR
   // and RMS gain come from the server-precomputed asset — see Ledger D12.
   const previewMastering = React.useMemo(() => {
-    if (!effectiveManifest?.mastering) return effectiveManifest?.mastering;
+    if (!trackManifest?.mastering) return trackManifest?.mastering;
     const asset = project?.reference_match;
-    if (!asset) return effectiveManifest.mastering;
-    const liveMatch = effectiveManifest.mastering.match_reference;
+    if (!asset) return trackManifest.mastering;
+    const liveMatch = trackManifest.mastering.match_reference;
     return {
-      ...effectiveManifest.mastering,
+      ...trackManifest.mastering,
       match_reference: {
         fir_url: asset.fir_url,
         channels: asset.channels,
@@ -306,7 +312,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         rms: liveMatch?.rms ?? asset.rms,
       },
     };
-  }, [effectiveManifest?.mastering, project?.reference_match]);
+  }, [trackManifest?.mastering, project?.reference_match]);
   const engineConstants = React.useMemo(
     () => (configuration?.constants ? resolveEngineConstants(configuration.constants) : null),
     [configuration],
