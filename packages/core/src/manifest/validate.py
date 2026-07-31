@@ -6,6 +6,7 @@ import re
 
 from upmixer.formats import ChannelLabel
 from upmixer.manifest.schema import _BLOCK_REGISTRY, BlockMapping, ManifestError, _leaf_type
+from upmixer.separation.bleed_reduction import DEBLEED_MODELS, PHASE_FIX_REFERENCE_MODELS
 from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
 
 _SEMVER_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
@@ -57,6 +58,9 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             "engine.stem_silence_min_duration_s": 0.0,
             "engine.stem_silence_crossfade_ms": 0.0,
             "engine.stem_silence_pad_ms": 0.0,
+            "engine.stem_phase_fix_low_hz": 1.0,
+            "engine.stem_phase_fix_high_hz": 1.0,
+            "engine.stem_phase_fix_scale": 0.0,
             "processing.preview_duration": 0.0,
             "processing.preview_start": 0.0,
             "routing.lfe_cutoff": 0.0,
@@ -74,6 +78,7 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             "mixing.stem_source_anchor_strength": 1.0,
             "mastering.eq.strength": 1.0,
             "mastering.match_reference.strength": 1.0,
+            "engine.stem_phase_fix_scale": 1.0,
         }
         if path in minimums and float(value) < minimums[path]:
             raise ManifestError(f"{path} must be at least {minimums[path]}.")
@@ -87,6 +92,8 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
         "mixing.spatial.profile": {"auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"},
         "format.binaural.profile": set(_binaural_profile_choices()),
         "format.transaural.profile": set(_transaural_profile_choices()),
+        "engine.stem_phase_fix_reference_model": set(PHASE_FIX_REFERENCE_MODELS),
+        "engine.stem_debleed_model": set(DEBLEED_MODELS),
     }
     if path in choices and value not in choices[path]:
         raise ManifestError(f"{path} has an unsupported value: {value!r}.")

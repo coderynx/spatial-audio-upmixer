@@ -36,7 +36,24 @@ _SEPARATION_ENGINE_KEYS = (
     "stem_batch_size", "stem_segment_size", "stem_chunk_duration_s",
     "stem_model_cache_size", "stem_silence_skip", "stem_silence_threshold_db",
     "stem_silence_min_duration_s", "stem_silence_crossfade_ms", "stem_silence_pad_ms",
+    "stem_bleed_reduction", "stem_phase_fix", "stem_phase_fix_low_hz",
+    "stem_phase_fix_high_hz", "stem_phase_fix_scale", "stem_phase_fix_reference_model",
+    "stem_debleed", "stem_debleed_model",
 )
+
+# Engine keys a per-file extraction override may set (bleed reduction is chosen
+# per file at prepare time, like the stem list).
+_TRACK_ENGINE_OVERRIDE_KEYS = {
+    "stems",
+    "stem_bleed_reduction",
+    "stem_phase_fix",
+    "stem_phase_fix_low_hz",
+    "stem_phase_fix_high_hz",
+    "stem_phase_fix_scale",
+    "stem_phase_fix_reference_model",
+    "stem_debleed",
+    "stem_debleed_model",
+}
 
 
 class ProjectStateConflict(ValueError):
@@ -68,8 +85,10 @@ def _validate_track_overrides(project: Project, overrides: dict[str, Any]) -> No
     if unknown:
         raise ValueError(f"Unknown track override blocks: {', '.join(sorted(unknown))}")
     engine = overrides.get("engine", {})
-    if engine and (not isinstance(engine, dict) or set(engine) - {"stems"}):
-        raise ValueError("Track engine overrides may only set stems")
+    if engine and (not isinstance(engine, dict) or set(engine) - _TRACK_ENGINE_OVERRIDE_KEYS):
+        raise ValueError(
+            "Track engine overrides may only set stems and bleed-reduction settings"
+        )
     if isinstance(engine, dict) and "stems" in engine:
         stems = _normalize_project_stems(engine["stems"])
         if any(stem not in project.requested_stems for stem in stems):

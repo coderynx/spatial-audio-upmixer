@@ -1,14 +1,20 @@
 """Tests for stem_plan: vocabulary, resolver, and cache key contract."""
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from upmixer.separation.stem_plan import (
     DEFAULT_STEMS,
+    DEUX_OUTPUT_STEMS,
     MODEL_CROWD,
+    MODEL_DEUX,
     MODEL_DRUMS,
     MODEL_KARAOKE,
     MODEL_PRIMARY,
+    PRIMARY_INSTRUMENTAL_STEMS,
+    PRIMARY_OUTPUT_STEMS,
     SeparationPlan,
     normalize_stems,
     resolve_separation_plan,
@@ -62,89 +68,145 @@ class TestNormalizeStems:
 # ── resolve_separation_plan ────────────────────────────────────────────────────
 
 class TestResolveSeparationPlan:
-    def test_primary_subsets_share_inference_cache_identity(self):
+    def test_bass_subset_shares_inference_cache_identity_with_full(self):
+        """A subset that still needs the primary stage shares its cascade shape."""
+        bass = resolve_separation_plan(["Bass"])
+        full = resolve_separation_plan(DEFAULT_STEMS)
+        assert bass.stems_hash != full.stems_hash
+        assert bass.inference_hash == full.inference_hash
+
+    def test_vocals_only_skips_primary_stage(self):
+        """Vocals-only comes entirely from deux; the primary stage is skipped."""
         vocals = resolve_separation_plan(["Vocals"])
         full = resolve_separation_plan(DEFAULT_STEMS)
-        assert vocals.stems_hash != full.stems_hash
-        assert vocals.inference_hash == full.inference_hash
+        assert len(vocals.tasks) == 1
+        assert vocals.tasks[0].model == MODEL_DEUX
+        assert not any(t.model == MODEL_PRIMARY for t in vocals.tasks)
+        assert vocals.inference_hash != full.inference_hash
 
     def test_extra_stage_changes_inference_cache_identity(self):
-        primary = resolve_separation_plan(["Drums"])
+        drums = resolve_separation_plan(["Drums"])
         drum_subs = resolve_separation_plan(["Kick"])
-        assert primary.inference_hash != drum_subs.inference_hash
+        assert drums.inference_hash != drum_subs.inference_hash
 
-    def test_default_6stem_single_task(self):
-        """No drum subs, no crowd → Stage 1 only."""
+    def test_deux_prestage_feeds_primary(self):
+        """deux's instrumental residual, not the raw mix, feeds the primary model."""
         plan = resolve_separation_plan(DEFAULT_STEMS)
-        assert len(plan.tasks) == 1
-        task = plan.tasks[0]
-        assert task.model == MODEL_PRIMARY
-        assert task.input_source == "original"
-        assert "Vocals" in task.keep_stems
-        assert "Drums" in task.keep_stems
-        assert "Bass" in task.keep_stems
+        assert len(plan.tasks) == 2
+        deux_task, primary_task = plan.tasks
+        assert deux_task.model == MODEL_DEUX
+        assert deux_task.output_stems == DEUX_OUTPUT_STEMS
+        assert primary_task.model == MODEL_PRIMARY
+        assert primary_task.input_source == "_deux_inst"
+        assert "Vocals" not in primary_task.keep_stems
+
+    def test_primary_output_stems_excludes_vocals(self):
+        """Regression: primary's own Vocals output must never be advertised.
+
+        Both deux and primary produce a stem tagged "Vocals" (primary's is a
+        vocals-free residual, since its input is already deux's instrumental).
+        If primary's output_stems included "Vocals" too, _execute_plan's
+        later_inputs/keep_on_disk logic would write both to the same
+        "Vocals" key in its on-disk intermediate dict, and primary — running
+        second — would silently clobber deux's real Vocals before karaoke
+        ever reads it. This must hold whether or not karaoke also runs.
+        """
+        plan = resolve_separation_plan(DEFAULT_STEMS)
+        primary_task = next(t for t in plan.tasks if t.model == MODEL_PRIMARY)
+        assert primary_task.output_stems == PRIMARY_INSTRUMENTAL_STEMS
+        assert "Vocals" not in primary_task.output_stems
+
+        vocal_plan = resolve_separation_plan(["Lead Vocals", "Backing Vocals", "Bass"])
+        primary_task = next(t for t in vocal_plan.tasks if t.model == MODEL_PRIMARY)
+        assert "Vocals" not in primary_task.output_stems
+
+    def test_deux_prestage_alters_inference_hash(self):
+        """The deux pre-stage must change cache identity vs. the pre-cascade shape."""
+        old_identity = f"{MODEL_PRIMARY}:original:{','.join(sorted(PRIMARY_OUTPUT_STEMS))}:"
+        old_hash = hashlib.sha256(old_identity.encode()).hexdigest()[:20]
+        plan = resolve_separation_plan(DEFAULT_STEMS)
+        assert plan.inference_hash != old_hash
+
+    def test_default_6stem_two_tasks(self):
+        """deux supplies Vocals; primary supplies the rest, fed by deux's residual."""
+        plan = resolve_separation_plan(DEFAULT_STEMS)
+        assert len(plan.tasks) == 2
+        deux_task, primary_task = plan.tasks
+        assert deux_task.model == MODEL_DEUX
+        assert deux_task.input_source == "original"
+        assert deux_task.keep_stems == frozenset({"Vocals"})
+        assert primary_task.model == MODEL_PRIMARY
+        assert primary_task.input_source == "_deux_inst"
+        assert primary_task.keep_stems == frozenset(
+            {"Bass", "Drums", "Guitar", "Piano", "Other"}
+        )
 
     def test_empty_input_uses_defaults(self):
         plan = resolve_separation_plan([])
-        assert len(plan.tasks) == 1
-        assert plan.tasks[0].model == MODEL_PRIMARY
+        assert len(plan.tasks) == 2
+        assert plan.tasks[0].model == MODEL_DEUX
+        assert plan.tasks[1].model == MODEL_PRIMARY
         assert plan.requested_stems == frozenset(DEFAULT_STEMS)
 
-    def test_crowd_plus_drum_subs_three_stages(self):
-        """Stage 0 (crowd) → Stage 1 (primary) → Stage 2 (drumsep)."""
+    def test_crowd_plus_drum_subs_four_stages(self):
+        """crowd → deux → primary → drumsep."""
         canonical = normalize_stems(["vocals", "crowd", "kick", "snare"])
         plan = resolve_separation_plan(canonical)
-        assert len(plan.tasks) == 3
+        assert len(plan.tasks) == 4
 
-        stage0, stage1, stage2 = plan.tasks
+        stage0, stage1, stage2, stage3 = plan.tasks
         assert stage0.model == MODEL_CROWD
         assert stage0.input_source == "original"
         assert "Crowd" in stage0.keep_stems
 
-        assert stage1.model == MODEL_PRIMARY
+        assert stage1.model == MODEL_DEUX
         assert stage1.input_source == "_crowd_other"
         assert "Vocals" in stage1.keep_stems
         assert "Crowd" not in stage1.keep_stems  # Crowd came from Stage 0
 
-        assert stage2.model == MODEL_DRUMS
-        assert stage2.input_source == "Drums"
-        assert stage2.keep_stems == frozenset({"Kick", "Snare"})
+        assert stage2.model == MODEL_PRIMARY
+        assert stage2.input_source == "_deux_inst"
 
-    def test_drum_subs_only_two_stages(self):
-        """No crowd → Stage 1 (primary) + Stage 2 (drumsep)."""
+        assert stage3.model == MODEL_DRUMS
+        assert stage3.input_source == "Drums"
+        assert stage3.keep_stems == frozenset({"Kick", "Snare"})
+
+    def test_drum_subs_only_three_stages(self):
+        """No crowd → deux → primary → drumsep."""
         canonical = normalize_stems(["kick", "hi-hat"])
         plan = resolve_separation_plan(canonical)
-        assert len(plan.tasks) == 2
+        assert len(plan.tasks) == 3
 
-        stage1, stage2 = plan.tasks
-        assert stage1.model == MODEL_PRIMARY
-        assert stage1.input_source == "original"
+        deux_task, primary_task, drumsep_task = plan.tasks
+        assert deux_task.model == MODEL_DEUX
+        assert deux_task.input_source == "original"
+        assert primary_task.model == MODEL_PRIMARY
+        assert primary_task.input_source == "_deux_inst"
         # "Drums" not in requested_stems — kept only as intermediate
         assert "Drums" not in plan.requested_stems
 
-        assert stage2.model == MODEL_DRUMS
-        assert stage2.input_source == "Drums"
-        assert stage2.keep_stems == frozenset({"Kick", "Hi-Hat"})
+        assert drumsep_task.model == MODEL_DRUMS
+        assert drumsep_task.input_source == "Drums"
+        assert drumsep_task.keep_stems == frozenset({"Kick", "Hi-Hat"})
 
     def test_drum_sub_stems_replace_parent_in_final_mix(self):
         """Parent Drums must not be mixed with its derived sub-stems."""
         canonical = normalize_stems(["drums", "kick"])
         plan = resolve_separation_plan(canonical)
-        assert len(plan.tasks) == 2
+        assert len(plan.tasks) == 3
 
-        stage1, stage2 = plan.tasks
-        assert "Drums" not in stage1.keep_stems
+        *_, drumsep_task = plan.tasks
         assert "Drums" not in plan.requested_stems
-        assert stage2.keep_stems == frozenset({"Kick"})
+        assert drumsep_task.keep_stems == frozenset({"Kick"})
 
     def test_backing_vocals_only_two_stages(self):
-        """backing-vocals alone runs primary then karaoke."""
+        """backing-vocals alone runs deux then karaoke — primary is skipped."""
         canonical = normalize_stems(["backing-vocals"])
         plan = resolve_separation_plan(canonical)
         assert len(plan.tasks) == 2
 
         stage1, stage2 = plan.tasks
-        assert stage1.model == MODEL_PRIMARY
+        assert stage1.model == MODEL_DEUX
         assert stage1.input_source == "original"
 
         assert stage2.model == MODEL_KARAOKE
@@ -176,14 +238,14 @@ class TestResolveSeparationPlan:
         assert plan.requested_stems == frozenset({"Lead Vocals", "Backing Vocals"})
 
     def test_crowd_plus_backing_vocals_three_stages(self):
-        """Stage 0 (crowd) → Stage 1 (primary on residual) → karaoke."""
+        """crowd → deux (on residual) → karaoke; primary is skipped."""
         canonical = normalize_stems(["crowd", "backing-vocals"])
         plan = resolve_separation_plan(canonical)
         assert len(plan.tasks) == 3
 
         stage0, stage1, stage2 = plan.tasks
         assert stage0.model == MODEL_CROWD
-        assert stage1.model == MODEL_PRIMARY
+        assert stage1.model == MODEL_DEUX
         assert stage1.input_source == "_crowd_other"
         assert stage2.model == MODEL_KARAOKE
         assert stage2.input_source == "Vocals"
@@ -226,13 +288,19 @@ class TestResolveSeparationPlan:
         plan = resolve_separation_plan(["Vocals"])
         assert isinstance(plan, SeparationPlan)
 
-    def test_primary_stage_input_uses_crowd_other_when_crowd_present(self):
-        """Stage 1 must read from _crowd_other, not original, when crowd was requested."""
+    def test_deux_stage_input_uses_crowd_other_when_crowd_present(self):
+        """deux must read from _crowd_other, not original, when crowd was requested."""
         plan = resolve_separation_plan(["Vocals", "Crowd"])
-        primary_task = next(t for t in plan.tasks if t.model == MODEL_PRIMARY)
-        assert primary_task.input_source == "_crowd_other"
+        deux_task = next(t for t in plan.tasks if t.model == MODEL_DEUX)
+        assert deux_task.input_source == "_crowd_other"
 
-    def test_primary_stage_reads_original_without_crowd(self):
+    def test_primary_stage_input_uses_deux_instrumental_when_crowd_present(self):
+        """primary must read deux's residual even when crowd also ran."""
+        plan = resolve_separation_plan(["Bass", "Crowd"])
+        primary_task = next(t for t in plan.tasks if t.model == MODEL_PRIMARY)
+        assert primary_task.input_source == "_deux_inst"
+
+    def test_first_stage_reads_original_without_crowd(self):
         plan = resolve_separation_plan(["Vocals", "Bass"])
         assert plan.tasks[0].input_source == "original"
 
@@ -301,3 +369,43 @@ def test_stem_cache_identity_changes_for_inference_overrides():
     assert tta_identity != default_identity
     assert pitch_identity != default_identity
     assert len({overlap_identity, tta_identity, pitch_identity, tuned_identity}) == 4
+
+
+def test_stem_cache_identity_changes_for_bleed_reduction():
+    from upmixer.config import UpmixConfig
+    from upmixer.separation.stem_pipeline import _stem_cache_identity
+
+    plan = resolve_separation_plan(["Vocals", "Bass"])
+    default_identity = _stem_cache_identity(plan, UpmixConfig())
+    gate_identity = _stem_cache_identity(
+        plan, UpmixConfig(stem_bleed_reduction=True)
+    )
+    low_identity = _stem_cache_identity(
+        plan, UpmixConfig(stem_bleed_reduction=True, stem_phase_fix_low_hz=200.0)
+    )
+    scale_identity = _stem_cache_identity(
+        plan, UpmixConfig(stem_bleed_reduction=True, stem_phase_fix_scale=0.5)
+    )
+    debleed_identity = _stem_cache_identity(
+        plan,
+        UpmixConfig(
+            stem_bleed_reduction=True,
+            stem_debleed_model="mel_band_roformer_denoise_debleed_gabox.ckpt",
+        ),
+    )
+    override_identity = _stem_cache_identity(
+        plan, UpmixConfig(stem_bleed_reduction=True, stem_phase_fix={"Other": False})
+    )
+
+    # Gate off leaves the plan hash untouched; any enabled variant diverges.
+    assert default_identity == plan.inference_hash
+    assert gate_identity != default_identity
+    assert len(
+        {
+            gate_identity,
+            low_identity,
+            scale_identity,
+            debleed_identity,
+            override_identity,
+        }
+    ) == 5

@@ -159,6 +159,9 @@ MODEL_STEM_OVERRIDES: dict[str, dict[str, str]] = {
     "mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt": {
         "other": "_crowd_other",
     },
+    "becruily_deux.ckpt": {
+        "instrumental": "_deux_inst",
+    },
     # Fed the isolated Vocals stem, this model emits the lead as "Vocals" and
     # the backing vocal residual as "Instrumental".
     "mel_band_roformer_karaoke_gabox_v2.ckpt": {

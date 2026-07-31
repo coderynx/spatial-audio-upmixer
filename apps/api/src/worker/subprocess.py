@@ -28,7 +28,7 @@ class WorkItem:
     """One track's processing work, picklable across the process boundary."""
 
     track_id: str
-    mode: Literal["stem", "realtime"]
+    mode: Literal["stem", "stem_prepare", "realtime"]
     input_path: str
     output_path: str
     config: UpmixConfig
@@ -61,7 +61,7 @@ def _run_work_items(items: list[WorkItem], progress_queue, cancel_event) -> None
                 progress_queue.put(("progress", tid, message, fraction))
 
             try:
-                if item.mode == "stem":
+                if item.mode in ("stem", "stem_prepare"):
                     if item.custom_routing is not None:
                         pipeline: StemUpmixPipeline = StemUpmixPipeline(
                             config=item.config, custom_routing=item.custom_routing,
@@ -72,12 +72,19 @@ def _run_work_items(items: list[WorkItem], progress_queue, cancel_event) -> None
                         stem_pipeline.config = item.config
                         pipeline = stem_pipeline
                     try:
-                        result = pipeline.process_file(
-                            item.input_path,
-                            item.output_path,
-                            input_format_override=item.input_format_override,
-                            progress_callback=_callback,
-                        )
+                        if item.mode == "stem_prepare":
+                            result = pipeline.prepare_stems(
+                                item.input_path,
+                                input_format_override=item.input_format_override,
+                                progress_callback=_callback,
+                            )
+                        else:
+                            result = pipeline.process_file(
+                                item.input_path,
+                                item.output_path,
+                                input_format_override=item.input_format_override,
+                                progress_callback=_callback,
+                            )
                     finally:
                         if pipeline is not stem_pipeline:
                             pipeline.close()

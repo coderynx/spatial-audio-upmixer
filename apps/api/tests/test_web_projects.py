@@ -11,6 +11,22 @@ from upmixer_web.settings import Settings
 from _helpers import _wav_bytes
 
 
+def test_separation_settings_detects_bleed_reduction_changes():
+    from upmixer_web.features.projects.service import _separation_settings
+
+    off = {"engine": {"mode": "stem"}}
+    on = {"engine": {"mode": "stem", "stem_bleed_reduction": True}}
+    tuned = {
+        "engine": {
+            "mode": "stem",
+            "stem_bleed_reduction": True,
+            "stem_phase_fix_scale": 0.5,
+        }
+    }
+    assert _separation_settings(off) != _separation_settings(on)
+    assert _separation_settings(on) != _separation_settings(tuned)
+
+
 def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch):
     settings = Settings(
         data_dir=tmp_path,
@@ -476,7 +492,13 @@ def test_add_project_assets_stores_per_file_overrides_and_unions_stems(tmp_path,
             "import_id": imported["id"],
             "per_asset_overrides": {
                 asset_id: {
-                    "engine": {"stems": ["Bass"]},
+                    "engine": {
+                        "stems": ["Bass"],
+                        "stem_bleed_reduction": True,
+                        "stem_phase_fix_scale": 0.6,
+                        "stem_debleed_model": "mel_band_roformer_denoise_debleed_gabox.ckpt",
+                        "stem_debleed": {"Bass": True},
+                    },
                     "format": {"sample_rate": 48000, "subtype": "PCM_24"},
                     "mixing": {"channel_layout": "7.1.4"},
                 },
@@ -486,7 +508,12 @@ def test_add_project_assets_stores_per_file_overrides_and_unions_stems(tmp_path,
         project = response.json()
         assert project["requested_stems"] == ["Vocals", "Bass"]
         track = project["tracks"][0]
-        assert track["manifest_overrides"]["engine"]["stems"] == ["Bass"]
+        engine = track["manifest_overrides"]["engine"]
+        assert engine["stems"] == ["Bass"]
+        assert engine["stem_bleed_reduction"] is True
+        assert engine["stem_phase_fix_scale"] == 0.6
+        assert engine["stem_debleed_model"] == "mel_band_roformer_denoise_debleed_gabox.ckpt"
+        assert engine["stem_debleed"] == {"Bass": True}
         assert track["manifest_overrides"]["format"]["sample_rate"] == 48000
         assert track["manifest_overrides"]["format"]["subtype"] == "PCM_24"
         assert track["manifest_overrides"]["mixing"]["channel_layout"] == "7.1.4"

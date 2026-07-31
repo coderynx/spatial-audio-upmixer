@@ -121,7 +121,7 @@ class ProjectRunnerMixin:
                     index_by_track[track_id] = index
                     work_items.append(WorkItem(
                         track_id=track_id,
-                        mode="stem",
+                        mode="stem_prepare",
                         input_path=asset_job.input,
                         output_path=asset_job.output,
                         config=config,

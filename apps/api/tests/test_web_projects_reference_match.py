@@ -30,6 +30,15 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    # These tests exercise signature/FIR/scheduling bookkeeping on the
+    # assumption stems are already cached (the real invariant, guaranteed by
+    # `project.prepared_stems` only going true after a real prepare_stems
+    # pass) — not stems_cached()'s own miss-detection, which has its own
+    # dedicated test below.
+    monkeypatch.setattr(
+        "upmixer.separation.stem_pipeline.StemUpmixPipeline.stems_cached",
+        lambda self, input_path: True,
+    )
 
     upgrade_database(database_url)
     engine = create_database_engine(database_url)
@@ -190,6 +199,208 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
     engine.dispose()
 
 
+def test_worker_prepare_reference_match_applies_track_manifest_overrides(tmp_path, monkeypatch):
+    """prepare_reference_match's asset job must carry a track's
+    manifest_overrides (e.g. engine.stem_batch_size, set from
+    StemsSection.tsx), exactly like worker.py's _run_project does when it
+    originally cached the stems. Otherwise the stem-cache identity computed
+    here (see _stem_cache_identity in stem_pipeline.py) disagrees with the
+    cached entry, so this "cheap, stems-already-cached" precompute silently
+    re-runs a full GPU separation pass instead of hitting the cache — the
+    "Preparing reference EQ match" spinner then hangs for as long as
+    separation takes."""
+    from unittest.mock import patch
+
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'refmatch_overrides.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    # These tests exercise signature/FIR/scheduling bookkeeping on the
+    # assumption stems are already cached (the real invariant, guaranteed by
+    # `project.prepared_stems` only going true after a real prepare_stems
+    # pass) — not stems_cached()'s own miss-detection, which has its own
+    # dedicated test below.
+    monkeypatch.setattr(
+        "upmixer.separation.stem_pipeline.StemUpmixPipeline.stems_cached",
+        lambda self, input_path: True,
+    )
+
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+
+    captured_batch_sizes: list[int | None] = []
+
+    def _fake_execute_plan(self_inner, plan, sep_path, sep_sr, stage_callback=None):
+        captured_batch_sizes.append(self_inner.config.stem_batch_size)
+        audio, _ = sf.read(sep_path, dtype="float32", always_2d=True)
+        n = len(audio)
+        return {name: np.full((n, 2), 0.2, dtype=np.float32) for name in plan.requested_stems}
+
+    with TestClient(create_app(settings)) as client:
+        storage = client.app.state.storage
+        source_wav = tmp_path / "source.wav"
+        reference_wav = tmp_path / "reference.wav"
+        samples = np.arange(48_000 * 2) / 48_000
+        sf.write(source_wav, 0.2 * np.column_stack([
+            np.sin(2 * np.pi * 440.0 * samples), np.sin(2 * np.pi * 442.0 * samples),
+        ]), 48_000, subtype="FLOAT")
+        sf.write(reference_wav, 0.4 * np.column_stack([
+            np.sin(2 * np.pi * 440.0 * samples), np.sin(2 * np.pi * 442.0 * samples),
+        ]), 48_000, subtype="FLOAT")
+        storage.put_file("assets/source.wav", source_wav)
+        storage.put_file("references/reference.wav", reference_wav)
+
+        with factory() as session:
+            batch = ImportBatch(kind="track", title="Song")
+            asset = MediaAsset(
+                import_batch=batch, filename="source.wav", relative_path="source.wav",
+                storage_key="assets/source.wav", sha256="0" * 64, size_bytes=1,
+            )
+            reference = MasteringReference(
+                import_batch=batch, filename="reference.wav",
+                storage_key="references/reference.wav", sha256="1" * 64, size_bytes=1,
+            )
+            manifest = {
+                "version": "1.0.0",
+                "engine": {"mode": "stem", "stems": ["Vocals"]},
+                "mixing": {"channel_layout": "5.1"},
+                "mastering": {
+                    "match_reference": {
+                        "strength": 1.0, "spectrum": True, "rms": True, "max_db": 12.0,
+                    },
+                },
+            }
+            project = Project(
+                import_batch=batch, name="Ref match overrides project", manifest=manifest,
+                status="ready", prepared_stems=["Vocals"], requested_stems=["Vocals"],
+                mastering_reference=reference,
+            )
+            track = ProjectTrack(
+                project=project, asset=asset, position=0,
+                manifest_overrides={"engine": {"stem_batch_size": 4}},
+            )
+            session.add_all([batch, asset, reference, project, track])
+            session.commit()
+            project_id = project.id
+
+        manager = client.app.state.manager
+
+        with patch(
+            "upmixer.separation.stem_pipeline.StemUpmixPipeline._execute_plan",
+            _fake_execute_plan,
+        ):
+            manager.prepare_reference_match(project_id)
+
+        assert captured_batch_sizes, "separation should have run at least once"
+        assert all(size == 4 for size in captured_batch_sizes), (
+            "track.manifest_overrides must reach the reference-match asset job "
+            "so its stem-cache identity matches what stem-prep cached"
+        )
+
+    engine.dispose()
+
+
+def test_worker_prepare_reference_match_skips_on_stem_cache_miss(tmp_path, monkeypatch):
+    """When the project's stems don't actually hit the cache at the current
+    config (e.g. the separation plan/engine changed since the stems were
+    prepared, or settings drifted without a re-prepare), prepare_reference_match
+    must bail rather than fall through to a full uncached separation pass on
+    the caller's thread — that pass has no crash isolation and no progress
+    reporting, and can run for many minutes pegging the GPU behind a static
+    "Preparing reference EQ match" banner with no feedback. It must return
+    cleanly (no exception raised out of the worker loop) and leave no FIR
+    asset behind, so the frontend's fallback (original EQ, no reference
+    match) applies until a real re-prepare repopulates the cache."""
+    from unittest.mock import patch
+
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'refmatch_cache_miss.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+
+    execute_plan_called = {"n": 0}
+
+    def _fake_execute_plan(_self, plan, sep_path, sep_sr, stage_callback=None):
+        execute_plan_called["n"] += 1
+        audio, _ = sf.read(sep_path, dtype="float32", always_2d=True)
+        n = len(audio)
+        return {name: np.full((n, 2), 0.2, dtype=np.float32) for name in plan.requested_stems}
+
+    with TestClient(create_app(settings)) as client:
+        storage = client.app.state.storage
+        source_wav = tmp_path / "source.wav"
+        reference_wav = tmp_path / "reference.wav"
+        samples = np.arange(48_000 * 2) / 48_000
+        sf.write(source_wav, 0.2 * np.column_stack([
+            np.sin(2 * np.pi * 440.0 * samples), np.sin(2 * np.pi * 442.0 * samples),
+        ]), 48_000, subtype="FLOAT")
+        sf.write(reference_wav, 0.4 * np.column_stack([
+            np.sin(2 * np.pi * 440.0 * samples), np.sin(2 * np.pi * 442.0 * samples),
+        ]), 48_000, subtype="FLOAT")
+        storage.put_file("assets/source.wav", source_wav)
+        storage.put_file("references/reference.wav", reference_wav)
+
+        with factory() as session:
+            batch = ImportBatch(kind="track", title="Song")
+            asset = MediaAsset(
+                import_batch=batch, filename="source.wav", relative_path="source.wav",
+                storage_key="assets/source.wav", sha256="0" * 64, size_bytes=1,
+            )
+            reference = MasteringReference(
+                import_batch=batch, filename="reference.wav",
+                storage_key="references/reference.wav", sha256="1" * 64, size_bytes=1,
+            )
+            manifest = {
+                "version": "1.0.0",
+                "engine": {"mode": "stem", "stems": ["Vocals"]},
+                "mixing": {"channel_layout": "5.1"},
+                "mastering": {
+                    "match_reference": {
+                        "strength": 1.0, "spectrum": True, "rms": True, "max_db": 12.0,
+                    },
+                },
+            }
+            project = Project(
+                import_batch=batch, name="Ref match cache-miss project", manifest=manifest,
+                status="ready", prepared_stems=["Vocals"], requested_stems=["Vocals"],
+                mastering_reference=reference,
+            )
+            track = ProjectTrack(project=project, asset=asset, position=0)
+            session.add_all([batch, asset, reference, project, track])
+            session.commit()
+            project_id = project.id
+
+        manager = client.app.state.manager
+
+        # No prior prepare_stems pass ever ran for this track, so
+        # stems_cached() genuinely misses — real production never reaches
+        # here in this state (prepared_stems only goes true after a real,
+        # isolated prepare_stems pass), but this is exactly the state a
+        # drifted/rebuilt separation engine produces.
+        with patch(
+            "upmixer.separation.stem_pipeline.StemUpmixPipeline._execute_plan",
+            _fake_execute_plan,
+        ):
+            manager.prepare_reference_match(project_id)
+
+        assert execute_plan_called["n"] == 0, "must bail before running any separation"
+        assert client.app.state.project_stems.read_reference_match_meta(project_id) is None
+        assert not manager.reference_match_pending(project_id)
+
+    engine.dispose()
+
+
 def test_worker_schedule_reference_match_coalesces_and_reports_pending(tmp_path, monkeypatch):
     """schedule_reference_match must not run the heavy mix+PSD pass inline on
     the caller's thread — that was the CPU-storm bug: settings saves are
@@ -211,6 +422,15 @@ def test_worker_schedule_reference_match_coalesces_and_reports_pending(tmp_path,
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    # These tests exercise signature/FIR/scheduling bookkeeping on the
+    # assumption stems are already cached (the real invariant, guaranteed by
+    # `project.prepared_stems` only going true after a real prepare_stems
+    # pass) — not stems_cached()'s own miss-detection, which has its own
+    # dedicated test below.
+    monkeypatch.setattr(
+        "upmixer.separation.stem_pipeline.StemUpmixPipeline.stems_cached",
+        lambda self, input_path: True,
+    )
 
     upgrade_database(database_url)
     engine = create_database_engine(database_url)
@@ -324,6 +544,15 @@ def test_worker_schedule_reference_match_skips_pending_when_nothing_to_do(tmp_pa
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    # These tests exercise signature/FIR/scheduling bookkeeping on the
+    # assumption stems are already cached (the real invariant, guaranteed by
+    # `project.prepared_stems` only going true after a real prepare_stems
+    # pass) — not stems_cached()'s own miss-detection, which has its own
+    # dedicated test below.
+    monkeypatch.setattr(
+        "upmixer.separation.stem_pipeline.StemUpmixPipeline.stems_cached",
+        lambda self, input_path: True,
+    )
 
     upgrade_database(database_url)
     engine = create_database_engine(database_url)
@@ -438,6 +667,15 @@ def test_worker_schedule_reference_match_still_runs_to_clear_removed_reference(t
     settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    # These tests exercise signature/FIR/scheduling bookkeeping on the
+    # assumption stems are already cached (the real invariant, guaranteed by
+    # `project.prepared_stems` only going true after a real prepare_stems
+    # pass) — not stems_cached()'s own miss-detection, which has its own
+    # dedicated test below.
+    monkeypatch.setattr(
+        "upmixer.separation.stem_pipeline.StemUpmixPipeline.stems_cached",
+        lambda self, input_path: True,
+    )
 
     upgrade_database(database_url)
     engine = create_database_engine(database_url)

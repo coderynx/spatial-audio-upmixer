@@ -92,6 +92,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     from upmixer.mastering.bass import BASS_PROFILES
     from upmixer.mastering.compressor import COMP_PROFILES
     from upmixer.mastering.eq import EQ_PROFILES
+    from upmixer.separation.bleed_reduction import DEBLEED_MODELS, PHASE_FIX_REFERENCE_MODELS
     from upmixer.separation.stem_eq import STEM_EQ_PROFILES
     from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
     from upmixer.separation.stem_router import STEM_ROUTING_PRESET_NAMES
@@ -118,6 +119,8 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
             "compressor_profiles": sorted(COMP_PROFILES),
             "bass_profiles": sorted(BASS_PROFILES),
             "stem_eq_profiles": sorted(STEM_EQ_PROFILES),
+            "stem_phase_fix_reference_models": list(PHASE_FIX_REFERENCE_MODELS),
+            "stem_debleed_models": list(DEBLEED_MODELS),
             "stem_routing_presets": list(STEM_ROUTING_PRESET_NAMES),
             "layout_channels": {
                 name: [label.value for label in fmt.channels]

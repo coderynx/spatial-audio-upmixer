@@ -38,12 +38,16 @@ MODEL_CROWD = "mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt"
 
 MODEL_PRIMARY = "BS-Roformer-SW.ckpt"
 
+MODEL_DEUX = "becruily_deux.ckpt"
+
 MODEL_DRUMS = "MDX23C-DrumSep-aufr33-jarredou.ckpt"
 
 MODEL_KARAOKE = "mel_band_roformer_karaoke_gabox_v2.ckpt"
 _KARAOKE_OUTPUT_CACHE_TAG = "lead-vocals-v2"
 
+DEUX_OUTPUT_STEMS: frozenset[str] = frozenset({"Vocals", "_deux_inst"})
 PRIMARY_OUTPUT_STEMS: frozenset[str] = frozenset({"Vocals", "Bass", "Drums", "Guitar", "Piano", "Other"})
+PRIMARY_INSTRUMENTAL_STEMS: frozenset[str] = PRIMARY_OUTPUT_STEMS - {"Vocals"}
 DRUM_SUB_STEMS: frozenset[str] = frozenset({"Kick", "Snare", "Toms", "Hi-Hat", "Ride", "Crash"})
 VOCAL_SUB_STEMS: frozenset[str] = frozenset({"Lead Vocals", "Backing Vocals"})
 
@@ -61,8 +65,8 @@ class SeparationTask:
     Attributes:
         model:        Model filename to load (from the registry constants above).
         input_source: ``"original"`` for the raw input file, or a canonical stem
-                      name produced by a previous task (``"_crowd_other"`` or
-                      ``"Drums"``).
+                      name produced by a previous task (``"_crowd_other"``,
+                      ``"_deux_inst"``, ``"Drums"``, or ``"Vocals"``).
         output_stems: All canonical names this model can produce.
         keep_stems:   Final output stems the user requested from this task.
                       Does not include intermediates needed only by later stages.
@@ -130,10 +134,12 @@ def normalize_stems(stems: list[str]) -> list[str]:
 def resolve_separation_plan(canonical: list[str]) -> SeparationPlan:
     """Build an ordered execution plan for the given canonical stem names.
 
-    The resolver determines which of the three model tiers to invoke and in
-    what order, ensuring that crowd isolation runs before primary separation
-    when requested, and that drum and vocal sub-stems are extracted
-    hierarchically from primary-model parent stems.
+    The resolver determines which model tiers to invoke and in what order:
+    crowd isolation runs first when requested; the dual becruily-deux model
+    then supplies the final Vocals stem and a clean instrumental residual for
+    the primary model to separate the remaining instrument stems from; drum
+    and vocal sub-stems are extracted hierarchically from the primary/deux
+    parent stems.
 
     Args:
         canonical: Canonical (title-case) stem names — output of
@@ -163,15 +169,31 @@ def resolve_separation_plan(canonical: list[str]) -> SeparationPlan:
     primary_needed = bool(requested & PRIMARY_OUTPUT_STEMS)
     drum_sub_needed = bool(requested & DRUM_SUB_STEMS)
     vocal_sub_needed = bool(requested & VOCAL_SUB_STEMS)
+    deux_needed = primary_needed or drum_sub_needed or vocal_sub_needed
+    instrumental_needed = bool(requested & (PRIMARY_OUTPUT_STEMS - {"Vocals"}))
+    primary_stage_needed = instrumental_needed or drum_sub_needed
 
-    if primary_needed or drum_sub_needed or vocal_sub_needed:
-        stage1_input = "_crowd_other" if crowd_needed else "original"
-        stage1_keep = requested & PRIMARY_OUTPUT_STEMS
+    if deux_needed:
+        deux_input = "_crowd_other" if crowd_needed else "original"
+        tasks.append(SeparationTask(
+            model=MODEL_DEUX,
+            input_source=deux_input,
+            output_stems=DEUX_OUTPUT_STEMS,
+            keep_stems=requested & {"Vocals"},
+        ))
+
+    if primary_stage_needed:
+        # output_stems excludes Vocals (unlike PRIMARY_OUTPUT_STEMS): primary
+        # is always fed deux's residual, so its own Vocals output is a
+        # vocals-free leftover, not real vocal content. Keeping "Vocals" here
+        # would collide with deux's disk-cached Vocals key in _execute_plan
+        # (both stems land under the same canonical name) and karaoke would
+        # then run on whichever task wrote to disk last.
         tasks.append(SeparationTask(
             model=MODEL_PRIMARY,
-            input_source=stage1_input,
-            output_stems=PRIMARY_OUTPUT_STEMS,
-            keep_stems=stage1_keep,
+            input_source="_deux_inst",
+            output_stems=PRIMARY_INSTRUMENTAL_STEMS,
+            keep_stems=requested & PRIMARY_INSTRUMENTAL_STEMS,
         ))
 
     if drum_sub_needed:

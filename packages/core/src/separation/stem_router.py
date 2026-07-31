@@ -584,3 +584,38 @@ class StemRouter:
     def get_routing(self, stem_key: str) -> dict[str, float] | None:
         """Return effective routing dict for a stem key ("StemName" or "StemName@zone")."""
         return self._routing_for(stem_key)
+
+
+def stem_reaches_surround_height(
+    stem_key: str, output_fmt: OutputFormat
+) -> tuple[bool, bool]:
+    """Whether a stem's built-in routing sends to surround / height channels.
+
+    Uses the ZONE_ROUTING / DEFAULT_ROUTING tables only (not manifest or custom
+    overrides): the bleed-reduction gate runs at separation time, before any user
+    3D placement exists, so it keys on a stem's default spatial role rather than
+    its final routed position. Returns ``(reaches_surround, reaches_height)``
+    restricted to *output_fmt*.
+    """
+    if "@" in stem_key:
+        stem_name, zone = stem_key.rsplit("@", 1)
+        zone_routing = ZONE_ROUTING.get(zone, {})
+        base = (
+            zone_routing[stem_name]
+            if stem_name in zone_routing
+            else DEFAULT_ROUTING.get(stem_name)
+        )
+    else:
+        base = DEFAULT_ROUTING.get(stem_key)
+    if not base:
+        return (False, False)
+    fmt_channels = {label.value for label in output_fmt.channels}
+    surround = any(
+        label.value in base and label.value in fmt_channels
+        for label in _SURROUND_CHANNELS
+    )
+    height = any(
+        label.value in base and label.value in fmt_channels
+        for label in _HEIGHT_CHANNELS
+    )
+    return (surround, height)

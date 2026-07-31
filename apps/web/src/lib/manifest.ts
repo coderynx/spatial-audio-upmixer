@@ -10,6 +10,13 @@ export type Manifest = {
     stem_silence_min_duration_s: number;
     stem_silence_crossfade_ms: number;
     stem_silence_pad_ms: number;
+    stem_bleed_reduction: boolean;
+    stem_phase_fix_low_hz: number;
+    stem_phase_fix_high_hz: number;
+    stem_phase_fix_scale: number;
+    stem_phase_fix_reference_model: string;
+    stem_debleed: Record<string, boolean>;
+    stem_debleed_model: string;
   };
   mixing: {
     channel_layout: string;
@@ -115,6 +122,13 @@ export const defaultManifest: Manifest = {
     stem_silence_min_duration_s: 2,
     stem_silence_crossfade_ms: 10,
     stem_silence_pad_ms: 200,
+    stem_bleed_reduction: false,
+    stem_phase_fix_low_hz: 500,
+    stem_phase_fix_high_hz: 5000,
+    stem_phase_fix_scale: 0.8,
+    stem_phase_fix_reference_model: "kimmel_unwa_ft2_bleedless.ckpt",
+    stem_debleed: {},
+    stem_debleed_model: "mel_band_roformer_bleed_suppressor_v1.ckpt",
   },
   mixing: {
     channel_layout: "7.1.4",

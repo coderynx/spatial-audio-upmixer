@@ -156,12 +156,14 @@ class ReferenceMatchMixin:
         signature has drifted since the last compute; a cheap no-op
         otherwise.
 
-        Runs in the caller's thread rather than a :class:`JobSubprocess`:
-        stems are already cached (``process_file`` skips separation), so no
-        Torch/ONNX inference — the reason jobs need child-process crash
-        isolation — happens here. Safe to call after every project stem
-        preparation and every settings save; only a signature mismatch
-        triggers the actual mix + PSD-match pass.
+        Runs in the caller's thread rather than a :class:`JobSubprocess`: this
+        is only safe because it never runs inference itself — it relies on
+        stems already being cached and bails via ``StemUpmixPipeline.stems_cached``
+        if they are not (see that check below), rather than falling through to
+        a full uncached separation pass with none of JobSubprocess's crash
+        isolation or progress reporting. Safe to call after every project stem
+        preparation and every settings save; only a signature mismatch on an
+        actual cache hit triggers the mix + PSD-match pass.
         """
         with self.sessions() as session:
             project = get_project(session, project_id)
@@ -182,6 +184,7 @@ class ReferenceMatchMixin:
             manifest = copy.deepcopy(project.manifest)
             requested_stems = list(project.requested_stems)
             track_id = project.tracks[0].id
+            track_overrides = copy.deepcopy(project.tracks[0].manifest_overrides)
             source_key = project.tracks[0].asset.storage_key
             reference_key = reference.storage_key
 
@@ -197,6 +200,17 @@ class ReferenceMatchMixin:
                     "input": str(input_path),
                     "output": str(Path(tmp_dir) / "refmatch-prepare.wav"),
                     "stem_cache_dir": str(self.project_stems.track_root(project_id, track_id)),
+                    "stem_cache_key": f"project:{project_id}:track:{track_id}",
+                    # Must match worker.py's asset dict for the same track so
+                    # the stem-cache identity computed here (batch/segment/
+                    # overlap/tta/pitch/bleed settings) agrees with what
+                    # stem-prep cached — otherwise this "cheap" precompute
+                    # silently re-runs full GPU separation on every call.
+                    **{
+                        block: value
+                        for block, value in track_overrides.items()
+                        if isinstance(value, dict) and value
+                    },
                 }]
                 _, asset_jobs = parse_manifest(data)
                 asset_job = asset_jobs[0]
@@ -223,6 +237,21 @@ class ReferenceMatchMixin:
 
                 pipeline = StemUpmixPipeline(config=config)
                 try:
+                    if not pipeline.stems_cached(str(input_path)):
+                        # Stems don't actually match this config's cache
+                        # identity (settings changed since the last prepare,
+                        # or the separation engine itself changed) — running
+                        # process_file here would fall through to a full,
+                        # uncached separation pass on this thread, with none
+                        # of JobSubprocess's crash isolation or progress
+                        # reporting. Bail and let the next real stem
+                        # preparation (which does run isolated, with
+                        # progress) repopulate the cache and re-trigger this.
+                        _log.warning(
+                            "Reference-match precompute skipped for project %s: "
+                            "stem cache miss (stems need re-preparing)", project_id,
+                        )
+                        return
                     pipeline.process_file(
                         str(input_path), asset_job.output,
                         pre_master_hook=_capture_and_abort,

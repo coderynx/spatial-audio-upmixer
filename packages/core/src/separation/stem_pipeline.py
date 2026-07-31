@@ -38,6 +38,7 @@ import math
 import os
 import tempfile
 import time
+from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
@@ -46,12 +47,13 @@ from scipy.signal import resample_poly
 
 from upmixer.binaural.renderer import render_binaural_delivery
 from upmixer.config import UpmixConfig
-from upmixer.formats import BINAURAL, BINAURAL_BED_FORMATS, FORMAT_MAP, INPUT_FORMAT_MAP, OutputFormat, detect_input_format
+from upmixer.formats import BINAURAL, BINAURAL_BED_FORMATS, FORMAT_MAP, INPUT_FORMAT_MAP, InputFormat, OutputFormat, detect_input_format
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
 from upmixer.io.writer import AudioWriter
 from upmixer.mastering import MasteringChain
 from upmixer.result import UpmixResult
+from upmixer.separation.bleed_reduction import apply_bleed_reduction
 from upmixer.separation.separator import StemSeparator
 from upmixer.separation.source_anchor import apply_source_anchor
 from upmixer.separation.stem_plan import (
@@ -84,6 +86,22 @@ def _cacheable_plan_stems(plan: SeparationPlan) -> frozenset[str]:
     )
 
 
+def _bleed_cache_component(config: UpmixConfig) -> str:
+    """Serialize the bleed-reduction settings that change stored stem audio."""
+    if not config.stem_bleed_reduction:
+        return ""
+
+    def _dict(value: dict | None) -> str:
+        return "" if not value else "&".join(f"{k}={value[k]}" for k in sorted(value))
+
+    return (
+        f"bleed|pf={_dict(config.stem_phase_fix)}"
+        f"|low={config.stem_phase_fix_low_hz}|high={config.stem_phase_fix_high_hz}"
+        f"|scale={config.stem_phase_fix_scale}|ref={config.stem_phase_fix_reference_model}"
+        f"|db={_dict(config.stem_debleed)}|dbmodel={config.stem_debleed_model}"
+    )
+
+
 def _stem_cache_identity(plan: SeparationPlan, config: UpmixConfig) -> str:
     """Return model-plan identity including output-affecting inference overrides."""
     base = plan.inference_hash or plan.stems_hash
@@ -95,13 +113,31 @@ def _stem_cache_identity(plan: SeparationPlan, config: UpmixConfig) -> str:
         config.stem_tta,
         config.stem_pitch_shift,
     )
-    if all(value in (None, False) for value in options):
+    bleed = _bleed_cache_component(config)
+    if all(value in (None, False) for value in options) and not bleed:
         return base
     raw = (
         f"{base}|batch={options[0]}|segment={options[1]}|chunk={options[2]}"
         f"|overlap={options[3]}|tta={options[4]}|pitch={options[5]}"
     )
+    if bleed:
+        raw += f"|{bleed}"
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
+
+
+def _validate_bleed_config(config: UpmixConfig) -> None:
+    """Validate bleed-reduction settings before any inference runs."""
+    if not 0.0 < config.stem_phase_fix_scale <= 1.0:
+        raise ValueError("stem_phase_fix_scale must be in (0.0, 1.0]")
+    if not 0.0 < config.stem_phase_fix_low_hz < config.stem_phase_fix_high_hz:
+        raise ValueError("stem_phase_fix requires 0 < low_hz < high_hz")
+    from upmixer.separation.inference.registry import get_model_spec
+
+    for model in (
+        config.stem_phase_fix_reference_model,
+        config.stem_debleed_model,
+    ):
+        get_model_spec(model)
 
 
 class PreMasterAbort(Exception):
@@ -111,6 +147,24 @@ class PreMasterAbort(Exception):
     Safe to raise unconditionally from the hook: nothing has been written to
     ``output_path`` yet at that point, so aborting leaves no partial output.
     """
+
+
+@dataclass
+class _SeparationResult:
+    """Separated (and cached) stems plus the context downstream routing needs."""
+
+    all_stems: dict[str, np.ndarray]
+    plan: SeparationPlan
+    input_fmt: InputFormat
+    output_fmt: OutputFormat
+    input_sr: int
+    sep_sr: int
+    out_sr: int
+    audio_full: np.ndarray
+    passthrough: dict[str, np.ndarray]
+    source_zones: dict[str, np.ndarray]
+    n_samples: int
+    stem_summary: list[str]
 
 
 class StemUpmixPipeline:
@@ -229,6 +283,18 @@ class StemUpmixPipeline:
             self._separators[model] = separator
         return separator
 
+    def _separate_array(
+        self, model: str, audio: np.ndarray, in_sr: int, sep_sr: int
+    ) -> dict[str, np.ndarray]:
+        """Run one model on an in-memory array via a temp-WAV round-trip."""
+        tmp = _temporary_wav_path("upmixer_bleed_")
+        try:
+            sf.write(tmp, audio, in_sr, subtype="FLOAT")
+            return self._get_or_create_separator(model, sep_sr).separate(tmp)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+
     def close(self) -> None:
         """Release all separators and unload neural network models."""
         for s in self._separators.values():
@@ -253,11 +319,11 @@ class StemUpmixPipeline:
     ) -> dict[str, np.ndarray]:
         """Execute all tasks in the plan against one audio zone (sep_path).
 
-        Manages intermediate on-disk files between stages:
-        - Stage 0 keeps ``_crowd_other`` on disk so Stage 1 can read it.
-        - Stage 1 keeps ``Drums`` on disk so Stage 2 can read it.
-        - Intermediate files not in the final requested stems are deleted after
-          all stages complete.
+        Manages intermediate on-disk files between stages: whichever stems a
+        later task's ``input_source`` names (``_crowd_other``, ``_deux_inst``,
+        ``Drums``, ``Vocals``) are kept on disk until consumed. Intermediate
+        files not in the final requested stems are deleted after all stages
+        complete.
 
         Args:
             stage_callback: Optional callable ``(stage_idx, n_tasks, model,
@@ -448,50 +514,16 @@ class StemUpmixPipeline:
 
         return result
 
-    def process_file(
+    def _separate(
         self,
         input_path: str,
-        output_path: str,
-        input_format_override: str | None = None,
-        progress_callback: Callable[[str, float], None] | None = None,
-        pre_master_hook: Callable[[dict[str, np.ndarray], int, OutputFormat], None] | None = None,
-    ) -> UpmixResult:
-        """Separate stems and write spatially routed multichannel output file.
-
-        Args:
-            input_path: Source audio file (WAV/FLAC).
-            output_path: Destination file path.
-            input_format_override: Force a specific input layout name instead of
-                auto-detecting from channel count.
-            progress_callback: Optional callable ``(message, fraction)`` invoked
-                at key stages.  *fraction* is in [0, 1].
-            pre_master_hook: Optional callable ``(channels, sample_rate,
-                output_format)`` invoked with the fully routed, pre-mastering
-                channel bed, right before :class:`~upmixer.mastering.chain.MasteringChain`
-                runs. Lets a caller inspect or analyze the exact bed the export
-                would master (e.g. to precompute a reference-match FIR) without
-                duplicating separation/routing. Raise :class:`PreMasterAbort`
-                from the hook to stop the run here, before mastering/writing —
-                safe because no output has been written yet.
-
-        Returns:
-            :class:`~upmixer.result.UpmixResult` with processing metadata.
-        """
-        t0 = time.monotonic()
-        is_binaural = self.config.output_type == "binaural"
-        if is_binaural and self.config.output_format not in BINAURAL_BED_FORMATS:
-            raise ValueError(
-                f"binaural output requires output_format one of {BINAURAL_BED_FORMATS}, "
-                f"got '{self.config.output_format}'"
-            )
+        input_format_override: str | None,
+        _progress: Callable[[str, float], None],
+    ) -> _SeparationResult:
+        """Read, zone-split, separate, and cache stems — no routing or mastering."""
         cfg = self.config
-        if not 0.0 <= cfg.stem_source_anchor_strength <= 1.0:
-            raise ValueError("stem_source_anchor_strength must be between 0.0 and 1.0")
-
-        def _progress(msg: str, frac: float) -> None:
-            _log.info(msg)
-            if progress_callback is not None:
-                progress_callback(msg, frac)
+        if cfg.stem_bleed_reduction:
+            _validate_bleed_config(cfg)
 
         reader = AudioReader(input_path)
         read_started = time.monotonic()
@@ -564,6 +596,7 @@ class StemUpmixPipeline:
                     cfg.stem_overlap,
                     cfg.stem_tta,
                     cfg.stem_pitch_shift,
+                    cfg.stem_bleed_reduction,
                 )
             )
             cache_started = time.monotonic()
@@ -697,6 +730,21 @@ class StemUpmixPipeline:
                     if os.path.exists(tmp):
                         os.unlink(tmp)
 
+            if cfg.stem_bleed_reduction and all_stems:
+                _progress("  Reducing stem bleed...", 0.72)
+                all_stems = apply_bleed_reduction(
+                    all_stems,
+                    source_zones,
+                    sr,
+                    sep_sr,
+                    cfg,
+                    output_fmt,
+                    lambda model, audio, in_sr: self._separate_array(
+                        model, audio, in_sr, sep_sr
+                    ),
+                    progress=lambda msg: _progress(msg, 0.72),
+                )
+
             if _stem_cache is not None and all_stems:
                 cache_started = time.monotonic()
                 _stem_cache.save(
@@ -737,6 +785,80 @@ class StemUpmixPipeline:
             "  Stems: %s  (%.2fs at %d Hz)",
             stem_summary, n_samples / sep_sr, sep_sr,
         )
+
+        return _SeparationResult(
+            all_stems=all_stems,
+            plan=plan,
+            input_fmt=input_fmt,
+            output_fmt=output_fmt,
+            input_sr=sr,
+            sep_sr=sep_sr,
+            out_sr=out_sr,
+            audio_full=audio_full,
+            passthrough=passthrough,
+            source_zones=source_zones,
+            n_samples=n_samples,
+            stem_summary=stem_summary,
+        )
+
+    def process_file(
+        self,
+        input_path: str,
+        output_path: str,
+        input_format_override: str | None = None,
+        progress_callback: Callable[[str, float], None] | None = None,
+        pre_master_hook: Callable[[dict[str, np.ndarray], int, OutputFormat], None] | None = None,
+    ) -> UpmixResult:
+        """Separate stems and write spatially routed multichannel output file.
+
+        Args:
+            input_path: Source audio file (WAV/FLAC).
+            output_path: Destination file path.
+            input_format_override: Force a specific input layout name instead of
+                auto-detecting from channel count.
+            progress_callback: Optional callable ``(message, fraction)`` invoked
+                at key stages.  *fraction* is in [0, 1].
+            pre_master_hook: Optional callable ``(channels, sample_rate,
+                output_format)`` invoked with the fully routed, pre-mastering
+                channel bed, right before :class:`~upmixer.mastering.chain.MasteringChain`
+                runs. Lets a caller inspect or analyze the exact bed the export
+                would master (e.g. to precompute a reference-match FIR) without
+                duplicating separation/routing. Raise :class:`PreMasterAbort`
+                from the hook to stop the run here, before mastering/writing —
+                safe because no output has been written yet.
+
+        Returns:
+            :class:`~upmixer.result.UpmixResult` with processing metadata.
+        """
+        t0 = time.monotonic()
+        is_binaural = self.config.output_type == "binaural"
+        if is_binaural and self.config.output_format not in BINAURAL_BED_FORMATS:
+            raise ValueError(
+                f"binaural output requires output_format one of {BINAURAL_BED_FORMATS}, "
+                f"got '{self.config.output_format}'"
+            )
+        cfg = self.config
+        if not 0.0 <= cfg.stem_source_anchor_strength <= 1.0:
+            raise ValueError("stem_source_anchor_strength must be between 0.0 and 1.0")
+
+        def _progress(msg: str, frac: float) -> None:
+            _log.info(msg)
+            if progress_callback is not None:
+                progress_callback(msg, frac)
+
+        sep = self._separate(input_path, input_format_override, _progress)
+        all_stems = sep.all_stems
+        plan = sep.plan
+        input_fmt = sep.input_fmt
+        output_fmt = sep.output_fmt
+        sr = sep.input_sr
+        sep_sr = sep.sep_sr
+        out_sr = sep.out_sr
+        audio_full = sep.audio_full
+        passthrough = sep.passthrough
+        source_zones = sep.source_zones
+        n_samples = sep.n_samples
+        stem_summary = sep.stem_summary
 
         passthrough_resampled: dict[str, np.ndarray] = {}
         if passthrough:
@@ -812,7 +934,7 @@ class StemUpmixPipeline:
                 channels = {name: ch * scale for name, ch in channels.items()}
             del source_audio
 
-        del all_stems, audio_full, source_zones, sep_zones, passthrough
+        del all_stems, audio_full, source_zones, passthrough
         del passthrough_resampled
 
         if pre_master_hook is not None:
@@ -877,5 +999,92 @@ class StemUpmixPipeline:
             measured_tp_dbtp=mastering_result.measured_tp_dbtp,
             applied_gain_db=mastering_result.applied_gain_db,
             stems=stem_summary,
+            processing_time_seconds=time.monotonic() - t0,
+        )
+
+    def stems_cached(self, input_path: str) -> bool:
+        """Whether ``config.stem_cache_dir`` already holds a hit for
+        *input_path* at the current config — without decoding audio or
+        loading any model.
+
+        Lets a caller that only wants cached stems (never a fresh separation
+        pass) check first and skip its own heavy work on a miss, instead of
+        discovering the cost by calling :meth:`process_file`/:meth:`prepare_stems`
+        and triggering full inference. A miss here means the requested stems,
+        cache-affecting inference options, or the separation engine itself
+        have changed since the cache entry was written.
+        """
+        cfg = self.config
+        if not cfg.stem_cache_dir:
+            return False
+        from upmixer.separation.stem_cache import StemCache
+
+        info = sf.info(input_path)
+        out_sr = cfg.output_sample_rate or info.samplerate
+        if cfg.output_type == "adm-bwf" and cfg.output_sample_rate is None:
+            out_sr = 48_000
+        sep_sr = out_sr
+
+        raw_stems = cfg.stems or []
+        canonical = normalize_stems(raw_stems) if raw_stems else list(DEFAULT_STEMS)
+        plan = resolve_separation_plan(canonical)
+        cache_identity = _stem_cache_identity(plan, cfg)
+
+        cache = StemCache(cfg.stem_cache_dir)
+        hit = cache.load(
+            input_path, cache_identity, sep_sr,
+            is_preview=cfg.preview,
+            preview_duration=cfg.preview_duration_s,
+            preview_start=cfg.preview_start_s,
+            silence_skip=cfg.stem_silence_skip,
+            silence_threshold_db=cfg.stem_silence_threshold_db,
+            silence_min_duration_s=cfg.stem_silence_min_duration_s,
+            silence_crossfade_ms=cfg.stem_silence_crossfade_ms,
+            silence_pad_ms=cfg.stem_silence_pad_ms,
+            path_key=cfg.stem_cache_key,
+        )
+        return hit is not None
+
+    def prepare_stems(
+        self,
+        input_path: str,
+        input_format_override: str | None = None,
+        progress_callback: Callable[[str, float], None] | None = None,
+    ) -> UpmixResult:
+        """Separate and cache instrument stems without routing or mastering.
+
+        Runs only the separation half of :meth:`process_file` — read, zone
+        split, stem inference, and (when ``config.stem_cache_dir`` is set) cache
+        write — then stops. No spatial routing, mastering, or output file is
+        produced. Used by callers that only need the cached stem set prepared
+        for a later mix/export (e.g. project preparation), where the
+        routed/mastered output would be discarded.
+
+        Returns a :class:`~upmixer.result.UpmixResult` describing the separated
+        stems; output-only fields (``output_path``, ``n_channels_out``,
+        mastering measurements) are left empty.
+        """
+        t0 = time.monotonic()
+
+        def _progress(msg: str, frac: float) -> None:
+            _log.info(msg)
+            if progress_callback is not None:
+                progress_callback(msg, frac)
+
+        sep = self._separate(input_path, input_format_override, _progress)
+        _progress("  Stems prepared", 1.0)
+
+        return UpmixResult(
+            input_path=input_path,
+            output_path="",
+            input_format=sep.input_fmt.name,
+            output_format=sep.output_fmt.name,
+            input_sample_rate=sep.input_sr,
+            output_sample_rate=sep.out_sr,
+            duration_seconds=sep.n_samples / sep.sep_sr,
+            n_channels_in=sep.input_fmt.n_channels,
+            n_channels_out=0,
+            mode="stem",
+            stems=sep.stem_summary,
             processing_time_seconds=time.monotonic() - t0,
         )

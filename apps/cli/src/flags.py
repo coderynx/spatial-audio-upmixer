@@ -157,6 +157,18 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.stem_silence_pad_ms = args.stem_silence_pad_ms
     if args.stem_source_anchor_strength is not None:
         config.stem_source_anchor_strength = args.stem_source_anchor_strength
+    if args.stem_bleed_reduction is not None:
+        config.stem_bleed_reduction = args.stem_bleed_reduction
+    if args.stem_phase_fix_low_hz is not None:
+        config.stem_phase_fix_low_hz = args.stem_phase_fix_low_hz
+    if args.stem_phase_fix_high_hz is not None:
+        config.stem_phase_fix_high_hz = args.stem_phase_fix_high_hz
+    if args.stem_phase_fix_scale is not None:
+        config.stem_phase_fix_scale = args.stem_phase_fix_scale
+    if args.stem_phase_fix_reference_model is not None:
+        config.stem_phase_fix_reference_model = args.stem_phase_fix_reference_model
+    if args.stem_debleed_model is not None:
+        config.stem_debleed_model = args.stem_debleed_model
     if args.stems is not None:
         from upmixer.separation.stem_plan import normalize_stems as _normalize
         raw = [s.strip() for s in args.stems.split(",") if s.strip()]
