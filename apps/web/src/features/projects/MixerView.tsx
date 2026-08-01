@@ -201,7 +201,7 @@ function MasterStrip({
         className="w-full truncate rounded-[5px] px-1 py-1 text-center text-[11px] font-semibold"
         style={{ backgroundColor: canvasTheme.stripWell }}
       >
-        Master
+        Monitor
       </span>
     </div>
   );
