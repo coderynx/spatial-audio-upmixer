@@ -390,6 +390,34 @@ def retry_project(session: Session, project: Project) -> Project:
     return project
 
 
+def reprepare_project_stems(session: Session, project: Project) -> Project:
+    """Force a full stem re-separation for a project that already has
+    prepared stems, re-running its exact current `requested_stems`.
+
+    Unlike `retry_project` (only for a failed run), this is for a `ready`
+    project whose on-disk stems now miss the separation engine's cache
+    identity — e.g. a separation-model/registry change (see
+    ~/Projects/upmixer-knowledge/roadmap.md's "cache-identity misses" standing
+    risk) landed after this project's stems were prepared. `_run_project`
+    always re-separates every requested track wholesale, so re-queuing it is
+    enough to repopulate the cache under the current engine version.
+    """
+    if project.status in {"preparing", "expanding", "queued", "deleting"}:
+        raise ProjectStateConflict("Project stem preparation is already in progress")
+    if not project.tracks:
+        raise ProjectStateConflict("Project has no tracks to prepare")
+    project.status = "expanding" if project.prepared_stems else "queued"
+    project.progress = 0.0
+    project.error = None
+    project.status_message = "Waiting for worker"
+    for track in project.tracks:
+        track.status = "queued"
+        track.progress = 0.0
+        track.error = None
+    session.commit()
+    return project
+
+
 def mark_project_deleting(session: Session, project: Project) -> bool:
     """Mark an in-flight project for worker-side teardown, or signal the
     caller to delete it immediately.

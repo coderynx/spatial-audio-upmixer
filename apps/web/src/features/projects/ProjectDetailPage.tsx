@@ -93,22 +93,39 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const saveTimer = React.useRef<number | null>(null);
   const initialized = React.useRef(false);
   React.useEffect(() => { initialized.current = false; }, [projectId]);
+  // The poll, the SSE stream, and every save call each fetch/return a full
+  // Project snapshot independently; without ordering, a poll issued before a
+  // save can resolve after it and clobber the fresh save response with stale
+  // data (e.g. flashing reference_match_pending back on after a mute/solo
+  // save already cleared it). Every setProject call site stamps its request
+  // with a monotonic sequence number and drops responses older than the
+  // newest one already applied.
+  const projectRequestSeq = React.useRef(0);
+  const appliedProjectSeq = React.useRef(0);
+  const shouldApplyProject = React.useCallback((seq: number) => {
+    if (seq < appliedProjectSeq.current) return false;
+    appliedProjectSeq.current = seq;
+    return true;
+  }, []);
   const load = React.useCallback(async () => {
     if (!projectId) return;
+    const seq = ++projectRequestSeq.current;
     try {
       const next = await api.getProject(projectId);
-      setProject(next);
-      if (!initialized.current) {
-        initialized.current = true;
-        setManifest(normalizeManifest(next.manifest));
-        setSelectedTrack(next.tracks[0]?.id || null);
-        // A project with nothing prepared yet has nowhere else useful to
-        // land — Mixing/Mastering/Delivery all need a ready track.
-        if (next.tracks.length === 0 || !next.prepared_stems.length) setActiveTab("assets");
+      if (shouldApplyProject(seq)) {
+        setProject(next);
+        if (!initialized.current) {
+          initialized.current = true;
+          setManifest(normalizeManifest(next.manifest));
+          setSelectedTrack(next.tracks[0]?.id || null);
+          // A project with nothing prepared yet has nowhere else useful to
+          // land — Mixing/Mastering/Delivery all need a ready track.
+          if (next.tracks.length === 0 || !next.prepared_stems.length) setActiveTab("assets");
+        }
       }
       setError(null);
     } catch (reason) { setError((reason as Error).message); }
-  }, [projectId]);
+  }, [projectId, shouldApplyProject]);
   // Polling stops at a terminal status unless a reference-match recompute or
   // peaks backfill is still pending server-side (schedule_reference_match/schedule_peaks).
   React.useEffect(() => {
@@ -137,7 +154,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     ) return;
     const source = new EventSource(api.projectEventsUrl(projectId));
     source.onmessage = (event) => {
-      try { setProject(JSON.parse(event.data)); } catch { /* ignore malformed frame */ }
+      const seq = ++projectRequestSeq.current;
+      try {
+        const next = JSON.parse(event.data);
+        if (shouldApplyProject(seq)) setProject(next);
+      } catch { /* ignore malformed frame */ }
     };
     source.onerror = () => source.close();
     return () => source.close();
@@ -148,10 +169,12 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     if (!projectId || !project) return;
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
+      const seq = ++projectRequestSeq.current;
       void api.saveProject(projectId, { manifest: next as unknown as Record<string, unknown>, scene: project.scene as Record<string, unknown> })
-        .then(setProject).catch((reason) => setError((reason as Error).message));
+        .then((updated) => { if (shouldApplyProject(seq)) setProject(updated); })
+        .catch((reason) => setError((reason as Error).message));
     }, 350);
-  }, [project, projectId]);
+  }, [project, projectId, shouldApplyProject]);
   const selected = project?.tracks.find((track) => track.id === selectedTrack) || null;
   const effectiveManifest = React.useMemo(() => {
     if (!manifest || !selected || editScope === "project") return manifest;
@@ -174,14 +197,16 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       return;
     }
     if (!projectId || !selected) return;
+    const seq = ++projectRequestSeq.current;
     void api.saveProjectTrack(projectId, selected.id, {
       manifest_overrides: {
         engine: { stems: next.engine.stems }, mixing: next.mixing, routing: next.routing,
         mastering: next.mastering, processing: next.processing, format: next.format,
       },
       scene_overrides: selected.scene_overrides,
-    }).then(setProject).catch((reason) => setError((reason as Error).message));
-  }, [editScope, projectId, selected, queueSave]);
+    }).then((updated) => { if (shouldApplyProject(seq)) setProject(updated); })
+      .catch((reason) => setError((reason as Error).message));
+  }, [editScope, projectId, selected, queueSave, shouldApplyProject]);
   // Project-wide settings (name, default speaker layout, preview quality) —
   // ProjectSettingsSection only. This is the inherited default a new track
   // starts from, distinct from `updateTrackManifest` below.
@@ -211,42 +236,50 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   }, [manifest, selected]);
   const updateTrackManifest = React.useCallback((next: Manifest) => {
     if (!projectId || !selected) return;
+    const seq = ++projectRequestSeq.current;
     void api.saveProjectTrack(projectId, selected.id, {
       manifest_overrides: {
         engine: { stems: next.engine.stems }, mixing: next.mixing, routing: next.routing,
         mastering: next.mastering, processing: next.processing, format: next.format,
       },
       scene_overrides: selected.scene_overrides,
-    }).then(setProject).catch((reason) => setError((reason as Error).message));
-  }, [projectId, selected]);
+    }).then((updated) => { if (shouldApplyProject(seq)) setProject(updated); })
+      .catch((reason) => setError((reason as Error).message));
+  }, [projectId, selected, shouldApplyProject]);
   const saveReference = async (mastering_reference_id: string | null) => {
     if (!projectId || !project || !manifest) return;
+    const seq = ++projectRequestSeq.current;
     try {
-      setProject(await api.saveProject(projectId, {
+      const updated = await api.saveProject(projectId, {
         manifest: manifest as unknown as Record<string, unknown>,
         scene: project.scene as Record<string, unknown>,
         mastering_reference_id,
-      }));
+      });
+      if (shouldApplyProject(seq)) setProject(updated);
     } catch (reason) { setError((reason as Error).message); }
   };
   const renameProject = async (name: string) => {
     if (!projectId || !project || !manifest) return;
+    const seq = ++projectRequestSeq.current;
     try {
-      setProject(await api.saveProject(projectId, {
+      const updated = await api.saveProject(projectId, {
         name,
         manifest: manifest as unknown as Record<string, unknown>,
         scene: project.scene as Record<string, unknown>,
-      }));
+      });
+      if (shouldApplyProject(seq)) setProject(updated);
     } catch (reason) { setError((reason as Error).message); }
   };
   const savePreviewQuality = async (preview_quality: string) => {
     if (!projectId || !project || !manifest) return;
+    const seq = ++projectRequestSeq.current;
     try {
-      setProject(await api.saveProject(projectId, {
+      const updated = await api.saveProject(projectId, {
         preview_quality,
         manifest: manifest as unknown as Record<string, unknown>,
         scene: project.scene as Record<string, unknown>,
-      }));
+      });
+      if (shouldApplyProject(seq)) setProject(updated);
     } catch (reason) { setError((reason as Error).message); }
   };
   const previewStems = selected?.stems.filter((stem) => project?.prepared_stems.includes(stem.stem_key.split("@", 1)[0])) || [];
@@ -401,7 +434,20 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     setExporting(true);
     try { await api.exportProject(projectId); navigate("/jobs"); } catch (reason) { setError((reason as Error).message); } finally { setExporting(false); }
   };
-  const retry = async () => { if (projectId) setProject(await api.retryProject(projectId)); };
+  const retry = async () => {
+    if (!projectId) return;
+    const seq = ++projectRequestSeq.current;
+    const updated = await api.retryProject(projectId);
+    if (shouldApplyProject(seq)) setProject(updated);
+  };
+  const reprepareStems = async () => {
+    if (!projectId) return;
+    const seq = ++projectRequestSeq.current;
+    try {
+      const updated = await api.reprepareProjectStems(projectId);
+      if (shouldApplyProject(seq)) setProject(updated);
+    } catch (reason) { setError((reason as Error).message); }
+  };
   // `node` must stay referentially stable across renders — useHeaderTitle's
   // effect keys on it, so a fresh JSX element every render (e.g. inline
   // here) would re-fire the effect every render, which updates provider
@@ -531,9 +577,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         <AssetsTab
           project={project}
           configuration={configuration}
-          onProjectUpdate={setProject}
+          onProjectUpdate={(next) => { if (shouldApplyProject(++projectRequestSeq.current)) setProject(next); }}
           onOpenTrack={(trackId) => { setSelectedTrack(trackId); setActiveTab("mixing"); }}
           onRetry={() => void retry()}
+          onReprepare={() => void reprepareStems()}
         />
       </section>
     ) : !ready ? (

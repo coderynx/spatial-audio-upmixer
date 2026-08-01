@@ -35,6 +35,7 @@ from upmixer_web.features.projects.service import (
     list_projects,
     mark_project_deleting,
     project_export_job,
+    reprepare_project_stems,
     retry_project,
     update_project_settings,
     update_track_settings,
@@ -195,6 +196,18 @@ def register_project_routes(
             raise HTTPException(status_code=404, detail="Project not found")
         try:
             retry_project(session, project)
+        except ProjectStateConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        manager.notify()
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
+
+    @app.post("/api/v1/projects/{project_id}/stems/reprepare", response_model=ProjectView, tags=["projects"])
+    def reprepare_project_stems_route(project_id: str, session: Session = Depends(database_session)) -> ProjectView:
+        project = get_project(session, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        try:
+            reprepare_project_stems(session, project)
         except ProjectStateConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         manager.notify()

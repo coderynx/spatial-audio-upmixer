@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -13,24 +13,41 @@ function statusVariant(status: string) {
   return "secondary" as const;
 }
 
+const IN_FLIGHT_STATUSES = new Set(["preparing", "expanding", "queued", "deleting"]);
+
 /** Project → Track → Stem (→ Zone, for a multichannel source) tree of every
  * prepared track, mirroring `StemsSection`'s parent/child expand rows. */
 export function PreparedTrackTree({
   project,
   configuration,
   onOpenTrack,
+  onReprepare,
 }: {
   project: Project;
   configuration: Configuration | null;
   onOpenTrack: (trackId: string) => void;
+  onReprepare: () => void;
 }) {
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({});
+  const canReprepare = !IN_FLIGHT_STATUSES.has(project.status);
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
-      <header className="flex h-8 items-center border-b px-3">
+      <header className="flex h-8 items-center gap-2 border-b px-3">
         <span className="text-[11px] font-semibold uppercase tracking-[.08em] text-muted-foreground">
           Tracks · {project.tracks.length}
         </span>
+        <div className="min-w-0 flex-1" />
+        {canReprepare && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onReprepare}
+            title="Re-run stem separation for every track — e.g. after a separation model update leaves prepared stems stale"
+          >
+            <RotateCcw />
+            Re-prepare stems
+          </Button>
+        )}
       </header>
       <div className="divide-y">
         {project.tracks.map((track) => (

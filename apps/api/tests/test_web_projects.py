@@ -78,6 +78,78 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
         assert expanded.json()["requested_stems"] == ["Vocals", "Kick", "Bass"]
 
 
+def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(tmp_path, monkeypatch):
+    """`/stems/reprepare` must force a full re-separation for an already-ready
+    project — e.g. a separation-engine/model-registry change (see
+    `service.reprepare_project_stems` and
+    ~/Projects/upmixer-knowledge/roadmap.md's "cache-identity misses" standing
+    risk) left its cached stems stale even though `prepared_stems` is
+    populated — but refuse while a preparation is already in flight or the
+    project has no tracks to prepare."""
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'reprepare.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+
+    with TestClient(create_app(settings)) as client:
+        with factory() as session:
+            batch = ImportBatch(kind="track", title="Song")
+            ready_asset = MediaAsset(
+                import_batch=batch, filename="ready.wav", relative_path="ready.wav",
+                storage_key="objects/ready.wav", sha256="0" * 64, size_bytes=1,
+            )
+            ready_project = Project(
+                import_batch=batch, name="Ready project", manifest={},
+                status="ready", prepared_stems=["Vocals"], requested_stems=["Vocals"],
+                stem_generation=1,
+            )
+            ready_track = ProjectTrack(project=ready_project, asset=ready_asset, position=0)
+            expanding_asset = MediaAsset(
+                import_batch=batch, filename="expanding.wav", relative_path="expanding.wav",
+                storage_key="objects/expanding.wav", sha256="1" * 64, size_bytes=1,
+            )
+            expanding_project = Project(
+                import_batch=batch, name="Expanding project", manifest={},
+                status="expanding", prepared_stems=["Vocals"], requested_stems=["Vocals"],
+                stem_generation=1,
+            )
+            expanding_track = ProjectTrack(project=expanding_project, asset=expanding_asset, position=0)
+            empty_project = Project(import_batch=batch, name="Empty project", manifest={}, status="ready")
+            session.add_all([
+                batch, ready_asset, ready_project, ready_track,
+                expanding_asset, expanding_project, expanding_track, empty_project,
+            ])
+            session.commit()
+            ready_id = ready_project.id
+            expanding_id = expanding_project.id
+            empty_id = empty_project.id
+
+        response = client.post(f"/api/v1/projects/{ready_id}/stems/reprepare")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "expanding"
+        assert body["progress"] == 0.0
+        assert all(track["status"] == "queued" for track in body["tracks"])
+
+        conflict = client.post(f"/api/v1/projects/{expanding_id}/stems/reprepare")
+        assert conflict.status_code == 409
+
+        no_tracks = client.post(f"/api/v1/projects/{empty_id}/stems/reprepare")
+        assert no_tracks.status_code == 409
+
+        missing = client.post("/api/v1/projects/does-not-exist/stems/reprepare")
+        assert missing.status_code == 404
+
+    engine.dispose()
+
+
 def test_project_seeds_stem_routing_when_client_sends_empty_dict(tmp_path, monkeypatch):
     """The web client always sends `mixing.stem_routing` (default `{}`) rather than
     omitting the key, so seeding must trigger on an empty dict, not just a missing

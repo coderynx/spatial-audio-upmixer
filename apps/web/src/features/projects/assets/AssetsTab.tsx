@@ -32,12 +32,14 @@ export function AssetsTab({
   onProjectUpdate,
   onOpenTrack,
   onRetry,
+  onReprepare,
 }: {
   project: Project;
   configuration: Configuration | null;
   onProjectUpdate: (project: Project) => void;
   onOpenTrack: (trackId: string) => void;
   onRetry: () => void;
+  onReprepare: () => void;
 }) {
   const choices = configuration?.choices;
   const availableStems = choices?.stems || fallbackStems;
@@ -218,7 +220,7 @@ export function AssetsTab({
       {showLog && <PreparationPanel project={project} onRetry={onRetry} />}
 
       {project.tracks.length > 0 && (
-        <PreparedTrackTree project={project} configuration={configuration} onOpenTrack={onOpenTrack} />
+        <PreparedTrackTree project={project} configuration={configuration} onOpenTrack={onOpenTrack} onReprepare={onReprepare} />
       )}
     </div>
   );

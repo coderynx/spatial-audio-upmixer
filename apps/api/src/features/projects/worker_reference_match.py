@@ -33,6 +33,12 @@ def _reference_match_signature(project: Project) -> str | None:
     and never change the FIR bytes or `rms_gain_db` that
     `compute_channel_filters` produces, so hashing them only forces
     needless full-song recomputes while the strength slider is dragged.
+    Includes ``stem_generation``: a stem cache miss makes `prepare_reference_match`
+    stamp a signature-matching empty asset (see below) so an unrelated save
+    doesn't reopen `reference_match_pending`; without `stem_generation` in the
+    signature that empty stamp would never go stale, and a later stem
+    re-prepare (which bumps `stem_generation`, `worker.py`'s
+    `_run_project`) would never re-trigger the real compute.
     Returns ``None`` when no reference is attached, meaning "no asset should
     exist."
     """
@@ -49,6 +55,7 @@ def _reference_match_signature(project: Project) -> str | None:
         "channel_layout": mixing.get("channel_layout"),
         "spectrum": match.get("spectrum"),
         "max_db": match.get("max_db"),
+        "stem_generation": project.stem_generation,
     }
     raw = json.dumps(payload, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
@@ -250,6 +257,19 @@ class ReferenceMatchMixin:
                         _log.warning(
                             "Reference-match precompute skipped for project %s: "
                             "stem cache miss (stems need re-preparing)", project_id,
+                        )
+                        # Record a signature-stamped empty result so
+                        # `_reference_match_needs_work` stops reopening the
+                        # `reference_match_pending` window on every unrelated
+                        # settings save while the cache stays stale — without
+                        # this, an unresolvable cache miss makes every save
+                        # flash "Preparing reference EQ match" (existing==None
+                        # forever) until stems are re-prepared for real.
+                        self.project_stems.write_reference_match(
+                            project_id, {}, 0.0, 0, target_signature,
+                            config.mastering_match_ref_strength,
+                            config.mastering_match_ref_spectrum,
+                            config.mastering_match_ref_rms,
                         )
                         return
                     pipeline.process_file(

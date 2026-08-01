@@ -314,7 +314,11 @@ def test_worker_prepare_reference_match_skips_on_stem_cache_miss(tmp_path, monke
     "Preparing reference EQ match" banner with no feedback. It must return
     cleanly (no exception raised out of the worker loop) and leave no FIR
     asset behind, so the frontend's fallback (original EQ, no reference
-    match) applies until a real re-prepare repopulates the cache."""
+    match) applies until a real re-prepare repopulates the cache. It must
+    also stamp a signature-matching empty meta record so an unrelated
+    settings save (e.g. a stem mute/solo toggle, which never changes the
+    signature) doesn't see "no meta" and reopen reference_match_pending on
+    every save while the cache stays stale."""
     from unittest.mock import patch
 
     from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
@@ -395,8 +399,41 @@ def test_worker_prepare_reference_match_skips_on_stem_cache_miss(tmp_path, monke
             manager.prepare_reference_match(project_id)
 
         assert execute_plan_called["n"] == 0, "must bail before running any separation"
-        assert client.app.state.project_stems.read_reference_match_meta(project_id) is None
+        meta = client.app.state.project_stems.read_reference_match_meta(project_id)
+        assert meta is not None
+        assert meta["channels"] == []
+        assert client.app.state.project_stems.reference_match_fir_path(project_id) is None
         assert not manager.reference_match_pending(project_id)
+
+        # An unrelated re-schedule (e.g. a stem mute/solo save) must not
+        # reopen pending or retry the doomed mix pass: the signature hasn't
+        # changed, so the stamped empty meta above satisfies
+        # `_reference_match_needs_work` on its own.
+        manager.schedule_reference_match(project_id)
+        assert not manager.reference_match_pending(project_id)
+        assert execute_plan_called["n"] == 0
+
+        from upmixer_web.features.projects.worker_reference_match import _reference_match_needs_work
+
+        with factory() as session:
+            project = session.get(Project, project_id)
+            assert not _reference_match_needs_work(project, client.app.state.project_stems), (
+                "the empty stamp at the current stem_generation must satisfy "
+                "needs_work so it doesn't reopen pending for an unrelated save"
+            )
+            # A real stem re-prepare bumps stem_generation (worker.py's
+            # _run_project) — that must invalidate the stale empty stamp so
+            # the FIR gets a real chance to compute once stems are cached,
+            # rather than being stuck empty forever at the old signature.
+            project.stem_generation += 1
+            session.commit()
+
+        with factory() as session:
+            project = session.get(Project, project_id)
+            assert _reference_match_needs_work(project, client.app.state.project_stems), (
+                "a stem_generation bump (real re-prepare) must invalidate the "
+                "stale empty stamp so the reference match can recompute for real"
+            )
 
     engine.dispose()
 
