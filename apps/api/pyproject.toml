@@ -64,6 +64,7 @@ upmixer_web = "src"
 upmixer_web = ["migrations/script.py.mako"]
 
 [tool.pytest.ini_options]
+addopts = "-m 'not perf'"
 markers = [
     "perf: performance benchmarks (run with -m perf; skipped in CI by default)",
 ]

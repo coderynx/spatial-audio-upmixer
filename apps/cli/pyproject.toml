@@ -47,6 +47,7 @@ packages = ["upmixer_cli"]
 upmixer_cli = "src"
 
 [tool.pytest.ini_options]
+addopts = "-m 'not perf'"
 markers = [
     "perf: performance benchmarks (run with -m perf; skipped in CI by default)",
 ]

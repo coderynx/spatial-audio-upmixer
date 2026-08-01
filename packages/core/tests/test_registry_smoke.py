@@ -1,11 +1,14 @@
 """Integration coverage for newly registered separation checkpoints.
 
 Tier 1 (default `pytest -q`) proves each new registry entry's bundled YAML
-matches its architecture's constructor and produces correctly named,
-non-silent stems — without downloading any weights: the arch is built from
-the config with its (random) default-initialized parameters.
+matches its architecture's constructor — the arch builds from the config
+with its (random) default-initialized parameters — without downloading any
+weights or running inference.
 
-Tier 2 (`@pytest.mark.perf`) loads the real checkpoint from its
+Tier 2 (`@pytest.mark.perf`) builds the same arch and asserts it produces
+correctly named, non-silent stems on random audio (still no download).
+
+Tier 3 (`@pytest.mark.perf`) loads the real checkpoint from its
 ``weights_url`` and asserts non-silent output on real audio, mirroring
 ``test_stem_separation_integration.py``.
 """
@@ -35,7 +38,23 @@ _NEW_MODELS = (
 
 
 @pytest.mark.parametrize("model_filename", _NEW_MODELS)
-def test_config_matches_arch_and_demixes_non_silent(model_filename):
+def test_config_matches_arch_builds(model_filename):
+    torch = pytest.importorskip("torch")
+    from upmixer.separation.inference import loader
+
+    spec = get_model_spec(model_filename)
+    config = load_model_config(spec.config_name)
+    device = torch.device("cpu")
+
+    model = loader._build_arch(spec, config, device).eval()
+
+    assert model is not None
+    assert config.instruments
+
+
+@pytest.mark.perf
+@pytest.mark.parametrize("model_filename", _NEW_MODELS)
+def test_arch_demixes_non_silent(model_filename):
     torch = pytest.importorskip("torch")
     from upmixer.separation.inference import demix, loader
 
