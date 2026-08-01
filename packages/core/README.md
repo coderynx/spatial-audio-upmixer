@@ -35,9 +35,8 @@ Keep the public compatibility shims `mastering_comp.py`, `mastering_bass.py`, an
 
 ## Modules
 
-`analysis/`, `decomposition/`, `routing/`, `io/`, `mastering/`, `separation/` (incl. the in-core PyTorch inference
-engine under `separation/inference/`), `manifest/`, `binaural/` (HOA binaural rendering), `crosstalk/` (transaural
-XTC rendering), `eval/` (objective separation evaluation harness), `upmix/`.
+See `AGENTS.md` for the full module map, the two pipelines, and the
+in-core inference boundary.
 
 ## Testing
 
@@ -46,4 +45,6 @@ uv run pytest packages/core/tests -q
 uv run pytest packages/core/tests -m perf -s   # opt-in performance/real-model checks
 ```
 
-See the repository root `AGENTS.md` for coding conventions, comment policy, and standards references.
+See this package's `AGENTS.md` for module layout and the Knowledge Base, and
+the repository root `AGENTS.md` for coding conventions, comment policy, and
+standards references.

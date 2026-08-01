@@ -35,41 +35,17 @@ the canonical paths returned by `manifest_parameters`: `engine.*`, `mixing.*`,
 every processing block. Their `input`, `output`, directory expansion, and cache
 path fields are automation-only.
 
-Canonical processing paths are:
-
-- `engine.mode`, `engine.stem_model_dir`, `engine.input_format`,
-  `engine.stem_cache_dir`, `engine.stem_cache_key`, `engine.stem_batch_size`,
-  `engine.stem_segment_size`, `engine.stem_chunk_duration_s`,
-  `engine.stem_model_cache_size`, `engine.stems`, `engine.stem_silence_skip`,
-  `engine.stem_silence_threshold_db`, `engine.stem_silence_min_duration_s`,
-  `engine.stem_silence_crossfade_ms`, `engine.stem_silence_pad_ms`.
-- `format.type`, `format.subtype`, `format.sample_rate`,
-  `format.downmix.enabled`, `format.downmix.output`,
-  `format.downmix.surround_coeff`, `format.binaural.profile`,
-  `format.transaural.profile`.
-- `mixing.channel_layout`, `mixing.stem_rebalance`, `mixing.stem_eq`,
-  `mixing.stem_routing`, `mixing.stem_enabled`, `mixing.stem_solo`,
-  `mixing.stem_source_anchor_strength`, `mixing.spatial.profile`,
-  `mixing.spatial.intensity`, `mixing.spatial.preanalyze`, `mixing.stems`.
-- `routing.center_gain`, `routing.surround_gain`, `routing.back_gain`,
-  `routing.height_gain`, `routing.lfe_gain`, `routing.lfe_cutoff`,
-  `routing.center_extraction_gain`, `routing.center_attenuation`,
-  `routing.height_low_rolloff_gain`, `routing.height_high_shelf_gain`,
-  `routing.content_mix_strength`, `routing.content_hf_analysis_hz`.
-- `processing.preview`, `processing.preview_duration`, `processing.preview_start`,
-  `processing.fft_size`, `processing.block_size`, `processing.normalize_output`.
-- `mastering.loudness.normalize`, `mastering.loudness.target`,
-  `mastering.loudness.max_tp`, `mastering.eq.profile`,
-  `mastering.eq.strength`, `mastering.compressor.profile`,
-  `mastering.compressor.threshold_db`, `mastering.compressor.ratio`,
-  `mastering.compressor.attack_ms`, `mastering.compressor.release_ms`,
-  `mastering.compressor.knee_db`, `mastering.compressor.makeup_db`,
-  `mastering.bass.profile`, `mastering.bass.sub_gain_db`,
-  `mastering.bass.mid_gain_db`, `mastering.bass.mono_cutoff_hz`,
-  `mastering.bass.excite`, `mastering.bass.lfe_gain_db`,
-  `mastering.match_reference.path`, `mastering.match_reference.strength`,
-  `mastering.match_reference.spectrum`, `mastering.match_reference.rms`, and
-  `mastering.match_reference.max_db`.
+The full, current list of canonical processing paths is whatever
+`GET /api/v1/configuration`'s `manifest_parameters` returns (also mirrored by
+`upmixer --manifest-keys`) — that response, not this document, is the
+source of truth, so it is not re-enumerated here. Representative paths per
+group: `engine.stems`/`engine.stem_silence_skip` (stem separation),
+`format.type`/`format.binaural.profile`/`format.transaural.profile`
+(delivery), `mixing.channel_layout`/`mixing.stem_routing` (spatial mix),
+`routing.center_gain`/`routing.lfe_gain` (channel-group gains),
+`processing.preview`/`processing.fft_size` (analysis), and
+`mastering.loudness.target`/`mastering.compressor.profile`/
+`mastering.match_reference.strength` (mastering chain).
 
 ## Parity Matrix
 

@@ -1,13 +1,13 @@
 # Signed Contracts — Index and Rules for AI Agents
 
 This directory defines the **signed contracts** that keep the web preview
-(`web/`, `upmixer_web/`) and the core export pipeline (`upmixer/`) producing
-equivalent audio. It exists because of a specific architectural fact: **the
-frontend does not send audio to the backend to preview an upmix.** It
-re-implements the mixing, spatial routing, mastering, and binaural rendering
-stages as a Web Audio graph in the browser
-(`web/src/features/projects/useStemPreview.ts`,
-`web/src/features/projects/masteringProfiles.ts`, `web/src/lib/spatial.ts`)
+(`apps/web/`, `apps/api/`) and the core export pipeline (`packages/core/`)
+producing equivalent audio. It exists because of a specific architectural
+fact: **the frontend does not send audio to the backend to preview an
+upmix.** It re-implements the mixing, spatial routing, mastering, and
+binaural rendering stages as a Web Audio graph in the browser
+(`apps/web/src/features/projects/useStemPreview.ts`,
+`apps/web/src/features/projects/masteringProfiles.ts`, `apps/web/src/lib/spatial.ts`)
 and plays that back live. Export renders the same project through
 `upmixer.pipeline.UpmixPipeline` / `upmixer.separation.stem_pipeline
 .StemUpmixPipeline`. Two independent implementations of the same DSP only
@@ -53,14 +53,15 @@ The tunable DSP constants in `preview_export_parity.md`'s catalog are
 below and that document's §4) — the web has no second copy to keep in sync.
 Changing a served constant means:
 
-1. Update the Python source (`upmixer/...`) — the only place the value lives.
+1. Update the Python source (`packages/core/src/...`) — the only place the value lives.
 2. Update the constants catalog / tier / threshold in
    `preview_export_parity.md` to describe the new value.
 3. Update the web test fixture
    `apps/web/src/features/projects/engineConstants.fixture.ts` to match (it
    feeds the golden harness), then re-run the golden render diff
-   (`tests/test_preview_export_golden.py`, which runs by default — refresh
-   its fixtures with `npm run golden:render` first) until green.
+   (`packages/core/tests/test_preview_export_golden.py`, which runs by
+   default — refresh its fixtures with `npm run golden:render` first) until
+   green.
 
 For a DSP change that alters the *realization* on only one side (Tier 2/3, or
 a web-local structural constant), the golden render diff is what holds the
@@ -68,24 +69,19 @@ result within tolerance. Do not silence, skip, or loosen a tolerance to make
 a failing test pass; fix the divergent side, or if the contract itself should
 change, follow the steps above.
 
-If you are an AI agent asked to change DSP behavior anywhere in `upmixer/`
-or in the preview graph, **read `preview_export_parity.md` first** to find
-out whether the value you're touching is contracted, and if so, at which
-parity tier — that determines whether the other side must also change and
-how tightly re-verification must hold.
+If you are an AI agent asked to change DSP behavior anywhere in
+`packages/core/src/` or in the preview graph, **read `preview_export_parity.md`
+first** to find out whether the value you're touching is contracted, and if
+so, at which parity tier — that determines whether the other side must also
+change and how tightly re-verification must hold.
 
 ## Single-source constants mechanism
 
-`apps/api/src/features/system/service.py::engine_constants()` reads the
-tunable DSP constants straight from their real core source modules (never
-re-typed) and serves them as the `constants` block of
-`GET /api/v1/configuration`. The web fetches them once at bootstrap and
-normalizes them through `resolveEngineConstants` (`masteringProfiles.ts`)
-into the `EngineConstants` object its graph builders consume. Because core is
-the only source, there is no value cross-check to run — the former
-`contract.py`/`contract.ts`/`dump-constants.mjs`/`web_constants.json`/
-`test_contract_parity.py` machinery was removed (see `preview_export_parity.md`
-Ledger D16). Signal-level equivalence — the thing that actually matters — is
-the job of the golden render diff (`tests/test_preview_export_golden.py`),
-which runs by default (not opt-in) and is described in
-`preview_export_parity.md`'s tolerance-thresholds section.
+The full mechanism (`engine_constants()`, what is served vs. kept web-local,
+and why there is no value cross-check to run) is specified once, in
+[`preview_export_parity.md` §4](preview_export_parity.md#4-single-source-of-truth-for-the-constants-3).
+Signal-level equivalence — the thing that actually matters once constants
+can no longer drift — is the job of the golden render diff
+(`packages/core/tests/test_preview_export_golden.py`), which runs by
+default and is described in that document's tolerance-thresholds section
+(§5).

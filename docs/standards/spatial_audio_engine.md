@@ -12,7 +12,7 @@ Audio and the Dolby Atmos binaural renderer (see References). No measured
 proprietary HRTF/BRIR data is used — all filters are synthesized (§4).
 **Scope:** Rendering a discrete multichannel bed to headphone-ready binaural
 stereo. This document is the signed contract between the core engine
-(`upmixer/binaural/`) and the web preview (`web/src/features/projects/
+(`packages/core/src/binaural/`) and the web preview (`apps/web/src/features/projects/
 useStemPreview.ts`, `masteringProfiles.ts`) — both must implement it
 identically at the parameter level (see §6 for what "identically" means).
 
@@ -100,8 +100,8 @@ azimuth  = atan2(-x, -z)             (degrees, 0 = front)
 elevation = asin(y / |position|)     (degrees, 0 = horizon)
 ```
 
-Source of truth: `upmixer/binaural/geometry.py` (core) and
-`web/src/lib/spatial.ts` `speakerCoordinates` / `positionToAzimuthElevation`
+Source of truth: `packages/core/src/binaural/geometry.py` (core) and
+`apps/web/src/lib/spatial.ts` `speakerCoordinates` / `positionToAzimuthElevation`
 (web). These two files must stay numerically identical.
 
 ---
@@ -133,7 +133,7 @@ convention). 16 channels. `azimuth` = 0 front / positive = left; `elevation`
 
 A speaker's contribution to the HOA bus is `gain[acn] * signal` summed
 across all positional speakers. Source of truth:
-`upmixer/binaural/ambisonics.py::encode_gains`.
+`packages/core/src/binaural/ambisonics.py::encode_gains`.
 
 **ACN 12 normalization note:** `encode_gains`'s ACN 12 (Y₃⁰, the order-3
 vertical/zonal harmonic) deliberately omits the standard N3D `√7` factor
@@ -213,8 +213,8 @@ This is a documented approximation, not a perceptually validated HRTF
 measurement. Swapping in a measured dataset later only requires regenerating
 the same file layout — no engine code changes.
 
-Core loader: `upmixer/binaural/decoder.py`. The web preview fetches the same
-four-file-per-profile layout from `web/public/hrir/` (copied byte-for-byte
+Core loader: `packages/core/src/binaural/decoder.py`. The web preview fetches the same
+four-file-per-profile layout from `apps/web/public/hrir/` (copied byte-for-byte
 by the build script).
 
 ---
@@ -254,12 +254,12 @@ without boomy ringing.
 Crossfeed: each ear mixed with a low-passed copy of the opposite ear
 (`out_L = L·(1−a) + lowpass(R)·a`), softening hard-panned harshness the way
 headphone crossfeed does in general. Shelf/peak filters use the same
-subtract/add biquad trick as `upmixer/utils.py::elevation_eq` so the Web
+subtract/add biquad trick as `packages/core/src/utils.py::elevation_eq` so the Web
 Audio `BiquadFilterNode` chain can match parameter-for-parameter.
 
-Core implementation: `upmixer/binaural/voicing.py` +
-`upmixer/binaural/profiles.py::VOICING_PARAMS`. Web mirror:
-`web/src/features/projects/masteringProfiles.ts` (listening voicing
+Core implementation: `packages/core/src/binaural/voicing.py` +
+`packages/core/src/binaural/profiles.py::VOICING_PARAMS`. Web mirror:
+`apps/web/src/features/projects/masteringProfiles.ts` (listening voicing
 constants) applied in `useStemPreview.ts`.
 
 ---
@@ -274,14 +274,14 @@ The **DSP realization** of the voicing chain is *not* required to be
 sample-identical: the core uses SciPy `sosfilt` IIR sections, the web uses
 Web Audio `BiquadFilterNode`s. These differ in numerical precision and
 exact phase response, the same accepted gap that already exists between
-`upmixer/mastering/*.py` and the web's `buildMasteringTopology` mirror.
+`packages/core/src/mastering/*.py` and the web's `buildMasteringTopology` mirror.
 Parity at the **parameter table** level (§5) is structural: the voicing and
 gain constants are single-sourced from core and served to the web at runtime
 (see `docs/contracts/preview_export_parity.md` §4), so there is no second copy
 to drift. The actual cross-engine render is held within a bounded
-audible-difference tolerance by `tests/test_preview_export_golden.py`.
+audible-difference tolerance by `packages/core/tests/test_preview_export_golden.py`.
 (Constant-level parity has long been pinned independently on each side by
-`tests/test_binaural.py` and `masteringProfiles.test.ts`; the served single
+`packages/core/tests/test_binaural.py` and `masteringProfiles.test.ts`; the served single
 source above is what ties the two
 together and what the cross-engine render diff actually verifies, closing a
 gap this document previously described as already covered when it was not.)
@@ -314,7 +314,7 @@ re-run a full loudness match on top of that — the 12→2 channel collapse
 concentrates energy from many channels into two, so a second full match
 would read louder than the mastered bed rather than matching it. Instead it
 applies a small bounded correction for the collapse's own level shift
-(`BINAURAL_LOUDNESS_MAX_GAIN_DB = 6.0` dB ceiling, `upmixer/binaural/
+(`BINAURAL_LOUDNESS_MAX_GAIN_DB = 6.0` dB ceiling, `packages/core/src/binaural/
 renderer.py`) and true-peak limits linearly to `-1.0 dBTP`. The soft-limit
 safety net (`soft_limit`, tanh above `peak_limit_threshold`) runs **last**,
 after this gain correction — limiting the raw pre-gain HRTF sum instead bakes

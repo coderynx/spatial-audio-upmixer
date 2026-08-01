@@ -4,13 +4,13 @@ The web application is an additional delivery surface around the existing `upmix
 
 ## Components
 
-- `upmixer_web/` exposes a versioned FastAPI API and OpenAPI document.
-- `web/` is a React and shadcn/ui client. It does not contain processing logic.
+- `apps/api/` (`upmixer_web/`) exposes a versioned FastAPI API and OpenAPI document.
+- `apps/web/` is a React and shadcn/ui client. It does not contain processing logic.
 - SQLAlchemy persists imports, jobs, per-track progress, and artifacts. SQLite is the default; install the `web-postgres` extra and supply a PostgreSQL URL without changing repositories or models.
 - `ObjectStorage`, `AudioSource`, and `AudioSink` isolate blob access. The first implementation uses local disk. An S3 implementation can materialize sources into worker scratch space and upload sink outputs without changing job orchestration.
-- `WorkerManager` recovers interrupted jobs and bounds processing concurrency. Each job's actual pipeline work (`StemUpmixPipeline`/`UpmixPipeline.process_file`, including stem separation and mastering) runs in an isolated child process via `upmixer_web/worker/subprocess.py`, so a native crash (OS OOM-kill, CUDA/MPS driver crash, segfault) in that code fails only the one job, not the server. Progress and completion are relayed back over a queue; pause/delete requests terminate the child process.
+- `WorkerManager` recovers interrupted jobs and bounds processing concurrency. Each job's actual pipeline work (`StemUpmixPipeline`/`UpmixPipeline.process_file`, including stem separation and mastering) runs in an isolated child process via `apps/api/src/worker/subprocess.py`, so a native crash (OS OOM-kill, CUDA/MPS driver crash, segfault) in that code fails only the one job, not the server. Progress and completion are relayed back over a queue; pause/delete requests terminate the child process.
 
-`upmixer_web/` itself is organized as vertical slices (routes/service/views/schemas per feature, under `features/`) rather than by technical layer — see [Web API architecture](web_api_architecture.md) for the package layout and the convention new endpoints must follow.
+`apps/api/src/` itself is organized as vertical slices (routes/service/views/schemas per feature, under `features/`) rather than by technical layer — see [Web API architecture](web_api_architecture.md) for the package layout and the convention new endpoints must follow.
 
 ## Durable state
 
@@ -73,7 +73,7 @@ sits upstream of the splitter; the anchor has none, since its two sends are
 driven directly by anchor strength instead. `postEqGain` is the fixed
 post-EQ insert point `createStemSends` reads from — `buildStemEqChains`
 rebuilds the `stemGain -> [EQ filters] -> postEqGain` chain whenever
-`mix.stem_eq` changes (mirrors `upmixer/separation/stem_eq.py`; the anchor
+`mix.stem_eq` changes (mirrors `packages/core/src/separation/stem_eq.py`; the anchor
 has none, since the backend's dry-source blend bypasses stem EQ entirely).
 `sends` holds one gain node per positional channel the source can reach,
 each feeding straight into that channel's `SpeakerBus.muteGain`, so route
@@ -93,17 +93,17 @@ HRTF. An earlier fix layered a fixed compensation EQ on the HRTF bus and
 hard-switched some sources to a dry stereo pan to dodge comb filtering
 against the panner's unqueryable ITD — both hacks are gone now. The preview
 now mirrors the backend exactly: stems route into the same 11-speaker
-channel bed `upmixer/separation/stem_router.py::StemRouter.route` builds,
+channel bed `packages/core/src/separation/stem_router.py::StemRouter.route` builds,
 and that channel bed — not the individual stems — is what gets encoded to
 ambisonics and binauralized (the "virtual loudspeaker" model, see below).
 
 **Routing.** `createStemSends` builds the shaped-signal set a stem needs
 (raw L/R, mono downmix, surround send, height send) and one gain node per
 positional channel wiring the right shaped signal in, mirroring
-`upmixer/separation/stem_router.py::route()` — done once per stem rather
+`packages/core/src/separation/stem_router.py::route()` — done once per stem rather
 than per output channel since channels like SL/BL share a shaped signal.
 `CHANNEL_SIGNAL` maps each positional channel to which shaped signal feeds
-it. `STEREO_DOWNMIX_GAINS` mirrors `upmixer/utils.py::itu_downmix_stereo`
+it. `STEREO_DOWNMIX_GAINS` mirrors `packages/core/src/utils.py::itu_downmix_stereo`
 (ITU-R BS.775-4 Annex 4 Table 2): back channels fold into the matching side
 channel attenuated by the centre coefficient; height channels and LFE are
 excluded per the standard (LFE gets its own discrete native send instead).
@@ -182,7 +182,7 @@ renders the whole channel bed to stereo via the loaded HRIR set — the
 `preMasterBus`/`lfeBus`/`mergePoint` sum the binaural render with the LFE
 bypass ahead of the soft-limiter; `preMasterBus` is a plain passthrough since
 mastering (EQ/comp/bass) runs earlier on the discrete bed
-(`SpeakerBus.masterIn`/`masterOut`), matching `upmixer/pipeline.py`'s order
+(`SpeakerBus.masterIn`/`masterOut`), matching `packages/core/src/pipeline.py`'s order
 (`MasteringChain` before `render_binaural_delivery`). `decodeConvolvers` is
 one `ConvolverNode` pair per ACN channel per `spatial_audio_engine.md` §4.
 `voicingMerger` is `buildBinauralGraph`'s post-voicing stereo output; LFE
@@ -199,7 +199,7 @@ the headphone preview selected).
 
 `sidechainSum`/`sidechainSink`/`sidechainCompressor`/`compGains`/
 `compMakeupGain` emulate the backend's linked-sidechain bus compressor
-(`upmixer/mastering/compressor.py`) without an AudioWorklet: every channel's
+(`packages/core/src/mastering/compressor.py`) without an AudioWorklet: every channel's
 post-EQ signal sums into `sidechainSum`, feeding one shared
 `DynamicsCompressorNode` used purely as a sidechain (its native channelCount
 can't exceed 2, so it can't process the discrete bed directly); its live
@@ -219,6 +219,6 @@ Uvicorn trusts only `UPMIXER_FORWARDED_ALLOW_IPS`. Set it to the proxy address o
 
 ## Local development
 
-Use Python 3.11, 3.12, or 3.13 for web stem jobs. Install Python web dependencies with `python3 -m pip install -e ".[dev,web,web-dev,separation-cpu]"`, then run `python3 -m upmixer_web`. The CPU extra also enables MPS acceleration on supported Apple Silicon Macs; reserve `separation-gpu` for NVIDIA CUDA hosts. In `web/`, install packages and run `npm run dev`. Vite proxies `/api` to the backend.
+Use Python 3.11, 3.12, or 3.13 for web stem jobs. Run `uv sync --all-packages --extra dev --extra web-dev --extra separation-cpu` from the repo root (see `AGENTS.md` Commands), then `uv run python -m upmixer_web`. The CPU extra also enables MPS acceleration on supported Apple Silicon Macs; reserve `separation-gpu` for NVIDIA CUDA hosts. In `apps/web/`, install packages and run `npm run dev`. Vite proxies `/api` to the backend.
 
 For a GPU container, run `docker compose up --build`. The Compose configuration requests all available NVIDIA GPUs and persists database, imports, cache, and outputs in the `upmixer-data` volume.

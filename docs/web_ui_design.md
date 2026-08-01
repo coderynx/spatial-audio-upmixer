@@ -1,6 +1,6 @@
 # Web UI Design Specification
 
-Binding reference for `web/`. Any change that adds a page, a control, or a
+Binding reference for `apps/web/`. Any change that adds a page, a control, or a
 visual state follows this document. It records the decisions already
 implemented, so new work stays coherent with what exists rather than
 re-deriving a look per feature.
@@ -11,8 +11,9 @@ panel anatomy. Both light and dark are first-class — neither is an
 afterthought skin of the other.
 
 Scope is presentation only. `docs/web_architecture.md` governs the delivery
-boundary, and the rule in `AGENTS.md` still holds: no `upmixer/` change for a
-web visual concern.
+boundary; the no-core-change-for-a-web-visual-concern and
+`canvasTheme.ts`-is-the-only-literal-colour rules live in `apps/web/AGENTS.md`
+and still hold here.
 
 ## 1. Principles
 
@@ -34,13 +35,13 @@ web visual concern.
 
 ## 2. Tokens
 
-All colours come from CSS custom properties in `web/src/index.css`, consumed
-through the Tailwind mappings in `web/tailwind.config.ts`. Never write a
+All colours come from CSS custom properties in `apps/web/src/index.css`, consumed
+through the Tailwind mappings in `apps/web/tailwind.config.ts`. Never write a
 literal colour in a component — the only sanctioned literals live in two
 modules:
 
-- `web/src/lib/canvasTheme.ts` (§7) — the instrument-display palette.
-- `web/src/lib/stems.ts` — `stemColors`, the per-stem identity hues. §1.6
+- `apps/web/src/lib/canvasTheme.ts` (§7) — the instrument-display palette.
+- `apps/web/src/lib/stems.ts` — `stemColors`, the per-stem identity hues. §1.6
   permits stem identity as decorative colour, and these are consumed through
   `getStemColor` by both canvas surfaces (Haze, Elevation, Timeline lanes) and
   DOM chrome (stem rows, mixer nameplates). They are Tailwind-palette hues
@@ -113,7 +114,7 @@ Numeric values that update or align in columns take `tabular-nums`.
 
 ## 4. Page anatomy
 
-Every routed page composes `Workspace` from `web/src/app/Workspace.tsx`:
+Every routed page composes `Workspace` from `apps/web/src/app/Workspace.tsx`:
 
 ```
 ┌──────────────────────────── top bar (AppShell, 44px) ────────────────────┐
@@ -193,11 +194,10 @@ implementation.
   estimate kept in sync by hand, but a flexbox guarantee, which is what
   makes the row "magnetic": no combination of the other two displays' widths
   can ever leave a gap, because Elevation has no ceiling and always claims
-  every remaining pixel. `ChannelMeters` used to self-manage this width via
-  its own baked-in `min-w-[180px] max-w-[480px] flex-1`; that moved out to
-  the caller (its own classes dropped) once a fixed internal cap could
-  disagree with the caller's explicit width and leave unabsorbed space
-  between it and Elevation.
+  every remaining pixel. `ChannelMeters` does not manage its own width —
+  a baked-in internal cap could disagree with the caller's explicit width
+  and leave unabsorbed space between it and Elevation, so the caller always
+  supplies the value instead.
 
   A `StripResizeHandle` (§6.4) sits in the Haze and Elevation wrappers (the
   one between Elevation and Meters lives on Elevation's side but drives
@@ -217,7 +217,7 @@ implementation.
 ## 5. Layout primitives
 
 Compose these before writing bespoke layout markup. All live in
-`web/src/app/`.
+`apps/web/src/app/`.
 
 | Primitive | Shape | Use |
 | --- | --- | --- |
@@ -237,7 +237,7 @@ primitive only where real tabpanels exist.
 
 ## 6. Controls
 
-Class-level rules for `web/src/components/ui/*`. Keep every export signature
+Class-level rules for `apps/web/src/components/ui/*`. Keep every export signature
 and DOM shape — `ToggleField`'s nesting in particular is depended on.
 
 - **Button** — `default h-7 px-3 text-[13px]`, `sm h-6`, `lg h-9`,
@@ -600,15 +600,11 @@ rule — check `bars.length`/`channels`, don't hardcode a floor.
 
 ### 6.6 Project top bar and transport bar
 
-`ProjectDetailPage` used to stack a `Toolbar` (§5) holding the Mixing/
-Mastering/Delivery `SegmentedControl` above `Transport`'s own centred
-playback bar, then later merged that toolbar into `Transport`'s `leading`
-slot. The stage tabs have since moved again, up into the global top bar
-(`AppShell`'s `<header>`) beside the project's own breadcrumb and name —
-they're the project's identity and its workflow read as one unit, and it's
-the one bar that's *always* on screen (Settings used to swap `Transport`
-and everything under it out entirely; the merge fixed that once, moving up
-keeps it fixed). `ProjectDetailPage` builds this combined element itself
+The project's stage tabs (the Mixing/Mastering/Delivery `SegmentedControl`)
+live in the global top bar (`AppShell`'s `<header>`), beside the project's
+own breadcrumb and name — the project's identity and its workflow read as
+one unit, and the top bar is the one region that's *always* on screen
+regardless of stage. `ProjectDetailPage` builds this combined element itself
 and hands it to `useHeaderTitle`, since `HeaderSlot` only exposes a single
 slot — see the memo's own comment for why folding frequently-changing state
 (`activeTab`/`settingsView`) into that memo's deps is safe here (a bounded
@@ -648,14 +644,12 @@ state change per click, not a fresh element every render).
   the default fixed height, card-pill active state, and cross-fade.
 - **The top bar's right side empties out to make room.** `AppShell` renders
   Refresh and the page's `onCreate` button only when their callbacks are
-  supplied; `App.tsx` withholds both (and the processing-capability status
-  that used to sit beside them) specifically on `/projects/:id`, since the
-  stage tabs need the width. The projects *list* route keeps all three.
-- **`Transport`'s `leading` slot now carries only the `TrackRail` reveal
+  supplied; `App.tsx` withholds both specifically on `/projects/:id`, since
+  the stage tabs need the width. The projects *list* route keeps both.
+- **`Transport`'s `leading` slot carries only the `TrackRail` reveal
   toggle** (§4 — collapsing takes the rail out of the layout entirely, so
   its own header button can't be what brings it back; this is the one place
-  guaranteed to render whenever a rail-bearing stage is active). Everything
-  else that used to live here (the stage tabs, then Save) has moved on.
+  guaranteed to render whenever a rail-bearing stage is active).
 - **"Download project" lives inside the Settings view, not the top bar.**
   It's a portable `.upmix.zip` re-importable to an identical workspace —
   distinct from the Delivery tab's "Export project", which renders a
@@ -687,7 +681,7 @@ not swap them.
 ## 7. Canvas displays
 
 `HazeView`, `ElevationView`, and `ChannelMeters` render to `<canvas>` and read
-`web/src/lib/canvasTheme.ts`. These surfaces stay dark in **both** app themes,
+`apps/web/src/lib/canvasTheme.ts`. These surfaces stay dark in **both** app themes,
 the way Logic keeps its instrument displays dark regardless of appearance.
 They are the one place literal hex values are correct (alongside `stems.ts`,
 §2); add new ones to `canvasTheme.ts` rather than inline. `TimelineView` and
@@ -720,7 +714,7 @@ channel keeps a `well` slot inside a `destructive` frame so "off" reads
 differently from "silent". Peak ticks are centred on the dB they hold.
 
 **Meter scale.** `levelToDb`, `dbToY`, `drawMeterBar`, the zone thresholds and
-`createMeterState` live in `web/src/lib/meterScale.ts`, not in any one display.
+`createMeterState` live in `apps/web/src/lib/meterScale.ts`, not in any one display.
 Every meter in the app imports them. Re-deriving a dB scale beside a second
 meter is how two meters end up disagreeing about what −20 dB looks like.
 
@@ -743,7 +737,7 @@ panel next to it. Putting a working surface on the blue instrument field
 reads as a hole in the page rather than as depth.
 
 Canvas has no access to CSS variables, so those surfaces read the resolved
-tokens through `useThemeTokens` (`web/src/lib/themeTokens.ts`), which re-reads
+tokens through `useThemeTokens` (`apps/web/src/lib/themeTokens.ts`), which re-reads
 when the theme class on `<html>` changes. Never duplicate a token as a literal
 to get it into a canvas, and never add a chrome colour to `canvasTheme.ts`.
 
@@ -799,7 +793,7 @@ column `card`, separators `border`.
   canvas and is the only thing touched per frame. Position is read from
   `currentTimeRef` in the view's own rAF loop — never from `currentTime` state.
 - **Envelopes are server-precomputed**, fetched once per track as one binary
-  (`upmixer_web/project_storage.py`). Do not compute peaks in the browser from
+  (`apps/api/src/features/projects/storage.py`). Do not compute peaks in the browser from
   decoded buffers: that adds main-thread work at exactly the moment decode is
   already saturating it. The payload also carries the track duration, so the
   ruler draws before playback has finished loading.
@@ -835,7 +829,8 @@ A visual change is not done until:
 
 1. `cd web && npx tsc -b && npx eslint src` — zero errors.
 2. `cd web && npx vitest run` — all suites pass.
-3. `python3 -m pytest -q` from the repo root — zero regressions.
+3. `uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q` from
+   the repo root — zero regressions.
 4. Preview-tool check on each affected route, in **both** colour schemes and
    at desktop and tablet widths: no console errors, no page-level scrollbar
    (`scrollHeight === innerHeight`, `scrollWidth === innerWidth`), rail and

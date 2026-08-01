@@ -42,8 +42,8 @@ own package; the installed `upmixer` **command** is unchanged.
 - `src/flags.py` — translate parsed `Namespace` into `upmixer.config.UpmixConfig`.
 - `src/manifest_run.py` — manifest-driven asset job orchestration.
 
-All processing logic (pipelines, batch orchestration, preflight/resume state, manifests) lives in `upmixer` core;
-this package only parses arguments and dispatches into it.
+See `AGENTS.md` for the scope boundary (all processing logic lives in core)
+and coding conventions.
 
 ## Testing
 

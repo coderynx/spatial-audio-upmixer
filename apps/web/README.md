@@ -32,5 +32,5 @@ static SPA.
   root `scripts/build_*_filters.py` tools.
 - `scripts/` — `render-preview-golden.mjs` (bundles the preview graph and renders the cross-engine golden fixture).
 
-See [Web UI design specification](../../docs/web_ui_design.md) and [Web architecture](../../docs/web_architecture.md)
-before adding a page, control, or visual state.
+See `AGENTS.md`, [Web UI design specification](../../docs/web_ui_design.md), and
+[Web architecture](../../docs/web_architecture.md) before adding a page, control, or visual state.

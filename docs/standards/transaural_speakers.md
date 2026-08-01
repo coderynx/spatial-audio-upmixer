@@ -11,8 +11,8 @@ public *principles* those sources describe, not a transcription of any
 paper's exact formula.
 **Scope:** Rendering a discrete multichannel bed to speaker-ready,
 crosstalk-cancelled stereo for real stereo loudspeakers. This document is
-the signed contract between the core engine (`upmixer/crosstalk/`) and the
-web preview (`web/src/features/projects/previewGraph.ts`'s
+the signed contract between the core engine (`packages/core/src/crosstalk/`) and the
+web preview (`apps/web/src/features/projects/previewGraph.ts`'s
 `buildCrosstalkGraph`, `audioEngine.ts`) — both must implement it identically
 at the parameter level (see §6 for what "identically" means). It assumes
 familiarity with [Spatial Audio Engine — Binaural Rendering
@@ -21,7 +21,7 @@ this engine reuses as its input.
 
 ---
 
-## 1. Why crosstalk cancellation, and why three profiles
+## 1. Why crosstalk cancellation, and why five profiles
 
 Binaural audio (§0 of the sibling doc) is built to be heard with the left
 signal reaching only the left ear and the right signal only the right ear —
@@ -87,7 +87,7 @@ signal graph: everything from the HOA encode through the anechoic ear
 signals is identical and literally reused (`render_binaural`), not
 reimplemented.
 
-Core entry point: `upmixer/crosstalk/renderer.py::render_crosstalk`. Web
+Core entry point: `packages/core/src/crosstalk/renderer.py::render_crosstalk`. Web
 mirror: `buildCrosstalkGraph` (`previewGraph.ts`), which internally calls
 `buildBinauralGraph(ctx, "flat")` for the ear-signal stage and exposes the
 same `preVoicing` LFE-injection contract the binaural graph does (Ledger
@@ -99,7 +99,7 @@ D11 in `docs/contracts/preview_export_parity.md`).
 
 Each profile fixes two listener-relative speaker azimuths in degrees (0 =
 dead ahead, positive = left — the same convention as
-`upmixer/binaural/geometry.py`). Elevation is always 0 (ear-level speakers,
+`packages/core/src/binaural/geometry.py`). Elevation is always 0 (ear-level speakers,
 a documented simplification — see §8). Symmetric profiles set
 `azimuth_right_deg == -azimuth_left_deg`; `car` does not, since an
 off-center driver-seat position genuinely has four independent
@@ -113,8 +113,8 @@ speaker-to-ear paths, not a mirror pair.
 | `laptop` | +14° | −14° |
 | `phone` | +6° | −6° |
 
-Source of truth: `upmixer/crosstalk/profiles.py::XTC_PARAMS` (`XtcParams`
-dataclass) and `upmixer/crosstalk/geometry.py::speaker_azimuths_rad`.
+Source of truth: `packages/core/src/crosstalk/profiles.py::XTC_PARAMS` (`XtcParams`
+dataclass) and `packages/core/src/crosstalk/geometry.py::speaker_azimuths_rad`.
 
 ---
 
@@ -125,7 +125,7 @@ dataclass) and `upmixer/crosstalk/geometry.py::speaker_azimuths_rad`.
 The acoustic path from each speaker to each ear is synthesized with the
 **same parametric spherical-head HRTF model** the binaural engine's decode
 filters use — Woodworth ITD + frequency-dependent head-shadow ILD lowpass —
-now promoted to a shared module, `upmixer/binaural/head_model.py::synth_hrir`,
+now promoted to a shared module, `packages/core/src/binaural/head_model.py::synth_hrir`,
 imported by both `scripts/build_binaural_filters.py` and
 `scripts/build_crosstalk_filters.py` so the two spatial-audio targets never
 drift onto two different head models. For a profile's left speaker at
@@ -155,7 +155,7 @@ H(f) = C(f)^H · (C(f)·C(f)^H + β(f)·I)^-1
 `β(f)` is a smooth, profile-specific curve (`beta_mid` in the well-behaved
 mid-band, raised at low frequency via `low_boost_hz`/`low_boost_factor` and
 above the head-shadow onset via `high_boost_hz`/`high_boost_factor` — see
-`upmixer/crosstalk/profiles.py::XtcParams`). Raising `β` trades cancellation
+`packages/core/src/crosstalk/profiles.py::XtcParams`). Raising `β` trades cancellation
 depth for flatness; the profile's speaker span sets how much depth is
 achievable before that tradeoff bites (§1's per-profile summary). This
 curve is this engine's own heuristic, tuned to keep ipsilateral (same-ear)
@@ -175,7 +175,7 @@ without confirming, per profile, both halves of the tradeoff on the
 synthesized `C`/`H` pair: contralateral leakage energy is reduced relative
 to no cancellation at all (300 Hz–6 kHz band), and ipsilateral level stays
 within a bounded coloration window. See
-`tests/test_crosstalk.py::test_xtc_reduces_contralateral_leakage_within_coloration_bound`
+`packages/core/tests/test_crosstalk.py::test_xtc_reduces_contralateral_leakage_within_coloration_bound`
 — the same "no separation-quality change ships without a report" discipline
 `docs/evaluation_harness.md` establishes for the separation engine, applied
 here to crosstalk cancellation.
@@ -206,8 +206,8 @@ multichannel WAV decode cap (8 channels), so no multi-file split is needed.
 
 Sample rate is the filter's native rate (48 kHz); both engines resample the
 taps to the session's sample rate if it differs (`resample_poly`). Core
-loader: `upmixer/crosstalk/filters.py::load_xtc_filter_set`. The web preview
-fetches the same file from `web/public/xtc/` (copied byte-for-byte by
+loader: `packages/core/src/crosstalk/filters.py::load_xtc_filter_set`. The web preview
+fetches the same file from `apps/web/public/xtc/` (copied byte-for-byte by
 `scripts/build_crosstalk_filters.py`).
 
 ---
@@ -216,8 +216,8 @@ fetches the same file from `web/public/xtc/` (copied byte-for-byte by
 
 Applied **after** the XTC matrix, using the exact same voicing primitives
 and Web Audio topology as the binaural engine
-(`upmixer/binaural/voicing.py::apply_voicing`,
-`upmixer/binaural/profiles.py::VoicingParams` — see
+(`packages/core/src/binaural/voicing.py::apply_voicing`,
+`packages/core/src/binaural/profiles.py::VoicingParams` — see
 `spatial_audio_engine.md` §5 for the parameter definitions and DSP topology,
 not repeated here).
 
@@ -244,26 +244,23 @@ any profile — almost no bass response and the tightest physical span — so
 it carries the strongest bass lift and widen of the five, compensating
 perceptually for what the geometry and driver size can't provide.
 
-Source of truth: `upmixer/crosstalk/profiles.py::VOICING_PARAMS`. Web
+Source of truth: `packages/core/src/crosstalk/profiles.py::VOICING_PARAMS`. Web
 mirror: `TRANSAURAL_VOICING_PARAMS` in `masteringProfiles.ts`.
 
 ---
 
 ## 7. Parity policy
 
-Same three-tier structure as the binaural contract
-(`spatial_audio_engine.md` §6): the **spatial model** — speaker geometry
-(§3), the XTC filter files (§5), and voicing **parameters** (§6) — is
-specified exactly and must match bit-for-bit between core and web. The
-**DSP realization** (SciPy `sosfilt` vs. Web Audio `BiquadFilterNode`/
-`ConvolverNode`) is not required to be sample-identical. The voicing
-**parameters** are single-sourced from core and served to the web at runtime
-(`docs/contracts/preview_export_parity.md` §4), so there is no second copy to
-drift; the cross-engine result is held within tolerance by
-`tests/test_preview_export_golden.py`. The **XTC convolution** itself, like the
-binaural decode convolution, is a plain linear FIR bank applied to the same
-files on both sides, so it *is* expected to match closely (within
-floating-point/resampling tolerance) — any drift there indicates a bug.
+Same three-tier structure as the binaural contract (`spatial_audio_engine.md`
+§6), applied to this engine's own Tier-1 set: speaker geometry (§3), the XTC
+filter files (§5), and voicing parameters (§6) — bit-for-bit, single-sourced
+from core and served at runtime (`docs/contracts/preview_export_parity.md`
+§4). One exception to the usual Tier-2 DSP-realization gap: the **XTC
+convolution** itself, like the binaural decode convolution, is a plain
+linear FIR bank applied to the same files on both sides, so it *is* expected
+to match closely (within floating-point/resampling tolerance) — any drift
+there indicates a bug, not an accepted implementation difference. Held
+within tolerance by `packages/core/tests/test_preview_export_golden.py`.
 
 ---
 
@@ -274,7 +271,8 @@ Exposed as `UpmixConfig.output_type == "transaural"`
 alongside `"wav"`, `"adm-bwf"`, and `"binaural"`, mutually exclusive with
 all three (one `output_type` field). Manifest keys: `format.type:
 transaural`, `format.transaural.profile`. CLI: `--format {5.1.4,7.1.2,7.1.4}
---output-type transaural --transaural-profile {stereo,smart_speaker,car}`.
+--output-type transaural --transaural-profile
+{stereo,smart_speaker,car,laptop,phone}`.
 Gain-staging (collapse-stage loudness ceiling, soft-limit-last ordering)
 mirrors the binaural delivery stage exactly — see `spatial_audio_engine.md`
 §7 — with `CROSSTALK_LOUDNESS_MAX_GAIN_DB = 6.0` dB in place of

@@ -51,8 +51,8 @@ alembic revision -m "add some_column"
 
 Import only the public `upmixer` API — `upmixer.config`, `upmixer.formats`, `upmixer.manifest`,
 `upmixer.pipeline`, `upmixer.mastering.*`, `upmixer.separation.{separator,stem_pipeline,stem_plan,stem_router,stem_eq}`
-— never private/underscore symbols. Web-specific state, capability checks, and error presentation stay here; core
-behavior is never altered for browser-only cases.
+— never private/underscore symbols. See `AGENTS.md` for the full core boundary and vertical-slice
+conventions.
 
 ## Testing
 
