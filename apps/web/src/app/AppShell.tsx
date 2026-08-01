@@ -15,6 +15,7 @@ import logoMark from "@/assets/logo-mark.svg";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { HeaderSlotProvider, useHeaderSlot } from "./HeaderSlot";
+import { SeparationToggle } from "./SeparationToggle";
 import { ThemeToggle } from "./ThemeToggle";
 
 const SIDEBAR_COLLAPSED_KEY = "upmixer.sidebar-collapsed";
@@ -142,6 +143,7 @@ function AppShellLayout({
             <div className="min-w-0 flex-1 self-stretch">{headerNode}</div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <SeparationToggle collapsed />
             {onRefresh && (
               <Button variant="ghost" size="icon" aria-label="Refresh" onClick={onRefresh}>
                 <RefreshCw />

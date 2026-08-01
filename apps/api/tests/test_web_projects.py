@@ -27,6 +27,42 @@ def test_separation_settings_detects_bleed_reduction_changes():
     assert _separation_settings(on) != _separation_settings(tuned)
 
 
+def test_separation_settings_treats_missing_keys_as_client_defaults():
+    """A freshly-prepared project stores only `engine.mode`/`engine.stems`
+    (see `_normalized_project_manifest`), but the web client's
+    `normalizeManifest` always sends the full `stem_*` default block on every
+    save — these two shapes must compare equal, or the first settings save
+    after preparation spuriously clears `prepared_stems` and re-separates."""
+    from upmixer_web.features.projects.service import _separation_settings
+
+    minimal = {"engine": {"mode": "stem", "stems": ["Vocals", "Bass"]}}
+    client_defaults = {
+        "engine": {
+            "mode": "stem",
+            "stems": ["Vocals", "Bass"],
+            "stem_silence_skip": True,
+            "stem_batch_size": None,
+            "stem_silence_threshold_db": -90,
+            "stem_silence_min_duration_s": 2,
+            "stem_silence_crossfade_ms": 10,
+            "stem_silence_pad_ms": 200,
+            "stem_bleed_reduction": False,
+            "stem_phase_fix_low_hz": 500,
+            "stem_phase_fix_high_hz": 5000,
+            "stem_phase_fix_scale": 0.8,
+            "stem_phase_fix_reference_model": "kimmel_unwa_ft2_bleedless.ckpt",
+            "stem_debleed": {},
+            "stem_debleed_model": "mel_band_roformer_bleed_suppressor_v1.ckpt",
+        }
+    }
+    assert _separation_settings(minimal) == _separation_settings(client_defaults)
+
+    debleed_on = {
+        "engine": {**client_defaults["engine"], "stem_debleed": {"Vocals": True}},
+    }
+    assert _separation_settings(client_defaults) != _separation_settings(debleed_on)
+
+
 def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch):
     settings = Settings(
         data_dir=tmp_path,
@@ -146,6 +182,85 @@ def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(
 
         missing = client.post("/api/v1/projects/does-not-exist/stems/reprepare")
         assert missing.status_code == 404
+
+    engine.dispose()
+
+
+def test_settings_save_with_full_client_engine_block_does_not_reseparate(tmp_path, monkeypatch):
+    """A settings save that changes only `mixing.channel_layout` (a mix/
+    routing-time concern, independent of stem audio) must not clear
+    `prepared_stems` or requeue tracks — even though the web client always
+    sends the full `engine.stem_*` default block while a freshly-prepared
+    project's stored manifest carries only `engine.mode`/`engine.stems` (see
+    `_normalized_project_manifest`). Regression test for the spurious
+    re-separation this shape mismatch used to cause via `_separation_settings`."""
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'layout.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+
+    minimal_manifest = {
+        "version": "1.0.0",
+        "engine": {"mode": "stem", "stems": ["Vocals", "Bass"]},
+        "mixing": {"channel_layout": "7.1.4", "stem_routing": {}},
+    }
+
+    with factory() as session:
+        batch = ImportBatch(kind="track", title="Song")
+        asset = MediaAsset(
+            import_batch=batch, filename="ready.wav", relative_path="ready.wav",
+            storage_key="objects/ready.wav", sha256="0" * 64, size_bytes=1,
+        )
+        project = Project(
+            import_batch=batch, name="Ready project", manifest=minimal_manifest,
+            status="ready", prepared_stems=["Vocals", "Bass"], requested_stems=["Vocals", "Bass"],
+            stem_generation=1,
+        )
+        track = ProjectTrack(project=project, asset=asset, position=0)
+        session.add_all([batch, asset, project, track])
+        session.commit()
+        project_id = project.id
+
+    with TestClient(create_app(settings)) as client:
+        # Mirrors the web client's normalizeManifest: the full engine
+        # default block, only `mixing.channel_layout` changed.
+        client_manifest = {
+            "version": "1.0.0",
+            "engine": {
+                "mode": "stem",
+                "stems": ["Vocals", "Bass"],
+                "stem_silence_skip": True,
+                "stem_batch_size": None,
+                "stem_silence_threshold_db": -90,
+                "stem_silence_min_duration_s": 2,
+                "stem_silence_crossfade_ms": 10,
+                "stem_silence_pad_ms": 200,
+                "stem_bleed_reduction": False,
+                "stem_phase_fix_low_hz": 500,
+                "stem_phase_fix_high_hz": 5000,
+                "stem_phase_fix_scale": 0.8,
+                "stem_phase_fix_reference_model": "kimmel_unwa_ft2_bleedless.ckpt",
+                "stem_debleed": {},
+                "stem_debleed_model": "mel_band_roformer_bleed_suppressor_v1.ckpt",
+            },
+            "mixing": {"channel_layout": "5.1.4", "stem_routing": {}},
+        }
+        saved = client.put(f"/api/v1/projects/{project_id}/settings", json={
+            "manifest": client_manifest,
+            "scene": {},
+        })
+        assert saved.status_code == 200
+        body = saved.json()
+        assert body["status"] == "ready"
+        assert body["prepared_stems"] == ["Vocals", "Bass"]
+        assert body["manifest"]["mixing"]["channel_layout"] == "5.1.4"
 
     engine.dispose()
 

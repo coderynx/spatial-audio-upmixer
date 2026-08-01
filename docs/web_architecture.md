@@ -32,6 +32,7 @@ Interactive docs are served at `/api/docs`; the OpenAPI document is `/api/v1/ope
 - `GET /api/v1/imports/{id}` returns album metadata and track order.
 - `GET /api/v1/imports/{id}/assets/{asset_id}/audio` streams an imported source for browser audition and seeking.
 - `GET /api/v1/configuration` returns manifest choices and runtime stem-separation capability.
+- `GET /api/v1/separation` reports whether background stem separation is paused; `POST /api/v1/separation/pause` and `/resume` toggle it application-wide (in-flight work finishes; no new queued job or project is dispatched while paused).
 - `POST /api/v1/jobs` creates a job from an import and a CLI-compatible manifest.
 - `GET /api/v1/jobs` and `GET /api/v1/jobs/{id}` return durable state.
 - `GET /api/v1/jobs/{id}/events` streams state changes as server-sent events.

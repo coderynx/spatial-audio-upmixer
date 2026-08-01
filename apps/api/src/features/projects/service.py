@@ -68,8 +68,24 @@ class TrackNotFoundError(ValueError):
 
 
 def _separation_settings(manifest: dict[str, Any]) -> tuple[object, ...]:
-    engine = manifest.get("engine", {})
-    return tuple(engine.get(key) if isinstance(engine, dict) else None for key in _SEPARATION_ENGINE_KEYS)
+    """Resolve each separation-engine key against `UpmixConfig` defaults so a
+    minimal stored manifest (only ever `engine.mode`/`engine.stems`) compares
+    equal to a client save that always sends the full engine block — a
+    missing key and its default value must not look like a settings change.
+    An empty per-stem override dict (`stem_debleed: {}}`, the client's
+    "unset" shape) is canonicalized to `None` to match the config default.
+    """
+    engine = manifest.get("engine")
+    if not isinstance(engine, dict):
+        engine = {}
+    defaults = UpmixConfig()
+    values: list[object] = []
+    for key in _SEPARATION_ENGINE_KEYS:
+        value = engine.get(key, getattr(defaults, key))
+        if isinstance(value, dict) and not value:
+            value = None
+        values.append(value)
+    return tuple(values)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

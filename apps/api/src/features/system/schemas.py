@@ -12,6 +12,10 @@ class HealthResponse(BaseModel):
     workers: int
 
 
+class SeparationDispatchState(BaseModel):
+    paused: bool
+
+
 class ResolveStemRoutingRequest(BaseModel):
     stems: list[str] = Field(min_length=1)
     channel_layout: str
