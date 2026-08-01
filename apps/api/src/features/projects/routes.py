@@ -13,8 +13,8 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Upl
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
+from upmixer_web.features.imports.service import resolve_mastering_reference
 from upmixer_web.features.jobs.schemas import JobView
-from upmixer_web.features.jobs.service import job_mastering_reference
 from upmixer_web.features.jobs.views import job_view
 from upmixer_web.features.projects.archive import export_project_archive, import_project_archive
 from upmixer_web.features.projects.schemas import (
@@ -121,7 +121,7 @@ def register_project_routes(
         previous_preview_quality = project.preview_quality
         try:
             reference = (
-                job_mastering_reference(session, project.import_batch, request.mastering_reference_id)
+                resolve_mastering_reference(session, project.import_batch, request.mastering_reference_id)
                 if "mastering_reference_id" in request.model_fields_set
                 else project.mastering_reference
             )
@@ -183,7 +183,7 @@ def register_project_routes(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            job = project_export_job(session, project)
+            job = project_export_job(session, project, app.state.project_stems)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         manager.notify()

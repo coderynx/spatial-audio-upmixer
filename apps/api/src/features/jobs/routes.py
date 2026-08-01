@@ -11,13 +11,13 @@ from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
+from upmixer_web.features.imports.service import resolve_mastering_reference
 from upmixer_web.features.jobs.schemas import CloneJobRequest, CreateJobRequest, JobActionResponse, JobView
 from upmixer_web.features.jobs.service import (
     JobStateConflict,
     clone_job,
     create_job,
     get_job,
-    job_mastering_reference,
     list_jobs,
     mark_job_deleting,
     pause_job,
@@ -53,7 +53,7 @@ def register_job_routes(
         try:
             if request.start:
                 ensure_stem_separation_available(request.manifest, stem_capability)
-            reference = job_mastering_reference(
+            reference = resolve_mastering_reference(
                 session, batch, request.mastering_reference_id
             )
             job = create_job(
@@ -126,7 +126,7 @@ def register_job_routes(
                 if "mastering_reference_id" in request.model_fields_set
                 else source.mastering_reference_id
             )
-            reference = job_mastering_reference(
+            reference = resolve_mastering_reference(
                 session, source.import_batch, reference_id
             )
             job = clone_job(

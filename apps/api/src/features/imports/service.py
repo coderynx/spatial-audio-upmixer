@@ -165,6 +165,19 @@ def ingest_uploads(
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def resolve_mastering_reference(
+    session: Session,
+    import_batch: ImportBatch,
+    reference_id: str | None,
+) -> MasteringReference | None:
+    if reference_id is None:
+        return None
+    reference = session.get(MasteringReference, reference_id)
+    if not reference or reference.import_id != import_batch.id:
+        raise ValueError("Mastering reference does not belong to this import")
+    return reference
+
+
 def ingest_mastering_reference(
     session: Session,
     storage: ObjectStorage,

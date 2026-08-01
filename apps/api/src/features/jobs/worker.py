@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import shutil
 import zipfile
 from contextlib import ExitStack
@@ -12,8 +11,6 @@ from pathlib import Path
 from upmixer.config import UpmixConfig
 from upmixer.manifest import apply_asset_job, parse_manifest
 from upmixer_web.features.jobs.service import get_job
-from upmixer_web.features.projects.routing import merge_scene, routing_for_scene
-from upmixer_web.features.projects.service import get_project
 from upmixer_web.shared.manifests import materialize_manifest
 from upmixer_web.shared.models import Artifact, Job, JobTrack
 from upmixer_web.worker.manager import JobDeleting, JobPaused
@@ -24,9 +21,13 @@ class JobRunnerMixin:
     """Durable-job execution methods for ``WorkerManager``.
 
     Reads/writes the host's ``sessions``, ``source``, ``sink``,
-    ``work_root``, ``stem_cache_dir``, ``project_stems``, and ``storage``
-    attributes, and calls back into ``self._control`` — all set up by
-    ``upmixer_web.worker.manager._ManagerCore``.
+    ``work_root``, ``stem_cache_dir``, and ``storage`` attributes, and calls
+    back into ``self._control`` — all set up by
+    ``upmixer_web.worker.manager._ManagerCore``. A project export is just a
+    job whose manifest already carries everything it needs (see
+    ``features.projects.service.project_export_job`` and
+    ``shared.manifests.materialize_manifest``); this runner never reaches
+    into ``features.projects``.
     """
 
     def _update_progress(self, job_id: str, track_id: str, track_index: int, track_count: int, message: str, fraction: float) -> None:
@@ -83,28 +84,6 @@ class JobRunnerMixin:
                         job, input_paths, work_dir, self.stem_cache_dir,
                         reference_path,
                     )
-                    if job.project_id and job.project_snapshot:
-                        project = get_project(session, job.project_id)
-                        if not project:
-                            raise JobDeleting()
-                        snapshot_tracks = job.project_snapshot.get("tracks", {})
-                        track_by_asset = {track.asset_id: track for track in project.tracks}
-                        for asset_data, job_track in zip(manifest["assets"], job.tracks, strict=True):
-                            project_track = track_by_asset.get(job_track.asset_id)
-                            if not project_track:
-                                raise RuntimeError("Project export source track is missing")
-                            asset_data["stem_cache_dir"] = str(
-                                self.project_stems.track_root(project.id, project_track.id)
-                            )
-                            # Same stable identity project preparation used to key
-                            # this track's cache — see projects/worker.py — so an
-                            # export reuses already-separated stems even if the
-                            # data directory moved since preparation ran.
-                            asset_data["stem_cache_key"] = f"project:{project.id}:track:{project_track.id}"
-                            overrides = snapshot_tracks.get(project_track.id, {}).get("manifest_overrides", {})
-                            for block, value in overrides.items():
-                                if isinstance(value, dict):
-                                    asset_data[block] = copy.deepcopy(value)
                 _, asset_jobs = parse_manifest(manifest)
                 mode = asset_jobs[0].engine.get("mode", "realtime") if asset_jobs else "realtime"
 
@@ -120,7 +99,6 @@ class JobRunnerMixin:
                             raise JobDeleting()
                         if track.status == "completed":
                             continue
-                        asset_id = track.asset_id
                         track.status = "running"
                         track.error = None
                         session.commit()
@@ -131,28 +109,6 @@ class JobRunnerMixin:
                     if stems:
                         config.stems = stems
 
-                    custom_routing = None
-                    if (
-                        mode == "stem"
-                        and config.stem_routing is None
-                        and job.project_id
-                        and job.project_snapshot
-                    ):
-                        with self.sessions() as project_session:
-                            project = get_project(project_session, job.project_id)
-                            project_track = next(
-                                (item for item in project.tracks if item.asset_id == asset_id),
-                                None,
-                            ) if project else None
-                            if not project or not project_track:
-                                raise JobDeleting()
-                            overrides = job.project_snapshot.get("tracks", {}).get(project_track.id, {})
-                            scene = merge_scene(
-                                job.project_snapshot.get("scene", {}),
-                                overrides.get("scene_overrides", {}),
-                            )
-                            custom_routing = routing_for_scene(scene, config)
-
                     item = WorkItem(
                         track_id=track_id,
                         mode=mode,
@@ -160,7 +116,6 @@ class JobRunnerMixin:
                         output_path=asset_job.output,
                         config=config,
                         input_format_override=asset_job.engine.get("input_format"),
-                        custom_routing=custom_routing,
                     )
                     work_items.append(item)
                     items_by_track[track_id] = item

@@ -414,6 +414,24 @@ class TestSingleAssetParse:
         _, jobs = parse_manifest(data)
         assert jobs[0].config.get("stem_cache_dir") == "/tmp/stems"
 
+    def test_stem_output_dir_shortcut(self):
+        data = _minimal([{
+            "input": "a.flac",
+            "output": "a.wav",
+            "stem_output_dir": "/tmp/project-stems/track-1",
+        }])
+        _, jobs = parse_manifest(data)
+        assert jobs[0].config.get("stem_output_dir") == "/tmp/project-stems/track-1"
+
+    def test_stem_input_dir_shortcut(self):
+        data = _minimal([{
+            "input": "a.flac",
+            "output": "a.wav",
+            "stem_input_dir": "/tmp/project-stems/track-1",
+        }])
+        _, jobs = parse_manifest(data)
+        assert jobs[0].config.get("stem_input_dir") == "/tmp/project-stems/track-1"
+
     def test_stem_batch_size_from_engine(self):
         data = _minimal(engine={"mode": "stem", "stem_batch_size": 4})
         _, jobs = parse_manifest(data)

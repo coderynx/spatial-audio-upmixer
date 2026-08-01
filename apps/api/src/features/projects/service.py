@@ -9,11 +9,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from upmixer.config import UpmixConfig
+from upmixer.manifest import apply_asset_job, parse_manifest
 from upmixer.separation.stem_plan import normalize_stems
 from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_router import build_stem_routing
 from upmixer_web.features.jobs.service import create_job
-from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS
+from upmixer_web.features.projects.routing import merge_scene, routing_for_scene
+from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS, ProjectStemStorage
 from upmixer_web.shared.manifests import normalize_job_manifest
 from upmixer_web.shared.models import ImportBatch, Job, MasteringReference, Project, ProjectStem, ProjectTrack
 
@@ -338,25 +341,62 @@ def expand_project_stems(session: Session, project: Project, stems: Iterable[str
     return get_project(session, project.id)  # type: ignore[return-value]
 
 
-def project_export_job(session: Session, project: Project) -> Job:
+def _resolve_track_routing(
+    manifest: dict[str, Any],
+    overrides: dict[str, Any],
+    requested_stems: list[str],
+    scene: dict[str, Any],
+) -> dict[str, dict[str, float]] | None:
+    """Derive the constant-power speaker routing for a track's positioned
+    stems, unless the merged manifest already sets `mixing.stem_routing`
+    explicitly — mirrors the precedence `StemRouter` itself applies (manifest
+    routing before any caller-supplied override)."""
+    probe = _deep_merge(manifest, overrides)
+    probe.setdefault("engine", {})["mode"] = "stem"
+    probe["engine"]["stems"] = list(requested_stems)
+    probe["assets"] = [{"input": "probe-in.wav", "output": "probe-out.wav"}]
+    _, asset_jobs = parse_manifest(probe)
+    asset_job = asset_jobs[0]
+    config = UpmixConfig()
+    apply_asset_job(config, asset_job)
+    if config.stem_routing is not None:
+        return None
+    config.stems = asset_job.engine.get("stems") or list(requested_stems)
+    return routing_for_scene(scene, config) or None
+
+
+def project_export_job(session: Session, project: Project, project_stems: ProjectStemStorage) -> Job:
+    """Create a self-contained export job from an immutable project snapshot.
+
+    The job needs nothing from `features.projects` at run time: each track's
+    resolved stem-routing and manifest overrides are baked into
+    `job.project_snapshot["tracks"]` (keyed by asset id, shared between
+    `ProjectTrack` and the cloned `JobTrack`) here, and `stem_input_dir`
+    points the job straight at the project's own already-separated stems —
+    see `shared.manifests.materialize_manifest`, which reads this snapshot as
+    plain data.
+    """
     if not project.prepared_stems or project.status not in {"ready", "expanding", "expansion_failed"}:
         raise ValueError("Project stems are not ready for export")
     if not project.tracks:
         raise ValueError("Project has no tracks to export")
     manifest = copy.deepcopy(project.manifest)
     manifest.setdefault("engine", {})["stems"] = list(project.prepared_stems)
-    snapshot = {
-        "manifest": manifest,
-        "scene": copy.deepcopy(project.scene),
-        "prepared_stems": list(project.prepared_stems),
-        "tracks": {
-            track.id: {
-                "manifest_overrides": copy.deepcopy(track.manifest_overrides),
-                "scene_overrides": copy.deepcopy(track.scene_overrides),
-            }
-            for track in project.tracks
-        },
-    }
+
+    tracks_snapshot: dict[str, dict[str, Any]] = {}
+    for track in project.tracks:
+        overrides = copy.deepcopy(track.manifest_overrides)
+        scene = merge_scene(project.scene, track.scene_overrides)
+        routing = _resolve_track_routing(manifest, overrides, project.prepared_stems, scene)
+        if routing:
+            mixing_override = dict(overrides.get("mixing", {}))
+            mixing_override.setdefault("stem_routing", routing)
+            overrides["mixing"] = mixing_override
+        tracks_snapshot[track.asset_id] = {
+            "manifest_overrides": overrides,
+            "stem_input_dir": str(project_stems.stem_dir(project.id, track.id)),
+        }
+
     # A project's tracks may not all share project.import_batch (or it may be
     # None, for an empty-created project) once assets are added incrementally
     # — Job.import_id only needs an anchor for its FK, so any track's own
@@ -369,7 +409,7 @@ def project_export_job(session: Session, project: Project) -> Job:
     )
     job.project_id = project.id
     job.project_revision = project.revision
-    job.project_snapshot = snapshot
+    job.project_snapshot = {"tracks": tracks_snapshot}
     session.commit()
     return job
 

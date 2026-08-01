@@ -66,12 +66,12 @@ def test_catalogue_track_writes_low_rate_preview_alongside_full_stem(tmp_path):
             0.2 * np.sin(2 * np.pi * 220 * samples),
             0.2 * np.sin(2 * np.pi * 220 * samples),
         ])
-        entry = storage.track_root(project.id, track.id) / "abc123"
+        entry = storage.stem_dir(project.id, track.id)
         entry.mkdir(parents=True)
         full_path = entry / "Vocals.wav"
         sf.write(str(full_path), audio, sample_rate, subtype="PCM_16")
-        (entry / "metadata.json").write_text(
-            json.dumps({"sep_sr": sample_rate, "stem_keys": ["Vocals"]}), encoding="utf-8"
+        (entry / "stems.json").write_text(
+            json.dumps({"sample_rate": sample_rate, "stem_keys": ["Vocals"]}), encoding="utf-8"
         )
 
         rows = storage.catalogue_track(session, project, track, generation=1)
@@ -93,15 +93,15 @@ def test_catalogue_track_writes_low_rate_preview_alongside_full_stem(tmp_path):
     engine.dispose()
 
 
-def _seed_stem_cache(storage, project, track, stem_keys, sample_rate=48_000, seconds=1):
+def _seed_stem_store(storage, project, track, stem_keys, sample_rate=48_000, seconds=1):
     samples = np.arange(sample_rate * seconds) / sample_rate
-    entry = storage.track_root(project.id, track.id) / "abc123"
+    entry = storage.stem_dir(project.id, track.id)
     entry.mkdir(parents=True)
     for index, stem_key in enumerate(stem_keys):
         tone = 0.5 * np.sin(2 * np.pi * (220 * (index + 1)) * samples)
         sf.write(str(entry / f"{stem_key}.wav"), np.column_stack([tone, tone]), sample_rate, subtype="PCM_16")
-    (entry / "metadata.json").write_text(
-        json.dumps({"sep_sr": sample_rate, "stem_keys": list(stem_keys)}), encoding="utf-8"
+    (entry / "stems.json").write_text(
+        json.dumps({"sample_rate": sample_rate, "stem_keys": list(stem_keys)}), encoding="utf-8"
     )
     return entry
 
@@ -121,7 +121,7 @@ def test_catalogue_track_excludes_bonus_stems_not_requested(tmp_path):
 
     with factory() as session:
         project, track = _seed_project_track(session, requested_stems=["Kick", "Snare"])
-        _seed_stem_cache(storage, project, track, ["Kick", "Snare", "Drums"])
+        _seed_stem_store(storage, project, track, ["Kick", "Snare", "Drums"])
         rows = storage.catalogue_track(session, project, track, generation=1)
         session.commit()
 
@@ -139,7 +139,7 @@ def test_catalogue_track_writes_track_peaks_for_every_stem(tmp_path):
 
     with factory() as session:
         project, track = _seed_project_track(session, requested_stems=["Vocals", "Drums"])
-        _seed_stem_cache(storage, project, track, ["Vocals", "Drums"])
+        _seed_stem_store(storage, project, track, ["Vocals", "Drums"])
         storage.catalogue_track(session, project, track, generation=3)
         session.commit()
         project_id, track_id = project.id, track.id
@@ -173,7 +173,7 @@ def test_rebuild_track_peaks_backfills_from_existing_previews(tmp_path):
 
     with factory() as session:
         project, track = _seed_project_track(session, requested_stems=["Vocals", "Drums"])
-        _seed_stem_cache(storage, project, track, ["Vocals", "Drums"])
+        _seed_stem_store(storage, project, track, ["Vocals", "Drums"])
         rows = storage.catalogue_track(session, project, track, generation=1)
         session.commit()
         project_id, track_id = project.id, track.id

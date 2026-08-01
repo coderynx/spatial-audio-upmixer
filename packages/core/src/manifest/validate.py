@@ -115,6 +115,7 @@ def _validate_block_fields(block: dict, mapping: BlockMapping, prefix: str) -> N
 
 _ASSET_NON_BLOCK_KEYS: frozenset[str] = frozenset({
     "input", "output", "stem_cache_dir", "stem_cache_key",
+    "stem_output_dir", "stem_input_dir",
     "input_dir", "output_dir", "glob",
 })
 

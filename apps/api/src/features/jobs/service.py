@@ -114,19 +114,6 @@ def reset_incomplete_jobs(session: Session) -> None:
     session.commit()
 
 
-def job_mastering_reference(
-    session: Session,
-    import_batch: ImportBatch,
-    reference_id: str | None,
-) -> MasteringReference | None:
-    if reference_id is None:
-        return None
-    reference = session.get(MasteringReference, reference_id)
-    if not reference or reference.import_id != import_batch.id:
-        raise ValueError("Mastering reference does not belong to this import")
-    return reference
-
-
 def pause_job(session: Session, job: Job) -> Job:
     """Transition a job toward paused, mirroring its current lifecycle stage."""
     if job.status == "queued":

@@ -33,7 +33,7 @@ def _reference_match_signature(project: Project) -> str | None:
     and never change the FIR bytes or `rms_gain_db` that
     `compute_channel_filters` produces, so hashing them only forces
     needless full-song recomputes while the strength slider is dragged.
-    Includes ``stem_generation``: a stem cache miss makes `prepare_reference_match`
+    Includes ``stem_generation``: unprepared stems make `prepare_reference_match`
     stamp a signature-matching empty asset (see below) so an unrelated save
     doesn't reopen `reference_match_pending`; without `stem_generation` in the
     signature that empty stamp would never go stale, and a later stem
@@ -164,13 +164,13 @@ class ReferenceMatchMixin:
         otherwise.
 
         Runs in the caller's thread rather than a :class:`JobSubprocess`: this
-        is only safe because it never runs inference itself — it relies on
-        stems already being cached and bails via ``StemUpmixPipeline.stems_cached``
-        if they are not (see that check below), rather than falling through to
-        a full uncached separation pass with none of JobSubprocess's crash
-        isolation or progress reporting. Safe to call after every project stem
-        preparation and every settings save; only a signature mismatch on an
-        actual cache hit triggers the mix + PSD-match pass.
+        is only safe because it never runs inference itself — it bails if the
+        track's plain stem store isn't populated yet (see that check below),
+        rather than falling through to a full uncached separation pass with
+        none of JobSubprocess's crash isolation or progress reporting. Safe to
+        call after every project stem preparation and every settings save;
+        only a signature mismatch with stems already prepared triggers the
+        mix + PSD-match pass.
         """
         with self.sessions() as session:
             project = get_project(session, project_id)
@@ -195,6 +195,8 @@ class ReferenceMatchMixin:
             source_key = project.tracks[0].asset.storage_key
             reference_key = reference.storage_key
 
+        stem_dir = self.project_stems.stem_dir(project_id, track_id)
+
         with ExitStack() as sources:
             input_path = sources.enter_context(self.source.materialize(source_key))
             reference_path = sources.enter_context(self.source.materialize(reference_key))
@@ -206,13 +208,7 @@ class ReferenceMatchMixin:
                 data["assets"] = [{
                     "input": str(input_path),
                     "output": str(Path(tmp_dir) / "refmatch-prepare.wav"),
-                    "stem_cache_dir": str(self.project_stems.track_root(project_id, track_id)),
-                    "stem_cache_key": f"project:{project_id}:track:{track_id}",
-                    # Must match worker.py's asset dict for the same track so
-                    # the stem-cache identity computed here (batch/segment/
-                    # overlap/tta/pitch/bleed settings) agrees with what
-                    # stem-prep cached — otherwise this "cheap" precompute
-                    # silently re-runs full GPU separation on every call.
+                    "stem_input_dir": str(stem_dir),
                     **{
                         block: value
                         for block, value in track_overrides.items()
@@ -224,6 +220,29 @@ class ReferenceMatchMixin:
                 config = UpmixConfig()
                 apply_asset_job(config, asset_job)
                 config.stems = asset_job.engine.get("stems") or requested_stems
+
+                if not (stem_dir / "stems.json").is_file():
+                    # Stems haven't been (re-)prepared yet for the current
+                    # track — running process_file here would fall through to
+                    # a full, unisolated separation pass on this thread. Bail
+                    # and let the next real stem preparation (which does run
+                    # isolated, with progress) populate the store and
+                    # re-trigger this.
+                    _log.warning(
+                        "Reference-match precompute skipped for project %s: "
+                        "stems not yet prepared", project_id,
+                    )
+                    # Record a signature-stamped empty result so
+                    # `_reference_match_needs_work` stops reopening the
+                    # `reference_match_pending` window on every unrelated
+                    # settings save while stems stay unprepared.
+                    self.project_stems.write_reference_match(
+                        project_id, {}, 0.0, 0, target_signature,
+                        config.mastering_match_ref_strength,
+                        config.mastering_match_ref_spectrum,
+                        config.mastering_match_ref_rms,
+                    )
+                    return
 
                 captured: dict[str, object] = {}
 
@@ -244,34 +263,6 @@ class ReferenceMatchMixin:
 
                 pipeline = StemUpmixPipeline(config=config)
                 try:
-                    if not pipeline.stems_cached(str(input_path)):
-                        # Stems don't actually match this config's cache
-                        # identity (settings changed since the last prepare,
-                        # or the separation engine itself changed) — running
-                        # process_file here would fall through to a full,
-                        # uncached separation pass on this thread, with none
-                        # of JobSubprocess's crash isolation or progress
-                        # reporting. Bail and let the next real stem
-                        # preparation (which does run isolated, with
-                        # progress) repopulate the cache and re-trigger this.
-                        _log.warning(
-                            "Reference-match precompute skipped for project %s: "
-                            "stem cache miss (stems need re-preparing)", project_id,
-                        )
-                        # Record a signature-stamped empty result so
-                        # `_reference_match_needs_work` stops reopening the
-                        # `reference_match_pending` window on every unrelated
-                        # settings save while the cache stays stale — without
-                        # this, an unresolvable cache miss makes every save
-                        # flash "Preparing reference EQ match" (existing==None
-                        # forever) until stems are re-prepared for real.
-                        self.project_stems.write_reference_match(
-                            project_id, {}, 0.0, 0, target_signature,
-                            config.mastering_match_ref_strength,
-                            config.mastering_match_ref_spectrum,
-                            config.mastering_match_ref_rms,
-                        )
-                        return
                     pipeline.process_file(
                         str(input_path), asset_job.output,
                         pre_master_hook=_capture_and_abort,

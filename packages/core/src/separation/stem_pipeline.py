@@ -584,7 +584,12 @@ class StemUpmixPipeline:
 
         _stem_cache = None
         _cache_hit_stems: dict[str, np.ndarray] | None = None
-        if cfg.stem_cache_dir:
+        if cfg.stem_input_dir:
+            from upmixer.separation.stem_store import PlainStemStore
+            _stem_input_result = PlainStemStore(cfg.stem_input_dir).load()
+            if _stem_input_result is not None:
+                _cache_hit_stems, _ = _stem_input_result
+        elif cfg.stem_cache_dir:
             from upmixer.separation.stem_cache import StemCache
             _stem_cache = StemCache(cfg.stem_cache_dir)
             cache_identity = _stem_cache_identity(plan, cfg)
@@ -761,6 +766,10 @@ class StemUpmixPipeline:
                     path_key=cfg.stem_cache_key,
                 )
                 _log.debug("  Timing cache-write=%.3fs", time.monotonic() - cache_started)
+
+            if cfg.stem_output_dir and all_stems:
+                from upmixer.separation.stem_store import PlainStemStore
+                PlainStemStore(cfg.stem_output_dir).write(all_stems, sep_sr)
 
         pair_src = None
         _zone_audio = None
@@ -1001,49 +1010,6 @@ class StemUpmixPipeline:
             stems=stem_summary,
             processing_time_seconds=time.monotonic() - t0,
         )
-
-    def stems_cached(self, input_path: str) -> bool:
-        """Whether ``config.stem_cache_dir`` already holds a hit for
-        *input_path* at the current config — without decoding audio or
-        loading any model.
-
-        Lets a caller that only wants cached stems (never a fresh separation
-        pass) check first and skip its own heavy work on a miss, instead of
-        discovering the cost by calling :meth:`process_file`/:meth:`prepare_stems`
-        and triggering full inference. A miss here means the requested stems,
-        cache-affecting inference options, or the separation engine itself
-        have changed since the cache entry was written.
-        """
-        cfg = self.config
-        if not cfg.stem_cache_dir:
-            return False
-        from upmixer.separation.stem_cache import StemCache
-
-        info = sf.info(input_path)
-        out_sr = cfg.output_sample_rate or info.samplerate
-        if cfg.output_type == "adm-bwf" and cfg.output_sample_rate is None:
-            out_sr = 48_000
-        sep_sr = out_sr
-
-        raw_stems = cfg.stems or []
-        canonical = normalize_stems(raw_stems) if raw_stems else list(DEFAULT_STEMS)
-        plan = resolve_separation_plan(canonical)
-        cache_identity = _stem_cache_identity(plan, cfg)
-
-        cache = StemCache(cfg.stem_cache_dir)
-        hit = cache.load(
-            input_path, cache_identity, sep_sr,
-            is_preview=cfg.preview,
-            preview_duration=cfg.preview_duration_s,
-            preview_start=cfg.preview_start_s,
-            silence_skip=cfg.stem_silence_skip,
-            silence_threshold_db=cfg.stem_silence_threshold_db,
-            silence_min_duration_s=cfg.stem_silence_min_duration_s,
-            silence_crossfade_ms=cfg.stem_silence_crossfade_ms,
-            silence_pad_ms=cfg.stem_silence_pad_ms,
-            path_key=cfg.stem_cache_key,
-        )
-        return hit is not None
 
     def prepare_stems(
         self,

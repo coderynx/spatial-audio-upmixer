@@ -33,7 +33,6 @@ class WorkItem:
     output_path: str
     config: UpmixConfig
     input_format_override: str | None = None
-    custom_routing: dict[str, dict[str, float]] | None = None
 
 
 def _describe_exit(exitcode: int) -> str:
@@ -62,32 +61,22 @@ def _run_work_items(items: list[WorkItem], progress_queue, cancel_event) -> None
 
             try:
                 if item.mode in ("stem", "stem_prepare"):
-                    if item.custom_routing is not None:
-                        pipeline: StemUpmixPipeline = StemUpmixPipeline(
-                            config=item.config, custom_routing=item.custom_routing,
+                    if stem_pipeline is None:
+                        stem_pipeline = StemUpmixPipeline(config=item.config)
+                    stem_pipeline.config = item.config
+                    if item.mode == "stem_prepare":
+                        result = stem_pipeline.prepare_stems(
+                            item.input_path,
+                            input_format_override=item.input_format_override,
+                            progress_callback=_callback,
                         )
                     else:
-                        if stem_pipeline is None:
-                            stem_pipeline = StemUpmixPipeline(config=item.config)
-                        stem_pipeline.config = item.config
-                        pipeline = stem_pipeline
-                    try:
-                        if item.mode == "stem_prepare":
-                            result = pipeline.prepare_stems(
-                                item.input_path,
-                                input_format_override=item.input_format_override,
-                                progress_callback=_callback,
-                            )
-                        else:
-                            result = pipeline.process_file(
-                                item.input_path,
-                                item.output_path,
-                                input_format_override=item.input_format_override,
-                                progress_callback=_callback,
-                            )
-                    finally:
-                        if pipeline is not stem_pipeline:
-                            pipeline.close()
+                        result = stem_pipeline.process_file(
+                            item.input_path,
+                            item.output_path,
+                            input_format_override=item.input_format_override,
+                            progress_callback=_callback,
+                        )
                 else:
                     result = UpmixPipeline(item.config).process_file(
                         item.input_path,

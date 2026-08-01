@@ -143,6 +143,15 @@ class UpmixConfig:
     # orphan previously separated stems.
     stem_cache_key: str | None = None
 
+    # Write separated stems to a plain per-caller directory after separation,
+    # with no cache-identity gating (unlike stem_cache_dir). For a caller that
+    # already owns one directory per logical source (e.g. a project track).
+    stem_output_dir: str | None = None
+
+    # Load pre-separated stems from a plain directory written by
+    # stem_output_dir, skipping inference and stem_cache_dir entirely.
+    stem_input_dir: str | None = None
+
     # None selects conservative backend-aware inference batching.
     stem_batch_size: int | None = None
     stem_segment_size: int | None = None

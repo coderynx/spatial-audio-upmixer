@@ -55,12 +55,22 @@ def materialize_manifest(
     stem_cache_dir: Path,
     mastering_reference_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Inject server-owned paths into a stored manifest."""
+    """Inject server-owned paths into a stored manifest.
+
+    A project export's ``job.project_snapshot["tracks"]`` (keyed by asset id
+    — see ``features.projects.service.project_export_job``) carries plain
+    per-track data baked in at export time: `stem_input_dir` points at the
+    project's own already-separated stems instead of the shared stem cache,
+    and `manifest_overrides` is deep-merged over this asset's blocks. An
+    ordinary (non-project) job has no snapshot and uses the shared
+    `stem_cache_dir` as before.
+    """
     data = copy.deepcopy(job.manifest)
     # Every format.type ("wav", "adm-bwf", "binaural") currently delivers a
     # WAV container; this will need to key off output_type once non-PCM
     # containers/codecs (ogg/opus, flac) are added.
     extension = ".wav"
+    track_snapshots = (job.project_snapshot or {}).get("tracks", {})
     assets = []
     # Read each source through the JobTrack's own asset FK rather than a
     # positional zip against import_batch.assets — a project export's tracks
@@ -69,11 +79,19 @@ def materialize_manifest(
     for track, input_path in zip(job.tracks, input_paths, strict=True):
         asset = track.asset
         output = work_dir / f"{track.position + 1:02d}-{Path(asset.filename).stem}{extension}"
-        assets.append({
+        asset_data: dict[str, Any] = {
             "input": str(input_path),
             "output": str(output),
-            "stem_cache_dir": str(stem_cache_dir),
-        })
+        }
+        snapshot = track_snapshots.get(track.asset_id)
+        if snapshot:
+            asset_data["stem_input_dir"] = snapshot["stem_input_dir"]
+            for block, value in snapshot.get("manifest_overrides", {}).items():
+                if isinstance(value, dict) and value:
+                    asset_data[block] = copy.deepcopy(value)
+        else:
+            asset_data["stem_cache_dir"] = str(stem_cache_dir)
+        assets.append(asset_data)
     data["assets"] = assets
     if mastering_reference_path is not None:
         mastering = data.setdefault("mastering", {})

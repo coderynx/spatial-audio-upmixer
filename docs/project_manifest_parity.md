@@ -53,7 +53,7 @@ group: `engine.stems`/`engine.stem_silence_skip` (stem separation),
 |---|---|---|---|---|
 | `engine.mode` | Derived stem-only project | Always `stem` | Low | Project behavior |
 | `engine.stems` | Create/expand targets; track Advanced subset | Canonical requested/prepared stems | Medium | Unified |
-| Separation tuning | Advanced JSON; rebuild on change | Rebuilds preview cache before export | High before change | Manifest behavior |
+| Separation tuning | Advanced JSON; rebuild on change | Rebuilds the project's stem store before export | High before change | Manifest behavior |
 | `mixing.stem_*` | Stem controls and Advanced JSON | Direct manifest mapping | None | Manifest behavior |
 | `mixing.spatial` / `routing.content_mix_strength` | Derived explicit-routing profile | Forced deterministic project values | Medium | Project behavior |
 | `mixing.stem_routing` | Position sliders, presets, Advanced matrix | Exact speaker matrix | None | Project behavior for UX |
@@ -76,8 +76,8 @@ allowed. Advanced JSON is validated by the server on save.
 
 Track overrides may set all post-separation blocks and may select a subset of
 already prepared stems. They cannot change project mode, server paths, or
-separation tuning; those are project-wide so preview cache and exports remain
-identical.
+separation tuning; those are project-wide so the project's stem store and its
+exports remain identical.
 
 Position sliders intentionally collapse an arbitrary speaker matrix to front/back
 and floor/height. Use Advanced JSON for asymmetric or per-channel routing. LFE

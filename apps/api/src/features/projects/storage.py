@@ -110,6 +110,11 @@ class ProjectStemStorage:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def stem_dir(self, project_id: str, track_id: str) -> Path:
+        """The plain stem store directory for one track — no cache identity,
+        directly written/read by `upmixer.separation.stem_store.PlainStemStore`."""
+        return self.track_root(project_id, track_id) / "stems"
+
     def delete_project(self, project_id: str) -> None:
         shutil.rmtree(self.root / project_id, ignore_errors=True)
 
@@ -127,22 +132,14 @@ class ProjectStemStorage:
         generation: int,
         quality: str = DEFAULT_PREVIEW_QUALITY,
     ) -> list[ProjectStem]:
-        """Replace a track's stem rows from its newest valid cache entry."""
-        root = self.track_root(project.id, track.id)
-        candidates: list[tuple[float, Path, dict]] = []
-        for metadata_path in root.glob("*/metadata.json"):
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                keys = metadata.get("stem_keys")
-                if isinstance(keys, list) and keys:
-                    candidates.append((metadata_path.stat().st_mtime, metadata_path.parent, metadata))
-            except (OSError, ValueError, TypeError):
-                continue
-        if not candidates:
-            raise RuntimeError("Project stem preparation completed without a readable stem cache")
-        _, entry, metadata = max(candidates, key=lambda item: item[0])
-        sample_rate = int(metadata["sep_sr"])
-        # The cache also holds "free" parent stems a model emitted en route to
+        """Replace a track's stem rows from its plain stem store."""
+        entry = self.stem_dir(project.id, track.id)
+        try:
+            metadata = json.loads((entry / "stems.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise RuntimeError("Project stem preparation completed without a readable stem store") from exc
+        sample_rate = int(metadata["sample_rate"])
+        # The store also holds "free" parent stems a model emitted en route to
         # a requested child (see stem_pipeline.py); filter to requested_stems
         # so those don't double-count as playable tracks.
         requested = set(project.requested_stems)
@@ -157,7 +154,7 @@ class ProjectStemStorage:
             filename = stem_key.replace("@", "__").replace("/", "__").replace("\\", "__") + ".wav"
             path = entry / filename
             if not path.is_file():
-                raise RuntimeError(f"Project stem cache is missing {filename}")
+                raise RuntimeError(f"Project stem store is missing {filename}")
             info = sf.info(str(path))
             duration_seconds = max(duration_seconds, info.duration)
             preview_path = path.with_suffix(".preview.ogg")

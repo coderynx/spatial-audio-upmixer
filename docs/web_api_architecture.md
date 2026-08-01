@@ -88,16 +88,21 @@ registered in `api.py` alongside the existing `register_*_routes` calls.
 Slices are not fully isolated — some dependencies between them are correct
 and expected, not violations to eliminate:
 
-- **`projects` routes depend on `jobs`.** Creating a project, saving its
-  settings, and exporting it all attach/validate a `MasteringReference` and
-  render a `Job` — `features/projects/routes.py` imports
-  `job_mastering_reference` from `features.jobs.service` and `job_view` from
-  `features.jobs.views`.
-- **`jobs`' worker runner depends on `projects`.** An export job carries a
-  `project_snapshot` (custom stem routing, manifest overrides), so
-  `features/jobs/worker.py`'s `JobRunnerMixin` imports `get_project` from
-  `features.projects.service` and `merge_scene`/`routing_for_scene` from
-  `features.projects.routing`.
+- **`projects` routes depend on `jobs`, one-way, only at export.**
+  Exporting a project renders a `Job` — `features/projects/routes.py`
+  imports `job_view` from `features.jobs.views`, and
+  `features/projects/service.py`'s `project_export_job` calls
+  `features.jobs.service.create_job`. `jobs`' worker runner never imports
+  anything from `features.projects`: `project_export_job` resolves each
+  track's stem-routing and manifest overrides once, at export time, into
+  `job.project_snapshot["tracks"]` (keyed by asset id) and
+  `shared.manifests.materialize_manifest` reads that snapshot as plain JSON
+  — a project export is executed by `features/jobs/worker.py` as an
+  ordinary, self-contained job.
+- **Mastering-reference resolution lives in `imports`.** Both `jobs` and
+  `projects` routes call `features.imports.service.resolve_mastering_reference`
+  to validate a reference belongs to the right import batch — it is imports-
+  owned data, not a jobs concern.
 - **Every slice may depend on `shared/`.** `shared/` must never import from
   `features/`.
 - **`features/system/service.py`'s `configuration_schema` depends on

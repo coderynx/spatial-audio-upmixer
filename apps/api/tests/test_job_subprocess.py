@@ -43,7 +43,7 @@ class _FakeResult:
 class _FakePipeline:
     calls: list[str] = []
 
-    def __init__(self, config=None, custom_routing=None) -> None:
+    def __init__(self, config=None) -> None:
         self.config = config
 
     def process_file(self, input_path, output_path, input_format_override=None, progress_callback=None):
