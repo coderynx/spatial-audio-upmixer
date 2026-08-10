@@ -34,6 +34,7 @@ import { AssetsTab } from "./assets/AssetsTab";
 import HazeView from "./HazeView";
 import ChannelMeters from "./ChannelMeters";
 import ElevationView from "./ElevationView";
+import { KeyCommandsDialog } from "./KeyCommandsDialog";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import { StemChannelStrip, StripResizeHandle } from "./ChannelStrip";
 import { MixerView } from "./MixerView";
@@ -53,6 +54,7 @@ import {
   trackRailStorageKey,
 } from "./projectDetailLayout";
 import { useColumnLayout } from "./useColumnLayout";
+import { useKeyCommands } from "./useKeyCommands";
 import { usePaneLayout } from "./usePaneLayout";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
 import { resolveEngineConstants } from "./masteringProfiles";
@@ -429,6 +431,20 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       || (solo.length > 0 && !solo.includes(stem))
     ));
   }, [effectiveManifest, orderedStems]);
+  const transportDisabled = !preview.supported || !preview.ready || !previewStems.length;
+  const { shortcutsOpen, setShortcutsOpen } = useKeyCommands({
+    transportEnabled: !transportDisabled,
+    preview,
+    stems: orderedStems,
+    selectedStem,
+    onSelectStem: setSelectedStem,
+    onToggleMute: toggleEnabled,
+    onToggleSolo: toggleSolo,
+    manifest: effectiveManifest,
+    onManifestChange: updateManifest,
+    paneView,
+    onChangePane: changePane,
+  });
   const exportProject = async () => {
     if (!projectId) return;
     setExporting(true);
@@ -537,7 +553,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         volume={preview.volume}
         muted={preview.muted}
         loop={preview.loop}
-        disabled={!preview.supported || !preview.ready || !previewStems.length}
+        disabled={transportDisabled}
         onPlayPause={() => void preview.playPause()}
         onStop={preview.stop}
         onToggleLoop={preview.toggleLoop}
@@ -928,6 +944,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       />
       <StatusSpacer />
       <StatusCell label="Transport" value={preview.playing ? "Playing" : preview.ready ? "Ready" : "Loading"} />
+      <StatusSeparator />
+      <KeyCommandsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </StatusBar>
   </main>;
 }

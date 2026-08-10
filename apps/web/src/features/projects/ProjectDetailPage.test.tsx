@@ -289,3 +289,56 @@ describe("ProjectDetailPage tabs", () => {
     expect(channelCount()).toBe("12");
   });
 });
+
+describe("ProjectDetailPage keyboard shortcuts", () => {
+  it("switches the bottom pane to the mixer from the keyboard", async () => {
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    fireEvent.keyDown(document.body, { key: "x" });
+    expect(screen.getByRole("group", { name: "Mixer" })).toBeInTheDocument();
+  });
+
+  it("opens the shortcut reference with ? and closes it with Escape", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    fireEvent.keyDown(document.body, { key: "?" });
+    expect(screen.getByRole("dialog", { name: "Keyboard shortcuts" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+  });
+
+  it("mutes the selected stem from the keyboard", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Mixer" }));
+    await user.click(screen.getByRole("button", { name: "Vocals" }));
+
+    fireEvent.keyDown(document.body, { key: "m" });
+
+    await waitFor(() => expect(api.saveProject).toHaveBeenCalled());
+    const [, payload] = vi.mocked(api.saveProject).mock.calls.at(-1)!;
+    const saved = payload.manifest as unknown as { mixing: { stem_enabled: Record<string, boolean> } };
+    expect(saved.mixing.stem_enabled.Vocals).toBe(false);
+  });
+
+  it("leaves the rename field alone — typing shortcut letters into it mutates nothing", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    const nameField = screen.getByLabelText(/project name/i);
+    await user.clear(nameField);
+    await user.type(nameField, "mssx?");
+
+    expect(screen.queryByRole("group", { name: "Mixer" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
+    expect(api.saveProject).not.toHaveBeenCalled();
+  });
+});
