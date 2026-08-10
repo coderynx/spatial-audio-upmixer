@@ -27,6 +27,14 @@ def merge_scene(scene: dict[str, Any], overrides: dict[str, Any]) -> dict[str, A
     return merged
 
 
+def _angular_distance(azimuth: float, elevation: float, position: tuple[float, float]) -> float:
+    """Degree-space distance with azimuth wrapped to ±180° — BL/TBL sit at
+    +135° and BR/TBR at −135°, so an unwrapped difference puts the far rear
+    pair ~315° away and drops one whole side from the nearest-3 selection."""
+    delta_azimuth = (position[0] - azimuth + 180.0) % 360.0 - 180.0
+    return math.hypot(delta_azimuth, position[1] - elevation)
+
+
 def routing_for_scene(scene: dict[str, Any], config: UpmixConfig) -> dict[str, dict[str, float]]:
     """Build constant-power speaker maps for positioned project stems."""
     stems = scene.get("stems", {})
@@ -53,9 +61,9 @@ def routing_for_scene(scene: dict[str, Any], config: UpmixConfig) -> dict[str, d
         elevation = float(raw.get("elevation_deg", 0.0))
         ranked = sorted(
             available,
-            key=lambda item: (item[1][0] - azimuth) ** 2 + (item[1][1] - elevation) ** 2,
+            key=lambda item: _angular_distance(azimuth, elevation, item[1]),
         )[: min(3, len(available))]
-        weights = [1.0 / max(1.0, math.dist((azimuth, elevation), position)) for _, position in ranked]
+        weights = [1.0 / max(1.0, _angular_distance(azimuth, elevation, position)) for _, position in ranked]
         norm = math.sqrt(sum(weight * weight for weight in weights)) or 1.0
         mapping = {label.value: 0.0 for label in labels}
         for (label, _), weight in zip(ranked, weights, strict=True):
