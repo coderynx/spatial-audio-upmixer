@@ -42,7 +42,7 @@ const DURATION_S = 5; // must match tests/test_preview_export_golden.py::_DURATI
 // SL, SR, TFL, TFR, TBL, TBR (back before side, unlike 7.1/7.1.2).
 const CHANNELS = ["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR"];
 
-// upmixer/loudness.py _CH_WEIGHT: L/R/C/back/height = 1.0, LFE excluded
+// upmixer/loudness.py CHANNEL_WEIGHT: L/R/C/back/height = 1.0, LFE excluded
 // (0), ear-level side (SL/SR) = 1.41 (+1.5 dB) per BS.1770-5 Annex 3 Table 5.
 const LOUDNESS_WEIGHT = { FL: 1, FR: 1, C: 1, LFE: 0, BL: 1, BR: 1, SL: 1.41, SR: 1.41, TFL: 1, TFR: 1, TBL: 1, TBR: 1 };
 
@@ -231,6 +231,27 @@ async function loadDecodeFilterPartFromDisk(ctx, partName) {
   return ctx.decodeAudioData(arrayBuffer);
 }
 
+// --- Disk-based reference-match FIR loader ------------------------------
+// Unlike eq_fir, this isn't a production build artifact — every real
+// reference-match FIR is computed per-project and served live from
+// GET /api/v1/projects/{id}/reference-match/fir. This fixture exists purely
+// for this golden diff; see
+// packages/core/tests/test_preview_export_golden.py's
+// `_write_reference_match_fixture` (Ledger D21).
+const REFMATCH_FIXTURE_DIR = path.join(repoRoot, "packages/core/tests/fixtures/preview_export_golden");
+
+async function loadRefMatchFirFromDisk(ctx, _url) {
+  const filePath = path.join(REFMATCH_FIXTURE_DIR, "reference_match_fir.wav");
+  const bytes = fs.readFileSync(filePath);
+  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  return ctx.decodeAudioData(arrayBuffer);
+}
+
+function loadRefMatchMeta() {
+  const metaPath = path.join(REFMATCH_FIXTURE_DIR, "reference_match_meta.json");
+  return JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+}
+
 // upmixer/config.py loudness_target_lkfs default — the Studio/Flat profiles'
 // own voicing loudnessTargetLkfs is null, so `apply()` in useStemPreview.ts
 // falls back to this same default in the live preview. Not part of the served
@@ -252,12 +273,14 @@ function loudnessGainFor(measuredLkfs, targetLkfs, maxGainDb) {
   return 10 ** (gainDb / 20);
 }
 
-async function main() {
-  const { buildMasteringGraph } = await loadPreviewGraphModule();
-  const { buildSoftLimitCurve, measureBufferTruePeakDbtp } = await loadMasteringProfilesModule();
-  const constants = await loadEngineConstantsFixture();
-
-  const { n, channels: bedSamples } = deterministicBed(SR, DURATION_S);
+/** Renders the deterministic bed through `buildMasteringGraph` with the
+ * given `masterConfig`, exactly like `main()`'s Stage 1 used to do inline —
+ * extracted so it can run twice: once for the plain bed-stage fixture
+ * (`web_bed_metrics.json`) and once with reference matching added as
+ * mastering step 0 (`web_reference_match_metrics.json`, Ledger D21). */
+async function renderBedStage({
+  buildMasteringGraph, measureBufferTruePeakDbtp, constants, n, bedSamples, masterConfig, refMatchLoader,
+}) {
   const ctx = new OfflineAudioContext(CHANNELS.length, n, SR);
 
   const merger = ctx.createChannelMerger(CHANNELS.length);
@@ -276,15 +299,10 @@ async function main() {
     sources.push(source);
   });
 
-  // Same mastering config as test_preview_export_golden.py::_mastering_config.
-  const masterConfig = {
-    eq: { profile: "spatial-air", strength: 1 },
-    compressor: { profile: "glue" },
-    bass: { profile: "enhance" },
-  };
-
   const handle = buildMasteringGraph(ctx, channelPorts, masterConfig, new Map(), constants, {
     firLoader: loadFirFromDisk,
+    refMatchBufferCache: new Map(),
+    refMatchLoader,
   });
 
   // Let the FIR asset's disk-read + decodeAudioData resolve (see
@@ -330,12 +348,59 @@ async function main() {
     channel_rms: Object.fromEntries(CHANNELS.map((name) => [name, rms(outputChannels[name])])),
   };
 
+  return { outputChannels, metrics };
+}
+
+async function main() {
+  const { buildMasteringGraph } = await loadPreviewGraphModule();
+  const { buildSoftLimitCurve, measureBufferTruePeakDbtp } = await loadMasteringProfilesModule();
+  const constants = await loadEngineConstantsFixture();
+
+  const { n, channels: bedSamples } = deterministicBed(SR, DURATION_S);
+
+  // Same mastering config as test_preview_export_golden.py::_mastering_config.
+  const masterConfig = {
+    eq: { profile: "spatial-air", strength: 1 },
+    compressor: { profile: "glue" },
+    bass: { profile: "enhance" },
+  };
+
+  const { outputChannels, metrics } = await renderBedStage({
+    buildMasteringGraph, measureBufferTruePeakDbtp, constants, n, bedSamples, masterConfig,
+  });
+
   const outDir = path.join(repoRoot, "packages/core/tests/fixtures/preview_export_golden");
   fs.mkdirSync(outDir, { recursive: true });
   const outPath = path.join(outDir, "web_bed_metrics.json");
   fs.writeFileSync(outPath, JSON.stringify(metrics, null, 2));
   console.log(`Wrote ${outPath}`);
   console.log(JSON.stringify(metrics, null, 2));
+
+  // --- Stage 1b: same bed and mastering config, plus reference matching as
+  // mastering step 0 (Ledger D21) — see
+  // test_preview_export_golden.py::test_cross_engine_reference_match_golden_diff.
+  // `fir_url` is a placeholder: `loadRefMatchFirFromDisk` ignores it and
+  // reads the fixture FIR directly, since there is no live server here.
+  const refMatchMeta = loadRefMatchMeta();
+  const refMatchConfig = {
+    ...masterConfig,
+    match_reference: {
+      fir_url: "fixture://reference-match",
+      strength: 0.6,
+      spectrum: true,
+      rms: true,
+      max_db: 6.0,
+      rms_gain_db: refMatchMeta.rms_gain_db,
+    },
+  };
+  const { metrics: refMatchMetrics } = await renderBedStage({
+    buildMasteringGraph, measureBufferTruePeakDbtp, constants, n, bedSamples,
+    masterConfig: refMatchConfig, refMatchLoader: loadRefMatchFirFromDisk,
+  });
+  const refMatchOutPath = path.join(outDir, "web_reference_match_metrics.json");
+  fs.writeFileSync(refMatchOutPath, JSON.stringify(refMatchMetrics, null, 2));
+  console.log(`Wrote ${refMatchOutPath}`);
+  console.log(JSON.stringify(refMatchMetrics, null, 2));
 
   // --- Stage 2: binaural collapse + loudness + soft-limit -----------------
   // Feeds the same mastered bed (`outputChannels` above) through the

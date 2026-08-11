@@ -139,6 +139,7 @@ class MasteringChain:
             )
             proc = ReferenceMatchProcessor(
                 reference_path=cfg.mastering_match_ref_path,
+                output_fmt=output_fmt,
                 strength=cfg.mastering_match_ref_strength,
                 match_spectrum=cfg.mastering_match_ref_spectrum,
                 match_rms=cfg.mastering_match_ref_rms,

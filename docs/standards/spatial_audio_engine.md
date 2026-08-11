@@ -72,6 +72,14 @@ This graph runs identically for every bed layout in
 `upmixer.formats.BINAURAL_BED_FORMATS` (`5.1.4`, `7.1.2`, `7.1.4`) — only the
 set of positional channels encoded into the HOA bus changes.
 
+"Bed channels" above is deliberate: reference matching
+(`mastering/match_reference/`) runs as mastering step 0, entirely upstream
+of this graph, on the discrete speaker bed — never on the binaural output.
+A reference file that is itself a binaural render is an invalid reference
+for that reason: its long-term spectrum carries the anechoic HRTF decode's
+own diffuse-field coloration, so matching a speaker-bed master to it would
+fold headphone-specific correction into content also delivered to speakers.
+
 ---
 
 ## 2. Virtual-loudspeaker geometry

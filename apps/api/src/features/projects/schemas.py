@@ -44,16 +44,18 @@ class ProjectTrackView(ApiModel):
 
 
 class ReferenceMatchAssetView(BaseModel):
-    """A project's server-precomputed reference-match FIR bank — see
-    `docs/contracts/preview_export_parity.md` Ledger D12. `fir_url` is empty
-    when spectral matching is disabled; `rms_gain_db` still applies."""
+    """A project's server-precomputed reference-match correction curve — see
+    `docs/contracts/preview_export_parity.md` Ledgers D12/D20. `fir_url` is a
+    base URL the browser appends live `strength`/`max_db` query params to
+    (the FIR endpoint designs the filter from the curve on demand); it is
+    ``None`` when no curve is persisted. `strength`/`spectrum`/`rms`/`max_db`
+    are not server state — they're read live from the project's manifest
+    (`Manifest.mastering.match_reference`), not this asset. `rms_gain_db`
+    still applies when spectral matching is off."""
 
     fir_url: str | None = None
     channels: list[str] = Field(default_factory=list)
     rms_gain_db: float = 0.0
-    strength: float
-    spectrum: bool
-    rms: bool
     sample_rate: int
 
 

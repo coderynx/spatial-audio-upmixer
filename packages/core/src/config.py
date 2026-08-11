@@ -118,7 +118,7 @@ class UpmixConfig:
     mastering_match_ref_strength: float = 0.7
     mastering_match_ref_spectrum: bool = True
     mastering_match_ref_rms: bool = True
-    mastering_match_ref_max_db: float = 12.0
+    mastering_match_ref_max_db: float = 6.0
 
     stem_rebalance: dict | None = None
 

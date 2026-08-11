@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import shutil
@@ -15,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from upmixer_web.shared.models import Project, ProjectStem, ProjectTrack
 
-REFERENCE_MATCH_FILENAME = "reference_match.wav"
 REFERENCE_MATCH_META_FILENAME = "reference_match.json"
 
 PEAKS_FILENAME = "peaks.bin"
@@ -285,46 +285,33 @@ class ProjectStemStorage:
     def write_reference_match(
         self,
         project_id: str,
-        fir_by_channel: dict[str, np.ndarray],
+        curve: list[tuple[float, float]],
+        channels: list[str],
         rms_gain_db: float,
         sample_rate: int,
+        n_taps: int,
         signature: str,
-        strength: float,
-        spectrum: bool,
-        rms: bool,
     ) -> None:
-        """Persist a project's server-precomputed reference-match FIR bank
-        and RMS gain for the web preview to consume as-is.
+        """Persist a project's server-precomputed reference-match correction
+        curve and level gain.
 
-        `fir_by_channel` is exactly what
-        `ReferenceMatchProcessor.compute_channel_filters` returns — the
-        browser convolves with these real minimum-phase FIRs rather than
-        re-deriving the PSD-matching algorithm in JS (see
-        docs/contracts/preview_export_parity.md Ledger D12). Empty when
-        spectral matching is disabled or `strength` is 0; RMS-only match
-        still needs the sidecar's `rms_gain_db`.
+        `curve` is exactly what `ReferenceMatchProcessor.compute_curve`
+        returns — strength/max_db-independent (see
+        docs/contracts/preview_export_parity.md Ledger D21), unlike the
+        per-channel FIR bank this replaced. No FIR is written to disk:
+        `reference_match_fir_wav_bytes` designs one on demand per request, so
+        `strength`/`max_db` are live browser knobs with no recompute. Empty
+        `curve`/`channels` when spectral matching is disabled; `rms_gain_db`
+        still applies.
         """
         directory = self.reference_match_dir(project_id)
-        wav_path = directory / REFERENCE_MATCH_FILENAME
-        channels = list(fir_by_channel.keys())
-        if channels:
-            n_taps = len(next(iter(fir_by_channel.values())))
-            data = np.column_stack(
-                [fir_by_channel[name] for name in channels]
-            ).astype(np.float32)
-            sf.write(str(wav_path), data, sample_rate, subtype="FLOAT")
-        else:
-            n_taps = 0
-            wav_path.unlink(missing_ok=True)
         meta = {
             "signature": signature,
             "sample_rate": sample_rate,
             "n_taps": n_taps,
-            "rms_gain_db": rms_gain_db,
+            "curve": [[f, g] for f, g in curve],
             "channels": channels,
-            "strength": strength,
-            "spectrum": spectrum,
-            "rms": rms,
+            "rms_gain_db": rms_gain_db,
         }
         (directory / REFERENCE_MATCH_META_FILENAME).write_text(
             json.dumps(meta), encoding="utf-8"
@@ -339,9 +326,31 @@ class ProjectStemStorage:
         except (OSError, ValueError):
             return None
 
-    def reference_match_fir_path(self, project_id: str) -> Path | None:
-        path = self.root / project_id / "reference_match" / REFERENCE_MATCH_FILENAME
-        return path if path.is_file() else None
+    def reference_match_fir_wav_bytes(
+        self, project_id: str, strength: float, max_correction_db: float,
+    ) -> bytes | None:
+        """Render the reference-match FIR for one ``(strength,
+        max_correction_db)`` pair from the persisted curve, as WAV bytes
+        ready to serve.
+
+        Cheap: ``build_curve_fir`` only scales/clamps the persisted curve and
+        runs ``firwin2``/``minimum_phase`` (memoized) — no spectral analysis,
+        no pipeline run. Returns ``None`` when no curve is persisted
+        (spectral matching disabled, or the reference hasn't been analysed
+        yet).
+        """
+        meta = self.read_reference_match_meta(project_id)
+        if not meta or not meta.get("curve"):
+            return None
+        from upmixer.mastering.match_reference import build_curve_fir
+
+        curve = [(float(f), float(g)) for f, g in meta["curve"]]
+        fir = build_curve_fir(
+            curve, meta["sample_rate"], meta.get("n_taps", 1023), strength, max_correction_db,
+        )
+        buffer = io.BytesIO()
+        sf.write(buffer, fir.astype(np.float32), meta["sample_rate"], format="WAV", subtype="FLOAT")
+        return buffer.getvalue()
 
     def clear_reference_match(self, project_id: str) -> None:
         shutil.rmtree(self.root / project_id / "reference_match", ignore_errors=True)

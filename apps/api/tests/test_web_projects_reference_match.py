@@ -77,7 +77,7 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
                 "mixing": {"channel_layout": "5.1"},
                 "mastering": {
                     "match_reference": {
-                        "strength": 1.0, "spectrum": True, "rms": True, "max_db": 12.0,
+                        "strength": 1.0, "spectrum": True, "rms": True, "max_db": 6.0,
                     },
                 },
             }
@@ -102,8 +102,8 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
 
         meta = project_stems.read_reference_match_meta(project_id)
         assert meta is not None
-        assert meta["channels"], "spectral FIRs should be present with spectrum=True, strength=1.0"
-        assert project_stems.reference_match_fir_path(project_id) is not None
+        assert meta["curve"], "a correction curve should always be persisted (both stages are forced on server-side)"
+        assert meta["channels"], "the curve should list the non-LFE channels it applies to"
         first_signature = meta["signature"]
 
         view = client.get(f"/api/v1/projects/{project_id}").json()
@@ -120,56 +120,48 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
         assert fir_response.headers["content-type"].startswith("audio/")
 
         call_count = {"n": 0}
-        original_compute_filters = ReferenceMatchProcessor.compute_channel_filters
+        original_compute_curve = ReferenceMatchProcessor.compute_curve
 
-        def _counting_compute_filters(self_inner, channels):
+        def _counting_compute_curve(self_inner, channels, lfe_key="LFE"):
             call_count["n"] += 1
-            return original_compute_filters(self_inner, channels)
+            return original_compute_curve(self_inner, channels, lfe_key)
 
-        with patch.object(ReferenceMatchProcessor, "compute_channel_filters", _counting_compute_filters):
+        with patch.object(ReferenceMatchProcessor, "compute_curve", _counting_compute_curve):
             manager.prepare_reference_match(project_id)
         assert call_count["n"] == 0, "unchanged signature must not recompute"
         assert project_stems.read_reference_match_meta(project_id)["signature"] == first_signature
 
-        # strength/rms are live preview-only knobs (wet/dry blend, gate) that
-        # never change the FIR bytes or rms_gain_db — hashing them into the
-        # signature would force a full recompute on every strength-slider
-        # drag (the reported CPU-storm bug). Confirm they're excluded.
+        # strength/spectrum/rms/max_db are all live client-side knobs applied
+        # on top of the persisted curve/gain (the precompute always derives
+        # both with both stages forced on — see `_capture_and_abort`) — none
+        # of them ever change the curve or rms_gain_db, so hashing any of
+        # them into the signature would force a full recompute on every
+        # slider drag (the reported CPU-storm bug). Confirm they're excluded.
         with factory() as session:
             project = session.get(Project, project_id)
             project.manifest = {
                 **project.manifest,
                 "mastering": {
                     "match_reference": {
-                        "strength": 0.1, "spectrum": True, "rms": False, "max_db": 12.0,
+                        "strength": 0.1, "spectrum": False, "rms": False, "max_db": 12.0,
                     },
                 },
             }
             session.commit()
-        with patch.object(ReferenceMatchProcessor, "compute_channel_filters", _counting_compute_filters):
+        with patch.object(ReferenceMatchProcessor, "compute_curve", _counting_compute_curve):
             manager.prepare_reference_match(project_id)
-        assert call_count["n"] == 0, "strength/rms changes must not recompute"
+        assert call_count["n"] == 0, "strength/spectrum/rms/max_db changes must not recompute"
         assert project_stems.read_reference_match_meta(project_id)["signature"] == first_signature
 
-        # max_db does change the FIR — must trigger a recompute. Note this
-        # doesn't re-run separation: stems come straight from the plain stem
-        # store (separation-affecting config is untouched) — only the
-        # mastering-adjacent hook (PSD/FIR + RMS gain) actually depends on
-        # `max_db`, so a changed signature (not a call count) is the correct
-        # signal that a real recompute happened rather than an early return.
+        # A channel-layout change *does* change what the curve is computed
+        # against (a different target bed) — must trigger a real recompute.
         with factory() as session:
             project = session.get(Project, project_id)
-            project.manifest = {
-                **project.manifest,
-                "mastering": {
-                    "match_reference": {
-                        "strength": 0.1, "spectrum": True, "rms": False, "max_db": 6.0,
-                    },
-                },
-            }
+            project.manifest = {**project.manifest, "mixing": {"channel_layout": "7.1"}}
             session.commit()
-        with patch.object(ReferenceMatchProcessor, "compute_channel_filters", _counting_compute_filters):
+        with patch.object(ReferenceMatchProcessor, "compute_curve", _counting_compute_curve):
             manager.prepare_reference_match(project_id)
+        assert call_count["n"] == 1, "a channel_layout change must trigger a real recompute"
         new_signature = project_stems.read_reference_match_meta(project_id)["signature"]
         assert new_signature != first_signature
 
@@ -362,7 +354,7 @@ def test_worker_prepare_reference_match_skips_when_stems_not_prepared(tmp_path, 
         meta = client.app.state.project_stems.read_reference_match_meta(project_id)
         assert meta is not None
         assert meta["channels"] == []
-        assert client.app.state.project_stems.reference_match_fir_path(project_id) is None
+        assert meta["curve"] == []
         assert not manager.reference_match_pending(project_id)
 
         # An unrelated re-schedule (e.g. a stem mute/solo save) must not
@@ -426,12 +418,12 @@ def test_worker_schedule_reference_match_coalesces_and_reports_pending(tmp_path,
 
     release = threading.Event()
     call_count = {"n": 0}
-    original_compute_filters = ReferenceMatchProcessor.compute_channel_filters
+    original_compute_curve = ReferenceMatchProcessor.compute_curve
 
-    def _blocking_compute_filters(self_inner, channels):
+    def _blocking_compute_curve(self_inner, channels, lfe_key="LFE"):
         call_count["n"] += 1
         release.wait(timeout=5)
-        return original_compute_filters(self_inner, channels)
+        return original_compute_curve(self_inner, channels, lfe_key)
 
     with TestClient(create_app(settings)) as client:
         storage = client.app.state.storage
@@ -487,11 +479,11 @@ def test_worker_schedule_reference_match_coalesces_and_reports_pending(tmp_path,
         # create, so schedule_reference_match has somewhere to submit to.
         manager._refmatch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-refmatch")
         try:
-            with patch.object(ReferenceMatchProcessor, "compute_channel_filters", _blocking_compute_filters):
+            with patch.object(ReferenceMatchProcessor, "compute_curve", _blocking_compute_curve):
                 manager.schedule_reference_match(project_id)
                 assert manager.reference_match_pending(project_id)
                 # Fired while the first pass is still blocked in
-                # compute_channel_filters — must coalesce into the trailing
+                # compute_curve — must coalesce into the trailing
                 # check rather than each starting a concurrent full-song pass.
                 manager.schedule_reference_match(project_id)
                 manager.schedule_reference_match(project_id)
@@ -710,5 +702,268 @@ def test_worker_schedule_reference_match_still_runs_to_clear_removed_reference(t
             assert manager.project_stems.read_reference_match_meta(project_id) is None
         finally:
             manager._refmatch_executor.shutdown(wait=True)
+
+    engine.dispose()
+
+
+def test_fir_endpoint_varies_with_strength_and_max_db(tmp_path, monkeypatch):
+    """The reference-match FIR endpoint designs the filter from the
+    persisted curve on demand (see Ledger D21) — different `strength`/
+    `max_db` query params must produce different filter bytes without any
+    recompute of the underlying curve, since strength/max_db are excluded
+    from the recompute signature (see the docs-comment on
+    `_reference_match_signature`)."""
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'refmatch-fir-endpoint.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+
+    with TestClient(create_app(settings)) as client:
+        storage = client.app.state.storage
+        source_wav = tmp_path / "source.wav"
+        reference_wav = tmp_path / "reference.wav"
+        samples = np.arange(48_000 * 2) / 48_000
+        sf.write(source_wav, 0.2 * np.column_stack([
+            np.sin(2 * np.pi * 440.0 * samples), np.sin(2 * np.pi * 442.0 * samples),
+        ]), 48_000, subtype="FLOAT")
+        sf.write(reference_wav, 0.4 * np.column_stack([
+            np.sin(2 * np.pi * 220.0 * samples), np.sin(2 * np.pi * 8000.0 * samples),
+        ]), 48_000, subtype="FLOAT")
+        storage.put_file("assets/source.wav", source_wav)
+        storage.put_file("references/reference.wav", reference_wav)
+
+        with factory() as session:
+            batch = ImportBatch(kind="track", title="Song")
+            asset = MediaAsset(
+                import_batch=batch, filename="source.wav", relative_path="source.wav",
+                storage_key="assets/source.wav", sha256="0" * 64, size_bytes=1,
+            )
+            reference = MasteringReference(
+                import_batch=batch, filename="reference.wav",
+                storage_key="references/reference.wav", sha256="1" * 64, size_bytes=1,
+            )
+            manifest = {
+                "version": "1.0.0",
+                "engine": {"mode": "stem", "stems": ["Vocals"]},
+                "mixing": {"channel_layout": "5.1"},
+                "mastering": {
+                    "match_reference": {
+                        "strength": 1.0, "spectrum": True, "rms": True, "max_db": 6.0,
+                    },
+                },
+            }
+            project = Project(
+                import_batch=batch, name="Ref match fir endpoint project", manifest=manifest,
+                status="ready", prepared_stems=["Vocals"], requested_stems=["Vocals"],
+                mastering_reference=reference,
+            )
+            track = ProjectTrack(project=project, asset=asset, position=0)
+            session.add_all([batch, asset, reference, project, track])
+            session.commit()
+            project_id, track_id = project.id, track.id
+
+        manager = client.app.state.manager
+        project_stems = client.app.state.project_stems
+        _seed_prepared_stems(
+            project_stems, project_id, track_id,
+            {"Vocals": np.full((len(samples), 2), 0.2, dtype=np.float32)},
+        )
+        manager.prepare_reference_match(project_id)
+        meta = project_stems.read_reference_match_meta(project_id)
+        assert meta["curve"]
+
+        base_url = f"/api/v1/projects/{project_id}/reference-match/fir"
+        full_strength = client.get(base_url, params={"strength": 1.0, "max_db": 6.0})
+        half_strength = client.get(base_url, params={"strength": 0.5, "max_db": 6.0})
+        clamped = client.get(base_url, params={"strength": 1.0, "max_db": 1.0})
+        assert full_strength.status_code == half_strength.status_code == clamped.status_code == 200
+        assert full_strength.content != half_strength.content
+        assert full_strength.content != clamped.content
+
+    engine.dispose()
+
+
+def test_resolve_project_mastering_reference_allows_reference_from_any_track_import(tmp_path):
+    """A project can accumulate tracks from more than one import over time
+    (unlike a job, which is scoped to a single import). A reference attached
+    from import A must stay resolvable even after the project later gains a
+    track from import B — before this widened check, the strict
+    single-`ImportBatch` comparison would start rejecting an already-valid
+    reference the moment a second-import track was added, and the only
+    workaround was re-uploading the same reference file again under
+    import B."""
+    from upmixer_web.features.imports.service import resolve_project_mastering_reference
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'refmatch-resolver.db'}"
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+
+    with factory() as session:
+        batch_a = ImportBatch(kind="track", title="Import A")
+        batch_b = ImportBatch(kind="track", title="Import B")
+        asset_a = MediaAsset(
+            import_batch=batch_a, filename="a.wav", relative_path="a.wav",
+            storage_key="assets/a.wav", sha256="a" * 64, size_bytes=1,
+        )
+        asset_b = MediaAsset(
+            import_batch=batch_b, filename="b.wav", relative_path="b.wav",
+            storage_key="assets/b.wav", sha256="b" * 64, size_bytes=1,
+        )
+        reference = MasteringReference(
+            import_batch=batch_a, filename="ref.wav",
+            storage_key="references/ref.wav", sha256="r" * 64, size_bytes=1,
+        )
+        project = Project(
+            import_batch=batch_a, name="Multi-import project", manifest={"version": "1.0.0"},
+            status="ready",
+        )
+        track_a = ProjectTrack(project=project, asset=asset_a, position=0)
+        session.add_all([batch_a, batch_b, asset_a, asset_b, reference, project, track_a])
+        session.commit()
+        reference_id = reference.id
+
+        # Single-import project: resolves exactly like the strict job-side check.
+        resolved = resolve_project_mastering_reference(session, project, reference_id)
+        assert resolved is not None and resolved.id == reference_id
+
+        # Add a track from a *different* import — the reference from import A
+        # must remain resolvable through the project's track set.
+        track_b = ProjectTrack(project=project, asset=asset_b, position=1)
+        session.add(track_b)
+        session.commit()
+        session.refresh(project)
+
+        resolved = resolve_project_mastering_reference(session, project, reference_id)
+        assert resolved is not None and resolved.id == reference_id
+
+    engine.dispose()
+
+
+def test_resolve_project_mastering_reference_rejects_unrelated_reference(tmp_path):
+    """A reference belonging to neither the project's own import nor any
+    track's import must still be rejected."""
+    from upmixer_web.features.imports.service import resolve_project_mastering_reference
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'refmatch-resolver-reject.db'}"
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+
+    with factory() as session:
+        batch_a = ImportBatch(kind="track", title="Import A")
+        batch_unrelated = ImportBatch(kind="track", title="Unrelated import")
+        asset_a = MediaAsset(
+            import_batch=batch_a, filename="a.wav", relative_path="a.wav",
+            storage_key="assets/a2.wav", sha256="c" * 64, size_bytes=1,
+        )
+        unrelated_reference = MasteringReference(
+            import_batch=batch_unrelated, filename="ref.wav",
+            storage_key="references/unrelated.wav", sha256="d" * 64, size_bytes=1,
+        )
+        project = Project(
+            import_batch=batch_a, name="Single-import project", manifest={"version": "1.0.0"},
+            status="ready",
+        )
+        track_a = ProjectTrack(project=project, asset=asset_a, position=0)
+        session.add_all([batch_a, batch_unrelated, asset_a, unrelated_reference, project, track_a])
+        session.commit()
+
+        with pytest.raises(ValueError):
+            resolve_project_mastering_reference(session, project, unrelated_reference.id)
+
+    engine.dispose()
+
+
+def test_startup_sweep_schedules_reference_match_for_projects_with_a_reference(tmp_path):
+    """The API's startup lifespan (`api.py`) sweeps every project with a
+    reference attached through the normal signature-checked scheduling path
+    — this is what lets an existing dev/prod database pick up a
+    reference-match algorithm or signature-shape change (like this rebuild)
+    on the next restart, regenerating every stale sidecar in the background
+    with no user action and no re-upload, rather than waiting for the next
+    settings save on each project. Unlike the other tests in this file,
+    `WorkerManager.start` runs for real here — it's cheap (thread pools + a
+    DB scan, no model loading) — since the sweep it performs is exactly
+    what's under test."""
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'refmatch-startup-sweep.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+
+    app = create_app(settings)
+    storage = app.state.storage
+    project_stems = app.state.project_stems
+
+    source_wav = tmp_path / "source.wav"
+    reference_wav = tmp_path / "reference.wav"
+    samples = np.arange(48_000 * 2) / 48_000
+    sf.write(source_wav, 0.2 * np.column_stack([
+        np.sin(2 * np.pi * 440.0 * samples), np.sin(2 * np.pi * 442.0 * samples),
+    ]), 48_000, subtype="FLOAT")
+    sf.write(reference_wav, 0.4 * np.column_stack([
+        np.sin(2 * np.pi * 440.0 * samples), np.sin(2 * np.pi * 442.0 * samples),
+    ]), 48_000, subtype="FLOAT")
+    storage.put_file("assets/source.wav", source_wav)
+    storage.put_file("references/reference.wav", reference_wav)
+
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+    with factory() as session:
+        batch = ImportBatch(kind="track", title="Song")
+        asset = MediaAsset(
+            import_batch=batch, filename="source.wav", relative_path="source.wav",
+            storage_key="assets/source.wav", sha256="0" * 64, size_bytes=1,
+        )
+        reference = MasteringReference(
+            import_batch=batch, filename="reference.wav",
+            storage_key="references/reference.wav", sha256="1" * 64, size_bytes=1,
+        )
+        manifest = {
+            "version": "1.0.0",
+            "engine": {"mode": "stem", "stems": ["Vocals"]},
+            "mixing": {"channel_layout": "5.1"},
+        }
+        project = Project(
+            import_batch=batch, name="Startup sweep project", manifest=manifest,
+            status="ready", prepared_stems=["Vocals"], requested_stems=["Vocals"],
+            mastering_reference=reference,
+        )
+        track = ProjectTrack(project=project, asset=asset, position=0)
+        session.add_all([batch, asset, reference, project, track])
+        session.commit()
+        project_id, track_id = project.id, track.id
+
+    _seed_prepared_stems(
+        project_stems, project_id, track_id,
+        {"Vocals": np.full((len(samples), 2), 0.2, dtype=np.float32)},
+    )
+    # No prepare_reference_match call here — the point is that the lifespan
+    # startup sweep is what schedules it, with nothing else triggering it.
+    assert project_stems.read_reference_match_meta(project_id) is None
+
+    with TestClient(app):
+        deadline = time.monotonic() + 10
+        meta = None
+        while time.monotonic() < deadline:
+            meta = project_stems.read_reference_match_meta(project_id)
+            if meta is not None:
+                break
+            time.sleep(0.05)
+
+    assert meta is not None
+    assert meta["curve"], "the startup sweep must compute a real curve, not just an empty stamp"
 
     engine.dispose()

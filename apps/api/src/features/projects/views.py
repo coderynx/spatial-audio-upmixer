@@ -60,19 +60,17 @@ def project_view(
     meta = project_stems.read_reference_match_meta(project.id) if project_stems else None
     if meta:
         fir_url = None
-        if meta.get("channels"):
+        if meta.get("channels") and meta.get("curve"):
             fir_url = f"{root_path}/api/v1/projects/{project.id}/reference-match/fir"
             # Signature-versioned so the browser's fir_url-keyed decode cache
-            # busts on a real recompute; the route itself ignores this param.
+            # busts on a real recompute; `strength`/`max_db` are appended by
+            # the caller as live query params (see ReferenceMatchAssetView).
             if meta.get("signature"):
                 fir_url = f"{fir_url}?v={meta['signature']}"
         view.reference_match = ReferenceMatchAssetView(
             fir_url=fir_url,
             channels=meta.get("channels", []),
             rms_gain_db=meta.get("rms_gain_db", 0.0),
-            strength=meta.get("strength", 0.0),
-            spectrum=meta.get("spectrum", False),
-            rms=meta.get("rms", False),
             sample_rate=meta.get("sample_rate", 0),
         )
     return view

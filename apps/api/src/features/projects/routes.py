@@ -13,7 +13,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Upl
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
-from upmixer_web.features.imports.service import resolve_mastering_reference
+from upmixer_web.features.imports.service import resolve_project_mastering_reference
 from upmixer_web.features.jobs.schemas import JobView
 from upmixer_web.features.jobs.views import job_view
 from upmixer_web.features.projects.archive import export_project_archive, import_project_archive
@@ -121,7 +121,7 @@ def register_project_routes(
         previous_preview_quality = project.preview_quality
         try:
             reference = (
-                resolve_mastering_reference(session, project.import_batch, request.mastering_reference_id)
+                resolve_project_mastering_reference(session, project, request.mastering_reference_id)
                 if "mastering_reference_id" in request.model_fields_set
                 else project.mastering_reference
             )
@@ -304,15 +304,27 @@ def register_project_routes(
     @app.get("/api/v1/projects/{project_id}/reference-match/fir", tags=["projects"])
     def read_project_reference_match_fir(
         project_id: str,
+        strength: float = 1.0,
+        max_db: float = 6.0,
         session: Session = Depends(database_session),
-    ) -> FileResponse:
+    ) -> Response:
+        """Design and serve the reference-match FIR for one (strength,
+        max_db) pair on demand from the project's persisted correction curve
+        — see `ProjectStemStorage.reference_match_fir_wav_bytes`. Cheap
+        enough to call on every slider drag (see
+        docs/contracts/preview_export_parity.md Ledger D21); the `v=`
+        signature query param `views.py` appends is for browser cache-busting
+        only and is intentionally not read here.
+        """
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        path = app.state.project_stems.reference_match_fir_path(project_id)
-        if not path:
+        strength = max(0.0, min(1.0, strength))
+        max_db = max(0.0, min(24.0, max_db))
+        wav_bytes = app.state.project_stems.reference_match_fir_wav_bytes(project_id, strength, max_db)
+        if wav_bytes is None:
             raise HTTPException(status_code=404, detail="Reference-match FIR is not available")
-        return FileResponse(path, media_type="audio/wav")
+        return Response(content=wav_bytes, media_type="audio/wav")
 
     @app.get("/api/v1/projects/{project_id}/tracks/{track_id}/source-preview", tags=["projects"])
     def read_project_source_preview(

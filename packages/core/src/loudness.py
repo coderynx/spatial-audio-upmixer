@@ -21,7 +21,7 @@ from upmixer.formats import ChannelLabel, OutputFormat
 
 _SURROUND_WEIGHT: float = 1.41  # BS.1770-4 Annex 1 Table 3 literal value
 
-_CH_WEIGHT: dict[ChannelLabel, float] = {
+CHANNEL_WEIGHT: dict[ChannelLabel, float] = {
     ChannelLabel.FL:  1.0,
     ChannelLabel.FR:  1.0,
     ChannelLabel.C:   1.0,
@@ -133,7 +133,7 @@ def measure_integrated_loudness(
 
     tasks = []
     for label in fmt.channels:
-        weight = _CH_WEIGHT.get(label, 0.0)
+        weight = CHANNEL_WEIGHT.get(label, 0.0)
         if weight == 0.0:
             continue
         audio = channels.get(label.value)

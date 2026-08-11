@@ -351,10 +351,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="FILE",
         help=(
-            "Apply spectral envelope + RMS level matching against a reference "
-            "audio file (mono through 7.1.4). Runs as mastering step 0, before "
-            "preset EQ. For best results use a reference matching the target "
-            "channel count."
+            "Apply spectral envelope + level matching against a reference "
+            "audio file (mono, stereo, 5.1, 7.1, 7.1.2, or 7.1.4). Runs as "
+            "mastering step 0, before preset EQ, as one shared correction "
+            "curve applied to every full-range channel."
         ),
     )
     parser.add_argument(
@@ -362,7 +362,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         metavar="S",
-        help="Spectral FIR wet/dry blend for reference matching (0.0–1.0, default 0.7).",
+        help="Spectral correction curve scale for reference matching (0.0–1.0, default 0.7).",
     )
     parser.add_argument(
         "--no-match-reference-spectrum",
@@ -379,7 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         metavar="DB",
-        help="Maximum spectral correction magnitude in dB (default 12.0).",
+        help="Maximum spectral correction magnitude in dB (default 6.0).",
     )
 
     parser.add_argument(

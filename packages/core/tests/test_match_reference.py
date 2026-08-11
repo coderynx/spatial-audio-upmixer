@@ -1,14 +1,33 @@
-"""Tests for upmixer.mastering.match_reference.ReferenceMatchProcessor."""
+"""Tests for upmixer.mastering.match_reference (ReferenceMatchProcessor,
+compute_reference_curve, build_curve_fir)."""
+from __future__ import annotations
+
 import numpy as np
+from scipy.signal import freqz
 
 import upmixer.mastering.match_reference  # noqa: F401 — triggers register_block_keys for mastering.match_reference
 from upmixer.config import UpmixConfig
+from upmixer.formats import ChannelLabel, SURROUND_51
 from upmixer.manifest import _BLOCK_REGISTRY, _FIELD_MAP, apply_asset_job, AssetJob, parse_manifest
+from upmixer.mastering.eq import _apply_fir
 from upmixer.mastering.match_reference import (
     ReferenceMatchProcessor,
-    _CHANNEL_PROXIES,
-    _gaussian_smooth_log,
+    build_curve_fir,
+    compute_reference_curve,
 )
+from upmixer.mastering.match_reference.curve import (
+    _band_edge_taper,
+    _confidence_taper,
+    _log_grid,
+    _smooth_log_grid,
+    _soft_clamp,
+)
+from upmixer.mastering.match_reference.spectrum import (
+    _canonicalize_reference,
+    _REFERENCE_CHANNEL_ORDER,
+    weighted_power_spectrum_reference,
+)
+from upmixer.utils import itu_downmix_stereo
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -22,17 +41,18 @@ def _sine(freq: float = 440.0, amplitude: float = 0.2, n: int = N) -> np.ndarray
 
 
 def _51_channels() -> dict[str, np.ndarray]:
-    freqs = {"FL": 440, "FR": 550, "C": 660, "LFE": 60, "SL": 330, "SR": 440}
+    freqs = {"FL": 440, "FR": 550, "C": 660, "LFE": 60, "SL": 330, "SR": 880}
     return {k: _sine(f) for k, f in freqs.items()}
 
 
 def _make_proc(**kwargs) -> ReferenceMatchProcessor:
     defaults = dict(
         reference_path="__synthetic__",
+        output_fmt=SURROUND_51,
         strength=0.7,
         match_spectrum=True,
         match_rms=True,
-        max_correction_db=12.0,
+        max_correction_db=6.0,
         sample_rate=SR,
     )
     defaults.update(kwargs)
@@ -42,10 +62,6 @@ def _make_proc(**kwargs) -> ReferenceMatchProcessor:
 def _inject_ref(proc: ReferenceMatchProcessor, ref_data: np.ndarray) -> None:
     """Bypass file loading by injecting ref_data directly."""
     proc._ref_data = ref_data
-    n_ch = ref_data.shape[1]
-    supported = sorted(_CHANNEL_PROXIES.keys())
-    proxy_n = min(supported, key=lambda x: abs(x - n_ch))
-    proc._proxy_table = _CHANNEL_PROXIES[proxy_n]
 
 
 def _stereo_ref(n: int = N) -> np.ndarray:
@@ -55,9 +71,15 @@ def _stereo_ref(n: int = N) -> np.ndarray:
 
 
 def _51_ref(n: int = N) -> np.ndarray:
-    freqs = [440, 550, 660, 60, 330, 440]
+    freqs = [440, 550, 660, 60, 330, 880]
     cols = [_sine(f, amplitude=0.3, n=n) for f in freqs]
     return np.stack(cols, axis=1)
+
+
+def _fir_response_db(fir: np.ndarray, sr: int, freq_hz: float) -> float:
+    w, h = freqz(fir, worN=8192, fs=sr)
+    idx = int(np.argmin(np.abs(w - freq_hz)))
+    return float(20.0 * np.log10(np.abs(h[idx]) + 1e-12))
 
 
 # ── init ─────────────────────────────────────────────────────────────────────
@@ -78,7 +100,6 @@ class TestReferenceMatchProcessorInit:
     def test_ref_data_not_loaded_on_init(self):
         proc = _make_proc()
         assert proc._ref_data is None
-        assert proc._proxy_table is None
 
 
 # ── bypass ───────────────────────────────────────────────────────────────────
@@ -90,104 +111,121 @@ class TestBypass:
         result = proc.process(channels)
         assert result is channels
 
-    def test_lfe_processed_not_bypassed(self):
+    def test_lfe_gets_level_gain_not_bypassed(self):
         proc = _make_proc(match_rms=True, match_spectrum=False)
         channels = _51_channels()
-        ref = _stereo_ref()
-        _inject_ref(proc, ref)
+        _inject_ref(proc, _stereo_ref())
         result = proc.process(channels)
-        # LFE is modified (RMS scalar applied to all channels)
         assert "LFE" in result
         assert result["LFE"] is not channels["LFE"]
 
-
-# ── spectral matching ─────────────────────────────────────────────────────────
-
-class TestSpectralMatching:
-    def test_runs_with_stereo_ref(self):
-        proc = _make_proc(match_rms=False)
-        channels = _51_channels()
-        _inject_ref(proc, _stereo_ref())
-        result = proc.process(channels)
-        for name, arr in result.items():
-            assert np.all(np.isfinite(arr)), f"{name} has non-finite values"
-
-    def test_runs_with_mono_ref(self):
-        proc = _make_proc(match_rms=False)
-        channels = _51_channels()
-        mono = _sine(440.0, amplitude=0.3, n=N).reshape(-1, 1)
-        _inject_ref(proc, mono)
-        result = proc.process(channels)
-        assert set(result.keys()) == set(channels.keys())
-
-    def test_runs_with_51_ref(self):
-        proc = _make_proc(match_rms=False)
-        channels = _51_channels()
-        _inject_ref(proc, _51_ref())
-        result = proc.process(channels)
-        for arr in result.values():
-            assert np.all(np.isfinite(arr))
-
-    def test_shape_preserved(self):
-        proc = _make_proc(match_rms=False)
-        channels = _51_channels()
-        _inject_ref(proc, _stereo_ref())
-        result = proc.process(channels)
-        for name, arr in result.items():
-            assert arr.shape == channels[name].shape
-
-    def test_channel_keys_preserved(self):
-        proc = _make_proc(match_rms=False)
-        channels = _51_channels()
-        _inject_ref(proc, _stereo_ref())
-        result = proc.process(channels)
-        assert set(result.keys()) == set(channels.keys())
-
-    def test_strength_zero_returns_similar_to_input(self):
+    def test_process_skips_fir_when_strength_zero(self):
         proc = _make_proc(strength=0.0, match_rms=False)
         channels = _51_channels()
         _inject_ref(proc, _stereo_ref())
         result = proc.process(channels)
-        # With strength=0, _apply_fir returns dry signal unchanged
         for name in channels:
             np.testing.assert_array_almost_equal(result[name], channels[name])
 
-    def test_lfe_spectral_matched_via_proxy(self):
+
+# ── smoothing — regression guard for the pre-fix near-identity kernel ────────
+
+class TestSmoothing:
+    def test_attenuates_narrow_spike(self):
+        grid = _log_grid(20000.0)
+        values = np.zeros(len(grid))
+        spike = len(grid) // 2
+        values[spike] = 20.0
+        smoothed = _smooth_log_grid(values, 1.0 / 3.0, 1.0 / 24.0)
+        assert smoothed[spike] < 5.0, "a one-bin spike must be attenuated, not passed through"
+
+    def test_spreads_energy_over_multiple_bins(self):
+        # 1/3 octave at a 1/24-octave grid step is 8 bins of half-width; the
+        # pre-fix kernel (its width measured off a mismatched linear FFT
+        # grid) collapsed to a ~1-bin-wide identity, so this width is the
+        # regression guard.
+        grid = _log_grid(20000.0)
+        values = np.zeros(len(grid))
+        spike = len(grid) // 2
+        values[spike] = 20.0
+        smoothed = _smooth_log_grid(values, 1.0 / 3.0, 1.0 / 24.0)
+        nonzero = np.where(smoothed > 0.05)[0]
+        assert (nonzero[-1] - nonzero[0]) >= 8
+
+    def test_constant_input_preserved(self):
+        values = np.full(200, 3.5)
+        smoothed = _smooth_log_grid(values, 1.0 / 3.0, 1.0 / 24.0)
+        np.testing.assert_allclose(smoothed[10:-10], 3.5, atol=1e-6)
+
+
+# ── single shared curve — the core spatial-correctness property ─────────────
+
+class TestSingleSharedCurve:
+    def test_identical_inputs_produce_identical_outputs(self):
         proc = _make_proc(match_rms=False, strength=1.0)
-        channels = _51_channels()
+        sig = _sine(440.0, amplitude=0.05)
+        channels = {
+            "FL": sig.copy(), "FR": sig.copy(),
+            "C": _sine(660.0), "SL": _sine(330.0), "SR": _sine(880.0), "LFE": _sine(60.0),
+        }
         _inject_ref(proc, _stereo_ref())
         result = proc.process(channels)
-        # LFE should have been modified (not identical to input)
-        # With strength=1.0 and a non-trivial correction, arrays differ
-        assert "LFE" in result
-        assert np.all(np.isfinite(result["LFE"]))
+        np.testing.assert_array_equal(result["FL"], result["FR"])
 
+    def test_lr_symmetry_preserved_with_asymmetric_reference(self):
+        proc = _make_proc(match_rms=False, strength=1.0)
+        sig = _sine(440.0, amplitude=0.05)
+        channels = {
+            "FL": sig.copy(), "FR": sig.copy(),
+            "C": _sine(660.0), "SL": _sine(330.0), "SR": _sine(880.0), "LFE": _sine(60.0),
+        }
+        # Deliberately asymmetric reference: L and R carry unrelated content.
+        ref = np.stack(
+            [_sine(200.0, amplitude=0.5, n=N), _sine(4000.0, amplitude=0.01, n=N)], axis=1
+        )
+        _inject_ref(proc, ref)
+        result = proc.process(channels)
+        np.testing.assert_array_equal(result["FL"], result["FR"])
 
-# ── LFE handling ──────────────────────────────────────────────────────────────
-
-class TestLFEHandling:
-    def test_stereo_ref_lfe_uses_mid_lp_proxy(self):
-        # For 2-ch ref, LFE proxy is "mid_lp" — just verify it runs without error
-        proc = _make_proc(match_rms=False)
-        channels = {"LFE": _sine(60.0)}
+    def test_lfe_not_spectrally_corrected(self):
+        proc = _make_proc(match_rms=True, match_spectrum=True, strength=1.0)
+        channels = _51_channels()
         _inject_ref(proc, _stereo_ref())
-        result = proc.process(channels, lfe_key="LFE")
-        assert "LFE" in result
-        assert np.all(np.isfinite(result["LFE"]))
+        _, rms_gain_db = proc.compute_curve(channels)
+        result = proc.process(channels)
+        rms_gain_lin = 10.0 ** (rms_gain_db / 20.0)
+        expected_lfe = channels["LFE"].astype(np.float64) * rms_gain_lin
+        np.testing.assert_array_almost_equal(result["LFE"], expected_lfe)
 
-    def test_51_ref_lfe_uses_direct_channel(self):
-        # For 6-ch ref, LFE proxy is index 3 (actual LFE)
-        proc = _make_proc(match_rms=False)
-        channels = {"LFE": _sine(60.0)}
+    def test_downmix_commutes_with_matching(self):
+        """A single shared FIR is linear, so BS.775 stereo-downmixing the
+        matched bed must equal downmixing the original bed and then applying
+        the same correction — the property that breaks the moment
+        per-channel curves diverge, since each channel would then carry a
+        different filter and filtering would stop commuting with summation.
+        """
+        proc = _make_proc(match_rms=True, strength=1.0)
+        channels = _51_channels()
         _inject_ref(proc, _51_ref())
-        result = proc.process(channels, lfe_key="LFE")
-        assert "LFE" in result
-        assert np.all(np.isfinite(result["LFE"]))
+        curve, rms_gain_db = proc.compute_curve(channels)
+        rms_gain_lin = 10.0 ** (rms_gain_db / 20.0)
+        fir = build_curve_fir(curve, SR, proc._n_taps, 1.0, proc._max_db)
+
+        matched = proc.process(channels)
+        matched_l, matched_r = itu_downmix_stereo(matched)
+
+        scaled = {name: ch.astype(np.float64) * rms_gain_lin for name, ch in channels.items()}
+        pre_l, pre_r = itu_downmix_stereo(scaled)
+        expected_l = _apply_fir(pre_l, fir, 1.0)
+        expected_r = _apply_fir(pre_r, fir, 1.0)
+
+        np.testing.assert_array_almost_equal(matched_l, expected_l, decimal=6)
+        np.testing.assert_array_almost_equal(matched_r, expected_r, decimal=6)
 
 
-# ── RMS matching ──────────────────────────────────────────────────────────────
+# ── level matching ───────────────────────────────────────────────────────────
 
-class TestRmsMatching:
+class TestLevelMatching:
     def test_runs_with_stereo_ref(self):
         proc = _make_proc(match_spectrum=False)
         channels = _51_channels()
@@ -197,7 +235,6 @@ class TestRmsMatching:
             assert np.all(np.isfinite(arr))
 
     def test_louder_ref_increases_target_level(self):
-        # Reference is 6 dB louder than target
         proc = _make_proc(match_spectrum=False)
         channels = {"FL": _sine(440.0, amplitude=0.1), "FR": _sine(550.0, amplitude=0.1)}
         ref = np.stack([_sine(440.0, amplitude=0.4), _sine(550.0, amplitude=0.4)], axis=1)
@@ -213,242 +250,231 @@ class TestRmsMatching:
         result = proc.process(channels, lfe_key="LFE")
         assert np.sqrt(np.mean(result["FL"] ** 2)) < np.sqrt(np.mean(channels["FL"] ** 2))
 
-    def test_rms_gain_clamped(self):
-        # Reference is 40 dB louder — gain should be clamped to +6 dB
+    def test_gain_clamped(self):
         proc = _make_proc(match_spectrum=False)
         channels = {"FL": _sine(440.0, amplitude=0.001), "FR": _sine(550.0, amplitude=0.001)}
         ref = np.stack([_sine(440.0, amplitude=0.4), _sine(550.0, amplitude=0.4)], axis=1)
         _inject_ref(proc, ref)
-        gain_db = proc._compute_rms_gain_db(
-            proc._ref_data, proc._proxy_table, channels, "LFE"
-        )
+        _, gain_db = proc.compute_curve(channels)
         assert gain_db <= 6.0 + 1e-6
 
-    def test_rms_applied_to_lfe(self):
+    def test_applied_to_lfe(self):
         proc = _make_proc(match_spectrum=False)
         channels = _51_channels()
         _inject_ref(proc, _stereo_ref())
         lfe_before = channels["LFE"].copy()
         result = proc.process(channels)
-        # LFE should have been scaled (unless ref == tgt RMS, which is unlikely)
         assert not np.allclose(result["LFE"], lfe_before)
 
     def test_inter_channel_balance_preserved(self):
-        # FL/FR ratio should be identical before and after (same scalar applied)
         proc = _make_proc(match_spectrum=False)
-        channels = {
-            "FL": _sine(440.0, amplitude=0.15),
-            "FR": _sine(550.0, amplitude=0.30),
-        }
+        channels = {"FL": _sine(440.0, amplitude=0.15), "FR": _sine(550.0, amplitude=0.30)}
         ref = np.stack([_sine(440.0, amplitude=0.4), _sine(550.0, amplitude=0.4)], axis=1)
         _inject_ref(proc, ref)
         result = proc.process(channels, lfe_key="LFE")
-        rms_fl_before = np.sqrt(np.mean(channels["FL"] ** 2))
-        rms_fr_before = np.sqrt(np.mean(channels["FR"] ** 2))
-        rms_fl_after = np.sqrt(np.mean(result["FL"] ** 2))
-        rms_fr_after = np.sqrt(np.mean(result["FR"] ** 2))
-        ratio_before = rms_fl_before / rms_fr_before
-        ratio_after = rms_fl_after / rms_fr_after
+        ratio_before = np.sqrt(np.mean(channels["FL"] ** 2)) / np.sqrt(np.mean(channels["FR"] ** 2))
+        ratio_after = np.sqrt(np.mean(result["FL"] ** 2)) / np.sqrt(np.mean(result["FR"] ** 2))
         assert abs(ratio_before - ratio_after) < 1e-6
 
 
-# ── compute_channel_filters (web reference-match precompute) ─────────────────
+# ── compute_curve (web reference-match precompute) ───────────────────────────
 
-class TestComputeChannelFilters:
-    """compute_channel_filters must return exactly what process() builds and
-    applies internally — the web preview's server-side FIR precompute ships
-    these arrays as-is instead of re-deriving the algorithm in JS."""
+class TestComputeCurve:
+    """compute_curve must return exactly what process() builds and applies
+    internally — the web preview's server-side precompute persists the curve
+    as-is instead of re-deriving the algorithm in JS."""
 
-    def test_firs_match_what_process_applies(self):
+    def test_matches_what_process_applies(self):
         proc = _make_proc(match_rms=True, match_spectrum=True, strength=1.0)
         channels = _51_channels()
         _inject_ref(proc, _stereo_ref())
-        fir_by_channel, rms_gain_db = proc.compute_channel_filters(channels)
-
-        from upmixer.mastering.eq import _apply_fir
-
+        curve, rms_gain_db = proc.compute_curve(channels)
+        fir = build_curve_fir(curve, SR, proc._n_taps, proc._strength, proc._max_db)
         rms_gain_lin = 10.0 ** (rms_gain_db / 20.0)
-        expected = {
-            name: _apply_fir(ch.astype(np.float64) * rms_gain_lin, fir_by_channel[name], proc._strength)
-            for name, ch in channels.items()
-        }
+        expected = {}
+        for name, ch in channels.items():
+            scaled = ch.astype(np.float64) * rms_gain_lin
+            expected[name] = scaled if name == "LFE" else _apply_fir(scaled, fir, 1.0)
+
         proc2 = _make_proc(match_rms=True, match_spectrum=True, strength=1.0)
         _inject_ref(proc2, _stereo_ref())
         actual = proc2.process(channels)
         for name in channels:
             np.testing.assert_array_almost_equal(actual[name], expected[name])
 
-    def test_rms_gain_matches_process_rms_stage(self):
-        proc = _make_proc(match_rms=True, match_spectrum=False)
-        channels = {"FL": _sine(440.0, amplitude=0.1), "FR": _sine(550.0, amplitude=0.1)}
-        ref = np.stack([_sine(440.0, amplitude=0.4), _sine(550.0, amplitude=0.4)], axis=1)
-        _inject_ref(proc, ref)
-        _, rms_gain_db = proc.compute_channel_filters(channels)
-        expected_gain_db = proc._compute_rms_gain_db(proc._ref_data, proc._proxy_table, channels, "LFE")
-        assert rms_gain_db == expected_gain_db
+    def test_curve_is_strength_independent(self):
+        channels = _51_channels()
+        proc_full = _make_proc(strength=1.0)
+        _inject_ref(proc_full, _stereo_ref())
+        curve_full, _ = proc_full.compute_curve(channels)
+        proc_zero = _make_proc(strength=0.0)
+        _inject_ref(proc_zero, _stereo_ref())
+        curve_zero, _ = proc_zero.compute_curve(channels)
+        assert curve_full == curve_zero
 
-    def test_empty_when_spectrum_disabled(self):
+    def test_empty_curve_when_spectrum_disabled(self):
         proc = _make_proc(match_spectrum=False, match_rms=True)
         channels = _51_channels()
         _inject_ref(proc, _stereo_ref())
-        fir_by_channel, _ = proc.compute_channel_filters(channels)
-        assert fir_by_channel == {}
-
-    def test_empty_when_strength_zero(self):
-        proc = _make_proc(strength=0.0, match_spectrum=True)
-        channels = _51_channels()
-        _inject_ref(proc, _stereo_ref())
-        fir_by_channel, _ = proc.compute_channel_filters(channels)
-        assert fir_by_channel == {}
-
-    def test_keys_match_input_channels(self):
-        proc = _make_proc(match_spectrum=True, strength=1.0)
-        channels = _51_channels()
-        _inject_ref(proc, _stereo_ref())
-        fir_by_channel, _ = proc.compute_channel_filters(channels)
-        assert set(fir_by_channel.keys()) == set(channels.keys())
+        curve, _ = proc.compute_curve(channels)
+        assert curve == []
 
     def test_does_not_mutate_input_channels(self):
         proc = _make_proc(match_rms=True, match_spectrum=True, strength=1.0)
         channels = _51_channels()
         before = {name: arr.copy() for name, arr in channels.items()}
         _inject_ref(proc, _stereo_ref())
-        proc.compute_channel_filters(channels)
+        proc.compute_curve(channels)
         for name, arr in channels.items():
             np.testing.assert_array_equal(arr, before[name])
 
 
-# ── channel proxy table ───────────────────────────────────────────────────────
+# ── reference channel canonicalization ───────────────────────────────────────
 
-class TestChannelProxies:
+class TestReferenceChannelCanonicalization:
     def test_supported_counts(self):
-        assert set(_CHANNEL_PROXIES.keys()) == {1, 2, 6, 8}
+        assert set(_REFERENCE_CHANNEL_ORDER.keys()) == {6, 8, 10, 12}
 
-    def test_stereo_fl_fr_direct(self):
-        assert _CHANNEL_PROXIES[2]["FL"] == 0
-        assert _CHANNEL_PROXIES[2]["FR"] == 1
+    def test_51_order_matches_wav_convention(self):
+        assert _REFERENCE_CHANNEL_ORDER[6] == (
+            ChannelLabel.FL, ChannelLabel.FR, ChannelLabel.C, ChannelLabel.LFE,
+            ChannelLabel.SL, ChannelLabel.SR,
+        )
 
-    def test_stereo_lfe_is_mid_lp(self):
-        assert _CHANNEL_PROXIES[2]["LFE"] == "mid_lp"
+    def test_unsupported_count_falls_back_to_nearest(self):
+        ref = np.zeros((100, 4))
+        data, order = _canonicalize_reference(ref)
+        assert len(order) == 2  # nearest supported count to 4 is 2 (stereo)
+        assert data.shape[1] == 2
 
-    def test_51_lfe_direct(self):
-        assert _CHANNEL_PROXIES[6]["LFE"] == 3
+    def test_12ch_reference_keeps_height_channels(self):
+        # Regression: the old proxy-table selection clamped any >8ch
+        # reference to the 8ch table, silently discarding height channels.
+        ref = np.zeros((100, 12))
+        data, order = _canonicalize_reference(ref)
+        assert ChannelLabel.TBL in order and ChannelLabel.TBR in order
+        assert data.shape[1] == 12
 
-    def test_71_lfe_direct(self):
-        assert _CHANNEL_PROXIES[8]["LFE"] == 3
 
-    def test_mono_all_zero(self):
-        assert all(v == 0 for v in _CHANNEL_PROXIES[1].values())
+# ── compute_reference_curve unit tests ───────────────────────────────────────
 
-
-# ── _compute_spectral_breakpoints unit tests ──────────────────────────────────
-
-class TestComputeSpectralBreakpoints:
-    def setup_method(self):
-        self.proc = _make_proc()
-        _inject_ref(self.proc, _stereo_ref())
-
+class TestComputeReferenceCurve:
     def test_breakpoints_count(self):
-        ref_ch = _sine(440.0)
-        tgt_ch = _sine(440.0, amplitude=0.1)
-        bps = self.proc._compute_spectral_breakpoints(ref_ch, tgt_ch)
-        assert len(bps) == 40
+        target = {"FL": _sine(440.0), "FR": _sine(550.0)}
+        curve = compute_reference_curve(target, _stereo_ref(), SR, 8192)
+        assert len(curve) == 64
 
     def test_breakpoints_ascending_freq(self):
-        ref_ch = _sine(440.0)
-        tgt_ch = _sine(440.0, amplitude=0.1)
-        bps = self.proc._compute_spectral_breakpoints(ref_ch, tgt_ch)
-        freqs = [f for f, _ in bps]
+        target = {"FL": _sine(440.0), "FR": _sine(550.0)}
+        curve = compute_reference_curve(target, _stereo_ref(), SR, 8192)
+        freqs = [f for f, _ in curve]
         assert freqs == sorted(freqs)
 
     def test_gains_finite(self):
-        ref_ch = _sine(440.0)
-        tgt_ch = _sine(440.0)
-        bps = self.proc._compute_spectral_breakpoints(ref_ch, tgt_ch)
-        assert all(np.isfinite(g) for _, g in bps)
-
-    def test_max_correction_clamp(self):
-        proc = _make_proc(max_correction_db=3.0)
-        _inject_ref(proc, _stereo_ref())
-        ref_ch = _sine(100.0, amplitude=0.5)
-        tgt_ch = _sine(440.0, amplitude=0.001)  # very different
-        bps = proc._compute_spectral_breakpoints(ref_ch, tgt_ch)
-        gains_above_bass = [g for f, g in bps if f >= 120.0]
-        assert all(abs(g) <= 3.0 + 1e-6 for g in gains_above_bass)
-
-    def test_bass_clamp_applied(self):
-        proc = _make_proc(max_correction_db=20.0)
-        _inject_ref(proc, _stereo_ref())
-        ref_ch = _sine(50.0, amplitude=0.5)
-        tgt_ch = _sine(50.0, amplitude=0.001)
-        bps = proc._compute_spectral_breakpoints(ref_ch, tgt_ch)
-        bass_gains = [g for f, g in bps if f < 120.0]
-        assert all(abs(g) <= 2.0 + 1e-6 for g in bass_gains)
+        target = {"FL": _sine(440.0), "FR": _sine(550.0)}
+        curve = compute_reference_curve(target, _stereo_ref(), SR, 8192)
+        assert all(np.isfinite(g) for _, g in curve)
 
 
-# ── _compute_rms_gain_db unit tests ──────────────────────────────────────────
+# ── gating ────────────────────────────────────────────────────────────────────
 
-class TestComputeRmsGainDb:
-    def setup_method(self):
-        self.proc = _make_proc()
-        _inject_ref(self.proc, _stereo_ref())
+class TestGating:
+    def test_ignores_silent_lead_in(self):
+        # Measures the gated power spectrum directly (rather than the
+        # derived correction curve) at the two frequencies that actually
+        # carry signal: the curve's confidence taper and normalization mean
+        # amplify tiny near-noise-floor differences well away from real
+        # content, which would make this assertion about *gating* fail for
+        # reasons unrelated to gating (frame-boundary spectral leakage at
+        # the hard digital silence-to-tone edge this test constructs, not
+        # present in a real fade-in).
+        ref_tail = _stereo_ref(n=N)
+        ref_padded = np.concatenate([np.zeros((SR * 10, 2)), ref_tail], axis=0)
+        freqs1, power1 = weighted_power_spectrum_reference(ref_tail, SR, 8192)
+        freqs2, power2 = weighted_power_spectrum_reference(ref_padded, SR, 8192)
+        db1 = 10.0 * np.log10(power1 + 1e-20)
+        db2 = 10.0 * np.log10(power2 + 1e-20)
+        for target_hz in (440.0, 550.0):
+            idx = int(np.argmin(np.abs(freqs1 - target_hz)))
+            assert abs(db1[idx] - db2[idx]) < 1.0
 
-    def test_identical_signals_gives_zero_gain(self):
-        amp = 0.2
-        channels = {"FL": _sine(440.0, amplitude=amp), "FR": _sine(550.0, amplitude=amp)}
-        ref = np.stack([_sine(440.0, amplitude=amp), _sine(550.0, amplitude=amp)], axis=1)
-        proc = _make_proc()
-        _inject_ref(proc, ref)
-        gain = proc._compute_rms_gain_db(ref, proc._proxy_table, channels, "LFE")
-        assert abs(gain) < 0.5  # near zero (not exact due to different freqs)
 
-    def test_louder_ref_positive_gain(self):
-        channels = {"FL": _sine(440.0, amplitude=0.1), "FR": _sine(550.0, amplitude=0.1)}
-        ref = np.stack([_sine(440.0, amplitude=0.4), _sine(550.0, amplitude=0.4)], axis=1)
-        proc = _make_proc()
-        _inject_ref(proc, ref)
-        gain = proc._compute_rms_gain_db(ref, proc._proxy_table, channels, "LFE")
-        assert gain > 0.0
+# ── clamp / taper primitives ─────────────────────────────────────────────────
 
-    def test_quieter_ref_negative_gain(self):
-        channels = {"FL": _sine(440.0, amplitude=0.4), "FR": _sine(550.0, amplitude=0.4)}
-        ref = np.stack([_sine(440.0, amplitude=0.1), _sine(550.0, amplitude=0.1)], axis=1)
-        proc = _make_proc()
-        _inject_ref(proc, ref)
-        gain = proc._compute_rms_gain_db(ref, proc._proxy_table, channels, "LFE")
-        assert gain < 0.0
+class TestSoftClamp:
+    def test_within_knee_unaffected(self):
+        db = np.array([1.0, -1.0, 3.5])
+        out = _soft_clamp(db, 6.0, knee_db=2.0)
+        np.testing.assert_allclose(out, db, atol=1e-6)
 
-    def test_gain_clamped_positive(self):
-        channels = {"FL": _sine(440.0, amplitude=0.001)}
-        ref = _sine(440.0, amplitude=0.9).reshape(-1, 1)
-        proc = _make_proc()
-        _inject_ref(proc, ref)
-        gain = proc._compute_rms_gain_db(ref, proc._proxy_table, channels, "LFE")
-        assert gain <= 6.0 + 1e-6
+    def test_asymptotes_toward_limit(self):
+        out = _soft_clamp(np.array([100.0]), 6.0, knee_db=2.0)
+        assert 5.9 < out[0] <= 6.0
 
-    def test_gain_clamped_negative(self):
-        channels = {"FL": _sine(440.0, amplitude=0.9)}
-        ref = _sine(440.0, amplitude=0.001).reshape(-1, 1)
-        proc = _make_proc()
-        _inject_ref(proc, ref)
-        gain = proc._compute_rms_gain_db(ref, proc._proxy_table, channels, "LFE")
-        assert gain >= -6.0 - 1e-6
+    def test_symmetric_for_negative(self):
+        pos = _soft_clamp(np.array([50.0]), 6.0)
+        neg = _soft_clamp(np.array([-50.0]), 6.0)
+        assert np.isclose(pos[0], -neg[0])
 
-    def test_lfe_excluded_from_computation(self):
-        # LFE channel should not affect the RMS gain computation
-        channels_with_lfe = {
-            "FL": _sine(440.0, amplitude=0.2),
-            "LFE": _sine(60.0, amplitude=10.0),  # extreme LFE would skew if included
-        }
-        channels_without_lfe = {"FL": _sine(440.0, amplitude=0.2)}
-        ref = _stereo_ref()
-        proc = _make_proc()
-        _inject_ref(proc, ref)
-        gain_with = proc._compute_rms_gain_db(ref, proc._proxy_table, channels_with_lfe, "LFE")
-        gain_without = proc._compute_rms_gain_db(
-            ref, proc._proxy_table, channels_without_lfe, "LFE"
-        )
-        assert abs(gain_with - gain_without) < 0.01
+
+class TestBandEdgeTaper:
+    def test_tapers_to_zero_at_20khz(self):
+        grid = _log_grid(20000.0)
+        flat = np.full(len(grid), 5.0)
+        tapered = _band_edge_taper(flat, grid)
+        assert abs(tapered[-1]) < 0.5
+
+    def test_flat_in_middle_band(self):
+        grid = _log_grid(20000.0)
+        flat = np.full(len(grid), 5.0)
+        tapered = _band_edge_taper(flat, grid)
+        mid_mask = (grid > 200) & (grid < 10000)
+        np.testing.assert_allclose(tapered[mid_mask], 5.0)
+
+
+class TestConfidenceTaper:
+    def test_fades_where_reference_has_no_energy(self):
+        n = 100
+        correction = np.full(n, 10.0)
+        ref_power_db = np.full(n, -20.0)
+        ref_power_db[-10:] = -120.0  # brickwalled tail, far below peak
+        out = _confidence_taper(correction, ref_power_db)
+        assert abs(out[-1]) < 1.0
+        assert abs(out[0] - 10.0) < 1e-6
+
+
+# ── build_curve_fir ───────────────────────────────────────────────────────────
+
+class TestBuildCurveFir:
+    def test_bass_clamped_regardless_of_max_db(self):
+        curve = [(f, 20.0) for f in np.logspace(np.log10(20), np.log10(20000), 64)]
+        fir = build_curve_fir(curve, SR, 1023, 1.0, 24.0)
+        assert _fir_response_db(fir, SR, 60.0) <= 2.0 + 1.0
+
+    def test_max_correction_soft_clamped(self):
+        curve = [(f, 20.0) for f in np.logspace(np.log10(20), np.log10(20000), 64)]
+        fir = build_curve_fir(curve, SR, 1023, 1.0, 3.0)
+        assert _fir_response_db(fir, SR, 1000.0) <= 3.0 + 1.0
+
+    def test_strength_scales_curve_in_db(self):
+        curve = [(f, 4.0) for f in np.logspace(np.log10(20), np.log10(20000), 64)]
+        fir_full = build_curve_fir(curve, SR, 1023, 1.0, 24.0)
+        fir_half = build_curve_fir(curve, SR, 1023, 0.5, 24.0)
+        db_full = _fir_response_db(fir_full, SR, 1000.0)
+        db_half = _fir_response_db(fir_half, SR, 1000.0)
+        assert abs(db_half - db_full / 2.0) < 0.5
+
+    def test_apply_fir_full_wet_preserves_energy_for_flat_curve(self):
+        # strength is folded into the curve before FIR design; _apply_fir is
+        # always called at full wet (1.0) by the processor — this is the fix
+        # for the old comb-filter defect where an undelayed dry path was
+        # crossfaded against a minimum-phase-delayed wet path at partial
+        # strength.
+        curve = [(f, 0.0) for f in np.logspace(np.log10(20), np.log10(20000), 64)]
+        fir = build_curve_fir(curve, SR, 1023, 1.0, 6.0)
+        sig = _sine(440.0)
+        out = _apply_fir(sig, fir, 1.0)
+        assert abs(np.sqrt(np.mean(out ** 2)) - np.sqrt(np.mean(sig ** 2))) < 0.05
 
 
 # ── config fields ─────────────────────────────────────────────────────────────
@@ -467,7 +493,7 @@ class TestConfigFields:
         assert UpmixConfig().mastering_match_ref_rms is True
 
     def test_default_max_db(self):
-        assert UpmixConfig().mastering_match_ref_max_db == 12.0
+        assert UpmixConfig().mastering_match_ref_max_db == 6.0
 
     def test_old_eq_reference_field_gone(self):
         assert not hasattr(UpmixConfig(), "mastering_eq_reference")
@@ -543,25 +569,3 @@ class TestManifestMatchReferenceIntegration:
     def test_old_eq_reference_removed_from_field_map(self):
         assert "mastering_eq_reference" not in _FIELD_MAP
         assert "mastering_eq_match_strength" not in _FIELD_MAP
-
-
-# ── gaussian smooth helper ────────────────────────────────────────────────────
-
-class TestGaussianSmoothLog:
-    def test_output_same_length(self):
-        log_freqs = np.linspace(4, 14, 200)  # log2(20) to log2(16000)
-        values = np.random.default_rng(0).standard_normal(200)
-        smoothed = _gaussian_smooth_log(log_freqs, values, 0.25)
-        assert smoothed.shape == values.shape
-
-    def test_constant_input_preserved(self):
-        log_freqs = np.linspace(4, 14, 100)
-        values = np.ones(100) * 3.5
-        smoothed = _gaussian_smooth_log(log_freqs, values, 0.25)
-        np.testing.assert_allclose(smoothed, values, atol=1e-10)
-
-    def test_output_finite(self):
-        log_freqs = np.linspace(4, 14, 200)
-        values = np.random.default_rng(1).standard_normal(200)
-        smoothed = _gaussian_smooth_log(log_freqs, values, 0.25)
-        assert np.all(np.isfinite(smoothed))

@@ -20,10 +20,6 @@ type MasteringSectionProps = ManifestSectionProps & {
   referenceError: string | null;
   onReferenceUpload: (file: File) => void;
   onReferenceClear: () => void;
-  /** Hide the reference-EQ-match block. Used where there's no reference-file
-   * association to attach it to (e.g. projects, which don't support a
-   * mastering reference the way one-off jobs do). */
-  hideReferenceMatch?: boolean;
   /** True while the backend is (re)computing the reference-match FIR asset
    * (`project.reference_match_pending`). The controls below stay live — they
    * only edit the manifest — but the audible match itself isn't ready yet,
@@ -90,7 +86,6 @@ export function MasteringSection({
   referenceError,
   onReferenceUpload,
   onReferenceClear,
-  hideReferenceMatch = false,
   referencePending = false,
 }: MasteringSectionProps) {
   const choices = configuration?.choices;
@@ -130,113 +125,111 @@ export function MasteringSection({
 
   return (
     <div className="space-y-3">
-      {!hideReferenceMatch && (
-        <EffectPanel
-          title="Reference EQ match"
-          enabled={match.spectrum}
-          toggleDisabled={!hasReference}
-          onEnabledChange={(spectrum) =>
-            setMastering({ match_reference: { ...match, spectrum } })
-          }
-          status={
-            hasReference && referencePending ? (
-              <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Preparing
-              </span>
-            ) : null
-          }
-        >
-          {masteringReference ? (
-            <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 p-2">
-              <div className="flex min-w-0 items-center gap-2">
-                <FileAudio className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium">{masteringReference.filename}</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    {formatBytes(masteringReference.size_bytes)}
-                  </p>
-                </div>
-              </div>
-              <div className="flex shrink-0 gap-1">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={referenceUploading}
-                  onClick={() => referenceInput.current?.click()}
-                >
-                  <Upload /> Replace
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={referenceUploading}
-                  onClick={onReferenceClear}
-                >
-                  <X /> Remove
-                </Button>
+      <EffectPanel
+        title="Reference EQ match"
+        enabled={match.spectrum}
+        toggleDisabled={!hasReference}
+        onEnabledChange={(spectrum) =>
+          setMastering({ match_reference: { ...match, spectrum } })
+        }
+        status={
+          hasReference && referencePending ? (
+            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Preparing
+            </span>
+          ) : null
+        }
+      >
+        {masteringReference ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 p-2">
+            <div className="flex min-w-0 items-center gap-2">
+              <FileAudio className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0">
+                <p className="truncate text-[13px] font-medium">{masteringReference.filename}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {formatBytes(masteringReference.size_bytes)}
+                </p>
               </div>
             </div>
-          ) : (
-            <div className="space-y-1.5">
+            <div className="flex shrink-0 gap-1">
               <Button
                 type="button"
                 variant="secondary"
+                size="sm"
                 disabled={referenceUploading}
                 onClick={() => referenceInput.current?.click()}
               >
-                <Upload />
-                {referenceUploading ? "Uploading" : "Choose reference track"}
+                <Upload /> Replace
               </Button>
-              <p className="text-[11px] text-muted-foreground">
-                One WAV or FLAC, matched across every track.
-              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={referenceUploading}
+                onClick={onReferenceClear}
+              >
+                <X /> Remove
+              </Button>
             </div>
-          )}
-          <input
-            ref={referenceInput}
-            className="hidden"
-            type="file"
-            aria-label="Reference audio track"
-            accept="audio/wav,audio/flac,.wav,.flac"
-            onChange={(event) => {
-              const [file] = Array.from(event.target.files || []);
-              if (file) onReferenceUpload(file);
-              event.currentTarget.value = "";
-            }}
-          />
-          {referenceError && <p className="text-[11px] text-destructive">{referenceError}</p>}
-          <div className={FIELD_GRID}>
-            <SliderField
-              label="Strength"
-              value={match.strength}
-              min={0}
-              max={1}
-              step={0.01}
-              disabled={!hasReference || !match.spectrum}
-              onChange={(strength) => setMastering({ match_reference: { ...match, strength } })}
-            />
-            <SliderField
-              label="Max correction"
-              value={match.max_db}
-              min={0}
-              max={24}
-              step={0.5}
-              suffix=" dB"
-              disabled={!hasReference || !match.spectrum}
-              onChange={(max_db) => setMastering({ match_reference: { ...match, max_db } })}
-            />
           </div>
-          <SwitchRow
-            label="Match RMS level"
-            checked={match.rms}
-            disabled={!hasReference}
-            onChange={(rms) => setMastering({ match_reference: { ...match, rms } })}
+        ) : (
+          <div className="space-y-1.5">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={referenceUploading}
+              onClick={() => referenceInput.current?.click()}
+            >
+              <Upload />
+              {referenceUploading ? "Uploading" : "Choose reference track"}
+            </Button>
+            <p className="text-[11px] text-muted-foreground">
+              One WAV or FLAC, matched across every track.
+            </p>
+          </div>
+        )}
+        <input
+          ref={referenceInput}
+          className="hidden"
+          type="file"
+          aria-label="Reference audio track"
+          accept="audio/wav,audio/flac,.wav,.flac"
+          onChange={(event) => {
+            const [file] = Array.from(event.target.files || []);
+            if (file) onReferenceUpload(file);
+            event.currentTarget.value = "";
+          }}
+        />
+        {referenceError && <p className="text-[11px] text-destructive">{referenceError}</p>}
+        <div className={FIELD_GRID}>
+          <SliderField
+            label="Strength"
+            value={match.strength}
+            min={0}
+            max={1}
+            step={0.01}
+            disabled={!hasReference || !match.spectrum}
+            onChange={(strength) => setMastering({ match_reference: { ...match, strength } })}
           />
-        </EffectPanel>
-      )}
+          <SliderField
+            label="Max correction"
+            value={match.max_db}
+            min={0}
+            max={12}
+            step={0.5}
+            suffix=" dB"
+            disabled={!hasReference || !match.spectrum}
+            onChange={(max_db) => setMastering({ match_reference: { ...match, max_db } })}
+          />
+        </div>
+        <SwitchRow
+          label="Match RMS level"
+          checked={match.rms}
+          disabled={!hasReference}
+          onChange={(rms) => setMastering({ match_reference: { ...match, rms } })}
+        />
+      </EffectPanel>
 
       <EffectPanel
         title="Loudness"

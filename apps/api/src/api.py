@@ -20,6 +20,7 @@ from upmixer_web.features.projects.storage import ProjectStemStorage
 from upmixer_web.features.system import register_system_routes
 from upmixer_web.settings import Settings
 from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+from upmixer_web.shared.models import Project
 from upmixer_web.shared.separation import separation_capability
 from upmixer_web.shared.storage import LocalObjectStorage, StorageAudioSink, StorageAudioSource
 from upmixer_web.worker import WorkerManager
@@ -48,6 +49,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         manager.start()
+        # Sweep every project with a reference attached through the normal
+        # signature-checked scheduling path. Covers both a server restart
+        # after downtime (a settings save's own `schedule_reference_match`
+        # call never ran) and a deploy that changes what the signature or
+        # the curve algorithm covers (e.g. this reference-match rebuild) —
+        # every existing sidecar mismatches its new-shape signature and
+        # regenerates here, in the background, with no user action and no
+        # re-upload. Cheap when nothing has changed: `_reference_match_needs_
+        # work` reads one row and returns immediately.
+        with sessions() as session:
+            stale_ids = [
+                row[0] for row in
+                session.query(Project.id).filter(Project.mastering_reference_id.isnot(None)).all()
+            ]
+        for project_id in stale_ids:
+            manager.schedule_reference_match(project_id)
         yield
         manager.stop()
         engine.dispose()

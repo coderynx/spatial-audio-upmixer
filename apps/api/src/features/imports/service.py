@@ -12,7 +12,7 @@ from fastapi import UploadFile
 from sqlalchemy.orm import Session
 
 from upmixer_web.shared.metadata import AUDIO_SUFFIXES, COVER_NAMES, find_directory_cover, read_audio_metadata
-from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset
+from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project
 from upmixer_web.shared.storage import ObjectStorage
 
 
@@ -178,6 +178,37 @@ def resolve_mastering_reference(
     return reference
 
 
+def resolve_project_mastering_reference(
+    session: Session,
+    project: Project,
+    reference_id: str | None,
+) -> MasteringReference | None:
+    """Like :func:`resolve_mastering_reference`, widened for a project: a
+    project can accept tracks from several imports over time (unlike a job,
+    which is scoped to the one import batch it's created from), so validate
+    against every import the project can actually see — its own
+    ``import_id`` plus every track's asset's import — rather than a single
+    ``ImportBatch``.
+
+    Without this, attaching a reference from import A works fine right up
+    until a second track from import B is added to the same project, at
+    which point the already-attached reference starts failing this check —
+    the only way forward was re-uploading the same reference file again
+    under import B.
+    """
+    if reference_id is None:
+        return None
+    reference = session.get(MasteringReference, reference_id)
+    if not reference:
+        raise ValueError("Mastering reference does not belong to this project")
+    accessible_imports = {track.asset.import_id for track in project.tracks}
+    if project.import_id:
+        accessible_imports.add(project.import_id)
+    if reference.import_id not in accessible_imports:
+        raise ValueError("Mastering reference does not belong to this project")
+    return reference
+
+
 def ingest_mastering_reference(
     session: Session,
     storage: ObjectStorage,
@@ -185,7 +216,17 @@ def ingest_mastering_reference(
     import_batch: ImportBatch,
     upload: UploadFile,
 ) -> MasteringReference:
-    """Store one validated mastering reference for an existing source import."""
+    """Store one validated mastering reference for an existing source import.
+
+    A reference that is itself a binaural or transaural *render* is a poor
+    choice: matching a speaker-bed master to it folds that render's own
+    HRTF/XTC coloration into content also delivered to real speakers (see
+    docs/standards/spatial_audio_engine.md and transaural_speakers.md).
+    Not detected here — there's no reliable heuristic from file content
+    alone — a stereo file is valid input regardless of provenance, so this
+    is advisory for anyone integrating against this endpoint, not a runtime
+    check.
+    """
     filename = upload.filename or "reference.wav"
     relative = _safe_relative_path(filename)
     if relative.suffix.lower() not in AUDIO_SUFFIXES:

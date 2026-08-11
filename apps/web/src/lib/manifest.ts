@@ -143,7 +143,7 @@ export const defaultManifest: Manifest = {
   mastering: {
     loudness: { normalize: true, target: -18, max_tp: -1 },
     eq: { profile: null, strength: 1 },
-    match_reference: { strength: 0.7, spectrum: true, rms: true, max_db: 12 },
+    match_reference: { strength: 0.7, spectrum: true, rms: true, max_db: 6 },
     compressor: {
       profile: "transparent",
       threshold_db: null,

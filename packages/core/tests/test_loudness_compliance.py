@@ -18,7 +18,7 @@ from scipy.signal import sosfreqz
 
 from upmixer.formats import ChannelLabel, FORMAT_MAP
 from upmixer.loudness import (
-    _CH_WEIGHT,
+    CHANNEL_WEIGHT,
     _SURROUND_WEIGHT,
     _k_weighting_sos,
     measure_integrated_loudness,
@@ -127,22 +127,22 @@ def test_surround_weight_literal_value():
 
 
 def test_lfe_weight_zero():
-    assert _CH_WEIGHT[ChannelLabel.LFE] == 0.0
+    assert CHANNEL_WEIGHT[ChannelLabel.LFE] == 0.0
 
 
 def test_front_weights_unity():
     for label in (ChannelLabel.FL, ChannelLabel.FR, ChannelLabel.C):
-        assert _CH_WEIGHT[label] == 1.0, f"{label} weight != 1.0"
+        assert CHANNEL_WEIGHT[label] == 1.0, f"{label} weight != 1.0"
 
 
 def test_side_surround_weights_are_1_41():
     for label in _SIDE_SURROUND_LABELS:
-        assert _CH_WEIGHT[label] == 1.41, f"{label} weight != 1.41"
+        assert CHANNEL_WEIGHT[label] == 1.41, f"{label} weight != 1.41"
 
 
 def test_rear_and_height_weights_are_unity():
     for label in _UNITY_IMMERSIVE_LABELS:
-        assert _CH_WEIGHT[label] == 1.0, f"{label} weight != 1.0"
+        assert CHANNEL_WEIGHT[label] == 1.0, f"{label} weight != 1.0"
 
 
 # ---------------------------------------------------------------------------

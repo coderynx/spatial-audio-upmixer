@@ -27,7 +27,7 @@ Both are cross-referenced, not repeated, below.
 | HOA decode → binaural | `packages/core/src/binaural/decoder.py` | Per-ACN `ConvolverNode` bank in `buildBinauralGraph` (`previewGraph.ts`), called from `initialize()` in `useStemPreview.ts` — see `spatial_audio_engine.md` §4 and **Ledger D10** |
 | Binaural voicing chain | `packages/core/src/binaural/voicing.py::apply_voicing` | `buildVoicingChain`/`applyVoicingParams` in `masteringProfiles.ts`, wired inside `buildBinauralGraph` (`previewGraph.ts`) — see `spatial_audio_engine.md` §5 |
 | Crosstalk-cancellation (transaural) | `packages/core/src/crosstalk/renderer.py::render_crosstalk` (reuses `render_binaural` "flat" + `apply_xtc` + `apply_voicing`) | `buildCrosstalkGraph` (`previewGraph.ts`, reuses `buildBinauralGraph("flat")` + a 4-convolver 2x2 XTC matrix + `buildVoicingChain`), wired inside `initialize()` (`useStemPreview.ts`) — see `transaural_speakers.md` §1 |
-| Reference match (spectral + RMS) | `packages/core/src/mastering/match_reference.py::ReferenceMatchProcessor` | Server-precomputed per-channel FIR bank + RMS gain (`ReferenceMatchProcessor.compute_channel_filters`, `apps/api/src/features/projects/worker_reference_match.py::WorkerManager.prepare_reference_match`), served as a project asset and convolved via `buildFirEqNode` inside `buildMasteringGraph` (`previewGraph.ts`), before the named-EQ stage — see **Ledger D12** |
+| Reference match (spectral + level) | `packages/core/src/mastering/match_reference/` (package: `spectrum.py`/`curve.py`/`processor.py`) — one BS.1770-weighted, gated correction curve shared across every non-LFE channel, plus a level (loudness) gain | Server-precomputed correction curve + level gain (`ReferenceMatchProcessor.compute_curve`, `apps/api/src/features/projects/worker_reference_match.py::WorkerManager.prepare_reference_match`), realized into a FIR on demand per `(strength, max_db)` by `GET /api/v1/projects/{id}/reference-match/fir`, convolved via `buildFirEqNode(ctx, 1)` (always full wet) inside `buildMasteringGraph` (`previewGraph.ts`), before the named-EQ stage — see **Ledger D21** |
 | Spectral (mastering) EQ | `packages/core/src/mastering/eq.py::SpectralShaper` (asset names: `EQ_FIR_ASSETS`) | `EngineConstants.eqFirAssets` (served, see §4) + `buildFirEqNode` in `buildMasteringGraph` (same asset scheme as stem EQ, applied post-routing) |
 | Bus compression | `packages/core/src/mastering/compressor.py::BusCompressor` | Linked `DynamicsCompressorNode` detector + polled `.reduction` in `buildMasteringTopology` (`useStemPreview.ts`) |
 | Bass control | `packages/core/src/mastering/bass.py::BassController` | Bass shelves/exciter/mono-maker in `buildMasteringTopology` (**Ledger D5**) |
@@ -46,7 +46,8 @@ compression → bass control → BS.1770 loudness → soft-limit *last*. Soft
 limiting after loudness (not before) is deliberate — see
 `packages/core/src/mastering/chain.py`'s module docstring — and the preview graph
 must build its nodes in the same order. Reference match is now implemented
-in the preview (not ordering-only) — see **Ledger D12**.
+in the preview (not ordering-only) — see **Ledger D12**; its single-curve
+architecture is **Ledger D21**.
 
 ---
 
@@ -77,14 +78,17 @@ an approximation of the curve.
 The reference-match FIR asset is the same special case, computed per-project
 instead of built once at build time: `apps/api/src/features/projects/
 worker_reference_match.py::WorkerManager.prepare_reference_match` calls
-`ReferenceMatchProcessor.compute_channel_
-filters` — the exact function `process()` uses internally — against a
-server-rendered bed, and ships those real FIRs plus the real RMS gain to the
-browser (`GET /api/v1/projects/{id}/reference-match/fir`). The convolution
-and RMS gain are Tier 1 by asset identity; what *is* an approximation (Tier
-3, see **Ledger D12**) is the bed the FIR was computed against — a canonical
-server render of the project's default manifest, not the browser's live-
-edited mix.
+`ReferenceMatchProcessor.compute_curve` — the same analysis `process()` uses
+internally — against a server-rendered bed, and persists the resulting
+curve plus the real level gain (**Ledger D21**: strength/max_db-independent,
+so `strength`/`max_db` are live client knobs, not recompute triggers). `GET
+/api/v1/projects/{id}/reference-match/fir?strength=&max_db=` designs the
+actual FIR from that curve on request — cheap (`firwin2`/`minimum_phase`
+only, memoized), no re-analysis. The curve, the level gain, and the FIR
+design math are Tier 1 by algorithm identity; what *is* an approximation
+(Tier 3, see **Ledger D12**) is the bed the curve was computed against — a
+canonical server render of the project's default manifest, not the
+browser's live-edited mix.
 
 ---
 
@@ -178,29 +182,39 @@ reads the same window, so it inherits this same bounded-window caveat — it
 protects against the level the mastered signal reaches in that window, not
 a whole-file peak.
 
-### Reference match — `packages/core/src/mastering/match_reference.py`
+### Reference match — `packages/core/src/mastering/match_reference/` (Ledger D21)
 
 | Constant | Value | Tier |
 |---|---|---|
-| FIR taps | 1023 | *(server-only — the FIR is shipped as a computed asset, see §2, not re-derived in TS)* |
-| Welch FFT length | 8192 | *(server-only)* |
-| Spectral breakpoints | 40, log-spaced 20 Hz–Nyquist | *(server-only)* |
-| Spectral smoothing | 0.25 octave (Gaussian) | *(server-only)* |
-| Normalization band | 80–8000 Hz | *(server-only)* |
+| FIR taps | 1023 | *(server-only — the FIR is designed on demand by the FIR endpoint, see §2, not re-derived in TS)* |
+| STFT frame length | 8192, Hann, 75% overlap | *(server-only)* |
+| Silence gate | −70 dB absolute / −10 dB relative (two-stage) | *(server-only)* |
+| Log-frequency analysis grid | 1/24 octave, 20 Hz–20 kHz | *(server-only)* |
+| Spectral smoothing | 1/3 octave (Gaussian, on the log grid) | *(server-only)* |
+| Normalization band | 100 Hz–10 kHz (equal-per-octave mean) | *(server-only)* |
+| Confidence taper | fades to 0 dB where reference is >40 dB below its own peak | *(server-only)* |
+| Band-edge taper | 0 dB below 25 Hz / above 18–20 kHz | *(server-only)* |
+| Correction breakpoints | 64, log-spaced 20 Hz–Nyquist | *(server-only)* |
 | Sub-bass correction clamp | ±2.0 dB below 120 Hz | *(server-only)* |
-| RMS gain clamp | ±6.0 dB | *(server-only)* |
-| Default strength / max correction | 0.7 / 12.0 dB | *(server-only — live-editable via the manifest, see below)* |
+| Correction soft-knee clamp | ±6.0 dB (2 dB knee) | *(server-only)* |
+| Level gain clamp | ±6.0 dB | *(server-only)* |
+| Default strength / max correction | 0.7 / 6.0 dB | *(server-only defaults — live-editable via the manifest, see below)* |
+| Channel application | one shared curve, every non-LFE channel; LFE gets the level gain only | *(server-only — see D20)* |
 
-These constants live only in `packages/core/src/mastering/match_reference.py` — the
-web never re-derives the algorithm, only convolves with the FIR bytes the
-server already computed (§2), so none of them are served as engine constants
-(§4), the same rationale as the loudness K-weighting rows above. `strength`,
-`spectrum`, and `rms` *are* read live from the manifest by the preview
-(`ProjectDetailPage.tsx`'s `previewMastering`) — they gate/blend the
-server-computed FIR and RMS gain without needing a recompute, since neither
-the FIR shape nor the RMS gain value depends on them (`process()` builds the
-FIR independent of `strength`, then blends wet/dry at apply time — the
-preview does the same).
+These constants live only in `packages/core/src/mastering/match_reference/`
+— the web never re-derives the analysis algorithm, only convolves with the
+FIR bytes the server designs (§2), so none of them are served as engine
+constants (§4), the same rationale as the loudness K-weighting rows above.
+`strength`, `spectrum`, `rms`, and `max_db` are *all* read live from the
+manifest by the preview (`ProjectDetailPage.tsx`'s `previewMastering`) —
+none of them require a recompute (Ledger D21 extends D13's exclusion to
+`max_db`/`spectrum`): the persisted curve and level gain are
+strength/max_db-independent, `strength`/`max_db` are sent as query params to
+the FIR endpoint (which designs the filter in a few milliseconds from the
+stored curve), and the resulting FIR is always applied at full wet
+(`buildFirEqNode(ctx, 1)`) — `strength` scales the curve in the dB domain
+server-side, not as a wet/dry crossfade, which is also the fix for a
+comb-filtering defect the old crossfade had at partial strength.
 
 ### Binaural — see `spatial_audio_engine.md` for the full geometry/SH/decode-filter/voicing table. Cross-cutting constant repeated here because it also gates delivery gain-staging:
 
@@ -394,17 +408,36 @@ Building this harness surfaced two real bugs, both fixed (Ledger **D8**,
 binaural stage (Ledger **D11**) — the harness keeps doing exactly what it
 was built for.
 
+**Reference match (Ledger D21, now covered):** `render-preview-golden.mjs`
+renders the deterministic bed a second time (Stage 1b) with reference
+matching added as mastering step 0, against a fixed synthetic reference
+signal (`test_preview_export_golden.py::_deterministic_reference`) —
+writing `web_reference_match_metrics.json`, diffed by
+`test_cross_engine_reference_match_golden_diff` against
+`_render_python_reference_match`'s equivalent `MasteringChain` pass. Unlike
+EQ, reference matching has no shipped named-profile FIR asset (every real
+one is per-project) — the harness reads a dedicated
+`reference_match_fir.wav`/`reference_match_meta.json` fixture pair that
+`_write_reference_match_fixture` exports from the same Python analysis, via
+`REGENERATE_GOLDEN=1` (see `fixtures/preview_export_golden/README.md`). LFE
+is excluded from this diff's channel comparison: the harness's Stage 1
+(unlike the live app's `buildMasteringTopology`) runs LFE through
+`buildMasteringGraph`'s shared channel loop rather than bridging it
+separately, so it would incorrectly pick up the shared curve there — a
+harness-only gap, not a real-app one (the real app's LFE bridge is RMS-only,
+covered by `previewGraph.test.ts`'s reference-match tests instead).
+
 **Not yet exercised by the golden diff:** the live preview's true-peak
 safety net (§1's "True-peak ceiling" row, **Ledger D12**) is not wired into
 `render-preview-golden.mjs`'s binaural-collapse stage — that stage still
 only applies `loudnessGainFor`'s gain before soft-limit, matching the
 harness's pre-D12 behavior. `packages/core/tests/test_pre_master_hook.py` and
-`packages/core/tests/test_match_reference.py`'s `TestComputeChannelFilters` cover the
+`packages/core/tests/test_match_reference.py` cover the
 server-side reference-match plumbing and algorithm respectively;
 `test_worker_prepare_reference_match_computes_and_serves_fir`
 (`apps/api/tests/test_web_projects_reference_match.py`) covers the asset precompute/signature/serve path
-end-to-end. None of these are cross-engine signal-level diffs the way §5's
-table above is — extending the harness to cover both is future work.
+end-to-end; the golden diff above now adds cross-engine signal-level
+coverage on top.
 
 ---
 
@@ -434,3 +467,4 @@ Each row: what was found, the fix (file/constant), and any residual caveat. Do n
 | D18 | Not a discrepancy: de-duplicated a web-side copy. The true-peak kernel existed as two hand-synced files (`masteringProfiles.ts::buildTruePeakKernel` and `apps/web/public/truePeakKernel.js`, kept bit-for-bit by a test since a worklet can't import the app bundle); the worklet also hardcoded `SAFETY_MARGIN_DB = 0.1`, duplicating core's `limiter.py::_SAFETY_MARGIN_DB`. | Fixed — `audioEngine.ts` computes the kernel once via `buildTruePeakKernel()` and passes it to the worklet as `processorOptions.truePeakKernel`; `truePeakKernel.js` deleted; `_SAFETY_MARGIN_DB` now served by `engine_constants()` as `safety_margin_db`. Tests now assert the kernel's numeric properties instead of cross-copy equality. No output drift — golden diff stays byte-identical. |
 | D19 | `routing_for_scene` (`routing.py`) and its web mirror `routingFromAzimuthElevation` (`spatial.ts`) ranked nearest-3 speakers by a plain linear azimuth difference with no ±180° wraparound. `BL`/`TBL` sit at +135°, `BR`/`TBR` at −135°, so a stem placed near true back (azimuth ≈180°) computed the far rear speaker as ~315° away and dropped it from the nearest-3, collapsing routing onto 3 same-side channels — audible as a level drop plus a left/right image pull for back-positioned (and, less severely, top-positioned) stems in binaural/transaural output. Reachable from both preview (`audioEngine.ts`) and export (baked into the job snapshot via `service.py::_resolve_track_routing`). | Fixed — both sides now compute azimuth distance through a shared `_angular_distance`/`angularDistance` helper that wraps the delta to ±180° before combining with the elevation delta. New tests pin the invariant this restores: `apps/api/tests/test_project_routing.py` and `apps/web/src/lib/spatial.test.ts` (rear routes to both rear channels, left/right symmetry, constant-power at every azimuth, wraparound at out-of-range azimuth). |
 | D20 | Reviewing the transaural engine (D15) against Choueiri's XTC paper found three defects. (1) The shared head model's contralateral attenuation was frequency-flat, so the speaker-to-ear matrix `C` looked far better conditioned at low frequency than a real head is, and the filters inverted from it were designed for a listener who does not exist. (2) The regularization was a hand-tuned constant-`β` curve — the paper proves that shape is optimal only at discrete frequencies, and it measured a +6.2 dB coloration ripple at 1-3 kHz. (3) Both engines applied voicing *after* the XTC matrix, where its M/S widen re-introduces crosstalk the matrix had just removed for `car`, whose asymmetric `C` does not commute with an M/S matrix. | Fixed on both sides. `head_model.py` gains a 700 Hz high shelf so ILD falls to zero at low frequency (also more correct for the headphone decode it feeds — both filter banks rebaked, binaural goldens regenerated on both engines; only true-peak moved, by 0.098 dB). `build_crosstalk_filters.py` replaces the `beta_mid`/`low_boost`/`high_boost` knobs with the paper's frequency-dependent criterion — per bin, the least regularization holding `‖H‖` under the profile's `gamma_db` budget, via `C`'s singular values so it generalizes to `car`'s asymmetric geometry — plus an identity blend outside `[xtc_lo_hz, xtc_hi_hz]` (STAR-style LF bypass; 6 kHz upper bound per the paper's §V.D), applied before the bulk delay so the crossover cannot comb. Taps 512 → 1024 with a centered window. Voicing moved ahead of the matrix in `render_crosstalk` and `buildCrosstalkGraph` (handle shape unchanged, so `audioEngine.ts` is untouched). Measured leakage suppression rose to 15.5-26.6 dB per profile (was 4-15 dB thresholds) with ipsilateral coloration ≤ 0.9 dB; new tests add per-sub-band bounds, a ±10 % head-radius robustness check (catches overfitting to the model head — the gap that hid defect 1), and a crossover comb check. Filter-file contract (§5) unchanged, so this stays Tier-1 single-sourced; still not covered by the golden diff (D15's open item). |
+| D21 | A review of `mastering/match_reference.py` against published match-EQ practice (ITU-R BS.775-4/BS.1770-4/5, Dolby Atmos Renderer Guide v3.0, Tylka/Boren/Choueiri JAES 65(3) on fractional-octave smoothing) found the algorithm didn't do what its own docstring claimed and was actively harmful to the project's spatial delivery targets. (1) `_gaussian_smooth_log`'s bin width was measured from Welch's *linear* frequency grid, where bins 1→2 happen to be exactly 1.0 octave apart — the "0.25-octave smoothing" collapsed to a 3-tap `[3.35e-4, 0.999, 3.35e-4]` near-identity kernel, so the 40 breakpoints sampled raw, unsmoothed PSD-ratio noise. (2) With a stereo reference, LFE's `mid_lp` proxy (an 80 Hz lowpass of L+R) produced a full-band correction against a 120 Hz-bandlimited target — simulated: +12 dB at 1.9-2.7 kHz on a channel BS.775-4 requires band-limited to 120 Hz. (3) Each channel got an independently-computed FIR with no symmetry constraint, so FL≠FR — divergent per-channel phase rotation that BS.775 downmix folding and the transaural XTC canceller (D15) both depend on *not* happening; per Fraunhofer's US10937435B2, exactly this kind of inter-channel misalignment is what manufactures downmix comb-filtering. (4) `_apply_fir`'s wet/dry crossfade blended an undelayed dry signal against a minimum-phase-*delayed* wet one, comb-filtering at every partial strength (default 0.7). (5) Level leaked into the curve as tilt: the 80-8000 Hz normalization mean was linear-bin-weighted (biased toward the top of the band) with no loudness gating. (6) No band-edge taper, so a lossy-sourced (e.g. 16 kHz-brickwalled) reference baked a hard HF shelf into the master. | Fixed — full rewrite as a package (`mastering/match_reference/{spectrum,curve,processor}.py`). Analysis: BS.1770-weighted (`loudness.CHANNEL_WEIGHT`, promoted public), silence-gated (two-stage, mirroring BS.1770 §2.3) power spectrum, resampled onto a uniform 1/24-octave log grid so smoothing width is real; 1/3-octave Gaussian smoothing; equal-per-octave (log-grid) normalization mean over 100 Hz-10 kHz; a confidence taper fading correction to 0 dB where the reference sits >40 dB below its own peak, plus a hard 25 Hz/18-20 kHz band-edge taper; soft-knee ±6 dB default clamp (was ±12 dB hard). Architecture: **one shared correction curve**, applied identically to every non-LFE channel — preserves inter-channel phase for downmix and XTC; LFE now receives only the level (loudness-delta) gain, never the spectral curve. Level matching switched from mean-of-per-channel-RMS to a direct BS.1770 integrated-loudness delta (`loudness.measure_integrated_loudness`), reusing the same gating machinery. `strength` now scales the persisted curve in the dB domain before FIR design, applied at full wet (`_apply_fir(..., 1.0)`) — eliminates the comb-filter defect entirely rather than bounding it. API: the sidecar persists the unclamped, strength-independent `curve` (not FIR bytes); `GET .../reference-match/fir?strength=&max_db=` designs the actual filter on demand (`build_curve_fir`, memoized) — `strength`/`spectrum`/`rms`/`max_db` all excluded from the recompute signature (extends D13), so every one of them is a genuinely live browser knob. `resolve_project_mastering_reference` (`imports/service.py`) widens reference-attachment validation from a single `ImportBatch` to every import a project's tracks span, fixing a re-upload-forcing bug for multi-import projects. Web: `previewGraph.ts` fetches one shared FIR buffer (not a per-channel bank), applied at full wet; both hand-wired LFE spectral-FIR bridges in `audioEngine.ts` deleted (LFE never gets the curve now). New coverage: `test_match_reference.py` (smoothing-width, single-curve, L/R symmetry, downmix-commutes-with-matching, LFE-not-spectrally-corrected, gating, taper/clamp unit tests), `previewGraph.test.ts` (shared-buffer fetch, URL params, full-wet wiring), and a new golden-diff stage (`test_cross_engine_reference_match_golden_diff`) — see §5. |

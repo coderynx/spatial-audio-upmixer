@@ -92,6 +92,16 @@ mirror: `buildCrosstalkGraph` (`previewGraph.ts`), which internally calls
 same `preVoicing` LFE-injection contract the binaural graph does (Ledger
 D11 in `docs/contracts/preview_export_parity.md`).
 
+"Mastered bed" above is deliberate: reference matching
+(`mastering/match_reference/`) runs as mastering step 0, entirely upstream
+of this graph, on the discrete speaker bed — never on ear signals or the
+crosstalk-cancelled output. A reference file that is itself a binaural or
+transaural *render* is an invalid reference for that reason: its long-term
+spectrum carries the anechoic HRTF/XTC filter's own coloration (and, for
+XTC, the 2x2 matrix's), so matching a speaker-bed master to it would fold
+headphone- or one-listener-position-specific correction into content played
+back on arbitrary speakers.
+
 ---
 
 ## 3. Speaker geometry

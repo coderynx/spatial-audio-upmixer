@@ -22,17 +22,20 @@ _log = logging.getLogger("upmixer_web")
 
 
 def _reference_match_signature(project: Project) -> str | None:
-    """Hash of everything a project's reference-match FIR asset depends on.
+    """Hash of everything a project's reference-match curve asset depends on.
 
     Deliberately excludes live mixing edits (routing/rebalance/stem EQ/
     anchor) — the asset is a bounded Tier-3 approximation computed against a
     canonical server-rendered bed, not the browser's live-edited mix (see
     docs/contracts/preview_export_parity.md Ledger D12). Also excludes
-    ``strength`` and ``rms``: both are wet/dry-blend and gate knobs applied
-    live in the browser preview (`ProjectDetailPage.tsx`'s `previewMastering`)
-    and never change the FIR bytes or `rms_gain_db` that
-    `compute_channel_filters` produces, so hashing them only forces
-    needless full-song recomputes while the strength slider is dragged.
+    ``strength``, ``spectrum``, ``rms``, and ``max_db``: the precompute
+    (`_capture_and_abort` below) always derives the curve and level gain with
+    both stages forced on, and all four are live client-side gates/knobs
+    applied on top of that persisted result — `ProjectDetailPage.tsx`'s
+    `previewMastering` in the browser, `strength`/`max_db` query params on
+    the FIR endpoint (see Ledger D21). None of them change the curve or
+    `rms_gain_db` themselves, so hashing any of them would force needless
+    full-song recomputes while a slider is dragged.
     Includes ``stem_generation``: unprepared stems make `prepare_reference_match`
     stamp a signature-matching empty asset (see below) so an unrelated save
     doesn't reopen `reference_match_pending`; without `stem_generation` in the
@@ -45,16 +48,12 @@ def _reference_match_signature(project: Project) -> str | None:
     if not project.mastering_reference_id:
         return None
     manifest = project.manifest if isinstance(project.manifest, dict) else {}
-    mastering = manifest.get("mastering", {}) if isinstance(manifest.get("mastering"), dict) else {}
-    match = mastering.get("match_reference", {}) if isinstance(mastering.get("match_reference"), dict) else {}
     mixing = manifest.get("mixing", {}) if isinstance(manifest.get("mixing"), dict) else {}
     reference = project.mastering_reference
     payload = {
         "reference_id": project.mastering_reference_id,
         "reference_sha256": reference.sha256 if reference else None,
         "channel_layout": mixing.get("channel_layout"),
-        "spectrum": match.get("spectrum"),
-        "max_db": match.get("max_db"),
         "stem_generation": project.stem_generation,
     }
     raw = json.dumps(payload, sort_keys=True)
@@ -77,10 +76,7 @@ def _reference_match_needs_work(project: Project | None, project_stems: ProjectS
     if target_signature is None:
         # No reference attached — work is needed only to clear a
         # still-existing asset from a prior reference.
-        return (
-            project_stems.read_reference_match_meta(project.id) is not None
-            or project_stems.reference_match_fir_path(project.id) is not None
-        )
+        return project_stems.read_reference_match_meta(project.id) is not None
     if not project.prepared_stems or not project.tracks:
         return False
     existing = project_stems.read_reference_match_meta(project.id)
@@ -159,8 +155,8 @@ class ReferenceMatchMixin:
             return project_id in self._refmatch_pending or project_id in self._refmatch_running
 
     def prepare_reference_match(self, project_id: str) -> None:
-        """Recompute a project's server-side reference-match FIR asset if its
-        signature has drifted since the last compute; a cheap no-op
+        """Recompute a project's server-side reference-match curve asset if
+        its signature has drifted since the last compute; a cheap no-op
         otherwise.
 
         Runs in the caller's thread rather than a :class:`JobSubprocess`: this
@@ -237,28 +233,31 @@ class ReferenceMatchMixin:
                     # `reference_match_pending` window on every unrelated
                     # settings save while stems stay unprepared.
                     self.project_stems.write_reference_match(
-                        project_id, {}, 0.0, 0, target_signature,
-                        config.mastering_match_ref_strength,
-                        config.mastering_match_ref_spectrum,
-                        config.mastering_match_ref_rms,
+                        project_id, [], [], 0.0, 0, 0, target_signature,
                     )
                     return
 
                 captured: dict[str, object] = {}
 
-                def _capture_and_abort(channels, sr, _output_fmt) -> None:
+                def _capture_and_abort(channels, sr, output_fmt) -> None:
+                    # Both stages forced on regardless of the live manifest's
+                    # spectrum/rms toggles: those (plus strength/max_db) are
+                    # applied as client-side gates on top of this persisted
+                    # curve/gain, not baked into the precompute — see
+                    # `_reference_match_signature`'s docstring and Ledger D21.
                     processor = ReferenceMatchProcessor(
                         reference_path=str(reference_path),
-                        strength=config.mastering_match_ref_strength,
-                        match_spectrum=config.mastering_match_ref_spectrum,
-                        match_rms=config.mastering_match_ref_rms,
-                        max_correction_db=config.mastering_match_ref_max_db,
+                        output_fmt=output_fmt,
+                        match_spectrum=True,
+                        match_rms=True,
                         sample_rate=sr,
                     )
-                    fir_by_channel, rms_gain_db = processor.compute_channel_filters(channels)
-                    captured["fir_by_channel"] = fir_by_channel
+                    curve, rms_gain_db = processor.compute_curve(channels)
+                    captured["curve"] = curve
+                    captured["channels"] = [name for name in channels if name != "LFE"]
                     captured["rms_gain_db"] = rms_gain_db
                     captured["sample_rate"] = sr
+                    captured["n_taps"] = processor._n_taps
                     raise PreMasterAbort()
 
                 pipeline = StemUpmixPipeline(config=config)
@@ -272,15 +271,14 @@ class ReferenceMatchMixin:
                 finally:
                     pipeline.close()
 
-        if "fir_by_channel" not in captured:
+        if "curve" not in captured:
             return
         self.project_stems.write_reference_match(
             project_id,
-            captured["fir_by_channel"],
+            captured["curve"],
+            captured["channels"],
             captured["rms_gain_db"],
             captured["sample_rate"],
+            captured["n_taps"],
             target_signature,
-            config.mastering_match_ref_strength,
-            config.mastering_match_ref_spectrum,
-            config.mastering_match_ref_rms,
         )

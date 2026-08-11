@@ -333,8 +333,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // per-track master — sourcing it from `effectiveManifest` instead would read
   // the project-level block in the default project edit-scope, so per-track
   // mastering edits would never reach the audio engine.
-  // strength/spectrum/rms come from the manifest (instant, no round-trip); the FIR
-  // and RMS gain come from the server-precomputed asset — see Ledger D12.
+  // strength/spectrum/rms/max_db come entirely from the manifest (instant,
+  // no round-trip, and genuinely live now — see Ledger D21); only the
+  // correction curve (as `fir_url`, realized into a filter on demand) and
+  // the level gain come from the server-precomputed asset.
   const previewMastering = React.useMemo(() => {
     if (!trackManifest?.mastering) return trackManifest?.mastering;
     const asset = project?.reference_match;
@@ -344,11 +346,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       ...trackManifest.mastering,
       match_reference: {
         fir_url: asset.fir_url,
-        channels: asset.channels,
         rms_gain_db: asset.rms_gain_db,
-        strength: liveMatch?.strength ?? asset.strength,
-        spectrum: liveMatch?.spectrum ?? asset.spectrum,
-        rms: liveMatch?.rms ?? asset.rms,
+        strength: liveMatch?.strength,
+        spectrum: liveMatch?.spectrum,
+        rms: liveMatch?.rms,
+        max_db: liveMatch?.max_db,
       },
     };
   }, [trackManifest?.mastering, project?.reference_match]);

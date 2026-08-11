@@ -117,12 +117,10 @@ def export_project_archive(
                 "channels": reference.channels,
             }
 
-        reference_match_entry = None
+        # The reference-match asset is now just a JSON curve (see
+        # `ProjectStemStorage.write_reference_match`) — no separate binary
+        # blob to bundle, embed the meta dict directly in the manifest.
         reference_match_meta = project_stems.read_reference_match_meta(project.id)
-        fir_path = project_stems.reference_match_fir_path(project.id)
-        if fir_path is not None:
-            reference_match_entry = "reference_match/reference_match.wav"
-            archive.write(fir_path, reference_match_entry)
 
         manifest = {
             "format_version": ARCHIVE_FORMAT_VERSION,
@@ -138,7 +136,6 @@ def export_project_archive(
             },
             "mastering_reference": reference_meta,
             "reference_match": reference_match_meta,
-            "reference_match_entry": reference_match_entry,
             "tracks": manifest_tracks,
         }
         archive.writestr(MANIFEST_FILENAME, json.dumps(manifest))
@@ -277,10 +274,8 @@ def import_project_archive(
                     track.source_preview_size_bytes = preview_dest.stat().st_size
 
             reference_match_meta = manifest.get("reference_match")
-            reference_match_entry = manifest.get("reference_match_entry")
-            if reference_match_entry and reference_match_meta:
+            if reference_match_meta:
                 rm_dir = project_stems.reference_match_dir(project.id)
-                _extract(archive, reference_match_entry, rm_dir / "reference_match.wav")
                 (rm_dir / "reference_match.json").write_text(json.dumps(reference_match_meta), encoding="utf-8")
 
         session.commit()

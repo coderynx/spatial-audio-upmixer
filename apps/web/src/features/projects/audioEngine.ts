@@ -27,7 +27,7 @@ import {
   createPositionalEncoder,
   loadCachedDecodeFilterChannels,
   loadCachedEqBuffer,
-  loadCachedRefMatchBuffers,
+  loadCachedRefMatchBuffer,
   loadCachedXtcFilterChannels,
   type MasterPreview,
   type XtcConvolvers,
@@ -343,12 +343,12 @@ export class PreviewAudioEngine {
   // to the single AudioContext this engine creates once per lifetime (see
   // `initialize`) — never needs invalidating within that lifetime.
   private firEqBufferCache: Map<string, Promise<AudioBuffer>> = new Map();
-  // Same per-context cache lifetime as `firEqBufferCache`, keyed by
-  // `fir_url` instead of a profile name (see `loadCachedRefMatchBuffers`) —
-  // the URL carries the asset's `?v=<signature>` query param (see
+  // Same per-context cache lifetime as `firEqBufferCache`, keyed by the full
+  // request URL incl. `strength`/`max_db` (see `loadCachedRefMatchBuffer`) —
+  // the URL also carries the asset's `?v=<signature>` query param (see
   // `_project_view` in upmixer_web/api.py), so a genuine server recompute
   // naturally busts this cache instead of serving a stale FIR.
-  private refMatchBufferCache: Map<string, Promise<Map<string, AudioBuffer>>> = new Map();
+  private refMatchBufferCache: Map<string, Promise<AudioBuffer>> = new Map();
   // Same per-context cache lifetime, keyed by decode filter set name — see
   // loadCachedDecodeFilterChannels. Not cleared in reset(): the profile's
   // decoded Float32Arrays stay valid across a graph rebuild within the same
@@ -725,7 +725,9 @@ export class PreviewAudioEngine {
       // block and `initialize()`'s stable lfeBus -> lfeMasterIn/lfeMasterOut
       // -> mute wiring, ending at the binaural pre-voicing insertion point
       // (D11); stereo excludes LFE entirely, matching BS.775, same as the
-      // live graph.
+      // live graph. RMS/level gain only — match_reference.py never
+      // spectrally corrects LFE (see mastering/match_reference/processor.py),
+      // so there is no FIR stage here.
       const lfeBus = offlineCtx.createGain();
       const lfeMuteGain = offlineCtx.createGain();
       lfeMuteGain.gain.value = this.speakerEnabled.LFE === false ? 0 : 1;
@@ -736,14 +738,6 @@ export class PreviewAudioEngine {
         lfeRmsGain.gain.value = 10 ** (refCfg.rms_gain_db / 20);
         lfeChainEnd.connect(lfeRmsGain);
         lfeChainEnd = lfeRmsGain;
-      }
-      if (refCfg?.spectrum && refCfg.fir_url && (refCfg.strength ?? 0) > 0 && refCfg.channels?.includes("LFE")) {
-        const firLfeRef = buildFirEqNode(offlineCtx, refCfg.strength ?? 1);
-        lfeChainEnd.connect(firLfeRef.input);
-        lfeChainEnd = firLfeRef.output;
-        const buffers = await loadCachedRefMatchBuffers(this.refMatchBufferCache, offlineCtx, refCfg.fir_url, refCfg.channels);
-        const buffer = buffers.get("LFE");
-        if (buffer) firLfeRef.convolver.buffer = buffer;
       }
       lfeChainEnd.connect(lfeMuteGain);
       if (binaural) {
@@ -1069,9 +1063,11 @@ export class PreviewAudioEngine {
     this.compMakeupGain = handle.compMakeupGain;
     this.resolvedBass = { active: handle.bassActive, lfeGainDb: handle.bassLfeGainDb };
 
-    // Unlike named-profile EQ (which bypasses LFE), match_reference.py does not
-    // bypass LFE, so its RMS gain + spectral FIR bridge lfeMasterIn -> lfeMasterOut
-    // here — buildMasteringGraph only wires the positional channel bed.
+    // Unlike named-profile EQ (which bypasses LFE), match_reference.py does
+    // apply its RMS/level gain to LFE — bridge lfeMasterIn -> lfeMasterOut
+    // here, since buildMasteringGraph only wires the positional channel bed.
+    // RMS only: match_reference.py never spectrally corrects LFE (see
+    // mastering/match_reference/processor.py), so there's no FIR stage here.
     const refCfg = this.mastering?.match_reference;
     if (this.lfeMasterIn && this.lfeMasterOut) {
       let lfeChainEnd: AudioNode = this.lfeMasterIn;
@@ -1081,20 +1077,6 @@ export class PreviewAudioEngine {
         this.masteringNodes.push(lfeRmsGain);
         lfeChainEnd.connect(lfeRmsGain);
         lfeChainEnd = lfeRmsGain;
-      }
-      if (refCfg?.spectrum && refCfg.fir_url && (refCfg.strength ?? 0) > 0 && refCfg.channels?.includes("LFE")) {
-        const firLfeRef = buildFirEqNode(ctx, refCfg.strength ?? 1);
-        this.masteringNodes.push(...firLfeRef.nodes);
-        lfeChainEnd.connect(firLfeRef.input);
-        lfeChainEnd = firLfeRef.output;
-        void loadCachedRefMatchBuffers(
-          this.refMatchBufferCache, ctx, refCfg.fir_url, refCfg.channels,
-        )
-          .then((buffers) => {
-            const buffer = buffers.get("LFE");
-            if (buffer) firLfeRef.convolver.buffer = buffer;
-          })
-          .catch(() => {});
       }
       lfeChainEnd.connect(this.lfeMasterOut);
     }

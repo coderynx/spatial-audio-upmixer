@@ -90,30 +90,6 @@ describe("MasteringSection", () => {
     expect(onReferenceClear).toHaveBeenCalledOnce();
   });
 
-  it("hides the reference-match block and its dependent fields when hideReferenceMatch is set", () => {
-    render(
-      <MasteringSection
-        manifest={defaultManifest}
-        setManifest={vi.fn()}
-        configuration={null}
-        masteringReference={null}
-        referenceUploading={false}
-        referenceError={null}
-        onReferenceUpload={vi.fn()}
-        onReferenceClear={vi.fn()}
-        hideReferenceMatch
-      />,
-    );
-
-    expect(screen.queryByText("Reference EQ match")).not.toBeInTheDocument();
-    expect(screen.queryByRole("switch", { name: "Reference EQ match" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Match RMS level")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Reference audio track")).not.toBeInTheDocument();
-    // Unrelated mastering controls still render.
-    expect(screen.getByRole("switch", { name: "Loudness" })).toBeInTheDocument();
-    expect(screen.getByText("Spectral EQ")).toBeInTheDocument();
-  });
-
   it("uses the header switch as the effect's power button", () => {
     const setManifest = vi.fn();
     render(
