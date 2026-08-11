@@ -82,6 +82,20 @@ export type MasterPreview = {
  * gain nodes wrapping a fixed input buffer and the context destination. */
 export type MasteringChannelPort = { input: AudioNode; output: AudioNode };
 
+/** Session-only A/B monitor bypass: strips every stage but `loudness`, so
+ * `buildMasteringGraph` builds a bare passthrough while loudness
+ * normalize/true-peak protection (see `audioEngine.ts::apply`) stays live in
+ * both states — matching the unconditional `LookAheadLimiter` in
+ * `packages/core/src/mastering/chain.py`. Not persisted, not part of the
+ * manifest; the golden-diff harness never engages it. */
+export function monitorMastering(
+  mastering: MasterPreview | undefined,
+  bypassed: boolean,
+): MasterPreview | undefined {
+  if (!bypassed) return mastering;
+  return mastering?.loudness ? { loudness: mastering.loudness } : undefined;
+}
+
 export type MasteringGraphHandle = {
   /** Every node this call created, for teardown (`node.disconnect()`). */
   nodes: AudioNode[];

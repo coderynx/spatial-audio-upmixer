@@ -53,6 +53,7 @@ export interface KeyCommandsOptions {
   onManifestChange: (next: Manifest) => void;
   paneView: PaneView;
   onChangePane: (next: PaneView) => void;
+  onToggleMasterBypass: () => void;
 }
 
 /** Logic Pro-style global key commands for the project view (see
@@ -103,6 +104,9 @@ export function useKeyCommands(options: KeyCommandsOptions) {
         }
         case "toggleCycle":
           if (opts.transportEnabled) opts.preview.toggleLoop();
+          break;
+        case "toggleMasterBypass":
+          opts.onToggleMasterBypass();
           break;
         case "selectPreviousStem":
         case "selectNextStem": {

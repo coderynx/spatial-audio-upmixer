@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectStem } from "@/api";
 import { applyTruePeakCeiling, useStemPreview, type OutputMode, type SpatialProfile } from "./useStemPreview";
 import { TEST_ENGINE_CONSTANTS } from "./engineConstants.fixture";
+import { monitorMastering } from "./previewGraph";
 
 class FakeAudioParam {
   value = 0;
@@ -360,6 +361,33 @@ describe("useStemPreview mastering chain", () => {
     const lfeLowpasses = lastContext().eqFilters.filter((f) => f.type === "lowpass" && f.frequency.value === 120);
     expect(shapedFilters).toHaveLength(0);
     expect(lfeLowpasses.length).toBeGreaterThan(0);
+  });
+
+  it("monitorMastering bypass strips EQ/compressor/bass but keeps loudness's master gain live", async () => {
+    installAudio();
+    vi.stubGlobal("OfflineAudioContext", FakeOfflineAudioContext);
+    // Loud canned render, same technique as the precompute test below: proves
+    // the master gain is still driven by the offline measurement even though
+    // every other mastering stage was stripped by the bypass.
+    FakeOfflineAudioContext.render = { left: 0.9, right: 0.9 };
+    const fullMastering = {
+      eq: { profile: "spatial-warm", strength: 0.7 },
+      compressor: { profile: "glue" },
+      bass: { profile: "boost" },
+      loudness: { normalize: true, target: -16, max_tp: -1 },
+    };
+    render(<Harness mastering={monitorMastering(fullMastering, true)} outputMode="stereo" />);
+    await act(async () => { await preview.playPause(); });
+
+    expect(lastContext().compressors).toHaveLength(0);
+    const shapedFilters = lastContext().eqFilters.filter(
+      (f) => (f.type === "peaking" || f.type === "lowshelf") && f.gain.value !== 0,
+    );
+    expect(shapedFilters).toHaveLength(0);
+
+    const master = lastContext().gains.find((gain) => gain.connections[0] instanceof FakeWaveShaper);
+    expect(master).toBeDefined();
+    expect(master!.gain.value).toBeLessThan(0.5);
   });
 
   it("builds the compressor from the resolved profile with manifest overrides applied", async () => {

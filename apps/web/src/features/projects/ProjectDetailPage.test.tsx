@@ -327,6 +327,21 @@ describe("ProjectDetailPage keyboard shortcuts", () => {
     expect(saved.mixing.stem_enabled.Vocals).toBe(false);
   });
 
+  it("toggles the master bypass button by click and by the B key", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    const button = screen.getByRole("button", { name: "Bypass master chain" });
+    expect(button).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(button);
+    expect(button).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.keyDown(document.body, { key: "b" });
+    expect(button).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("leaves the rename field alone — typing shortcut letters into it mutates nothing", async () => {
     const user = userEvent.setup();
     renderPage();

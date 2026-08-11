@@ -27,6 +27,10 @@ describe("matchKeyCommand", () => {
     expect(matchKeyCommand({ code: "Period", key: ">", shiftKey: true })?.id).toBe("fastForward");
   });
 
+  it("matches B for Bypass Master Chain", () => {
+    expect(matchKeyCommand({ key: "b" })?.id).toBe("toggleMasterBypass");
+  });
+
   it("routes Ctrl-Shift-M to Mute Off for All, not Toggle Mute", () => {
     expect(matchKeyCommand({ key: "m", ctrlKey: true, shiftKey: true })?.id).toBe("unmuteAll");
     expect(matchKeyCommand({ key: "m" })?.id).toBe("toggleMute");

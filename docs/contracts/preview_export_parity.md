@@ -355,6 +355,12 @@ bed-level soft-limit stay out of scope for *this* test, since neither is
 implemented in the preview at the bed level, and enabling it here would
 compare a Python stage the web harness doesn't render at all.
 
+The golden harness never engages the web-only A/B monitor bypass
+(`monitorMastering` in `previewGraph.ts`, wired to the transport's bypass
+button/`B` key): while engaged the preview intentionally renders the
+unmastered bed and does not match the export, by design, not by drift — it
+has no core-side counterpart and no manifest field to compare against.
+
 **Binaural collapse stage (Ledger D10, now covered):**
 `apps/web/src/features/projects/previewGraph.ts` also exports `buildBinauralGraph`
 — the framework-free extraction of `useStemPreview.ts`'s `initialize()`

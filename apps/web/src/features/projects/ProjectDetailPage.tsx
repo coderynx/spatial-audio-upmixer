@@ -37,8 +37,10 @@ import ElevationView from "./ElevationView";
 import { KeyCommandsDialog } from "./KeyCommandsDialog";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import { StemChannelStrip, StripResizeHandle } from "./ChannelStrip";
+import { MasterBypassButton } from "./MasterBypassButton";
 import { MixerView } from "./MixerView";
 import { OutputModeSelect } from "./OutputModeSelect";
+import { monitorMastering } from "./previewGraph";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import { TimelineView } from "./TimelineView";
@@ -306,6 +308,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const [outputMode, setOutputMode] = React.useState<OutputMode>("binaural");
   const [spatialProfile, setSpatialProfile] = React.useState<SpatialProfile>("studio");
   const [transauralProfile, setTransauralProfile] = React.useState<TransauralProfile>("stereo");
+  // A/B monitor bypass for the master chain — see monitorMastering.
+  const [masteringBypassed, setMasteringBypassed] = React.useState(false);
   const {
     paneView, paneHeight, previewColumn, changePane, resizePaneTo,
     beginPaneResize, movePaneResize, endPaneResize, paneResizeKeys,
@@ -352,7 +356,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     () => (configuration?.constants ? resolveEngineConstants(configuration.constants) : null),
     [configuration],
   );
-  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, previewMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants);
+  const monitoredMastering = React.useMemo(
+    () => monitorMastering(previewMastering, masteringBypassed),
+    [previewMastering, masteringBypassed],
+  );
+  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants);
   // One cached fetch per track, independent of stem decode — the envelope and
   // the track's duration arrive together, so the timeline can draw its ruler
   // and lanes while playback is still loading.
@@ -444,6 +452,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     onManifestChange: updateManifest,
     paneView,
     onChangePane: changePane,
+    onToggleMasterBypass: () => setMasteringBypassed((bypassed) => !bypassed),
   });
   const exportProject = async () => {
     if (!projectId) return;
@@ -562,6 +571,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         headphoneLevels={preview.headphoneLevels}
         leading={transportLeading}
       >
+        <MasterBypassButton
+          bypassed={masteringBypassed}
+          onToggle={() => setMasteringBypassed((bypassed) => !bypassed)}
+        />
         <OutputModeSelect
           value={outputMode}
           onChange={setOutputMode}

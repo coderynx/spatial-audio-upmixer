@@ -63,7 +63,10 @@ Spatial Audio renderer uses). `masterIn`/`masterOut` are stable per-channel
 mastering insert points; `buildMasteringTopology` wires a fresh EQ →
 compressor-gain → bass chain (or a passthrough when mastering is inactive)
 between them on every rebuild, before the binaural/spatial render — see
-`docs/contracts/preview_export_parity.md` §1. `stereoSend` is present only
+`docs/contracts/preview_export_parity.md` §1. The same passthrough is what
+the transport's A/B bypass button produces: `monitorMastering`
+(`previewGraph.ts`) strips every stage but `loudness` before the config
+reaches this rebuild, a session-only monitoring choice, not a manifest field. `stereoSend` is present only
 for channels the BS.775 downmix uses (see `STEREO_DOWNMIX_GAINS`, excludes
 height channels and LFE); `nativeIndex` is the channel's input index on the
 native discrete `ChannelMergerNode`, or -1 if the current layout omits it.

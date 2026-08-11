@@ -39,6 +39,7 @@ function makeOptions(overrides: Partial<KeyCommandsOptions> = {}): KeyCommandsOp
     onManifestChange: vi.fn(),
     paneView: "timeline",
     onChangePane: vi.fn(),
+    onToggleMasterBypass: vi.fn(),
     ...overrides,
   };
 }
@@ -54,7 +55,7 @@ describe("useKeyCommands dispatch", () => {
     expect(options.preview.playPause).toHaveBeenCalledTimes(1);
   });
 
-  it("does not dispatch transport commands when transportEnabled is false, but M/X/? still fire", () => {
+  it("does not dispatch transport commands when transportEnabled is false, but M/X/B/? still fire", () => {
     const options = makeOptions({ transportEnabled: false });
     const { result } = renderHook(() => useKeyCommands(options));
     press({ key: " " });
@@ -65,6 +66,9 @@ describe("useKeyCommands dispatch", () => {
 
     press({ key: "x" });
     expect(options.onChangePane).toHaveBeenCalledWith("mixer");
+
+    press({ key: "b" });
+    expect(options.onToggleMasterBypass).toHaveBeenCalledTimes(1);
 
     press({ key: "?" });
     expect(result.current.shortcutsOpen).toBe(true);

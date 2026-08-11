@@ -23,6 +23,7 @@ export type KeyCommandId =
   | "fastRewind"
   | "fastForward"
   | "toggleCycle"
+  | "toggleMasterBypass"
   | "selectPreviousStem"
   | "selectNextStem"
   | "toggleMute"
@@ -84,6 +85,7 @@ export const KEY_COMMANDS: readonly KeyCommand[] = [
   { id: "fastRewind", group: "Transport", label: "Fast Rewind", code: "Comma", shift: true, cap: ",", repeatable: true },
   { id: "fastForward", group: "Transport", label: "Fast Forward", code: "Period", shift: true, cap: ".", repeatable: true },
   { id: "toggleCycle", group: "Transport", label: "Toggle Cycle Mode", keys: ["c"], cap: "C" },
+  { id: "toggleMasterBypass", group: "Transport", label: "Bypass Master Chain", keys: ["b"], cap: "B" },
 
   { id: "selectPreviousStem", group: "Mixer", label: "Select Previous Track", keys: ["arrowup"], cap: "↑" },
   { id: "selectNextStem", group: "Mixer", label: "Select Next Track", keys: ["arrowdown"], cap: "↓" },
