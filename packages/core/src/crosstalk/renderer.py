@@ -26,6 +26,8 @@ def render_crosstalk(
     sample_rate: int,
     profile: str,
     lfe_gain: float = 0.31622776601683794,
+    lfe_cutoff_hz: float = 120.0,
+    lfe_filter_order: int = 4,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Render a discrete multichannel bed to raw (unmastered) transaural stereo.
 
@@ -41,12 +43,17 @@ def render_crosstalk(
         profile: one of "stereo", "smart_speaker", "car", "laptop", "phone".
         lfe_gain: linear gain applied to the LFE before the ambisonic HOA
             decode (see :func:`upmixer.binaural.renderer.render_binaural`).
+        lfe_cutoff_hz: LFE lowpass cutoff, matching ``UpmixConfig.lfe_cutoff_hz``.
+        lfe_filter_order: LFE lowpass order, matching ``UpmixConfig.lfe_filter_order``.
 
     Returns:
         (left, right) float64 speaker-feed arrays, same length as the bed.
     """
     resolved = resolve_profile(profile)
-    ear_left, ear_right = render_binaural(channels, bed_fmt, sample_rate, "flat", lfe_gain=lfe_gain)
+    ear_left, ear_right = render_binaural(
+        channels, bed_fmt, sample_rate, "flat", lfe_gain=lfe_gain,
+        lfe_cutoff_hz=lfe_cutoff_hz, lfe_filter_order=lfe_filter_order,
+    )
 
     # Voicing shapes the ear signals the canceller is asked to deliver, so it
     # runs first: applied afterwards, its M/S widening would re-introduce
@@ -80,7 +87,8 @@ def render_crosstalk_delivery(
     saturation no later stage can undo).
     """
     left, right = render_crosstalk(
-        channels, bed_fmt, sample_rate, cfg.transaural_profile, lfe_gain=cfg.lfe_gain
+        channels, bed_fmt, sample_rate, cfg.transaural_profile, lfe_gain=cfg.lfe_gain,
+        lfe_cutoff_hz=cfg.lfe_cutoff_hz, lfe_filter_order=cfg.lfe_filter_order,
     )
     stereo_channels = {ChannelLabel.FL.value: left, ChannelLabel.FR.value: right}
 

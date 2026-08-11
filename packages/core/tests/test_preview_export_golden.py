@@ -128,11 +128,11 @@ _GOLDEN_REFMATCH_CHANNEL_RMS_HEX = {
 
 # Regenerate via `REGENERATE_GOLDEN=1 python3 -m pytest
 # tests/test_preview_export_golden.py::test_python_binaural_metrics_golden -s`.
-_GOLDEN_BINAURAL_LKFS_HEX = "c031fffffffffff5"
-_GOLDEN_BINAURAL_TP_HEX = "c026d148d4e39e1c"
+_GOLDEN_BINAURAL_LKFS_HEX = "c03200000000001c"
+_GOLDEN_BINAURAL_TP_HEX = "c026d2368a3b80c0"
 _GOLDEN_BINAURAL_CHANNEL_RMS_HEX = {
-    "FL": "3fb6614b847cd110",
-    "FR": "3fb67118370bc721",
+    "FL": "3fb661491b33a6f0",
+    "FR": "3fb6711655bd520e",
 }
 
 

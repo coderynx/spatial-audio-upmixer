@@ -23,8 +23,8 @@ from upmixer.mastering.chain import MasteringResult
 from upmixer.utils import soft_limit
 
 
-def _lfe_lowpass(signal: np.ndarray, sample_rate: int, cutoff_hz: float = 120.0) -> np.ndarray:
-    sos = butter(2, cutoff_hz / (sample_rate / 2.0), btype="low", output="sos")
+def _lfe_lowpass(signal: np.ndarray, sample_rate: int, cutoff_hz: float, order: int) -> np.ndarray:
+    sos = butter(order, cutoff_hz / (sample_rate / 2.0), btype="low", output="sos")
     return sosfilt(sos, signal)
 
 
@@ -34,6 +34,8 @@ def render_binaural(
     sample_rate: int,
     profile: str,
     lfe_gain: float = 0.31622776601683794,
+    lfe_cutoff_hz: float = 120.0,
+    lfe_filter_order: int = 4,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Render a discrete multichannel bed to raw (unmastered) binaural stereo.
 
@@ -47,6 +49,8 @@ def render_binaural(
             The LFE is fully correlated across both ears, so summing it at
             unity doubles its perceived weight relative to the HRTF-decoded
             bed and reads as boomy.
+        lfe_cutoff_hz: LFE lowpass cutoff, matching ``UpmixConfig.lfe_cutoff_hz``.
+        lfe_filter_order: LFE lowpass order, matching ``UpmixConfig.lfe_filter_order``.
 
     Returns:
         (left, right) float64 arrays of the same length as the bed channels.
@@ -68,7 +72,9 @@ def render_binaural(
     left, right = decode_to_binaural(hoa, filter_set)
 
     if ChannelLabel.LFE.value in channels:
-        lfe = _lfe_lowpass(channels[ChannelLabel.LFE.value][:n_samples], sample_rate) * lfe_gain
+        lfe = _lfe_lowpass(
+            channels[ChannelLabel.LFE.value][:n_samples], sample_rate, lfe_cutoff_hz, lfe_filter_order
+        ) * lfe_gain
         left = left + lfe
         right = right + lfe
 
@@ -107,7 +113,8 @@ def render_binaural_delivery(
     instead of clipping the raw HRTF sum.
     """
     left, right = render_binaural(
-        channels, bed_fmt, sample_rate, cfg.binaural_profile, lfe_gain=cfg.lfe_gain
+        channels, bed_fmt, sample_rate, cfg.binaural_profile, lfe_gain=cfg.lfe_gain,
+        lfe_cutoff_hz=cfg.lfe_cutoff_hz, lfe_filter_order=cfg.lfe_filter_order,
     )
     stereo_channels = {ChannelLabel.FL.value: left, ChannelLabel.FR.value: right}
 

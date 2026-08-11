@@ -51,3 +51,17 @@ def test_out_of_range_azimuth_wraps():
     wrapped = routing_for_scene(_scene(225.0, 0.0), config)["Vocals"]
     reference = routing_for_scene(_scene(-135.0, 0.0), config)["Vocals"]
     assert wrapped == pytest.approx(reference, abs=1e-9)
+
+
+def test_positioned_stem_gets_the_default_lfe_send():
+    config = UpmixConfig(output_format="7.1.4")
+    scene = {"stems": {"Bass": {"azimuth_deg": 0.0, "elevation_deg": 0.0}}}
+    routing = routing_for_scene(scene, config)["Bass"]
+    assert routing["LFE"] > 0.0
+
+
+def test_positioned_stem_honours_an_explicit_manifest_lfe_send():
+    config = UpmixConfig(output_format="7.1.4", stem_routing={"Bass": {"LFE": 0.42}})
+    scene = {"stems": {"Bass": {"azimuth_deg": 0.0, "elevation_deg": 0.0}}}
+    routing = routing_for_scene(scene, config)["Bass"]
+    assert routing["LFE"] == pytest.approx(0.42)

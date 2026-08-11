@@ -1,6 +1,7 @@
 """CLI flag application and resource-limit setup for the ``upmixer`` CLI."""
 
 import argparse
+import math
 
 from upmixer.config import UpmixConfig
 
@@ -135,6 +136,15 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
             config.stem_rebalance = REBALANCE_PROFILES[args.stem_rebalance_profile]
     if args.stem_eq is not None:
         config.stem_eq_profiles = _parse_key_value_pairs(args.stem_eq, str)
+    if args.stem_lfe is not None:
+        lfe_sends = _parse_key_value_pairs(args.stem_lfe, float)
+        for stem, amount in lfe_sends.items():
+            if not math.isfinite(amount) or amount < 0.0:
+                raise SystemExit(f"--stem-lfe amount for '{stem}' must be finite and non-negative, got {amount}.")
+        if config.stem_routing is None:
+            config.stem_routing = {}
+        for stem, amount in lfe_sends.items():
+            config.stem_routing.setdefault(stem, {})["LFE"] = amount
     if args.stem_cache_dir is not None:
         config.stem_cache_dir = args.stem_cache_dir
     if args.stem_batch_size is not None:

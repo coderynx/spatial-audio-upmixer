@@ -268,6 +268,43 @@ describe("ProjectDetailPage tabs", () => {
     expect(savedOverrides.mastering.loudness.normalize).toBe(false);
   });
 
+  it("shows an LFE send slider for a layout with an LFE channel and writes it to stem_routing", async () => {
+    const config = {
+      choices: {
+        layout_channels: {
+          "7.1.4": ["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR"],
+        },
+      },
+    } as unknown as Configuration;
+    const user = userEvent.setup();
+    renderPage(config);
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Mixer" }));
+    await user.click(screen.getByRole("button", { name: "Vocals" }));
+    const lfeSlider = screen.getByRole("slider", { name: "LFE send" });
+    fireEvent.keyDown(lfeSlider, { key: "ArrowUp" });
+
+    await waitFor(() => expect(api.saveProject).toHaveBeenCalled());
+    const [, payload] = vi.mocked(api.saveProject).mock.calls.at(-1)!;
+    const saved = payload.manifest as unknown as { mixing: { stem_routing: Record<string, Record<string, number>> } };
+    expect(saved.mixing.stem_routing.Vocals.LFE).toBeCloseTo(0.01);
+  });
+
+  it("hides the LFE send slider for a layout without an LFE channel", async () => {
+    const config = {
+      choices: { layout_channels: { "7.1.4": ["FL", "FR"] } },
+    } as unknown as Configuration;
+    const user = userEvent.setup();
+    renderPage(config);
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Mixer" }));
+    await user.click(screen.getByRole("button", { name: "Vocals" }));
+
+    expect(screen.queryByRole("slider", { name: "LFE send" })).not.toBeInTheDocument();
+  });
+
   it("sources the channel list solely from configuration — none before it loads, the served set after", async () => {
     // Backend order for 7.1.4 is back-before-side (upmixer/formats.py::FORMAT_MAP),
     // deliberately unlike the old hardcoded fallback's side-before-back literal.

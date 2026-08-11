@@ -69,7 +69,7 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Drums":          {"C": 0.22, "FL": 0.58, "FR": 0.58, "LFE": 0.32,
                            "TFL": 0.18, "TFR": 0.18},
         "Other":          {"FL": 0.38, "FR": 0.38, "SL": 0.18, "SR": 0.18,
-                           "TFL": 0.30, "TFR": 0.30},
+                           "LFE": 0.15, "TFL": 0.30, "TFR": 0.30},
         "Guitar":         {"FL": 0.55, "FR": 0.55, "SL": 0.15, "SR": 0.15,
                            "TFL": 0.10, "TFR": 0.10},
         "Piano":          {"C": 0.18, "FL": 0.58, "FR": 0.58,
@@ -95,7 +95,7 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Drums":          {"SL": 0.52, "SR": 0.52, "BL": 0.22, "BR": 0.22,
                            "TFL": 0.15, "TFR": 0.15, "TBL": 0.22, "TBR": 0.22},
         "Other":          {"SL": 0.62, "SR": 0.62, "BL": 0.32, "BR": 0.32,
-                           "TFL": 0.28, "TFR": 0.28, "TBL": 0.32, "TBR": 0.32},
+                           "LFE": 0.10, "TFL": 0.28, "TFR": 0.28, "TBL": 0.32, "TBR": 0.32},
         "Guitar":         {"SL": 0.58, "SR": 0.58, "BL": 0.22, "BR": 0.22,
                            "TBL": 0.12, "TBR": 0.12},
         "Piano":          {"SL": 0.38, "SR": 0.38, "TBL": 0.18, "TBR": 0.18},
@@ -134,7 +134,7 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
     },
     "height_front": {
         "Vocals":         {"TFL": 0.32, "TFR": 0.32},
-        "Bass":           {},
+        "Bass":           {"FL": 0.45, "FR": 0.45, "LFE": 0.70},
         "Drums":          {"TFL": 0.58, "TFR": 0.58, "TBL": 0.18, "TBR": 0.18},
         "Other":          {"TFL": 0.68, "TFR": 0.68, "TBL": 0.28, "TBR": 0.28},
         "Guitar":         {"TFL": 0.45, "TFR": 0.45, "TBL": 0.10, "TBR": 0.10},
@@ -142,7 +142,7 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Instrumental":   {"TFL": 0.52, "TFR": 0.52, "TBL": 0.18, "TBR": 0.18},
         "Lead Vocals":    {"TFL": 0.22, "TFR": 0.22},
         "Backing Vocals": {"TFL": 0.50, "TFR": 0.50},
-        "Kick":           {},
+        "Kick":           {"FL": 0.45, "FR": 0.45, "LFE": 0.80},
         "Snare":          {"TFL": 0.15, "TFR": 0.15},
         "Toms":           {"TFL": 0.22, "TFR": 0.22},
         "Hi-Hat":         {"TFL": 0.72, "TFR": 0.72},
@@ -152,7 +152,7 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
     },
     "height_back": {
         "Vocals":         {"TBL": 0.25, "TBR": 0.25},
-        "Bass":           {},
+        "Bass":           {"FL": 0.45, "FR": 0.45, "LFE": 0.70},
         "Drums":          {"TBL": 0.52, "TBR": 0.52},
         "Other":          {"TBL": 0.72, "TBR": 0.72},
         "Guitar":         {"TBL": 0.42, "TBR": 0.42},
@@ -160,7 +160,7 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Instrumental":   {"TBL": 0.58, "TBR": 0.58},
         "Lead Vocals":    {"TBL": 0.10, "TBR": 0.10},
         "Backing Vocals": {"TBL": 0.50, "TBR": 0.50},
-        "Kick":           {},
+        "Kick":           {"FL": 0.45, "FR": 0.45, "LFE": 0.80},
         "Snare":          {"TBL": 0.12, "TBR": 0.12},
         "Toms":           {"TBL": 0.18, "TBR": 0.18},
         "Hi-Hat":         {"TBL": 0.52, "TBR": 0.52},
@@ -178,6 +178,7 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "FR":  0.28,
         "TFL": 0.12,
         "TFR": 0.12,
+        "LFE": 0.0,
     },
     "Bass": {
         "FL":  0.65,
@@ -208,6 +209,7 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "TFR": 0.22,
         "TBL": 0.14,
         "TBR": 0.14,
+        "LFE": 0.15,
     },
     "Guitar": {
         "FL":  0.52,
@@ -218,6 +220,7 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "BR":  0.12,
         "TFL": 0.12,
         "TFR": 0.12,
+        "LFE": 0.0,
     },
     "Piano": {
         "C":   0.18,
@@ -227,6 +230,7 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "SR":  0.22,
         "TFL": 0.15,
         "TFR": 0.15,
+        "LFE": 0.0,
     },
     "Instrumental": {
         "C":   0.15,
@@ -248,6 +252,7 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "FR":  0.20,
         "TFL": 0.08,
         "TFR": 0.08,
+        "LFE": 0.0,
     },
     "Backing Vocals": {
         "FL":  0.45,
@@ -258,6 +263,7 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "TFR": 0.30,
         "TBL": 0.12,
         "TBR": 0.12,
+        "LFE": 0.0,
     },
     "Kick": {
         "C":   0.30,
@@ -271,6 +277,7 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "FR":  0.60,
         "TFL": 0.08,
         "TFR": 0.08,
+        "LFE": 0.0,
     },
     "Toms": {
         "C":   0.12,
@@ -287,12 +294,14 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "TFR": 0.40,
         "TBL": 0.06,
         "TBR": 0.06,
+        "LFE": 0.0,
     },
     "Ride": {
         "FL":  0.38,
         "FR":  0.38,
         "TFL": 0.45,
         "TFR": 0.45,
+        "LFE": 0.0,
     },
     "Crash": {
         "FL":  0.35,
@@ -303,6 +312,7 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "TFR": 0.50,
         "TBL": 0.08,
         "TBR": 0.08,
+        "LFE": 0.0,
     },
     "Crowd": {
         "SL":  0.28,
@@ -313,6 +323,7 @@ DEFAULT_ROUTING: dict[str, dict[str, float]] = {
         "TBR": 0.15,
         "TFL": 0.06,
         "TFR": 0.06,
+        "LFE": 0.0,
     },
 }
 
@@ -372,6 +383,21 @@ def build_stem_routing(
             route[channel] = gain * (1.0 + amount * (scale - 1.0))
         output[stem] = route
     return output
+
+
+def default_lfe_send(stem_key: str) -> float:
+    """Return the built-in LFE send weight for a stem (ignores overrides).
+
+    Resolves "StemName@zone" against ``ZONE_ROUTING`` first, falling back to
+    ``DEFAULT_ROUTING`` by stem name — same precedence as
+    ``StemRouter._routing_for`` without the manifest/custom override layers.
+    """
+    stem_name, _, zone = stem_key.partition("@")
+    if zone:
+        zone_routing = ZONE_ROUTING.get(zone, {}).get(stem_name)
+        if zone_routing is not None:
+            return zone_routing.get("LFE", 0.0)
+    return DEFAULT_ROUTING.get(stem_name, {}).get("LFE", 0.0)
 
 
 class StemRouter:

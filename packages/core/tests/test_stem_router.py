@@ -7,7 +7,13 @@ from scipy.signal import sosfilt
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_analyzer import analyze_stem
-from upmixer.separation.stem_router import StemRouter, build_stem_routing
+from upmixer.separation.stem_router import (
+    DEFAULT_ROUTING,
+    ZONE_ROUTING,
+    StemRouter,
+    build_stem_routing,
+    default_lfe_send,
+)
 
 
 def _audio(n: int = 48000, frequency: float = 440.0) -> np.ndarray:
@@ -70,10 +76,24 @@ def test_custom_routing_overrides_zone_table():
 
 
 def test_explicit_empty_zone_routing_does_not_fall_back_to_default():
+    router = StemRouter(
+        UpmixConfig(output_format="7.1.4"),
+        FORMAT_MAP["7.1.4"],
+        48000,
+        {"CustomStem@height_front": {}},
+    )
+
+    assert router.get_routing("CustomStem@height_front") == {}
+
+
+def test_bass_and_kick_reach_height_zones():
     router = _router()
 
-    assert router.get_routing("Bass@height_front") == {}
-    assert router.get_routing("Kick@height_back") == {}
+    bass = router.get_routing("Bass@height_front")
+    kick = router.get_routing("Kick@height_back")
+
+    assert bass["FL"] > 0.0 and bass["LFE"] > 0.0
+    assert kick["FL"] > 0.0 and kick["LFE"] > 0.0
 
 
 def test_routing_preset_is_explicit_and_layout_aware():
@@ -118,6 +138,33 @@ def test_default_lfe_gain_is_applied_once():
     expected = config.lfe_gain * sosfilt(router._lfe_sos, stem_mono)
 
     np.testing.assert_allclose(channels["LFE"], expected)
+
+
+def test_every_default_stem_has_an_explicit_lfe_send():
+    for stem, route in DEFAULT_ROUTING.items():
+        assert "LFE" in route, f"{stem} is missing an explicit LFE weight"
+
+
+def test_stem_lfe_send_scales_the_lfe_bus():
+    stems = {"Bass": _audio(frequency=80.0)}
+    quiet = _router(stem_routing={"Bass": {"LFE": 0.2}}).route(stems, len(stems["Bass"]))
+    loud = _router(stem_routing={"Bass": {"LFE": 0.8}}).route(stems, len(stems["Bass"]))
+
+    assert np.sum(loud["LFE"] ** 2) > np.sum(quiet["LFE"] ** 2)
+
+
+def test_zero_stem_lfe_send_silences_that_stem_in_the_lfe_bus():
+    stems = {"Bass": _audio(frequency=80.0)}
+    channels = _router(stem_routing={"Bass": {"LFE": 0.0}}).route(stems, len(stems["Bass"]))
+
+    assert np.max(np.abs(channels["LFE"])) == 0.0
+
+
+def test_default_lfe_send_resolves_zone_before_stem_name():
+    assert default_lfe_send("Bass@height_front") == ZONE_ROUTING["height_front"]["Bass"]["LFE"]
+    assert default_lfe_send("Bass") == DEFAULT_ROUTING["Bass"]["LFE"]
+    assert default_lfe_send("Bass@unknown_zone") == DEFAULT_ROUTING["Bass"]["LFE"]
+    assert default_lfe_send("Nonexistent") == 0.0
 
 
 def test_generic_and_percussion_defaults_start_conservative():

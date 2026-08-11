@@ -56,7 +56,7 @@ group: `engine.stems`/`engine.stem_silence_skip` (stem separation),
 | Separation tuning | Advanced JSON; rebuild on change | Rebuilds the project's stem store before export | High before change | Manifest behavior |
 | `mixing.stem_*` | Stem controls and Advanced JSON | Direct manifest mapping | None | Manifest behavior |
 | `mixing.spatial` / `routing.content_mix_strength` | Derived explicit-routing profile | Forced deterministic project values | Medium | Project behavior |
-| `mixing.stem_routing` | Position sliders, presets, Advanced matrix | Exact speaker matrix | None | Project behavior for UX |
+| `mixing.stem_routing` | Position sliders, per-stem LFE send slider, presets, Advanced matrix | Exact speaker matrix | None | Project behavior for UX |
 | `routing.*` | Advanced JSON | Direct manifest mapping | High before change | Manifest behavior |
 | `mastering.*` | Mastering tab and reference upload | Exported job receives trusted reference | High before change | Unified |
 | `format.*` | Delivery controls and Advanced JSON | Direct mapping | None | Manifest behavior |
@@ -83,6 +83,14 @@ Position sliders intentionally collapse an arbitrary speaker matrix to front/bac
 and floor/height. Use Advanced JSON for asymmetric or per-channel routing. LFE
 is excluded from stereo downmixes under ITU-R BS.775; `0.7071` is default
 surround coefficient and `0.5` is available for dense rear content.
+
+Each stem's LFE send amount is the `"LFE"` weight inside its
+`mixing.stem_routing` entry — a dedicated slider next to the position
+controls, independent of the front/back and floor/height sliders. It is
+excluded from position-slider-driven repositioning's constant-power
+normalization (LFE is not a positional speaker) but carried forward
+unchanged when a stem is dragged. `--stem-lfe` on the CLI sets the same
+field.
 
 ## Follow-ups
 

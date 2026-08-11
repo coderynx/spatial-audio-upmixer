@@ -298,3 +298,23 @@ def test_lfe_is_attenuated_relative_to_unity_sum():
     attenuated_rms = float(np.sqrt(np.mean(attenuated_l**2) + np.mean(attenuated_r**2)))
     unity_rms = float(np.sqrt(np.mean(unity_l**2) + np.mean(unity_r**2)))
     assert attenuated_rms < unity_rms * 0.5
+
+
+def test_lfe_lowpass_follows_configured_cutoff():
+    # Regression: the binaural LFE re-add hardcoded a 120 Hz cutoff instead
+    # of reading UpmixConfig.lfe_cutoff_hz, so a manifest/CLI cutoff change
+    # silently had no effect on binaural or transaural renders.
+    sr = 48000
+    n = sr
+    bed_fmt = FORMAT_MAP["7.1.4"]
+    t = np.arange(n) / sr
+    tone = 0.2 * np.sin(2.0 * np.pi * 100.0 * t)
+    channels = {label.value: np.zeros(n) for label in bed_fmt.channels}
+    channels[ChannelLabel.LFE.value] = tone
+
+    narrow_l, narrow_r = render_binaural(channels, bed_fmt, sr, "flat", lfe_gain=1.0, lfe_cutoff_hz=80.0)
+    wide_l, wide_r = render_binaural(channels, bed_fmt, sr, "flat", lfe_gain=1.0, lfe_cutoff_hz=120.0)
+
+    narrow_rms = float(np.sqrt(np.mean(narrow_l**2) + np.mean(narrow_r**2)))
+    wide_rms = float(np.sqrt(np.mean(wide_l**2) + np.mean(wide_r**2)))
+    assert narrow_rms < wide_rms * 0.5

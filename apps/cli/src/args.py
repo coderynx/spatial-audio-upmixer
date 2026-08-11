@@ -414,6 +414,17 @@ def build_parser() -> argparse.ArgumentParser:
             "bass-cut, drums-punch, other-air, flat."
         ),
     )
+    parser.add_argument(
+        "--stem-lfe",
+        default=None,
+        metavar="STEM=AMOUNT[,...]",
+        help=(
+            "Per-stem LFE send amount, 0.0-1.0 (stem mode only). "
+            "Format: 'Bass=0.8,Vocals=0'. Overrides only the LFE weight of "
+            "each stem's spatial routing, leaving the rest of its route "
+            "untouched."
+        ),
+    )
 
     parser.add_argument(
         "--stem-cache-dir",
