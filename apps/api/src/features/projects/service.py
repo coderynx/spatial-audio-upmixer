@@ -251,6 +251,16 @@ def add_project_assets(
         project.requested_stems = _normalize_project_stems([*project.requested_stems, *added_stems])
         project.manifest = copy.deepcopy(project.manifest)
         project.manifest.setdefault("engine", {})["stems"] = project.requested_stems
+        # New stem picks need their own routing entry immediately, not just
+        # at project creation — otherwise a freshly separated stem has no
+        # `stem_routing` key, every channel send resolves to zero, and it
+        # stays silent until a routing preset happens to touch the dict.
+        mixing = project.manifest.setdefault("mixing", {})
+        stem_routing = mixing.setdefault("stem_routing", {})
+        missing_stems = [stem for stem in project.requested_stems if stem not in stem_routing]
+        if missing_stems:
+            routing_fmt = FORMAT_MAP[mixing.get("channel_layout", "7.1.4")]
+            stem_routing.update(build_stem_routing(missing_stems, routing_fmt))
 
     for offset, asset in enumerate(import_batch.assets):
         overrides = per_asset_overrides.get(asset.id, {})

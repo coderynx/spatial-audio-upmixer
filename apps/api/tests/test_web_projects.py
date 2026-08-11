@@ -704,3 +704,7 @@ def test_add_project_assets_stores_per_file_overrides_and_unions_stems(tmp_path,
         assert track["manifest_overrides"]["format"]["sample_rate"] == 48000
         assert track["manifest_overrides"]["format"]["subtype"] == "PCM_24"
         assert track["manifest_overrides"]["mixing"]["channel_layout"] == "7.1.4"
+        stem_routing = project["manifest"]["mixing"]["stem_routing"]
+        assert "Vocals" in stem_routing
+        assert "Bass" in stem_routing
+        assert any(gain > 0 for gain in stem_routing["Bass"].values())
