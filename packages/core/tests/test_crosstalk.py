@@ -17,6 +17,7 @@ from upmixer.crosstalk.renderer import (
     render_crosstalk,
     render_crosstalk_delivery,
 )
+from upmixer.binaural import head_model
 from upmixer.binaural.head_model import synth_hrir
 from upmixer.formats import FORMAT_MAP, TRANSAURAL, TRANSAURAL_BED_FORMATS, ChannelLabel
 
@@ -38,6 +39,42 @@ def _speaker_to_ear_matrix(profile: CrosstalkProfile) -> tuple[np.ndarray, np.nd
     c_ll, c_rl = synth_hrir(az_left, 0.0, SR, HRIR_TAPS)
     c_lr, c_rr = synth_hrir(az_right, 0.0, SR, HRIR_TAPS)
     return c_ll, c_lr, c_rl, c_rr
+
+
+def _effective_response(
+    profile: CrosstalkProfile, c: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Ear response through the real acoustic path C with XTC applied: E = C * H."""
+    c_ll, c_lr, c_rl, c_rr = c
+    filter_set = load_xtc_filter_set(XTC_FILTER_SET[profile], SR)
+    h_ll, h_lr, h_rl, h_rr = (
+        filter_set.taps[0, 0], filter_set.taps[0, 1], filter_set.taps[1, 0], filter_set.taps[1, 1],
+    )
+    e_ll = np.convolve(c_ll, h_ll) + np.convolve(c_lr, h_rl)  # desired-left -> left ear (ipsi)
+    e_rl = np.convolve(c_rl, h_ll) + np.convolve(c_rr, h_rl)  # desired-left -> right ear (leakage)
+    e_rr = np.convolve(c_rr, h_rr) + np.convolve(c_rl, h_lr)  # desired-right -> right ear (ipsi)
+    e_lr = np.convolve(c_ll, h_lr) + np.convolve(c_lr, h_rr)  # desired-right -> left ear (leakage)
+    return e_ll, e_lr, e_rl, e_rr
+
+
+def _xtc_and_coloration_db(
+    c: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    e: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    lo: float = _BAND_LO,
+    hi: float = _BAND_HI,
+) -> tuple[float, float]:
+    """Return (leakage suppression vs no cancellation, |ipsilateral coloration|) in dB."""
+    c_ll, c_lr, c_rl, c_rr = c
+    e_ll, e_lr, e_rl, e_rr = e
+    energy = lambda sig: _band_energy(sig, SR, lo, hi)  # noqa: E731
+    ipsi_xtc = energy(e_ll) + energy(e_rr)
+    contra_xtc = energy(e_rl) + energy(e_lr)
+    ipsi_naive = energy(c_ll) + energy(c_rr)
+    contra_naive = energy(c_rl) + energy(c_lr)
+    return (
+        float(10.0 * np.log10(contra_naive / contra_xtc)),
+        float(abs(10.0 * np.log10(ipsi_xtc / ipsi_naive))),
+    )
 
 
 def test_resolve_profile_rejects_unknown():
@@ -190,11 +227,11 @@ def test_transaural_bed_formats_are_valid_output_formats():
 @pytest.mark.parametrize(
     "profile,min_xtc_db,max_coloration_db",
     [
-        (CrosstalkProfile.STEREO, 15.0, 3.0),
-        (CrosstalkProfile.SMART_SPEAKER, 6.0, 3.0),
-        (CrosstalkProfile.CAR, 10.0, 3.0),
-        (CrosstalkProfile.LAPTOP, 7.0, 3.0),
-        (CrosstalkProfile.PHONE, 4.0, 3.0),
+        (CrosstalkProfile.STEREO, 22.0, 3.0),
+        (CrosstalkProfile.SMART_SPEAKER, 13.0, 3.0),
+        (CrosstalkProfile.CAR, 19.0, 3.0),
+        (CrosstalkProfile.LAPTOP, 15.0, 3.0),
+        (CrosstalkProfile.PHONE, 12.0, 3.0),
     ],
 )
 def test_xtc_reduces_contralateral_leakage_within_coloration_bound(profile, min_xtc_db, max_coloration_db):
@@ -207,26 +244,68 @@ def test_xtc_reduces_contralateral_leakage_within_coloration_bound(profile, min_
     keeping the ipsilateral (same-ear) response within a bounded coloration
     window instead of just chasing suppression depth.
     """
-    c_ll, c_lr, c_rl, c_rr = _speaker_to_ear_matrix(profile)
-    filter_set = load_xtc_filter_set(XTC_FILTER_SET[profile], SR)
-    h_ll, h_lr, h_rl, h_rr = (
-        filter_set.taps[0, 0], filter_set.taps[0, 1], filter_set.taps[1, 0], filter_set.taps[1, 1],
-    )
-
-    # Effective ear response through the real acoustic path C with the XTC
-    # filters H applied first: E = C (convolution) H.
-    e_ll = np.convolve(c_ll, h_ll) + np.convolve(c_lr, h_rl)  # desired-left -> left ear (ipsi)
-    e_rl = np.convolve(c_rl, h_ll) + np.convolve(c_rr, h_rl)  # desired-left -> right ear (leakage)
-    e_rr = np.convolve(c_rr, h_rr) + np.convolve(c_rl, h_lr)  # desired-right -> right ear (ipsi)
-    e_lr = np.convolve(c_ll, h_lr) + np.convolve(c_lr, h_rr)  # desired-right -> left ear (leakage)
-
-    ipsi_xtc = _band_energy(e_ll, SR, _BAND_LO, _BAND_HI) + _band_energy(e_rr, SR, _BAND_LO, _BAND_HI)
-    contra_xtc = _band_energy(e_rl, SR, _BAND_LO, _BAND_HI) + _band_energy(e_lr, SR, _BAND_LO, _BAND_HI)
-    ipsi_naive = _band_energy(c_ll, SR, _BAND_LO, _BAND_HI) + _band_energy(c_rr, SR, _BAND_LO, _BAND_HI)
-    contra_naive = _band_energy(c_rl, SR, _BAND_LO, _BAND_HI) + _band_energy(c_lr, SR, _BAND_LO, _BAND_HI)
-
-    xtc_gain_db = 10.0 * np.log10(contra_naive / contra_xtc)
-    coloration_db = abs(10.0 * np.log10(ipsi_xtc / ipsi_naive))
+    c = _speaker_to_ear_matrix(profile)
+    xtc_gain_db, coloration_db = _xtc_and_coloration_db(c, _effective_response(profile, c))
 
     assert xtc_gain_db >= min_xtc_db
     assert coloration_db <= max_coloration_db
+
+
+@pytest.mark.parametrize("profile", list(CrosstalkProfile))
+@pytest.mark.parametrize("lo,hi", [(300.0, 1000.0), (1000.0, 3000.0), (3000.0, 6000.0)])
+def test_xtc_per_band_depth_and_coloration(profile, lo, hi):
+    """The tradeoff must hold in every sub-band, not just on band-summed energy.
+
+    A filter can post a strong 300 Hz-6 kHz total while being useless (or
+    coloring badly) inside one octave of it; the whole point of the
+    frequency-dependent regularization is that the budget is honored per bin.
+    """
+    c = _speaker_to_ear_matrix(profile)
+    xtc_gain_db, coloration_db = _xtc_and_coloration_db(c, _effective_response(profile, c), lo, hi)
+
+    assert xtc_gain_db > 0.0
+    assert coloration_db <= max(XTC_PARAMS[profile].gamma_db, 3.0)
+
+
+@pytest.mark.parametrize("profile", list(CrosstalkProfile))
+@pytest.mark.parametrize("radius_scale", [1.1, 0.9])
+def test_xtc_survives_head_size_mismatch(profile, radius_scale, monkeypatch):
+    """Baked filters must degrade gracefully on a head they were not designed for.
+
+    Evaluating H against the very C it was inverted from only proves the
+    algebra; a listener's head is never the model's. This catches a filter
+    that scores well by overfitting the design head.
+    """
+    monkeypatch.setattr(head_model, "HEAD_RADIUS_M", head_model.HEAD_RADIUS_M * radius_scale)
+    c = _speaker_to_ear_matrix(profile)
+    xtc_gain_db, coloration_db = _xtc_and_coloration_db(c, _effective_response(profile, c))
+
+    assert xtc_gain_db >= 5.0
+    assert coloration_db <= 6.0
+
+
+@pytest.mark.parametrize("profile", list(CrosstalkProfile))
+def test_xtc_passes_low_frequencies_without_a_crossover_notch(profile):
+    """Below the active band the filter blends to identity — with no comb dip.
+
+    Both blend branches carry the same bulk delay precisely so this crossover
+    stays flat (docs/standards/transaural_speakers.md §4.3).
+    """
+    params = XTC_PARAMS[profile]
+    c = _speaker_to_ear_matrix(profile)
+    e_ll = _effective_response(profile, c)[0]
+    n_fft = 16384
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / SR)
+    deviation_db = 20.0 * np.log10(
+        np.abs(np.fft.rfft(e_ll, n=n_fft)) / np.abs(np.fft.rfft(c[0], n=n_fft))
+    )
+
+    passband = (freqs >= 20.0) & (freqs <= params.xtc_lo_hz)
+    assert np.max(np.abs(deviation_db[passband])) <= 1.0
+
+    # A delay mismatch between the two blend branches would comb: narrow,
+    # repeating notches. Regularization's own broad tilt is expected instead,
+    # so compare each bin against its local average rather than against 0 dB.
+    crossover = (freqs >= 0.7 * params.xtc_lo_hz) & (freqs <= 3.0 * params.xtc_lo_hz)
+    local = np.convolve(deviation_db, np.ones(33) / 33.0, mode="same")
+    assert np.max(np.abs((deviation_db - local)[crossover])) <= 1.0

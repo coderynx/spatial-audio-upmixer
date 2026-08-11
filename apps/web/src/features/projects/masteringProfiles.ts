@@ -343,7 +343,7 @@ export const DECODE_FILTER_SPLITS = ["01-08ch", "09-16ch", "17-24ch", "25-32ch"]
 // Stereo / Smart-speaker / Car / Laptop / Phone crosstalk-cancellation (transaural) profiles.
 // Filter geometry/regularization contract lives in
 // docs/standards/transaural_speakers.md; this section carries the XTC asset
-// name only. The post-cancellation voicing *values* are fetched
+// name only. The voicing *values* are fetched
 // (EngineConstants.transauralVoicingParams), reusing the same VoicingParams
 // shape and Web Audio chain the binaural profiles use.
 

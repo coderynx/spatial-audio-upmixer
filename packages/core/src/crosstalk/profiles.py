@@ -2,10 +2,10 @@
 
 Each profile selects an XTC filter set (a regularized speaker-to-ear inverse,
 baked offline by ``scripts/build_crosstalk_filters.py``) and a voicing chain
-applied after cancellation. The voicing chain reuses
+applied to the ear signals before cancellation. The voicing chain reuses
 :class:`upmixer.binaural.profiles.VoicingParams` and
-:func:`upmixer.binaural.voicing.apply_voicing` unchanged — post-cancellation
-tone/width shaping is the same problem for speakers as for headphones. See
+:func:`upmixer.binaural.voicing.apply_voicing` unchanged — tone/width shaping
+is the same problem for speakers as for headphones. See
 ``docs/standards/transaural_speakers.md`` §5 for the authoritative parameter
 table this module implements; the web preview's ``masteringProfiles.ts``
 mirrors these values.
@@ -28,7 +28,7 @@ class CrosstalkProfile(str, Enum):
 
 @dataclass(frozen=True)
 class XtcParams:
-    """Speaker geometry + regularization curve for one XTC filter bake.
+    """Speaker geometry + coloration budget for one XTC filter bake.
 
     Listener-relative speaker azimuths in degrees (0 = dead ahead, positive =
     left — matches :mod:`upmixer.binaural.geometry`'s convention). Symmetric
@@ -39,16 +39,19 @@ class XtcParams:
 
     azimuth_left_deg: float
     azimuth_right_deg: float
-    beta_mid: float
-    """Tikhonov regularization floor in the well-conditioned mid-band (see
-    ``scripts/build_crosstalk_filters.py``). Higher = shallower cancellation
-    but less spectral coloration — the core BACCH-style tradeoff
-    (docs/standards/transaural_speakers.md §4)."""
-    low_boost_hz: float = 300.0
-    low_boost_factor: float = 8.0
-    high_boost_hz: float = 8000.0
-    high_boost_factor: float = 4.0
-    taps: int = 512
+    gamma_db: float
+    """Maximum tolerable spectral coloration at the speakers, in dB. The bake
+    regularizes each frequency bin by exactly as much as it takes to keep the
+    filter matrix norm under this ceiling, and no more — Choueiri's
+    frequency-dependent prescription (docs/standards/transaural_speakers.md
+    §4.2). Higher = deeper cancellation, more coloration."""
+    xtc_lo_hz: float = 150.0
+    """Cancellation fades out below this; the band carries no usable
+    localization cues and inverting it is hopeless for any real span."""
+    xtc_hi_hz: float = 6000.0
+    """Cancellation fades out above this: the head already separates the ears
+    there, and forcing more only shrinks the sweet spot."""
+    taps: int = 1024
 
 
 XTC_FILTER_SET: dict[CrosstalkProfile, str] = {
@@ -61,38 +64,39 @@ XTC_FILTER_SET: dict[CrosstalkProfile, str] = {
 
 XTC_PARAMS: dict[CrosstalkProfile, XtcParams] = {
     # Symmetric hi-fi pair, near-field mixing-triangle span (~60 degrees
-    # total). Widest angle of the three profiles, so it earns the deepest,
-    # least-regularized cancellation.
+    # total). Widest, best-conditioned span, so it can spend the largest
+    # coloration budget on cancellation depth.
     CrosstalkProfile.STEREO: XtcParams(
-        azimuth_left_deg=30.0, azimuth_right_deg=-30.0, beta_mid=0.05,
+        azimuth_left_deg=30.0, azimuth_right_deg=-30.0, gamma_db=7.0,
     ),
     # A single cabinet's two drivers are only centimeters apart — a much
-    # narrower span than a stereo pair. Narrow span makes low-frequency
-    # cancellation expensive (near-singular C at low f), so this profile
-    # trades cancellation depth for coloration safety via a higher beta_mid;
-    # VOICING_PARAMS below leans on stereo widening to compensate perceived
-    # narrowness instead.
+    # narrower span than a stereo pair, so the same budget buys far less
+    # depth. VOICING_PARAMS below leans on stereo widening to compensate
+    # perceived narrowness instead.
     CrosstalkProfile.SMART_SPEAKER: XtcParams(
-        azimuth_left_deg=12.0, azimuth_right_deg=-12.0, beta_mid=0.20,
+        azimuth_left_deg=12.0, azimuth_right_deg=-12.0, gamma_db=4.0,
+        xtc_lo_hz=180.0,
     ),
     # Asymmetric driver-seat sweet spot: the off-side (passenger-side)
     # speaker sits at a much wider effective angle than the near-side one.
     CrosstalkProfile.CAR: XtcParams(
-        azimuth_left_deg=22.0, azimuth_right_deg=-42.0, beta_mid=0.10,
+        azimuth_left_deg=22.0, azimuth_right_deg=-42.0, gamma_db=6.0,
     ),
     # A laptop's two speakers sit near the chassis's front edge, only
     # centimeters apart — narrower than a stereo pair but slightly wider than
     # a soundbar cabinet's span. Thin, bass-poor drivers, so voicing leans on
     # a bass shelf plus a presence lift in addition to widening.
     CrosstalkProfile.LAPTOP: XtcParams(
-        azimuth_left_deg=14.0, azimuth_right_deg=-14.0, beta_mid=0.18,
+        azimuth_left_deg=14.0, azimuth_right_deg=-14.0, gamma_db=5.0,
+        xtc_lo_hz=180.0,
     ),
     # A phone's two speakers are only ~5cm apart — the narrowest, most
-    # ill-conditioned span of any profile, so it earns the shallowest
-    # cancellation (highest beta_mid) and leans hardest on voicing to
-    # compensate: phone drivers have essentially no low end.
+    # ill-conditioned span of any profile, so it gets the tightest coloration
+    # budget and leans hardest on voicing to compensate: phone drivers have
+    # essentially no low end.
     CrosstalkProfile.PHONE: XtcParams(
-        azimuth_left_deg=6.0, azimuth_right_deg=-6.0, beta_mid=0.30,
+        azimuth_left_deg=6.0, azimuth_right_deg=-6.0, gamma_db=3.0,
+        xtc_lo_hz=200.0,
     ),
 }
 

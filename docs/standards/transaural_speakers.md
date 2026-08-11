@@ -1,14 +1,13 @@
 # Transaural Speaker Rendering — Crosstalk-Cancellation Contract
 
-**Source:** Internal design, modeled on published crosstalk-cancellation
+**Source:** Internal design, following published crosstalk-cancellation
 (XTC) literature — the Atal-Schroeder crosstalk canceller, the Cooper/Bauck
-"shuffler" simplification for symmetric listener geometry, and Princeton
-3D3A Lab's BACCH-filter work on frequency-dependent regularization to bound
-spectral coloration (see References). No proprietary BACCH filter design or
-other measured/licensed XTC dataset is reproduced here — the regularization
-curve in §4 is this engine's own documented heuristic, built from the same
-public *principles* those sources describe, not a transcription of any
-paper's exact formula.
+"shuffler" simplification for symmetric listener geometry, and Choueiri's
+analysis of frequency-dependent regularization for optimal XTC (see
+References), whose published optimization criterion §4.2 implements. No
+proprietary BACCH product filter set or measured/licensed XTC dataset is
+reproduced here; the speaker-to-ear model those filters are inverted from is
+this engine's own parametric head model (§4.1), not a measured HRTF.
 **Scope:** Rendering a discrete multichannel bed to speaker-ready,
 crosstalk-cancelled stereo for real stereo loudspeakers. This document is
 the signed contract between the core engine (`packages/core/src/crosstalk/`) and the
@@ -39,11 +38,11 @@ Five profiles cover distinct real playback geometries:
 
 | Profile | Purpose | Speaker span | XTC depth |
 |---|---|---|---|
-| `stereo` | Standard hi-fi speaker pair, symmetric listening position | Wide (±30°) | Deepest — a wide, symmetric span is the best-conditioned case for XTC |
+| `stereo` | Standard hi-fi speaker pair, symmetric listening position | Wide (±30°) | Deepest — a wide, symmetric span is the best-conditioned case for XTC, so the largest coloration budget buys the most depth |
 | `smart_speaker` | Single cabinet, narrow dual-driver span (soundbar / smart speaker) | Narrow (±12°) | Shallow, by design — a narrow span makes deep low-frequency cancellation expensive (see §4); voicing leans on stereo widening to compensate the narrower physical image instead |
 | `car` | Off-center driver-seat listening position | Wide, asymmetric (+22°/−42°) | Moderate — an asymmetric 2x2 matrix, not the symmetric shuffler simplification |
-| `laptop` | Built-in chassis speakers near the front edge, near-field desk listening | Narrow (±14°) | Shallow — slightly less regularized than `smart_speaker` since the span is a bit wider, but still far short of `stereo`'s depth |
-| `phone` | Built-in handset speakers, near-field handheld listening | Narrowest (±6°) | Shallowest of all five — the most ill-conditioned span, so cancellation depth is sacrificed hardest for coloration safety; voicing does the most compensating work |
+| `laptop` | Built-in chassis speakers near the front edge, near-field desk listening | Narrow (±14°) | Shallow — a slightly larger budget than `smart_speaker` since the span is a bit wider, but still far short of `stereo`'s depth |
+| `phone` | Built-in handset speakers, near-field handheld listening | Narrowest (±6°) | Shallowest of all five — the most ill-conditioned span, so it gets the tightest coloration budget; voicing does the most compensating work |
 
 Unlike the binaural engine's three profiles (which vary *room coloration*
 on a fixed geometry), these five profiles vary *speaker geometry* — the
@@ -67,12 +66,12 @@ render_binaural(bed, profile="flat")            [reuse — see spatial_audio_eng
 ear_L, ear_R
   │
   ▼
+profile voicing chain (bass/presence shelf → M/S widen)      [§6, reuses binaural's voicing chain unchanged]
+  │
+  ▼
 2x2 crosstalk-cancellation FIR matrix            [§4]
   speaker_L = conv(ear_L, H_LL) + conv(ear_R, H_LR)
   speaker_R = conv(ear_L, H_RL) + conv(ear_R, H_RR)
-  │
-  ▼
-profile voicing chain (bass/presence shelf → M/S widen)      [§5, reuses binaural's voicing chain unchanged]
   │
   ▼
 delivery: BS.1770 loudness correction (small, bed-preserving — see §7) → soft-limit (safety net, last) → 2ch WAV
@@ -105,13 +104,20 @@ a documented simplification — see §8). Symmetric profiles set
 off-center driver-seat position genuinely has four independent
 speaker-to-ear paths, not a mirror pair.
 
-| Profile | Left speaker azimuth | Right speaker azimuth |
-|---|---|---|
-| `stereo` | +30° | −30° |
-| `smart_speaker` | +12° | −12° |
-| `car` | +22° | −42° |
-| `laptop` | +14° | −14° |
-| `phone` | +6° | −6° |
+| Profile | Left speaker azimuth | Right speaker azimuth | `gamma_db` | `xtc_lo_hz` | `xtc_hi_hz` |
+|---|---|---|---|---|---|
+| `stereo` | +30° | −30° | 7.0 | 150 | 6000 |
+| `smart_speaker` | +12° | −12° | 4.0 | 180 | 6000 |
+| `car` | +22° | −42° | 6.0 | 150 | 6000 |
+| `laptop` | +14° | −14° | 5.0 | 180 | 6000 |
+| `phone` | +6° | −6° | 3.0 | 200 | 6000 |
+
+`gamma_db` is the profile's spectral-coloration budget (§4.2); `xtc_lo_hz` /
+`xtc_hi_hz` bound the band over which cancellation is applied at all (§4.3).
+Narrower spans get tighter budgets and a higher low corner — their `C` is
+ill-conditioned over a wider low-frequency range, so spending more there
+would buy coloration rather than depth. All three are bake-time only: the
+web preview never sees them, only the resulting WAV (§7).
 
 Source of truth: `packages/core/src/crosstalk/profiles.py::XTC_PARAMS` (`XtcParams`
 dataclass) and `packages/core/src/crosstalk/geometry.py::speaker_azimuths_rad`.
@@ -124,7 +130,8 @@ dataclass) and `packages/core/src/crosstalk/geometry.py::speaker_azimuths_rad`.
 
 The acoustic path from each speaker to each ear is synthesized with the
 **same parametric spherical-head HRTF model** the binaural engine's decode
-filters use — Woodworth ITD + frequency-dependent head-shadow ILD lowpass —
+filters use — Woodworth ITD + frequency-dependent head-shadow ILD (a lowpass
+plus a `SHADOW_SHELF_HZ = 700 Hz` high shelf) —
 now promoted to a shared module, `packages/core/src/binaural/head_model.py::synth_hrir`,
 imported by both `scripts/build_binaural_filters.py` and
 `scripts/build_crosstalk_filters.py` so the two spatial-audio targets never
@@ -137,6 +144,12 @@ C_LR, C_RR = synth_hrir(θ_R, 0, sr, n_taps)   # right speaker: (left ear=contra
 ```
 
 giving the 2x2 (ear × speaker) impulse-response matrix `C`.
+
+The shelf matters more here than it does for headphone rendering. A head only
+shadows wavelengths shorter than itself, so a real interaural level difference
+collapses below a few hundred Hz; a frequency-flat ILD would make `C` look far
+better conditioned at low frequency than it physically is, and the filters
+inverted from it would be designed for a listener who does not exist.
 
 ### 4.2 Regularized inverse
 
@@ -152,33 +165,74 @@ regularization** bounds this:
 H(f) = C(f)^H · (C(f)·C(f)^H + β(f)·I)^-1
 ```
 
-`β(f)` is a smooth, profile-specific curve (`beta_mid` in the well-behaved
-mid-band, raised at low frequency via `low_boost_hz`/`low_boost_factor` and
-above the head-shadow onset via `high_boost_hz`/`high_boost_factor` — see
-`packages/core/src/crosstalk/profiles.py::XtcParams`). Raising `β` trades cancellation
-depth for flatness; the profile's speaker span sets how much depth is
-achievable before that tradeoff bites (§1's per-profile summary). This
-curve is this engine's own heuristic, tuned to keep ipsilateral (same-ear)
-response within a few dB of flat while suppressing contralateral leakage —
-it is not a reproduction of the BACCH filter's own (unpublished in detail)
-regularization scheme; see §8 for the honest provenance note on this point.
+`β(f)` is **not** a fixed floor. A constant `β` is provably suboptimal —
+it is optimal only at a handful of discrete frequencies, and elsewhere it
+either overspends (needless loss of cancellation) or underspends (audible
+coloration peaks); it also splits the coloration peaks into doublets and
+turns the perfect filter's bass boost into a bass roll-off. Instead each bin
+gets **the least regularization that holds the coloration envelope under the
+profile's budget**, following Choueiri's frequency-dependent prescription:
+
+```
+γ = 10^(gamma_db/20)                      # coloration ceiling at the speakers
+for each singular value s of C(f):
+    β must satisfy   s / (s² + β)  ≤  γ   # that axis's gain through H
+β(f) = max(0, max_s( s/γ − s² ))
+```
+
+Both singular values must clear the ceiling, not only the smaller one — at a
+deep null both are small and capping one axis alone lets the other breach the
+budget. Where the geometry is well-conditioned enough that no cap is needed,
+`β = 0` and the bin gets exact, uncolored cancellation. So `gamma_db` is a
+single perceptual knob per profile (§3's table) replacing a hand-tuned curve:
+it *is* the maximum spectral coloration, in dB, that the speaker feeds are
+allowed to carry.
+
+### 4.3 Band limiting
+
+Outside an active band the matrix blends to identity, `H = w·H + (1−w)·I`
+with `w` a raised-cosine ramp (one octave up from `xtc_lo_hz`, and down over
+`[xtc_hi_hz, 1.5·xtc_hi_hz]`):
+
+- **Below `xtc_lo_hz`** there are no usable localization cues to protect and
+  inversion is hopeless for any real span — the band is passed through.
+- **Above `xtc_hi_hz`** (6 kHz) the head already separates the ears; forcing
+  cancellation there buys nothing perceptually and shrinks the sweet spot,
+  since the cancellation wavelength is only centimeters.
+
+The blend is applied **before** the bulk delay, so both branches carry the
+same delay and the crossover cannot comb.
+
+### 4.4 Windowing
 
 `H(f)` is IFFT'd with a bulk delay (to keep the generally non-causal inverse
-inside a causal, finite window) and windowed to the profile's tap count,
-giving the four time-domain FIRs `H_LL, H_LR, H_RL, H_RR`.
+inside a causal, finite window), windowed to the profile's tap count centered
+on that delay (`taps//2` of room on each side, since the anti-causal part of
+a regularized inverse is substantial), and edge-tapered — giving the four
+time-domain FIRs `H_LL, H_LR, H_RL, H_RR`.
 
-### 4.3 Objective correctness check
+### 4.5 Objective correctness check
 
-Because this is a from-scratch regularization design (not a reproduction of
-a validated published filter), no crosstalk-cancellation change ships
-without confirming, per profile, both halves of the tradeoff on the
-synthesized `C`/`H` pair: contralateral leakage energy is reduced relative
-to no cancellation at all (300 Hz–6 kHz band), and ipsilateral level stays
-within a bounded coloration window. See
-`packages/core/tests/test_crosstalk.py::test_xtc_reduces_contralateral_leakage_within_coloration_bound`
-— the same "no separation-quality change ships without a report" discipline
-`docs/evaluation_harness.md` establishes for the separation engine, applied
-here to crosstalk cancellation.
+Because the filters are inverted from a synthetic head rather than a measured
+one, no crosstalk-cancellation change ships without confirming, per profile,
+all of the following on the synthesized `C`/`H` pair — the same "no
+separation-quality change ships without a report" discipline
+`docs/evaluation_harness.md` establishes for the separation engine
+(`packages/core/tests/test_crosstalk.py`):
+
+| Check | Test |
+|---|---|
+| Contralateral leakage falls vs. no cancellation, 300 Hz–6 kHz, with ipsilateral level inside a bounded coloration window | `test_xtc_reduces_contralateral_leakage_within_coloration_bound` |
+| Both halves of that tradeoff also hold *per sub-band* (300 Hz–1 k, 1–3 k, 3–6 k), so a good total can't hide a dead or colored octave | `test_xtc_per_band_depth_and_coloration` |
+| Filters still work on a head they were not designed for (±10 % head radius) — catches a design that scores well only by overfitting the model head | `test_xtc_survives_head_size_mismatch` |
+| The §4.3 crossover passes low frequencies flat and adds no comb notch | `test_xtc_passes_low_frequencies_without_a_crossover_notch` |
+
+Measured depth on the design head (300 Hz–6 kHz leakage suppression, with
+ipsilateral coloration ≤ 0.9 dB in every profile): `stereo` 26.6 dB, `car`
+23.8 dB, `laptop` 18.5 dB, `smart_speaker` 17.0 dB, `phone` 15.5 dB. Under a
+±10 % head-radius mismatch these fall to 7–14 dB, which is the honest
+real-world expectation — a fixed-geometry XTC filter cannot hold its design
+depth on an arbitrary listener.
 
 Build script: `scripts/build_crosstalk_filters.py` (dev-only, not imported
 by production code).
@@ -204,8 +258,9 @@ multichannel WAV decode cap (8 channels), so no multi-file split is needed.
 | `laptop` | `laptop_xtc` |
 | `phone` | `phone_xtc` |
 
-Sample rate is the filter's native rate (48 kHz); both engines resample the
-taps to the session's sample rate if it differs (`resample_poly`). Core
+Each filter is 1024 taps. Sample rate is the filter's native rate (48 kHz);
+both engines resample the taps to the session's sample rate if it differs
+(`resample_poly`). Core
 loader: `packages/core/src/crosstalk/filters.py::load_xtc_filter_set`. The web preview
 fetches the same file from `apps/web/public/xtc/` (copied byte-for-byte by
 `scripts/build_crosstalk_filters.py`).
@@ -214,12 +269,17 @@ fetches the same file from `apps/web/public/xtc/` (copied byte-for-byte by
 
 ## 6. Per-profile voicing chain
 
-Applied **after** the XTC matrix, using the exact same voicing primitives
+Applied to the ear signals **before** the XTC matrix, using the exact same voicing primitives
 and Web Audio topology as the binaural engine
 (`packages/core/src/binaural/voicing.py::apply_voicing`,
 `packages/core/src/binaural/profiles.py::VoicingParams` — see
 `spatial_audio_engine.md` §5 for the parameter definitions and DSP topology,
 not repeated here).
+
+Order matters: voicing shapes the ear signals the canceller is then asked to
+deliver. Run afterwards, the M/S widen would re-introduce crosstalk the matrix
+had just removed — harmless for the symmetric profiles, whose `C` commutes
+with an M/S matrix, but not for `car`, whose asymmetric geometry does not.
 
 | Parameter | Stereo | Smart speaker | Car | Laptop | Phone |
 |---|---|---|---|---|---|
@@ -279,18 +339,26 @@ mirrors the binaural delivery stage exactly — see `spatial_audio_engine.md`
 `BINAURAL_LOUDNESS_MAX_GAIN_DB`.
 
 **What this engine does not model**, stated plainly rather than left
-implicit: elevation is fixed at 0 (real speakers are assumed ear-level;
-tilt/height is not corrected for); there is no head-tracking, so the XTC
-sweet spot is a single fixed listening position per profile (a real
-listener's head movement narrows or breaks cancellation, most severely
-above ~8 kHz where the cancellation wavelength is only centimeters — a
-known, physical limit of XTC in general, not specific to this
-implementation); and the regularization curve (§4.2) is this engine's own
-heuristic tuned against the objective check in §4.3, not a validated
-perceptual measurement or a reproduction of any commercial system's
-(e.g. BACCH's) specific, unpublished design. Swapping in a measured
-HRTF/BRIR dataset or a different regularization scheme later only requires
-regenerating the same file layout (§5) — no engine code changes.
+implicit:
+
+- **The listener's actual head.** `C` comes from a parametric spherical-head
+  model (§4.1), not a measured HRTF, so the design depth in §4.5 is an upper
+  bound no real listener reaches; the ±10 % head-radius figures there are the
+  honest expectation. Pinnae, torso, and cabinet/room response are absent.
+- **Elevation**, fixed at 0 — real speakers are assumed ear-level, and tilt
+  or height is not corrected for.
+- **Head movement.** There is no head-tracking, so the sweet spot is a single
+  fixed listening position per profile. Movement narrows or breaks
+  cancellation, worst at high frequency where the cancellation wavelength is
+  centimeters — a physical limit of two-speaker XTC in general, and part of
+  why §4.3 stops forcing cancellation above 6 kHz rather than chasing depth
+  the listener cannot hold still enough to receive.
+- **Perceptual validation.** The per-profile `gamma_db` budgets are engineering
+  judgment checked against the objective harness in §4.5, not listening-test
+  results.
+
+Swapping in a measured HRTF/BRIR dataset later only requires regenerating the
+same file layout (§5) — no engine code changes.
 
 ---
 
@@ -302,13 +370,18 @@ regenerating the same file layout (§5) — no engine code changes.
   simplification for symmetric listener/speaker geometry, and the
   ipsilateral/contralateral transfer-function formulation this engine's §4
   follows in spirit.
-- Choueiri, E. — Princeton 3D3A Lab, BACCH filters: optimized crosstalk
-  cancellation with minimized spectral coloration via frequency-dependent
-  regularization. General principle (regularize more where naive inversion
-  colors the sound) informs this engine's §4.2; the specific published
-  BACCH regularization formula is not reproduced here (not available in a
-  form this project could parse/verify) — see §8's provenance note.
+- Choueiri, E. (Princeton 3D3A Lab) — *Optimal Crosstalk Cancellation for
+  Binaural Audio with Two Loudspeakers*. The source for §4.2: constant-β
+  regularization is optimal only at discrete frequencies and produces doublet
+  coloration peaks plus a bass roll-off, while capping the coloration envelope
+  per frequency band yields maximum cancellation for a chosen coloration
+  budget Γ. §4.2 implements that criterion directly, generalized to an
+  arbitrary (including asymmetric) `C` via its singular values rather than the
+  paper's closed-form free-field two-point-source solution. §4.3's 6 kHz upper
+  bound follows the same paper's §V.D.
+- Méaux, E. and Marchand, S. — *Synthetic Transaural Audio Rendering (STAR)*,
+  DAFx-19. Source of §4.3's low-frequency bypass: below ~150–200 Hz there is
+  nothing to spatialize and the system inversion is unstable, so the band is
+  passed through rather than cancelled.
 - General XTC literature on off-center-listener asymmetric 2x2 crosstalk
-  matrices (informing the `car` profile) and on the ~8 kHz head-shadow
-  limit for high-frequency XTC performance (informing this engine's choice
-  not to force cancellation depth above that band).
+  matrices, informing the `car` profile.

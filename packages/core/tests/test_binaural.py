@@ -6,6 +6,7 @@ import pytest
 from upmixer.binaural.ambisonics import N_ACN_CHANNELS, encode_gains
 from upmixer.binaural.decoder import decode_to_binaural, load_decode_filter_set
 from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION, SPEAKER_COORDINATES
+from upmixer.binaural.head_model import synth_hrir
 from upmixer.binaural.profiles import BINAURAL_PROFILES, VOICING_PARAMS, BinauralProfile, resolve_profile
 from upmixer.binaural.renderer import (
     BINAURAL_LOUDNESS_MAX_GAIN_DB,
@@ -47,6 +48,30 @@ def test_encode_gains_acn12_omits_n3d_sqrt7_factor():
     sin_d = math.sin(delta)
     expected = 0.5 * sin_d * (5.0 * sin_d**2 - 3.0)
     assert gains[12] == pytest.approx(expected)
+
+
+def _band_ild_db(azimuth_deg: float, sr: int, lo_hz: float, hi_hz: float) -> float:
+    left, right = synth_hrir(math.radians(azimuth_deg), 0.0, sr, 256)
+    n_fft = 4096
+    mag_l = np.abs(np.fft.rfft(left, n_fft))
+    mag_r = np.abs(np.fft.rfft(right, n_fft))
+    freqs = np.fft.rfftfreq(n_fft, 1.0 / sr)
+    band = (freqs >= lo_hz) & (freqs < hi_hz)
+    return float(20.0 * np.log10(np.mean(mag_l[band]) / np.mean(mag_r[band])))
+
+
+def test_head_shadow_ild_is_frequency_dependent():
+    # A head cannot shadow wavelengths longer than itself, so the interaural
+    # level difference must collapse at low frequency.
+    assert abs(_band_ild_db(30.0, 48000, 100.0, 300.0)) < 1.0
+    assert _band_ild_db(30.0, 48000, 2000.0, 6000.0) >= 4.0
+
+
+def test_synth_hrir_is_exactly_mirror_symmetric():
+    left_pos, right_pos = synth_hrir(math.radians(30.0), 0.0, 48000, 256)
+    left_neg, right_neg = synth_hrir(math.radians(-30.0), 0.0, 48000, 256)
+    assert np.array_equal(left_pos, right_neg)
+    assert np.array_equal(right_pos, left_neg)
 
 
 def test_listening_voicing_params_exact():

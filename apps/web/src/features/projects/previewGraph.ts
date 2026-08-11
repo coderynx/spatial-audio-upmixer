@@ -711,8 +711,8 @@ export function assignDecodeFilterBuffers(
 // ---- Crosstalk-cancellation (transaural) speaker rendering ----
 //
 // Mirrors upmixer/crosstalk/renderer.py::render_crosstalk exactly: reuse the
-// anechoic binaural ("flat") ear signals, apply a 2x2 crosstalk-cancellation
-// FIR matrix, then a profile voicing chain — see
+// anechoic binaural ("flat") ear signals, apply a profile voicing chain, then
+// a 2x2 crosstalk-cancellation FIR matrix — see
 // docs/standards/transaural_speakers.md §1.
 
 export type XtcConvolvers = {
@@ -732,12 +732,12 @@ export type CrosstalkGraphHandle = {
   hoaBus: GainNode;
   /** Pre-voicing insertion point for LFE — same contract as
    * `BinauralGraphHandle.preVoicing` (Ledger D11): LFE folds into the
-   * anechoic ear signals *before* the XTC matrix and transaural voicing
-   * chain run, matching `render_binaural`'s own LFE-before-voicing order
-   * (the XTC/voicing stages downstream both then see the LFE-inclusive
-   * signal, same as the backend). */
+   * anechoic ear signals *before* the transaural voicing chain and the XTC
+   * matrix run, matching `render_binaural`'s own LFE-before-voicing order
+   * (both downstream stages then see the LFE-inclusive signal, same as the
+   * backend). */
   preVoicing: AudioNode;
-  /** Post-voicing stereo output (2 discrete channels via a ChannelMerger). */
+  /** Speaker-feed stereo output (2 discrete channels via a ChannelMerger). */
   output: AudioNode;
   /** The internal anechoic binaural sub-graph — exposed so its convolvers
    * can be filled by `loadDecodeFilterSet("flat")`, same as the primary
@@ -764,6 +764,12 @@ export function buildCrosstalkGraph(ctx: BaseAudioContext, profile: TransauralPr
   earSplitter.connect(earR, 1);
   nodes.push(earSplitter, earL, earR);
 
+  // Voicing runs on the ear signals, ahead of the matrix: applied afterwards,
+  // its M/S widening would re-introduce crosstalk the matrix had just removed
+  // (asymmetric geometry only).
+  const voicing = buildVoicingChain(ctx, earL, earR);
+  applyVoicingParams(voicing, constants.transauralVoicingParams[profile]);
+
   // 2x2 crosstalk-cancellation matrix: speaker = H @ ear (four convolvers,
   // one per H_xy tap — see docs/standards/transaural_speakers.md §4).
   const ll = ctx.createConvolver();
@@ -771,10 +777,10 @@ export function buildCrosstalkGraph(ctx: BaseAudioContext, profile: TransauralPr
   const rl = ctx.createConvolver();
   const rr = ctx.createConvolver();
   for (const conv of [ll, lr, rl, rr]) conv.normalize = false;
-  earL.connect(ll);
-  earR.connect(lr);
-  earL.connect(rl);
-  earR.connect(rr);
+  voicing.left.connect(ll);
+  voicing.right.connect(lr);
+  voicing.left.connect(rl);
+  voicing.right.connect(rr);
   nodes.push(ll, lr, rl, rr);
 
   const speakerSumL = ctx.createGain();
@@ -790,25 +796,10 @@ export function buildCrosstalkGraph(ctx: BaseAudioContext, profile: TransauralPr
   speakerSumR.connect(xtcMerger, 0, 1);
   nodes.push(xtcMerger);
 
-  const voicingSplitter = ctx.createChannelSplitter(2);
-  xtcMerger.connect(voicingSplitter);
-  const voicingLeftTap = ctx.createGain();
-  const voicingRightTap = ctx.createGain();
-  voicingSplitter.connect(voicingLeftTap, 0);
-  voicingSplitter.connect(voicingRightTap, 1);
-  nodes.push(voicingSplitter, voicingLeftTap, voicingRightTap);
-
-  const voicing = buildVoicingChain(ctx, voicingLeftTap, voicingRightTap);
-  applyVoicingParams(voicing, constants.transauralVoicingParams[profile]);
-  const voicingMerger = ctx.createChannelMerger(2);
-  voicing.left.connect(voicingMerger, 0, 0);
-  voicing.right.connect(voicingMerger, 0, 1);
-  nodes.push(voicingMerger);
-
   return {
     hoaBus: binaural.hoaBus,
     preVoicing: binaural.preVoicing,
-    output: voicingMerger,
+    output: xtcMerger,
     binaural,
     xtcConvolvers: { ll, lr, rl, rr },
     voicing,

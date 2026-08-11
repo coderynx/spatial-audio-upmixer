@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Generates the 2x2 crosstalk-cancellation (XTC) FIR filter sets.
 
-Dev-only tool — not imported by production code. For each transaural
-profile (stereo / smart_speaker / car), synthesizes the speaker-to-ear
-acoustic transfer matrix C from the same parametric spherical-head model the
-binaural HRIR decode uses (``upmixer.binaural.head_model.synth_hrir``), then
-computes a frequency-dependent Tikhonov-regularized inverse H = C^H (C C^H +
-beta(f) I)^-1 — the standard crosstalk-canceller design (Atal-Schroeder /
-Cooper-Bauck shuffler lineage; BACCH-style frequency-dependent regularization
-trades cancellation depth for bounded spectral coloration, see
-``docs/standards/transaural_speakers.md`` §4). Writes each profile's 4 FIR
+Dev-only tool — not imported by production code. For each transaural profile,
+synthesizes the speaker-to-ear acoustic transfer matrix C from the same
+parametric spherical-head model the binaural HRIR decode uses
+(``upmixer.binaural.head_model.synth_hrir``), then computes a
+frequency-dependent Tikhonov-regularized inverse H = C^H (C C^H + beta(f)
+I)^-1 — the standard crosstalk-canceller design (Atal-Schroeder /
+Cooper-Bauck shuffler lineage), with beta(f) set per bin to Choueiri's
+optimal frequency-dependent prescription: the least regularization that holds
+spectral coloration at the speakers under the profile's budget. Cancellation
+blends to identity outside the profile's active band. See
+``docs/standards/transaural_speakers.md`` §4. Writes each profile's 4 FIR
 filters (H_LL, H_LR, H_RL, H_RR) as one 4-channel WAV file and copies the
 result into ``apps/web/public/xtc/`` so the browser preview uses
 byte-identical filters.
@@ -54,26 +56,43 @@ def _speaker_to_ear_matrix(params: XtcParams) -> np.ndarray:
     return c
 
 
-def _beta_curve(freqs_hz: np.ndarray, params: XtcParams) -> np.ndarray:
-    """Frequency-dependent regularization floor.
+def _gamma_capped_beta(c: np.ndarray, gamma_db: float) -> np.ndarray:
+    """Smallest per-bin regularization holding ``||H(f)|| <= 10^(gamma_db/20)``.
 
-    Raised at low frequency (narrow-span C is near-singular there — tiny
-    interaural phase difference for a small head at long wavelengths) and
-    above the head-shadow onset (~8 kHz, where the head already separates
-    the ears and forcing more cancellation only adds coloration for no
-    perceptual gain). Flat at ``beta_mid`` in between. A documented
-    heuristic curve, not a reproduction of any specific published
-    regularization formula — see ``docs/standards/transaural_speakers.md``
-    §4 for the honest provenance note.
+    Choueiri's frequency-dependent prescription: rather than a fixed
+    regularization floor, spend exactly enough per bin to cap the coloration
+    envelope at the desired level and leave the rest of the spectrum
+    unregularized (the "perfect filter" branch). For a singular value ``s`` of
+    ``C``, the regularized filter's gain along that axis is ``s / (s^2 +
+    beta)``, so capping it at ``gamma`` needs ``beta >= s/gamma - s^2``. Both
+    singular values must clear the cap, not just the smaller one.
     """
-    beta = np.full_like(freqs_hz, params.beta_mid)
-    low = freqs_hz < params.low_boost_hz
-    beta[low] *= 1.0 + (params.low_boost_factor - 1.0) * (1.0 - freqs_hz[low] / params.low_boost_hz)
-    high = freqs_hz > params.high_boost_hz
-    span = max(float(freqs_hz[-1]) - params.high_boost_hz, 1.0)
-    ramp = np.clip((freqs_hz[high] - params.high_boost_hz) / span, 0.0, 1.0)
-    beta[high] *= 1.0 + (params.high_boost_factor - 1.0) * ramp
-    return beta
+    gamma = 10.0 ** (gamma_db / 20.0)
+    sv = np.linalg.svd(c, compute_uv=False)
+    return np.max(np.maximum(sv / gamma - sv**2, 0.0), axis=-1)
+
+
+def _xtc_band_weight(freqs_hz: np.ndarray, params: XtcParams) -> np.ndarray:
+    """Raised-cosine weight fading cancellation in over the active band.
+
+    Outside the band the filter blends to identity: below ``xtc_lo_hz`` there
+    are no usable localization cues to protect, above ``xtc_hi_hz`` the head
+    already separates the ears and cancellation only shrinks the sweet spot
+    (docs/standards/transaural_speakers.md §4.3).
+    """
+    weight = np.ones_like(freqs_hz)
+    lo_ramp = (freqs_hz >= params.xtc_lo_hz) & (freqs_hz < 2.0 * params.xtc_lo_hz)
+    weight[freqs_hz < params.xtc_lo_hz] = 0.0
+    weight[lo_ramp] = 0.5 * (
+        1.0 - np.cos(np.pi * (freqs_hz[lo_ramp] - params.xtc_lo_hz) / params.xtc_lo_hz)
+    )
+    hi_stop = 1.5 * params.xtc_hi_hz
+    hi_ramp = (freqs_hz > params.xtc_hi_hz) & (freqs_hz <= hi_stop)
+    weight[freqs_hz > hi_stop] = 0.0
+    weight[hi_ramp] = 0.5 * (
+        1.0 + np.cos(np.pi * (freqs_hz[hi_ramp] - params.xtc_hi_hz) / (hi_stop - params.xtc_hi_hz))
+    )
+    return weight
 
 
 def build_filter_set(params: XtcParams) -> np.ndarray:
@@ -85,21 +104,24 @@ def build_filter_set(params: XtcParams) -> np.ndarray:
 
     c = np.moveaxis(c_freq, -1, 0)  # (n_bins, 2, 2), row=ear, col=speaker
     c_h = np.conjugate(np.transpose(c, (0, 2, 1)))  # (n_bins, 2, 2), row=speaker, col=ear
-    beta = _beta_curve(freqs_hz, params)
+    beta = _gamma_capped_beta(c, params.gamma_db)
     regularized = c @ c_h + beta[:, None, None] * np.eye(2)[None, :, :]
     # H = C^H (C C^H + beta I)^-1 — regularized inverse, row=speaker, col=ear.
     h = c_h @ np.linalg.inv(regularized)
 
+    weight = _xtc_band_weight(freqs_hz, params)[:, None, None]
+    h = weight * h + (1.0 - weight) * np.eye(2)[None, :, :]
+
     # Bulk delay so the (generally non-causal) inverse filter's main energy
-    # lands inside a causal, finite window rather than wrapping at n=0.
+    # lands inside a causal, finite window rather than wrapping at n=0. Both
+    # blend branches share this one delay, so the crossover cannot comb.
     delay_samples = N_FFT // 2
     phase = np.exp(-2j * np.pi * np.arange(n_bins) * delay_samples / N_FFT)
     h_delayed = h * phase[:, None, None]
 
     h_time = np.fft.irfft(np.moveaxis(h_delayed, 0, -1), n=N_FFT, axis=-1)  # (2, 2, N_FFT)
 
-    pre_taps = params.taps // 8
-    start = delay_samples - pre_taps
+    start = delay_samples - params.taps // 2
     window = _edge_taper(params.taps)
     windowed = h_time[:, :, start:start + params.taps] * window
 
@@ -134,7 +156,7 @@ def write_filter_set(name: str, matrix: np.ndarray, out_dir: Path) -> None:
 def main() -> None:
     for profile, params in XTC_PARAMS.items():
         name = XTC_FILTER_SET[profile]
-        print(f"Building {name} (span={params.azimuth_left_deg - params.azimuth_right_deg:.0f}deg, beta_mid={params.beta_mid})...")
+        print(f"Building {name} (span={params.azimuth_left_deg - params.azimuth_right_deg:.0f}deg, gamma={params.gamma_db}dB)...")
         matrix = build_filter_set(params)
         write_filter_set(name, matrix, CORE_OUT_DIR)
 

@@ -4,7 +4,7 @@ Signal graph (matches the web preview 1:1 — see
 ``docs/standards/transaural_speakers.md`` §1):
 
     bed channels -> render_binaural(profile="flat") -> anechoic ear signals
-    -> 2x2 crosstalk-cancellation FIR matrix -> profile voicing chain
+    -> profile voicing chain -> 2x2 crosstalk-cancellation FIR matrix
 """
 from __future__ import annotations
 
@@ -48,12 +48,13 @@ def render_crosstalk(
     resolved = resolve_profile(profile)
     ear_left, ear_right = render_binaural(channels, bed_fmt, sample_rate, "flat", lfe_gain=lfe_gain)
 
-    filter_set = load_xtc_filter_set(XTC_FILTER_SET[resolved], sample_rate)
-    speaker_left, speaker_right = apply_xtc(ear_left, ear_right, filter_set)
+    # Voicing shapes the ear signals the canceller is asked to deliver, so it
+    # runs first: applied afterwards, its M/S widening would re-introduce
+    # crosstalk the matrix had just removed (asymmetric geometry only).
+    ear_left, ear_right = apply_voicing(ear_left, ear_right, sample_rate, VOICING_PARAMS[resolved])
 
-    voicing = VOICING_PARAMS[resolved]
-    speaker_left, speaker_right = apply_voicing(speaker_left, speaker_right, sample_rate, voicing)
-    return speaker_left, speaker_right
+    filter_set = load_xtc_filter_set(XTC_FILTER_SET[resolved], sample_rate)
+    return apply_xtc(ear_left, ear_right, filter_set)
 
 
 CROSSTALK_LOUDNESS_MAX_GAIN_DB: float = 6.0

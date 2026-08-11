@@ -15,12 +15,27 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from scipy.signal import butter, sosfilt
+from scipy.signal import bilinear, butter, lfilter, sosfilt
 
 from upmixer.utils import elevation_eq
 
 HEAD_RADIUS_M = 0.0875
 SPEED_OF_SOUND = 343.0
+SHADOW_SHELF_HZ = 700.0
+
+
+def _shadow_shelf(signal: np.ndarray, sr: int, atten_db: float) -> np.ndarray:
+    """First-order high shelf: unity below SHADOW_SHELF_HZ, *atten_db* above.
+
+    A head only shadows wavelengths shorter than itself, so contralateral
+    attenuation must vanish at low frequency — a frequency-flat ILD makes the
+    speaker-to-ear matrix look far better conditioned at low frequency than it
+    physically is (see docs/standards/transaural_speakers.md §4.1).
+    """
+    gain = 10.0 ** (atten_db / 20.0)
+    w0 = 2.0 * math.pi * SHADOW_SHELF_HZ
+    b, a = bilinear([gain, w0], [1.0, w0], fs=sr)
+    return lfilter(b, a, signal)
 
 
 def fractional_impulse(delay_samples: float, n_taps: int) -> np.ndarray:
@@ -36,6 +51,10 @@ def fractional_impulse(delay_samples: float, n_taps: int) -> np.ndarray:
 
 def synth_hrir(azimuth: float, elevation: float, sr: int, n_taps: int) -> tuple[np.ndarray, np.ndarray]:
     """Parametric spherical-head-model HRIR: Woodworth ITD + head-shadow ILD.
+
+    The contralateral path is lowpassed and high-shelved, so the interaural
+    level difference falls to zero below :data:`SHADOW_SHELF_HZ` as it does
+    for a real head.
 
     Not a measured HRTF — a documented approximation (see the contract docs
     referenced above) used because no measured dataset ships with this
@@ -60,7 +79,7 @@ def synth_hrir(azimuth: float, elevation: float, sr: int, n_taps: int) -> tuple[
         far = near
     else:
         far = fractional_impulse(abs(itd_samples), n_taps)
-        far = sosfilt(sos_shadow, far) * (10.0 ** (shadow_atten_db / 20.0))
+        far = _shadow_shelf(sosfilt(sos_shadow, far), sr, shadow_atten_db)
     left, right = (near, far) if azimuth >= 0 else (far, near)
 
     elevation_gain = max(0.0, math.sin(elevation))
