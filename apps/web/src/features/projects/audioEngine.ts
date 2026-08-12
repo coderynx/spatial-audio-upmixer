@@ -91,6 +91,13 @@ function level(rms: number, peak: number): MeterLevel {
   return { rms, peak, clipped: peak > CLIP_TOLERANCE };
 }
 
+/** Appends the live `strength`/`max_db` knobs to a reference-match `fir_url`
+ * base, so the FIR endpoint designs the filter for exactly this config. */
+export function withReferenceMatchParams(firUrl: string, strength: number, maxDb: number): string {
+  const separator = firUrl.includes("?") ? "&" : "?";
+  return `${firUrl}${separator}strength=${strength}&max_db=${maxDb}`;
+}
+
 export class PreviewAudioEngine {
   readonly supported = Boolean(
     window.AudioContext ||
@@ -132,6 +139,7 @@ export class PreviewAudioEngine {
   private stemEqTaps: Map<string, Float64Array> = new Map();
   private masterEqAsset: string | null = null;
   private masterEqTaps: Float64Array | null = null;
+  private referenceFirUrl: string | null = null;
   private referenceTaps: Float64Array | null = null;
   private measuredLkfs = -70;
   private measuredTpDbtp = -70;
@@ -256,7 +264,7 @@ export class PreviewAudioEngine {
   // per-control rewiring left to do.
 
   buildMasteringTopology() {
-    void this.loadMasteringFirs().then(() => this.apply());
+    void Promise.all([this.loadMasteringFirs(), this.loadReferenceMatchFir()]).then(() => this.apply());
   }
 
   buildStemEqChains() {
@@ -327,6 +335,25 @@ export class PreviewAudioEngine {
     this.masterEqTaps = asset
       ? await loadFirTaps(`/eq_fir/${asset}.wav`, this.context).catch(() => null)
       : null;
+  }
+
+  /**
+   * The server serves one correction curve per project as a base `fir_url`
+   * and designs the actual filter on demand from the live `strength`/
+   * `max_db` query params (see `MasterPreview.match_reference`'s doc
+   * comment) — so unlike `loadMasteringFirs`'s fixed asset names, the URL
+   * itself changes with the sliders and is the cache key.
+   */
+  private async loadReferenceMatchFir() {
+    if (!this.context) return;
+    const refCfg = this.mastering?.match_reference;
+    const strength = refCfg?.strength ?? 1;
+    const maxDb = refCfg?.max_db ?? 6;
+    const active = Boolean(refCfg?.spectrum && refCfg.fir_url && strength > 0);
+    const url = active ? withReferenceMatchParams(refCfg!.fir_url as string, strength, maxDb) : null;
+    if (url === this.referenceFirUrl && (url === null || this.referenceTaps)) return;
+    this.referenceFirUrl = url;
+    this.referenceTaps = url ? await loadFirTaps(url, this.context).catch(() => null) : null;
   }
 
   private async loadStemEqFirs() {
@@ -439,7 +466,9 @@ export class PreviewAudioEngine {
         eqFir: this.masterEqTaps ?? undefined,
         eqStrength: this.mastering?.eq?.strength ?? 1,
         referenceFir: this.referenceTaps ?? undefined,
-        referenceGain: 10 ** ((this.mastering?.match_reference?.rms_gain_db ?? 0) / 20),
+        referenceGain: this.mastering?.match_reference?.rms
+          ? 10 ** ((this.mastering.match_reference.rms_gain_db ?? 0) / 20)
+          : 1,
         outputGain,
         limiterCeilingDbtp: this.mastering?.loudness?.max_tp ?? -1,
       },
@@ -555,7 +584,7 @@ export class PreviewAudioEngine {
       await Promise.all([
         this.loadDecodeFilterSet(this.spatialProfile),
         this.loadXtcFilterSet(this.transauralProfile),
-        this.loadMasteringFirs().then(() => this.apply()),
+        Promise.all([this.loadMasteringFirs(), this.loadReferenceMatchFir()]).then(() => this.apply()),
         this.loadStemEqFirs().then(() => this.apply()),
         this.loadStems(token, context, client),
       ]);
@@ -691,6 +720,8 @@ export class PreviewAudioEngine {
     this.measureToken += 1;
     this.measuringRaw = false;
     this.stemEqTaps = new Map();
+    this.referenceFirUrl = null;
+    this.referenceTaps = null;
     this.client?.dispose();
     this.client = null;
     this.monitorGain?.disconnect();
