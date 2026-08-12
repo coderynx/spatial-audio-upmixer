@@ -73,8 +73,8 @@ class FakeAudioContext {
 }
 
 const STEMS: ProjectStem[] = [
-  { id: "a", stem_key: "Vocals", preview_url: "/stems/a.wav" } as ProjectStem,
-  { id: "b", stem_key: "Bass", preview_url: "/stems/b.wav" } as ProjectStem,
+  { id: "a", stem_key: "Vocals", preview_url: "/stems/a.wav", channels: 2 } as ProjectStem,
+  { id: "b", stem_key: "Bass", preview_url: "/stems/b.wav", channels: 1 } as ProjectStem,
 ];
 
 function Harness(props: Record<string, unknown>) {
@@ -215,24 +215,70 @@ describe("useStemPreview metering", () => {
       stemLevels: { current: Map<string, { rms: number }[]> };
       channelLevels: { current: Map<string, { rms: number }> };
       headphoneLevels: { current: { left: { rms: number }; right: { rms: number } } };
+      stemSpectrum: { current: Map<string, { level: number; centroid: number }> };
     };
 
-    // Two stems, six channels, one output pair — two floats each.
+    // Two stems (each a left/right pair), six channels, one output pair —
+    // two floats each.
     const meters = [
-      0.1, 0.2, 0.3, 0.4,
+      0.1, 0.2, 0.15, 0.25,
+      0.3, 0.4, 0.35, 0.45,
       1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
       0.7, 0.8, 0.9, 1.0,
     ];
+    // One [level, centroid] pair per stem.
+    const spectrum = [0.5, 0.6, 0.2, 0.3];
     act(() => {
-      capturedCallbacks.onFrame?.({ position: 48000, meters } as never);
+      capturedCallbacks.onFrame?.({ position: 48000, meters, spectrum } as never);
     });
 
-    expect(preview.stemLevels.current.get("a")?.[0].rms).toBeCloseTo(0.1, 6);
-    expect(preview.stemLevels.current.get("b")?.[0].rms).toBeCloseTo(0.3, 6);
+    const vocals = preview.stemLevels.current.get("Vocals");
+    expect(vocals?.[0].rms).toBeCloseTo(0.1, 6);
+    expect(vocals?.[1].rms).toBeCloseTo(0.15, 6);
+
+    const bass = preview.stemLevels.current.get("Bass");
+    expect(bass?.[0].rms).toBeCloseTo(0.3, 6);
+    expect(bass).toHaveLength(1);
+
     expect(preview.channelLevels.current.get("FL")?.rms).toBe(1);
     expect(preview.channelLevels.current.get("SR")?.rms).toBe(6);
     expect(preview.headphoneLevels.current.left.rms).toBeCloseTo(0.7, 6);
     expect(preview.headphoneLevels.current.right.rms).toBeCloseTo(0.9, 6);
+
+    expect(preview.stemSpectrum.current.get("Vocals")).toEqual({ level: 0.5, centroid: 0.6 });
+    expect(preview.stemSpectrum.current.get("Bass")).toEqual({ level: 0.2, centroid: 0.3 });
+  });
+
+  it("zeroes every meter's target on pause, since the worklet stops reporting", async () => {
+    await renderPreview();
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      stemLevels: { current: Map<string, { rms: number }[]> };
+      channelLevels: { current: Map<string, { rms: number }> };
+      headphoneLevels: { current: { left: { rms: number }; right: { rms: number } } };
+      stemSpectrum: { current: Map<string, { level: number; centroid: number }> };
+      playPause: () => Promise<void>;
+    };
+
+    const meters = [
+      0.1, 0.2, 0.15, 0.25,
+      0.3, 0.4, 0.35, 0.45,
+      1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
+      0.7, 0.8, 0.9, 1.0,
+    ];
+    const spectrum = [0.5, 0.6, 0.2, 0.3];
+    act(() => {
+      capturedCallbacks.onFrame?.({ position: 48000, meters, spectrum } as never);
+    });
+    await act(async () => {
+      await preview.playPause();
+      await preview.playPause();
+    });
+
+    for (const level of preview.stemLevels.current.get("Vocals") ?? []) expect(level.rms).toBe(0);
+    expect(preview.channelLevels.current.get("FL")?.rms).toBe(0);
+    expect(preview.headphoneLevels.current.left.rms).toBe(0);
+    expect(preview.headphoneLevels.current.right.rms).toBe(0);
+    expect(preview.stemSpectrum.current.get("Vocals")?.level).toBe(0);
   });
 });
 

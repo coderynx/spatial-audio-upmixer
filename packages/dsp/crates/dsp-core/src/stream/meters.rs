@@ -43,7 +43,10 @@ impl Level {
 #[derive(Clone, Debug, Default)]
 pub struct Meters {
     /// Per stem, post-gain and pre-routing — what a mixer strip shows.
-    pub stems: Vec<Level>,
+    /// Left/right pair always: a mono source has identical channels (see
+    /// `StemSource`'s decode), so the host slices to one bar itself from the
+    /// project's own channel count rather than the core tracking mono/stereo.
+    pub stems: Vec<[Level; 2]>,
     /// Per speaker of the mastered bed.
     pub channels: Vec<Level>,
     /// The collapsed pair, or the first two bed channels for native output.
@@ -51,7 +54,8 @@ pub struct Meters {
 }
 
 impl Meters {
-    /// Flatten to `[rms, peak]` pairs: stems, then channels, then output.
+    /// Flatten to `[rms, peak]` pairs: stems (left, right), then channels,
+    /// then output.
     pub fn write(&self, out: &mut [f32]) -> usize {
         let mut i = 0;
         let push = |level: &Level, out: &mut [f32], i: &mut usize| {
@@ -61,8 +65,9 @@ impl Meters {
             }
             *i += 2;
         };
-        for level in &self.stems {
-            push(level, out, &mut i);
+        for pair in &self.stems {
+            push(&pair[0], out, &mut i);
+            push(&pair[1], out, &mut i);
         }
         for level in &self.channels {
             push(level, out, &mut i);
@@ -75,7 +80,7 @@ impl Meters {
 
     /// Number of floats [`write`] needs.
     pub fn len(&self) -> usize {
-        2 * (self.stems.len() + self.channels.len() + 2)
+        2 * (self.stems.len() * 2 + self.channels.len() + 2)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -112,12 +117,12 @@ mod tests {
     #[test]
     fn the_flat_block_is_stems_then_channels_then_output() {
         let meters = Meters {
-            stems: vec![Level { rms: 0.1, peak: 0.2 }],
+            stems: vec![[Level { rms: 0.1, peak: 0.2 }, Level { rms: 0.15, peak: 0.25 }]],
             channels: vec![Level { rms: 0.3, peak: 0.4 }],
             output: [Level { rms: 0.5, peak: 0.6 }, Level { rms: 0.7, peak: 0.8 }],
         };
         let mut out = vec![0.0_f32; meters.len()];
-        assert_eq!(meters.write(&mut out), 8);
-        assert_eq!(out, vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
+        assert_eq!(meters.write(&mut out), 10);
+        assert_eq!(out, vec![0.1, 0.2, 0.15, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
     }
 }

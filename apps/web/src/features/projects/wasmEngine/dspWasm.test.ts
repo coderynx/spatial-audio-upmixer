@@ -209,12 +209,33 @@ describe("shared DSP core (wasm)", () => {
 
     const meterPtr = wasm.dsp_alloc(256 * 4);
     const written = wasm.dsp_engine_meters(engine, meterPtr, 256);
-    // One stem, three bed channels, one output pair — two floats each.
-    expect(written).toBe(2 * (1 + CHANNELS + 2));
+    // One stem (left/right pair), three bed channels, one output pair — two
+    // floats each.
+    expect(written).toBe(2 * (2 + CHANNELS + 2));
 
     const meters = new Float32Array(wasm.memory.buffer, meterPtr, written);
     expect(meters[1]).toBeGreaterThan(0);
     expect(wasm.dsp_engine_position(engine)).toBe(512);
+  });
+
+  it("reports a [level, centroid] pair for the haze/elevation displays", () => {
+    const wasm = instantiate();
+    const engine = createEngine(wasm, PARAMS);
+    const left = writeStem(wasm, tone(FRAMES));
+    const right = writeStem(wasm, tone(FRAMES));
+    wasm.dsp_engine_add_stem(engine, left.ptr, right.ptr, FRAMES);
+
+    const outPtr = wasm.dsp_alloc(CHANNELS * 4096 * 4);
+    wasm.dsp_engine_render(engine, outPtr, CHANNELS, 4096);
+
+    const spectrumPtr = wasm.dsp_alloc(256 * 4);
+    const written = wasm.dsp_engine_stem_spectrum(engine, spectrumPtr, 256);
+    expect(written).toBe(2);
+
+    const spectrum = new Float32Array(wasm.memory.buffer, spectrumPtr, written);
+    expect(spectrum[0]).toBeGreaterThan(0);
+    expect(spectrum[1]).toBeGreaterThanOrEqual(0);
+    expect(spectrum[1]).toBeLessThanOrEqual(1);
   });
 
   it("swaps parameters in place without dropping the stems or playhead", () => {

@@ -478,8 +478,9 @@ pub unsafe extern "C" fn dsp_engine_output_channels(engine: *const PreviewEngine
     engine.as_ref().map(|e| e.output_channels()).unwrap_or(0)
 }
 
-/// Copy the latest levels into `out` as `[rms, peak]` pairs — stems, then
-/// bed channels, then the output pair. Returns the number of floats written.
+/// Copy the latest levels into `out` as `[rms, peak]` pairs — stems (each as
+/// a left/right pair), then bed channels, then the output pair. Returns the
+/// number of floats written.
 ///
 /// # Safety
 /// `out` must address `capacity` writable f32 values.
@@ -492,6 +493,30 @@ pub unsafe extern "C" fn dsp_engine_meters(
     let Some(engine) = engine.as_ref() else { return 0 };
     let dst = std::slice::from_raw_parts_mut(out, capacity);
     engine.meters().write(dst).min(capacity)
+}
+
+/// Copy each stem's `[level, centroid]` pair for the haze/elevation
+/// displays. Returns the number of floats written.
+///
+/// # Safety
+/// `out` must address `capacity` writable f32 values.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_stem_spectrum(
+    engine: *const PreviewEngine,
+    out: *mut f32,
+    capacity: usize,
+) -> usize {
+    let Some(engine) = engine.as_ref() else { return 0 };
+    let dst = std::slice::from_raw_parts_mut(out, capacity);
+    let mut i = 0;
+    for (level, centroid) in engine.stem_spectrum() {
+        if i + 1 < dst.len() {
+            dst[i] = level as f32;
+            dst[i + 1] = centroid as f32;
+        }
+        i += 2;
+    }
+    i.min(capacity)
 }
 
 /// Begin measuring the collapsed programme; returns a pass handle, or null.

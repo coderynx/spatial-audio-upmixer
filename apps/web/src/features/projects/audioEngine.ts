@@ -151,6 +151,8 @@ export class PreviewAudioEngine {
   private measureToken = 0;
   private resumeOnGesture: (() => void) | null = null;
   private stemOrder: string[] = [];
+  /** Parallel to `stemOrder` — how many bars each stem's meter shows. */
+  private stemChannelCounts: number[] = [];
 
   readonly stemSpectrum: EngineRef<Map<string, { level: number; centroid: number }>> = engineRef(
     new Map(),
@@ -213,6 +215,24 @@ export class PreviewAudioEngine {
     this.playing = false;
     this.client?.setTransport({ playing: false });
     this.callbacks.onPlaying(false);
+    this.silenceLevels();
+  }
+
+  /** The worklet stops posting `frame` messages once paused, so the meter
+   * refs would otherwise freeze at their last value. Zero each in place —
+   * keeping every array's shape — so the existing decay ballistics ease
+   * every bar down instead of snapping it away. */
+  private silenceLevels() {
+    for (const [key, levels] of this.stemLevels.current) {
+      this.stemLevels.current.set(key, levels.map(() => SILENT_METER_LEVEL));
+    }
+    for (const key of this.channelLevels.current.keys()) {
+      this.channelLevels.current.set(key, SILENT_METER_LEVEL);
+    }
+    this.headphoneLevels.current = { left: SILENT_METER_LEVEL, right: SILENT_METER_LEVEL };
+    for (const [key, spectrum] of this.stemSpectrum.current) {
+      this.stemSpectrum.current.set(key, { ...spectrum, level: 0 });
+    }
   }
 
   stop() {
@@ -454,7 +474,9 @@ export class PreviewAudioEngine {
             this.mastering?.loudness?.max_tp ?? -1,
           );
 
-    this.stemOrder = this.previewableStems().map((stem) => stem.id);
+    const previewable = this.previewableStems();
+    this.stemOrder = previewable.map((stem) => stem.stem_key.split("@", 1)[0]);
+    this.stemChannelCounts = previewable.map((stem) => stem.channels);
     return buildEngineParams({
       constants: this.constants,
       layoutChannels: this.layoutChannels,
@@ -653,7 +675,7 @@ export class PreviewAudioEngine {
     this.callbacks.onLoadProgress(1);
   }
 
-  private onFrame(frame: { position: number; meters: number[] }) {
+  private onFrame(frame: { position: number; meters: number[]; spectrum: number[] }) {
     if (!this.scrubbing) {
       this.currentTimeRef.current = frame.position / CONTEXT_SAMPLE_RATE;
       this.callbacks.onCurrentTime(this.currentTimeRef.current);
@@ -663,13 +685,20 @@ export class PreviewAudioEngine {
     const stemCount = this.stemOrder.length;
     const channels = this.layoutChannels;
     const stemLevels = new Map<string, MeterLevel[]>();
+    const stemSpectrum = new Map<string, { level: number; centroid: number }>();
     for (let i = 0; i < stemCount; i += 1) {
-      stemLevels.set(this.stemOrder[i], [level(meters[i * 2] ?? 0, meters[i * 2 + 1] ?? 0)]);
+      const o = i * 4;
+      const bars = [level(meters[o] ?? 0, meters[o + 1] ?? 0)];
+      if ((this.stemChannelCounts[i] ?? 1) >= 2) bars.push(level(meters[o + 2] ?? 0, meters[o + 3] ?? 0));
+      stemLevels.set(this.stemOrder[i], bars);
+      const s = i * 2;
+      stemSpectrum.set(this.stemOrder[i], { level: frame.spectrum[s] ?? 0, centroid: frame.spectrum[s + 1] ?? 0 });
     }
     this.stemLevels.current = stemLevels;
+    this.stemSpectrum.current = stemSpectrum;
 
     const channelLevels = new Map<string, MeterLevel>();
-    const base = stemCount * 2;
+    const base = stemCount * 4;
     for (let i = 0; i < channels.length; i += 1) {
       channelLevels.set(channels[i], level(meters[base + i * 2] ?? 0, meters[base + i * 2 + 1] ?? 0));
     }
@@ -708,6 +737,7 @@ export class PreviewAudioEngine {
     this.playing = false;
     this.callbacks.onPlaying(false);
     this.moveTo(0);
+    this.silenceLevels();
   }
 
   reset() {

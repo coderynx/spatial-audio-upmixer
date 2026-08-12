@@ -9,6 +9,9 @@
 
 use std::sync::Arc;
 
+use crate::kernels::fft::RealFft;
+use crate::kernels::stft::hann_periodic;
+
 use super::master::{linked_rms, CausalChain, MonoMaker, StreamingLimiter, MONO_HORIZON_MS};
 use super::meters::{Level, Meters};
 use super::output::OutputStage;
@@ -23,6 +26,14 @@ const SEEK_PREROLL_MS: f64 = 500.0;
 /// Frames the mono-maker advances per call. Larger amortizes its zero-phase
 /// context further but raises the worst-case cost of a single render.
 const MONO_STRIDE: usize = 512;
+
+/// Metering window, in frames — matches the pre-Rust preview's 2048-sample
+/// analyser tap. `render()` runs one audio-worklet quantum (128 frames) at a
+/// time but the worklet only reports at ~30Hz, so measuring just the latest
+/// quantum would mostly discard the frames rendered between reports and read
+/// as flicker rather than a level; measuring this wider trailing window
+/// keeps every report representative of what was actually just heard.
+const METER_WINDOW_FRAMES: usize = 2048;
 
 /// Time constant for smoothing a stem's mute/solo/rebalance gain and the
 /// master output gain across a live [`PreviewEngine::update_params`] edit,
@@ -102,6 +113,13 @@ pub struct PreviewEngine {
     mono_horizon: usize,
     total_frames: usize,
     meters: Meters,
+    /// Trailing `METER_WINDOW_FRAMES` of the collapsed output, kept only for
+    /// metering — `collapsed` itself holds just the current call's frames.
+    output_meter_tail: Vec<Vec<f64>>,
+    /// Cached plan for `stem_spectrum`'s centroid FFT — built once at
+    /// `METER_WINDOW_FRAMES` length rather than replanned on every call.
+    spectrum_fft: RealFft,
+    spectrum_window: Vec<f64>,
 }
 
 /// `OutputStage::new` reads its taps from whichever engine field currently
@@ -187,6 +205,9 @@ impl PreviewEngine {
             mono_horizon: (sample_rate as f64 * MONO_HORIZON_MS / 1000.0) as usize,
             total_frames,
             meters: Meters::default(),
+            output_meter_tail: vec![Vec::new(); 2],
+            spectrum_fft: RealFft::new(METER_WINDOW_FRAMES),
+            spectrum_window: hann_periodic(METER_WINDOW_FRAMES),
         }
     }
 
@@ -441,31 +462,43 @@ impl PreviewEngine {
                 let sp = self.params.stems.get(i);
                 let enabled = sp.map(|p| p.enabled).unwrap_or(true);
                 if !enabled {
-                    return Level::default();
+                    return [Level::default(), Level::default()];
                 }
                 let gain = sp
                     .map(|p| 10.0_f64.powf(p.rebalance_db / 20.0))
                     .unwrap_or(1.0);
-                let to = (self.emitted + emit).min(stem.left.len());
+                let to = (self.emitted + emit).min(stem.len());
                 if self.emitted >= to {
-                    return Level::default();
+                    return [Level::default(), Level::default()];
                 }
-                Level::measure_f32(&stem.left[self.emitted..to], gain)
+                let win_start = to.saturating_sub(METER_WINDOW_FRAMES);
+                [
+                    Level::measure_f32(&stem.left[win_start..to], gain),
+                    Level::measure_f32(&stem.right[win_start..to], gain),
+                ]
             })
             .collect();
+        let meter_start = end.saturating_sub(METER_WINDOW_FRAMES);
         self.meters.channels = self
             .post
             .channels
             .iter()
-            .map(|c| Level::measure(&c[start..end]))
+            .map(|c| Level::measure(&c[meter_start..end]))
             .collect();
+        for (channel, tail) in self.output_meter_tail.iter_mut().enumerate() {
+            if let Some(rendered) = self.collapsed.get(channel) {
+                tail.extend_from_slice(&rendered[..emit.min(rendered.len())]);
+            }
+            let drop = tail.len().saturating_sub(METER_WINDOW_FRAMES);
+            tail.drain(..drop);
+        }
         self.meters.output = [
-            Level::measure(self.collapsed.first().map(|c| &c[..]).unwrap_or(&[])),
-            Level::measure(self.collapsed.get(1).map(|c| &c[..]).unwrap_or(&[])),
+            Level::measure(&self.output_meter_tail[0]),
+            Level::measure(&self.output_meter_tail[1]),
         ];
 
         self.emitted += emit;
-        self.post.drain_to(self.emitted);
+        self.post.drain_to(self.emitted.saturating_sub(METER_WINDOW_FRAMES));
         self.pre.drain_to(self.emitted.saturating_sub(self.mono_horizon));
         emit
     }
@@ -511,6 +544,61 @@ impl PreviewEngine {
     /// Levels from the most recent render.
     pub fn meters(&self) -> &Meters {
         &self.meters
+    }
+
+    /// Per-stem `(level, spectral centroid)` for the haze/elevation displays
+    /// — both roughly 0..1, `centroid` sqrt-scaled toward the low end like a
+    /// listener's own frequency perception. Computed here rather than kept
+    /// current in `meters`/`render()`: the FFT this needs is too heavy to
+    /// run every 128-frame quantum, but is cheap enough to run at the
+    /// worklet's ~30Hz report cadence, called on demand from the same
+    /// trailing `METER_WINDOW_FRAMES` window the meters use.
+    pub fn stem_spectrum(&self) -> Vec<(f64, f64)> {
+        self.stems
+            .iter()
+            .enumerate()
+            .map(|(i, stem)| {
+                let sp = self.params.stems.get(i);
+                if !sp.map(|p| p.enabled).unwrap_or(true) {
+                    return (0.0, 0.0);
+                }
+                let gain = sp
+                    .map(|p| 10.0_f64.powf(p.rebalance_db / 20.0))
+                    .unwrap_or(1.0);
+                let to = self.emitted.min(stem.len());
+                let win_start = to.saturating_sub(METER_WINDOW_FRAMES);
+                if to <= win_start {
+                    return (0.0, 0.0);
+                }
+
+                let level = self
+                    .meters
+                    .stems
+                    .get(i)
+                    .map(|pair| ((pair[0].rms + pair[1].rms) * 0.5 * 2.5).min(1.0))
+                    .unwrap_or(0.0);
+
+                let mut windowed = vec![0.0; self.spectrum_window.len()];
+                for (j, w) in self.spectrum_window.iter().enumerate().take(to - win_start) {
+                    let sample = (stem.left[win_start + j] as f64 + stem.right[win_start + j] as f64) * 0.5;
+                    windowed[j] = sample * gain * w;
+                }
+                let bins = self.spectrum_fft.rfft(&windowed);
+                let mut weighted = 0.0;
+                let mut total = 0.0;
+                for (bin, c) in bins.iter().enumerate() {
+                    let amplitude = c.norm();
+                    weighted += amplitude * bin as f64;
+                    total += amplitude;
+                }
+                let centroid = if total > 0.0 && bins.len() > 1 {
+                    ((weighted / total) / (bins.len() - 1) as f64).sqrt()
+                } else {
+                    0.0
+                };
+                (level, centroid)
+            })
+            .collect()
     }
 
     /// Reset filter states and drop the playhead at `frame`, with no run-up.

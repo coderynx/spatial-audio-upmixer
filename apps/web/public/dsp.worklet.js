@@ -54,6 +54,8 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.outBytes = 0;
     this.meterPtr = 0;
     this.meterBytes = 0;
+    this.spectrumPtr = 0;
+    this.spectrumBytes = 0;
     this.ended = false;
     this.playing = false;
     this.loop = false;
@@ -243,6 +245,10 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.wasm.dsp_free(this.meterPtr, this.meterBytes);
       this.meterPtr = 0;
     }
+    if (this.spectrumPtr) {
+      this.wasm.dsp_free(this.spectrumPtr, this.spectrumBytes);
+      this.spectrumPtr = 0;
+    }
   }
 
   // Start measuring for real BS.1770 loudness and true peak — the correction
@@ -344,11 +350,19 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.meterBytes = capacity * 4;
       this.meterPtr = this.wasm.dsp_alloc(this.meterBytes);
     }
+    if (!this.spectrumPtr) {
+      this.spectrumBytes = capacity * 4;
+      this.spectrumPtr = this.wasm.dsp_alloc(this.spectrumBytes);
+    }
     const written = this.wasm.dsp_engine_meters(this.engine, this.meterPtr, capacity);
+    // The spectrum's FFT is too heavy for every quantum; it only runs here,
+    // at report cadence (~30Hz) — see `PreviewEngine::stem_spectrum`.
+    const spectrumWritten = this.wasm.dsp_engine_stem_spectrum(this.engine, this.spectrumPtr, capacity);
     this.port.postMessage({
       type: "frame",
       position: this.wasm.dsp_engine_position(this.engine),
       meters: Array.from(this.heapF32(this.meterPtr, written)),
+      spectrum: Array.from(this.heapF32(this.spectrumPtr, spectrumWritten)),
     });
   }
 

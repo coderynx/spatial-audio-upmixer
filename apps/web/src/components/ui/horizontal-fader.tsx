@@ -127,13 +127,17 @@ export function HorizontalFader({
   sourceRef.current = meterSource;
   const activeRef = React.useRef(meterActive);
   activeRef.current = meterActive;
+  // Outlives the effect below (unlike a `const` inside it), so pausing —
+  // which changes `meterActive` and restarts the effect — doesn't forget the
+  // eased level and make the bar snap to zero instead of decaying into it.
+  const meterStateRef = React.useRef(createMeterState());
   React.useEffect(() => {
     if (!meterSource || !meterChannels) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const meterState = createMeterState();
+    const meterState = meterStateRef.current;
     let lastTime: number | null = null;
     let idle = 0;
     let frame: number;

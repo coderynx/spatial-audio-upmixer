@@ -10,6 +10,8 @@ export type DspEngineParams = Record<string, unknown>;
 export type DspMeterFrame = {
   position: number;
   meters: number[];
+  /** `[level, centroid]` pairs, one per stem — see `stem_spectrum` in the core. */
+  spectrum: number[];
 };
 
 export type DspEngineCallbacks = {
@@ -119,6 +121,7 @@ export class DspEngineClient {
           callbacks.onFrame?.({
             position: Number(message.position),
             meters: (message.meters as number[]) ?? [],
+            spectrum: (message.spectrum as number[]) ?? [],
           });
           break;
         case "measuring":
