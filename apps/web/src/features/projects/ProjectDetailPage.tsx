@@ -643,16 +643,18 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             <span className="w-9 shrink-0 text-right tabular-nums">{Math.round(preview.loadProgress * 100)}%</span>
           </div>
         )}
-        {/* Brief, first-play-only: the muted loudness warm-up in
-            useStemPreview.ts (runLoudnessWarmup) measures real output level
-            before letting any audio through, so playback never starts at an
-            uncorrected (potentially louder) level. Reuses the decode-stems
-            row's styling so it reads as the same kind of "getting ready"
-            status rather than an unresponsive transport. */}
+        {/* Fast excerpt loudness pass (audioEngine.ts measureIfNeeded): the
+            preview plays uncorrected until it lands, so this clears within a
+            few seconds rather than gating on the exact whole-programme pass
+            that keeps refining the gain in the background afterwards. Reuses
+            the decode-stems row's styling so it reads as the same kind of
+            "getting ready" status rather than an unresponsive transport. */}
         {!preview.error && preview.ready && preview.measuring && (
           <div className="flex shrink-0 items-center gap-2 rounded-md border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
             <span className="flex-1">Preparing preview — calibrating loudness…</span>
+            <Progress value={preview.measureProgress * 100} className="w-24" />
+            <span className="w-9 shrink-0 text-right tabular-nums">{Math.round(preview.measureProgress * 100)}%</span>
           </div>
         )}
         {/* The reference-match FIR is computed asynchronously on the server

@@ -22,14 +22,46 @@ impl OnePole {
         Self { alpha: 1.0 - (-dt / (ms.max(0.01) / 1000.0)).exp(), state: 0.0 }
     }
 
+    /// Start already settled at `initial`, so a caller that never moves the
+    /// target away from it sees no ramp-in — used for gain smoothers, whose
+    /// state must match a fresh hard-coded gain exactly until the first
+    /// parameter edit.
+    pub fn new_at(ms: f64, sample_rate: f64, initial: f64) -> Self {
+        let mut pole = Self::new(ms, sample_rate);
+        pole.state = initial;
+        pole
+    }
+
     pub fn reset(&mut self) {
         self.state = 0.0;
+    }
+
+    /// Recompute the time constant, keeping the current state — a config
+    /// edit (e.g. a new attack/release) should not restart the envelope.
+    pub fn retune(&mut self, ms: f64, sample_rate: f64) {
+        let dt = 1.0 / sample_rate;
+        self.alpha = 1.0 - (-dt / (ms.max(0.01) / 1000.0)).exp();
     }
 
     #[inline]
     pub fn tick(&mut self, x: f64) -> f64 {
         self.state += self.alpha * (x - self.state);
         self.state
+    }
+
+    /// Tick `n` times toward `target`, for smoothing a value that only
+    /// changes once per render block rather than once per sample.
+    pub fn advance(&mut self, target: f64, n: usize) -> f64 {
+        for _ in 0..n {
+            self.tick(target);
+        }
+        self.state
+    }
+
+    /// Whether the state has settled within `target`'s floating-point noise
+    /// floor — lets a caller resume a cheap early-exit once a ramp finishes.
+    pub fn is_settled(&self, target: f64) -> bool {
+        (self.state - target).abs() < 1e-9
     }
 }
 
@@ -55,6 +87,14 @@ impl StreamingCompressor {
     pub fn reset(&mut self) {
         self.fast.reset();
         self.slow.reset();
+    }
+
+    /// Adopt new config, keeping the envelope followers' state — a live
+    /// threshold/ratio/attack edit should not restart the compressor cold.
+    pub fn retune(&mut self, params: CompParams, sample_rate: u32) {
+        self.fast.retune(params.attack_ms, sample_rate as f64);
+        self.slow.retune(params.release_ms, sample_rate as f64);
+        self.params = params;
     }
 
     /// Gain to apply to every non-LFE channel for one sample, given the

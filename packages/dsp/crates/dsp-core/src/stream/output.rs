@@ -164,6 +164,30 @@ impl OutputStage {
         }
     }
 
+    /// Adopt new mode/voicing/downmix/encoders in place, leaving the decode
+    /// and XTC convolvers untouched — those travel their own channel (see
+    /// [`super::engine::PreviewEngine::set_decode_taps`]) and are large
+    /// enough that rebuilding them on every mix edit is what this method
+    /// exists to avoid. Only call when `params.speakers.len()` and
+    /// `params.lfe_index` match what this stage was built with; a channel
+    /// count change needs a full [`Self::new`].
+    pub fn retune(&mut self, sample_rate: u32, params: &EngineParams) {
+        self.mode = params.output_mode;
+        self.lfe_index = params.lfe_index;
+        self.encoders = params
+            .speakers
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                (params.lfe_index != Some(i))
+                    .then(|| encode_gains(s.azimuth_rad, s.elevation_rad))
+            })
+            .collect();
+        self.downmix = params.speakers.iter().map(|s| s.downmix).collect();
+        self.soft_limit_threshold = params.soft_limit_threshold;
+        self.voicing = params.voicing.map(|v| StreamingVoicing::new(sample_rate, v));
+    }
+
     /// How many channels this stage writes.
     pub fn output_channels(&self) -> usize {
         match self.mode {

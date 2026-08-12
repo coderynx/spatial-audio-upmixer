@@ -355,3 +355,108 @@ fn disabling_a_stem_through_update_params_silences_it_without_a_reload() {
     assert_eq!(engine.meters().stems[0].peak, 0.0);
     assert!(engine.meters().stems[1].peak > 0.0, "the other stem keeps playing");
 }
+
+#[test]
+fn update_params_mid_playback_never_starves_the_next_quantum() {
+    // The regression this guards: `update_params` used to end with a seek,
+    // which re-renders a 500 ms preroll synchronously — on the worklet's
+    // audio thread that starves the render deadline and drops the very next
+    // quantum. It must not do that: the call itself should be cheap, and the
+    // quantum right after it should come back full and at the expected
+    // position, exactly like any other quantum.
+    let params: EngineParams = serde_json::from_str(&params_json(true)).expect("engine params");
+    let n_channels = params.speakers.len();
+    let mut engine = PreviewEngine::new(SR, params, stems());
+    let mut scratch = vec![0.0; n_channels * 128];
+
+    for _ in 0..10 {
+        assert_eq!(engine.render(&mut scratch, 128), 128);
+    }
+    let position_before = engine.position();
+
+    let muted = params_json(true).replace(
+        r#"{"routing": [["FL", 0.9], ["FR", 0.9], ["SL", 0.4], ["LFE", 0.3]],
+              "rebalance_db": 0.0, "enabled": true}"#,
+        r#"{"routing": [["FL", 0.9], ["FR", 0.9], ["SL", 0.4], ["LFE", 0.3]],
+              "rebalance_db": 0.0, "enabled": false}"#,
+    );
+    engine.update_params(serde_json::from_str(&muted).expect("engine params"));
+
+    assert_eq!(engine.position(), position_before, "update_params must not move the playhead");
+    let written = engine.render(&mut scratch, 128);
+    assert_eq!(written, 128, "the quantum right after a param update must not come back short");
+    assert_eq!(engine.position(), position_before + 128);
+}
+
+#[test]
+fn update_params_with_unchanged_params_is_a_true_no_op() {
+    // A no-op edit (e.g. a redundant `apply()`) must not perturb the stream:
+    // an engine that gets the same params handed back through
+    // `update_params` mid-playback has to keep producing exactly what an
+    // engine that was never touched produces, because every filter it
+    // touches gets retuned to the value it already had.
+    let params_a: EngineParams = serde_json::from_str(&params_json(true)).expect("engine params");
+    let params_b: EngineParams = serde_json::from_str(&params_json(true)).expect("engine params");
+    let n_channels = params_a.speakers.len();
+    let mut untouched = PreviewEngine::new(SR, params_a, stems());
+    let mut touched = PreviewEngine::new(SR, params_b, stems());
+
+    let mut scratch_a = vec![0.0; n_channels * 512];
+    let mut scratch_b = vec![0.0; n_channels * 512];
+    untouched.render(&mut scratch_a, 512);
+    touched.render(&mut scratch_b, 512);
+    assert_eq!(scratch_a, scratch_b, "identical construction should render identically");
+
+    touched.update_params(serde_json::from_str(&params_json(true)).expect("engine params"));
+
+    for _ in 0..8 {
+        let wa = untouched.render(&mut scratch_a, 512);
+        let wb = touched.render(&mut scratch_b, 512);
+        assert_eq!(wa, wb);
+        for (i, (a, b)) in scratch_a[..wa * n_channels].iter().zip(&scratch_b[..wb * n_channels]).enumerate() {
+            assert!((a - b).abs() < 1e-12, "sample {i} diverged after a no-op update_params: {a} vs {b}");
+        }
+    }
+}
+
+#[test]
+fn clearing_the_limiter_through_update_params_actually_removes_it() {
+    // `rewind` used to only ever assign `self.limiter` when the new config
+    // was `Some`, so a limiter switched off mid-session stayed live with its
+    // old ceiling forever. Drive a signal that clips the ceiling, confirm
+    // the limiter is holding it down, then remove it and confirm the peak is
+    // freed to exceed that ceiling.
+    let ceiling_linear = 10.0_f64.powf((-6.0 - 0.1) / 20.0);
+    let hot_params = params_json(true)
+        .replace(r#""rebalance_db": 0.0, "enabled": true"#, r#""rebalance_db": 24.0, "enabled": true"#)
+        .replace(r#""ceiling_dbtp": -1.0"#, r#""ceiling_dbtp": -6.0"#);
+    let params: EngineParams = serde_json::from_str(&hot_params).expect("engine params");
+    let n_channels = params.speakers.len();
+    let mut engine = PreviewEngine::new(SR, params, stems());
+    let mut scratch = vec![0.0; n_channels * 4096];
+
+    engine.render(&mut scratch, 4096);
+    let limited_peak = engine.meters().output[0].peak.max(engine.meters().output[1].peak);
+    assert!(
+        limited_peak <= ceiling_linear + 1e-3,
+        "limiter should hold the boosted signal at its ceiling, got {limited_peak}"
+    );
+
+    let no_limiter = hot_params.replace(
+        r#""limiter": {"ceiling_dbtp": -6.0, "lookahead_ms": 5.0, "release_ms": 50.0,
+                        "safety_margin_db": 0.1},"#,
+        "",
+    );
+    engine.update_params(serde_json::from_str(&no_limiter).expect("engine params"));
+
+    // The look-ahead queues still hold audio the (now-removed) limiter had
+    // already shaped; render past that horizon before checking the peak.
+    for _ in 0..6 {
+        engine.render(&mut scratch, 4096);
+    }
+    let unlimited_peak = engine.meters().output[0].peak.max(engine.meters().output[1].peak);
+    assert!(
+        unlimited_peak > ceiling_linear + 0.05,
+        "removing the limiter should free the peak above its old ceiling, got {unlimited_peak}"
+    );
+}

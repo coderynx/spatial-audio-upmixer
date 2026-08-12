@@ -39,22 +39,78 @@ const BUDGET = { mean: 0.4, p99: 1.0, worst: 1.5 };
 // using, so only the overrun limits apply to it.
 const IDLE_BUDGET = { mean: 0.9, p99: 1.0, worst: 1.5 };
 
-// Must match MEASURE_FRAMES_IDLE in public/dsp.worklet.js.
+// The fast excerpt pass's idle slice is deliberately sized past a quantum's
+// budget: the node is the *source* and its output is already zero-filled
+// while paused, so overrunning here costs a dropped silent callback, not a
+// glitch — see MEASURE_FRAMES_FAST_IDLE's comment in public/dsp.worklet.js.
+// Its budget is looser accordingly; only a regression far past what that
+// slice size implies should trip it.
+const FAST_IDLE_BUDGET = { mean: 5, p99: 6, worst: 8 };
+
+// Unlike the idle cases, this shares the quantum with a real render, so an
+// overrun here is not silence-safe — it can drop a live render quantum.
+// Bounded to the heaviest configuration and the few seconds the fast pass
+// runs for, an occasional single-quantum click during that window is an
+// accepted trade against the alternative (no progress at all while playing,
+// which is what MEASURE_FRAMES_FAST_PLAYING replaces). p99/worst stay looser
+// than BUDGET for that reason; mean must stay close to a plain render's.
+const PLAYING_FAST_BUDGET = { mean: 0.6, p99: 1.6, worst: 2.5 };
+
+// Must match MEASURE_FRAMES_IDLE / _FAST_IDLE / _FAST_PLAYING and the
+// FAST_EXCERPT_* constants in public/dsp.worklet.js.
 const MEASURE_FRAMES_IDLE = 384;
+const MEASURE_FRAMES_FAST_IDLE = 2048;
+const MEASURE_FRAMES_FAST_PLAYING = 32;
+const FAST_EXCERPT_COUNT = 5;
+const FAST_EXCERPT_SECONDS = 3;
+const FAST_EXCERPT_PREROLL_SECONDS = 0.5;
 
 const CASES = {
   binaural: { mode: "binaural", decode: true, label: "binaural (order-3 decode)" },
   transaural: { mode: "transaural", decode: true, label: "transaural" },
   native: { mode: "native", decode: false, label: "native 7.1.4 + limiter" },
   stereo: { mode: "stereo", decode: false, label: "stereo downmix" },
-  // A measurement advances only while paused, so its slice has the quantum
-  // to itself rather than sharing one with a render.
+  // The exact whole-programme pass advances only while paused, so its slice
+  // has the quantum to itself rather than sharing one with a render.
   measuring: {
     mode: "binaural",
     decode: true,
-    measure: true,
+    kind: "idle-exact",
     budget: IDLE_BUDGET,
-    label: "measuring while paused",
+    label: "measuring (exact, paused)",
+  },
+  // The fast excerpt pass, same idle-only shape as the exact pass above, but
+  // sized to finish in a handful of calls instead of minutes.
+  measuringFast: {
+    mode: "binaural",
+    decode: true,
+    kind: "idle-fast",
+    budget: FAST_IDLE_BUDGET,
+    label: "measuring (fast excerpt, paused)",
+  },
+  // The fast excerpt pass also advances during playback, sharing the quantum
+  // with a real render, so a user who presses play immediately still gets a
+  // correction. Held to the normal render budget since it must not starve it.
+  measuringPlaying: {
+    mode: "binaural",
+    decode: true,
+    kind: "playing-fast",
+    budget: PLAYING_FAST_BUDGET,
+    label: "measuring (fast excerpt, playing)",
+  },
+  // A mix edit (mute/solo, a fader, a mastering toggle) lands via
+  // `dsp_engine_set_params` while playback continues. Regression guard for
+  // the bug this script didn't catch: `update_params` used to end with a
+  // seek, re-rendering a 500 ms preroll synchronously on this same call —
+  // budgeted at the render's own deadline since a slow update can starve
+  // the very next quantum just as surely as a slow render can. Uses the
+  // heaviest configuration (full mastering chain + limiter) so a retune
+  // that isn't as narrow as it should be shows up here first.
+  mixEditPlaying: {
+    mode: "native",
+    decode: false,
+    kind: "playing-update",
+    label: "mix edit (mute + compressor, playing)",
   },
 };
 
@@ -118,7 +174,7 @@ function decodeBank() {
   return bank;
 }
 
-function run(label, mode, decodeTaps, measure = false) {
+function run(label, mode, decodeTaps, kind) {
   const wasm = instantiate();
   const encoded = new TextEncoder().encode(JSON.stringify(params(mode, decodeTaps)));
   const ptr = wasm.dsp_alloc(encoded.length);
@@ -143,23 +199,69 @@ function run(label, mode, decodeTaps, measure = false) {
   let pass = 0;
   let weightPtr = 0;
   let resultPtr = 0;
-  if (measure) {
+  if (kind === "idle-exact" || kind === "idle-fast" || kind === "playing-fast") {
     weightPtr = wasm.dsp_alloc(16);
     new Float64Array(wasm.memory.buffer, weightPtr, 2).set([1, 1]);
     resultPtr = wasm.dsp_alloc(16);
-    pass = wasm.dsp_measure_begin(engine, weightPtr, 2);
+    pass = kind === "idle-exact"
+      ? wasm.dsp_measure_begin(engine, weightPtr, 2)
+      : wasm.dsp_measure_begin_excerpts(
+          engine,
+          weightPtr,
+          2,
+          FAST_EXCERPT_COUNT,
+          Math.round(FAST_EXCERPT_SECONDS * SR),
+          Math.round(FAST_EXCERPT_PREROLL_SECONDS * SR),
+        );
     if (!pass) throw new Error(`${label}: measurement could not start`);
   }
 
   const out = wasm.dsp_alloc(CHANNELS.length * QUANTUM * 4);
   const times = [];
-  if (pass) {
+  if (kind === "idle-exact" || kind === "idle-fast") {
     // Paused: the quantum does nothing but advance the measurement.
+    const step = kind === "idle-exact" ? MEASURE_FRAMES_IDLE : MEASURE_FRAMES_FAST_IDLE;
     for (;;) {
       const started = performance.now();
-      const done = wasm.dsp_measure_advance(pass, MEASURE_FRAMES_IDLE, resultPtr);
+      const done = wasm.dsp_measure_advance(pass, step, resultPtr);
       times.push(performance.now() - started);
       if (done) break;
+    }
+  } else if (kind === "playing-update") {
+    // Renders advance the transport but are not what's timed; only
+    // `dsp_engine_set_params` itself has to fit the deadline, since that's
+    // the call the worklet's `port.onmessage` makes on the audio thread.
+    let toggle = false;
+    for (;;) {
+      const written = wasm.dsp_engine_render(engine, out, CHANNELS.length, QUANTUM);
+      if (written === 0) break;
+      toggle = !toggle;
+      const edited = params(mode, decodeTaps);
+      edited.stems[0].enabled = toggle;
+      edited.master.compressor.threshold_db = toggle ? -20 : -18;
+      const encodedEdit = new TextEncoder().encode(JSON.stringify(edited));
+      const editPtr = wasm.dsp_alloc(encodedEdit.length);
+      new Uint8Array(wasm.memory.buffer, editPtr, encodedEdit.length).set(encodedEdit);
+      const started = performance.now();
+      wasm.dsp_engine_set_params(engine, editPtr, encodedEdit.length);
+      times.push(performance.now() - started);
+      wasm.dsp_free(editPtr, encodedEdit.length);
+    }
+  } else if (kind === "playing-fast") {
+    // Playing: a real render shares the quantum with a small measurement
+    // slice, until the fast pass lands — then the render continues alone.
+    let measureDone = false;
+    for (;;) {
+      const started = performance.now();
+      const written = wasm.dsp_engine_render(engine, out, CHANNELS.length, QUANTUM);
+      if (!measureDone) {
+        measureDone = Boolean(
+          wasm.dsp_measure_advance(pass, MEASURE_FRAMES_FAST_PLAYING, resultPtr),
+        );
+      }
+      const elapsed = performance.now() - started;
+      if (written === 0) break;
+      times.push(elapsed);
     }
   } else {
     for (;;) {
@@ -194,10 +296,8 @@ function run(label, mode, decodeTaps, measure = false) {
 // garbage collection, not the DSP.
 const requested = process.argv[2];
 if (requested) {
-  const { mode, decode, label, measure } = CASES[requested];
-  process.stdout.write(
-    JSON.stringify(run(label, mode, decode ? decodeBank() : [], Boolean(measure))),
-  );
+  const { mode, decode, label, kind } = CASES[requested];
+  process.stdout.write(JSON.stringify(run(label, mode, decode ? decodeBank() : [], kind)));
 } else {
   const self = fileURLToPath(import.meta.url);
   console.log(`deadline ${DEADLINE_MS.toFixed(2)} ms per ${QUANTUM}-frame quantum at ${SR} Hz\n`);

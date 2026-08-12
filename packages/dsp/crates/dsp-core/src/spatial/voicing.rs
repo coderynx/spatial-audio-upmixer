@@ -8,7 +8,7 @@
 use crate::kernels::biquad::sosfilt;
 use crate::kernels::butter::{butter_bandpass_sos, butter_sos, BandType};
 
-#[derive(Clone, Copy, Debug, Default, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Deserialize)]
 pub struct VoicingParams {
     pub crossfeed_amount: f64,
     pub crossfeed_cutoff_hz: f64,

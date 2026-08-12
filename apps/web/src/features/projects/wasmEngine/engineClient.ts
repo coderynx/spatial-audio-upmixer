@@ -18,8 +18,13 @@ export type DspEngineCallbacks = {
   /** ~30 Hz playhead and level report. */
   onFrame?: (frame: DspMeterFrame) => void;
   onEnded?: () => void;
-  /** Fraction of the programme measured, while a measurement is in flight. */
+  /** Fraction of the current measurement stage measured, while in flight. */
   onMeasureProgress?: (progress: number) => void;
+  /**
+   * The exact whole-programme measurement landed, refining the fast excerpt
+   * result `measure()` already resolved with. See `DspEngineClient.measure`.
+   */
+  onMeasured?: (result: { lkfs: number; dbtp: number }) => void;
   onError?: (message: string) => void;
 };
 
@@ -57,6 +62,10 @@ export class DspEngineClient {
   readonly ready: Promise<string>;
 
   private pendingMeasure: ((result: { lkfs: number; dbtp: number } | null) => void) | null = null;
+  /** Latest params awaiting the next coalesced `updateParams` post. */
+  private pendingUpdate: DspEngineParams | null = null;
+  private updateScheduled = false;
+  private disposed = false;
 
   private constructor(
     node: AudioWorkletNode,
@@ -115,12 +124,15 @@ export class DspEngineClient {
         case "measuring":
           callbacks.onMeasureProgress?.(Number(message.progress));
           break;
-        case "measured":
-          client?.resolveMeasure({
-            lkfs: Number(message.lkfs),
-            dbtp: Number(message.dbtp),
-          });
+        case "measured": {
+          const result = { lkfs: Number(message.lkfs), dbtp: Number(message.dbtp) };
+          if (message.stage === "exact") {
+            callbacks.onMeasured?.(result);
+          } else {
+            client?.resolveMeasure(result);
+          }
           break;
+        }
         case "ended":
           callbacks.onEnded?.();
           break;
@@ -149,10 +161,24 @@ export class DspEngineClient {
    * Replace the parameter block in place, keeping the loaded stems and the
    * playhead — the one path for "the mix changed", whether that means mute,
    * solo, rebalance, routing, mastering, or the output mode.
+   *
+   * Coalesced to one post per animation frame: a fader drag calls this once
+   * per pointer-move, and each call already carries the whole parameter
+   * block, so only the latest one before a frame actually needs to reach the
+   * worklet — the frames in between would just be immediately superseded.
    */
   updateParams(params: DspEngineParams): void {
-    const bytes = encodeParams(params);
-    this.node.port.postMessage({ type: "update", bytes }, [bytes.buffer]);
+    this.pendingUpdate = params;
+    if (this.updateScheduled || this.disposed) return;
+    this.updateScheduled = true;
+    requestAnimationFrame(() => {
+      this.updateScheduled = false;
+      const latest = this.pendingUpdate;
+      this.pendingUpdate = null;
+      if (!latest || this.disposed) return;
+      const bytes = encodeParams(latest);
+      this.node.port.postMessage({ type: "update", bytes }, [bytes.buffer]);
+    });
   }
 
   setTransport(state: { playing?: boolean; loop?: boolean }): void {
@@ -160,12 +186,14 @@ export class DspEngineClient {
   }
 
   /**
-   * Measure the whole collapsed programme. Resolves with real BS.1770
-   * integrated loudness and true peak; the transport is left where it was.
+   * Measure the collapsed programme's real BS.1770 integrated loudness and
+   * true peak; the transport is left where it was.
    *
-   * The pass is advanced in slices from the render callback, so this takes as
-   * long as the programme does to walk — minutes for a long track, faster
-   * while paused. Resolves with `null` if another measurement supersedes it.
+   * Runs in two stages: this resolves once a fast pass over a handful of
+   * excerpts lands, typically within a few seconds. An exact whole-programme
+   * pass then keeps running in the background and reports through
+   * `onMeasured` once it lands, minutes later on a long track. Resolves with
+   * `null` if another measurement supersedes it before the fast pass lands.
    */
   measure(weights: number[] = []): Promise<{ lkfs: number; dbtp: number } | null> {
     this.pendingMeasure?.(null);
@@ -223,6 +251,8 @@ export class DspEngineClient {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.pendingUpdate = null;
     this.pendingMeasure?.(null);
     this.pendingMeasure = null;
     this.node.port.postMessage({ type: "dispose" });

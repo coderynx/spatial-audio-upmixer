@@ -69,6 +69,63 @@ impl CausalChain {
         }
     }
 
+    /// Adopt new master params in place. Reference/EQ gain and blend are
+    /// scalars, assigned directly; the reference/EQ convolvers keep their
+    /// history via [`StreamingConvolver::retune_kernel`] when their FIR
+    /// content changed, or are added/dropped when it went to/from empty. The
+    /// bass sub/mid/exciter filters are cheap to rebuild outright (a few
+    /// biquad sections), so they're only touched — and only reset — when
+    /// `new.bass` actually differs from what this chain was built with.
+    pub fn retune(&mut self, sample_rate: u32, old: &MasterParams, new: &MasterParams) {
+        self.reference_gain = new.reference_gain;
+        self.eq_strength = new.eq_strength;
+
+        if !self.is_lfe && old.reference_fir != new.reference_fir {
+            if new.reference_fir.is_empty() {
+                self.reference = None;
+            } else if let Some(conv) = &mut self.reference {
+                conv.retune_kernel(new.reference_fir.clone());
+            } else {
+                self.reference = Some(StreamingConvolver::new(new.reference_fir.clone()));
+            }
+        }
+
+        if !self.is_lfe && old.eq_fir != new.eq_fir {
+            if new.eq_fir.is_empty() {
+                self.eq = None;
+            } else if let Some(conv) = &mut self.eq {
+                conv.retune_kernel(new.eq_fir.clone());
+            } else {
+                self.eq = Some(StreamingConvolver::new(new.eq_fir.clone()));
+            }
+        }
+
+        if old.bass != new.bass {
+            let nyq = sample_rate as f64 / 2.0;
+            let bass = new.bass.as_ref();
+            self.sub = bass.filter(|b| b.sub_gain_db != 0.0 && !self.is_lfe).map(|b| {
+                (
+                    SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::Low)),
+                    10.0_f64.powf(b.sub_gain_db / 20.0),
+                )
+            });
+            self.mid = bass.filter(|b| b.mid_gain_db != 0.0 && !self.is_lfe).map(|b| {
+                (
+                    SosFilter::from_flat(&butter_sos(2, b.mid_cutoff_hz / nyq, BandType::Low)),
+                    SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::High)),
+                    10.0_f64.powf(b.mid_gain_db / 20.0),
+                )
+            });
+            self.exciter = bass.filter(|b| b.excite && !self.is_lfe).map(|b| {
+                (
+                    SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::Low)),
+                    b.excite_drive,
+                    b.excite_blend,
+                )
+            });
+        }
+    }
+
     /// Everything before the compressor, which needs the linked bus first.
     pub fn pre_compressor(&mut self, block: &[f64]) -> Vec<f64> {
         let mut out: Vec<f64> = block.iter().map(|v| v * self.reference_gain).collect();

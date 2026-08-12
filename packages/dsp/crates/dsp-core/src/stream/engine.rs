@@ -14,7 +14,7 @@ use super::meters::{Level, Meters};
 use super::output::OutputStage;
 use super::params::EngineParams;
 use super::routing::{shape_index, LfeBus, StemRouteState};
-use super::state::StreamingCompressor;
+use super::state::{OnePole, StreamingCompressor};
 
 /// Run-up rendered and discarded before a seek lands, long enough to cover
 /// the Haas delays, the compressor's release, and the mono-maker's horizon.
@@ -23,6 +23,12 @@ const SEEK_PREROLL_MS: f64 = 500.0;
 /// Frames the mono-maker advances per call. Larger amortizes its zero-phase
 /// context further but raises the worst-case cost of a single render.
 const MONO_STRIDE: usize = 512;
+
+/// Time constant for smoothing a stem's mute/solo/rebalance gain and the
+/// master output gain across a live [`PreviewEngine::update_params`] edit,
+/// so the step lands as a fast ramp rather than a click. Matches the deleted
+/// `previewGraph.ts`'s `GAIN_RAMP_TIME_CONSTANT` from the pre-Rust preview.
+const GAIN_RAMP_MS: f64 = 8.0;
 
 
 /// Decoded stereo PCM for one stem, as the host transfers it.
@@ -86,6 +92,9 @@ pub struct PreviewEngine {
     decode_taps_override: Option<Vec<f64>>,
     xtc_taps_override: Option<Vec<f64>>,
     collapsed: Vec<Vec<f64>>,
+    /// One smoother per stem, tracking its mute/solo/rebalance gain.
+    stem_gain: Vec<OnePole>,
+    master_gain: OnePole,
     pre: Queue,
     post: Queue,
     mono_done: usize,
@@ -138,6 +147,20 @@ impl PreviewEngine {
             .map(|l| StreamingLimiter::new(l, sample_rate, n_channels));
         let total_frames = stems.iter().map(|s| s.len()).max().unwrap_or(0);
 
+        let stem_gain = params
+            .stems
+            .iter()
+            .map(|s| {
+                let target = if s.enabled {
+                    10.0_f64.powf(s.rebalance_db / 20.0) * s.route_scale
+                } else {
+                    0.0
+                };
+                OnePole::new_at(GAIN_RAMP_MS, sample_rate as f64, target)
+            })
+            .collect();
+        let master_gain = OnePole::new_at(GAIN_RAMP_MS, sample_rate as f64, params.master.output_gain);
+
         let decode_taps_override = None;
         let xtc_taps_override = None;
         let output = build_output(sample_rate, &params, &decode_taps_override, &xtc_taps_override);
@@ -145,6 +168,8 @@ impl PreviewEngine {
             sample_rate,
             lfe_bus: LfeBus::new(sample_rate, &params.sends),
             collapsed: vec![Vec::new(); n_channels.max(2)],
+            stem_gain,
+            master_gain,
             output,
             decode_taps_override,
             xtc_taps_override,
@@ -240,10 +265,17 @@ impl PreviewEngine {
 
         for (stem_index, stem) in self.stems.iter().enumerate() {
             let Some(sp) = self.params.stems.get(stem_index) else { continue };
-            if !sp.enabled {
+            let target_gain = if sp.enabled {
+                10.0_f64.powf(sp.rebalance_db / 20.0) * sp.route_scale
+            } else {
+                0.0
+            };
+            let smoother = &mut self.stem_gain[stem_index];
+            if !sp.enabled && smoother.is_settled(0.0) {
+                // Already faded out and staying muted — skip the routing and
+                // EQ work entirely, same as the old hard cut did.
                 continue;
             }
-            let gain = 10.0_f64.powf(sp.rebalance_db / 20.0) * sp.route_scale;
             let route = &mut self.routes[stem_index];
 
             let mut left = Vec::with_capacity(count);
@@ -259,13 +291,14 @@ impl PreviewEngine {
             }
 
             for i in 0..count {
+                let gain = smoother.tick(target_gain);
                 let shaped = route.tick(left[i], right[i]);
                 for (name, weight) in &sp.routing {
                     if *weight == 0.0 {
                         continue;
                     }
                     if name == "LFE" {
-                        lfe_sum[i] += shaped[shape_index(super::params::SendShape::Mono)] * weight;
+                        lfe_sum[i] += shaped[shape_index(super::params::SendShape::Mono)] * weight * gain;
                         continue;
                     }
                     let Some(channel) = self.params.speaker_index(name) else { continue };
@@ -384,8 +417,13 @@ impl PreviewEngine {
             .iter()
             .map(|c| c[start..end].to_vec())
             .collect();
-        self.output
-            .process(&window, emit, self.params.master.output_gain, &mut self.collapsed);
+        // Block-quantized rather than per-sample smoothing: output_gain is a
+        // scalar loudness/true-peak correction that changes rarely (mostly
+        // from the measurement pass, not a live user gesture), so ramping it
+        // once per render call is enough to hide the step without threading
+        // a per-sample gain array through the collapse stage.
+        let gain = self.master_gain.advance(self.params.master.output_gain, emit);
+        self.output.process(&window, emit, gain, &mut self.collapsed);
         for (channel, rendered) in self.collapsed.iter().enumerate().take(out_channels) {
             let base = channel * n_frames;
             let count = emit.min(rendered.len());
@@ -475,6 +513,21 @@ impl PreviewEngine {
         &self.meters
     }
 
+    /// Reset filter states and drop the playhead at `frame`, with no run-up.
+    ///
+    /// Leaves every filter cold at `frame`, so the caller is responsible for
+    /// warming it back up (see [`Self::seek`]) or for a use that tolerates a
+    /// cold start, such as a measurement excerpt where a `preroll` of real
+    /// audio is rendered and discarded before anything is measured.
+    pub(crate) fn jump_to(&mut self, frame: usize) {
+        let target = frame.min(self.total_frames);
+        self.rewind();
+        self.emitted = target;
+        self.mono_done = target;
+        self.pre.base = target;
+        self.post.base = target;
+    }
+
     /// Jump to `frame`, warming the filter states up from shortly before it.
     ///
     /// Starting cold would be audible: the surround and height sends are
@@ -484,14 +537,8 @@ impl PreviewEngine {
     /// would have produced there.
     pub fn seek(&mut self, frame: usize) {
         let target = frame.min(self.total_frames);
-        self.rewind();
-
         let preroll = (self.sample_rate as f64 * SEEK_PREROLL_MS / 1000.0) as usize;
-        let start = target.saturating_sub(preroll);
-        self.emitted = start;
-        self.mono_done = start;
-        self.pre.base = start;
-        self.post.base = start;
+        self.jump_to(target.saturating_sub(preroll));
 
         let block = 4096;
         let width = self.params.speakers.len().max(2);
@@ -504,23 +551,102 @@ impl PreviewEngine {
         }
     }
 
-    /// Replace the parameter block, keeping the loaded stems and playhead.
+    /// Replace the parameter block, keeping the loaded stems, the playhead,
+    /// and — outside a channel-layout change — every filter's carried state
+    /// and both look-ahead queues.
     ///
     /// Mute, solo, rebalance, routing, mastering and output-mode changes all
     /// arrive this way, so there is one path for "the mix changed" rather
-    /// than a special case per control.
+    /// than a special case per control. Each stage only re-derives the parts
+    /// of itself that actually moved: nothing here re-renders a preroll or
+    /// discards `pre`/`post`, so playback never gaps. The new mix reaches
+    /// the speakers once the look-ahead already rendered under the old
+    /// params has drained — audible lag on the order of the mono-maker's
+    /// horizon plus the limiter's lookahead, not audible silence.
     pub fn update_params(&mut self, params: EngineParams) {
-        let position = self.emitted;
-        self.params = params;
-        self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
+        let old = std::mem::replace(&mut self.params, params);
+
+        let topology_changed =
+            old.speakers.len() != self.params.speakers.len() || old.lfe_index != self.params.lfe_index;
+        if topology_changed {
+            // Rare — the web client tears the whole worklet down for a
+            // speaker-layout change before this can even fire in practice —
+            // so it keeps the old full-rebuild-then-seek behavior rather
+            // than earning its own diff logic.
+            let position = self.emitted;
+            self.rebuild_for_new_topology();
+            self.seek(position);
+            return;
+        }
+
+        if self.routes.len() != self.params.stems.len() {
+            self.rebuild_routes();
+        }
+
+        let sends_changed = old.sends != self.params.sends;
+        if sends_changed {
+            self.lfe_bus.retune(self.sample_rate, &self.params.sends);
+        }
+        for (i, route) in self.routes.iter_mut().enumerate() {
+            let new_eq = self.params.stems.get(i).map(|s| s.eq_fir.as_slice()).unwrap_or(&[]);
+            let old_eq = old.stems.get(i).map(|s| s.eq_fir.as_slice()).unwrap_or(&[]);
+            let eq_changed = new_eq != old_eq;
+            if sends_changed || eq_changed {
+                route.retune(self.sample_rate, &self.params.sends, new_eq, sends_changed, eq_changed);
+            }
+        }
+
+        match self.params.master.compressor {
+            None => self.compressor = None,
+            Some(c) => match &mut self.compressor {
+                Some(existing) => existing.retune(c, self.sample_rate),
+                None => self.compressor = Some(StreamingCompressor::new(c, self.sample_rate)),
+            },
+        }
+
+        let old_mono_cutoff = old.master.bass.and_then(|b| b.mono_cutoff_hz);
+        let new_mono_cutoff = self.params.master.bass.and_then(|b| b.mono_cutoff_hz);
+        if old_mono_cutoff != new_mono_cutoff || old.master.stereo_pairs != self.params.master.stereo_pairs {
+            // Stateless across calls (see `MonoMaker::process`), so a plain
+            // rebuild is already the cheap path here.
+            self.mono = new_mono_cutoff
+                .map(|hz| MonoMaker::new(self.sample_rate, hz, self.params.master.stereo_pairs.clone()));
+        }
+
+        if old.master != self.params.master {
+            for chain in &mut self.causal {
+                chain.retune(self.sample_rate, &old.master, &self.params.master);
+            }
+        }
+
+        match self.params.master.limiter {
+            None => self.limiter = None,
+            Some(l) if self.limiter.is_none() || old.master.limiter != Some(l) => {
+                self.limiter = Some(StreamingLimiter::new(l, self.sample_rate, self.params.speakers.len()));
+            }
+            Some(_) => {}
+        }
+
+        if old.speakers != self.params.speakers
+            || old.output_mode != self.params.output_mode
+            || old.voicing != self.params.voicing
+            || old.soft_limit_threshold != self.params.soft_limit_threshold
+        {
+            self.output.retune(self.sample_rate, &self.params);
+        }
+    }
+
+    /// Full rebuild for a channel-count/LFE-position change — every stage
+    /// keyed by `n_channels` has to move, so there is nothing cheaper to do
+    /// than what [`Self::new`] would build fresh. `pre`/`post`/`causal`/
+    /// `output`/`limiter`/`emitted` are left to the `seek` call the caller
+    /// makes right after this, whose `rewind` already rebuilds them at the
+    /// new topology.
+    fn rebuild_for_new_topology(&mut self) {
         let n_channels = self.params.speakers.len();
         self.collapsed = vec![Vec::new(); n_channels.max(2)];
-        self.routes = self
-            .params
-            .stems
-            .iter()
-            .map(|s| StemRouteState::new(self.sample_rate, &self.params.sends, &s.eq_fir))
-            .collect();
+        self.rebuild_routes();
+        self.lfe_bus.retune(self.sample_rate, &self.params.sends);
         self.compressor = self
             .params
             .master
@@ -532,7 +658,31 @@ impl PreviewEngine {
             .bass
             .and_then(|b| b.mono_cutoff_hz)
             .map(|hz| MonoMaker::new(self.sample_rate, hz, self.params.master.stereo_pairs.clone()));
-        self.seek(position);
+    }
+
+    /// Rebuild the per-stem routing state and gain smoothers to match
+    /// `self.params.stems` — used when a stem was added or removed, where
+    /// there is no previous per-index state to retune.
+    fn rebuild_routes(&mut self) {
+        self.routes = self
+            .params
+            .stems
+            .iter()
+            .map(|s| StemRouteState::new(self.sample_rate, &self.params.sends, &s.eq_fir))
+            .collect();
+        self.stem_gain = self
+            .params
+            .stems
+            .iter()
+            .map(|s| {
+                let target = if s.enabled {
+                    10.0_f64.powf(s.rebalance_db / 20.0) * s.route_scale
+                } else {
+                    0.0
+                };
+                OnePole::new_at(GAIN_RAMP_MS, self.sample_rate as f64, target)
+            })
+            .collect();
     }
 
     /// Reset transport and every filter state to the top of the programme.
@@ -550,9 +700,7 @@ impl PreviewEngine {
                 CausalChain::new(self.sample_rate, &self.params.master, self.params.lfe_index == Some(i))
             })
             .collect();
-        if let Some(l) = self.params.master.limiter {
-            self.limiter = Some(StreamingLimiter::new(l, self.sample_rate, n_channels));
-        }
+        self.limiter = self.params.master.limiter.map(|l| StreamingLimiter::new(l, self.sample_rate, n_channels));
         self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
         self.pre = Queue::new(n_channels);
         self.post = Queue::new(n_channels);

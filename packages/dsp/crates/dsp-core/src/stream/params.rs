@@ -21,7 +21,7 @@ pub enum OutputMode {
 }
 
 /// One positional speaker in the bed, plus the direction it encodes from.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct SpeakerParams {
     pub name: String,
     pub azimuth_rad: f64,
@@ -47,7 +47,7 @@ pub enum SendShape {
 }
 
 /// Send shaping constants, all served from core.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 pub struct SendParams {
     pub surround_bass_cutoff_hz: f64,
     pub surround_haas_ms: (f64, f64),
@@ -63,7 +63,7 @@ pub struct SendParams {
 }
 
 /// Per-stem live state: what it plays into and how loud.
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Default)]
 pub struct StemParams {
     /// Speaker name to routing weight, including `"LFE"`.
     #[serde(default)]
@@ -91,7 +91,7 @@ fn unit_scale() -> f64 {
 
 /// Mastering-bus stages, in the contracted order. `None` means the stage is
 /// off, matching how `MasteringChain` skips an unset profile.
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Default)]
 pub struct MasterParams {
     /// Reference-match level gain, applied before the curve.
     #[serde(default = "unit_scale")]

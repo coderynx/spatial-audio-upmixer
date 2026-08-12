@@ -9,7 +9,7 @@ use crate::kernels::sum::pairwise_sum;
 
 use super::non_lfe;
 
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize)]
 pub struct CompParams {
     pub threshold_db: f64,
     pub ratio: f64,

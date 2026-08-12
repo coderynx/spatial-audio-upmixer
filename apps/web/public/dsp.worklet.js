@@ -12,10 +12,31 @@
 
 const RENDER_QUANTUM = 128;
 
-// Frames of the measurement pass to advance per quantum while the transport
-// is idle. Measuring the whole programme costs ~0.12x realtime, so it cannot
-// happen in one call without starving the callback; it is spread across quanta
-// instead, using the budget the render is not using.
+// Measurement runs in two stages: a fast excerpt pass clears the "calibrating
+// loudness" UI in a few seconds, then an exact whole-programme pass refines
+// the gain in the background. See docs/contracts/preview_export_parity.md P3.
+const FAST_EXCERPT_COUNT = 5;
+const FAST_EXCERPT_SECONDS = 3;
+const FAST_EXCERPT_PREROLL_SECONDS = 0.5;
+
+// Frames of the fast excerpt pass to advance per quantum while paused. Sized
+// well past one quantum's budget on purpose: the node is the *source* and its
+// output is already zero-filled while paused, so an overrun here costs a
+// dropped silent callback, not a glitch, and finishing the (short) excerpt
+// plan in a handful of calls is what makes the banner clear in seconds.
+const MEASURE_FRAMES_FAST_IDLE = 2048;
+
+// Frames of the fast excerpt pass to advance per quantum while playing — kept
+// far smaller than the idle slice, because unlike the idle case this shares
+// the quantum with a real render: an overrun here drops real audio, not
+// silence. Bench-measured worst-case headroom on the heaviest configuration
+// (order-3 binaural decode, 9 stems) is what sets this value.
+const MEASURE_FRAMES_FAST_PLAYING = 32;
+
+// Frames of the exact whole-programme pass to advance per quantum while the
+// transport is idle. Measuring the whole programme costs ~0.12x realtime, so
+// it cannot happen in one call without starving the callback; it is spread
+// across quanta instead, using the budget the render is not using.
 //
 // It advances only while paused. Playing already spends most of the quantum,
 // and both the render and the measurement have periodic look-ahead strides
@@ -40,6 +61,8 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.measurePass = 0;
     this.measureOut = 0;
     this.measureReport = 0;
+    this.measureStage = null;
+    this.measureWeights = [1];
 
     try {
       this.instance = new WebAssembly.Instance(module);
@@ -156,6 +179,14 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
   // take effect without a reload.
   updateParams(encoded) {
     if (!this.engine) return;
+    // Deliberately does not `endMeasure()`: a pass in flight forked its own
+    // engine (see `PreviewEngine::fork`) and keeps measuring it against the
+    // parameters at the moment `measure()` started. `setParams`/`dispose`
+    // can call `endMeasure()` freely because they also tell the main thread
+    // the pass ended (a fresh engine or a torn-down one); this path, fired
+    // on every mix edit, has no such signal — freeing the pass here would
+    // leave `DspEngineClient.measure()`'s promise on the main thread waiting
+    // for a "measured" message that would never arrive.
     const { ptr, bytes } = this.copyBytes(encoded);
     const ok = this.wasm.dsp_engine_set_params(this.engine, ptr, bytes);
     this.wasm.dsp_free(ptr, bytes);
@@ -214,43 +245,69 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     }
   }
 
-  // Start measuring the whole programme for real BS.1770 loudness and true
-  // peak — the correction gain a bounce would need, rather than an estimate
-  // from a few seconds of it. The pass runs on its own engine over the same
-  // stems, advanced from `process` so the transport keeps its playhead and the
+  // Start measuring for real BS.1770 loudness and true peak — the correction
+  // gain a bounce would need, rather than an estimate from a few seconds of
+  // it. Runs in two stages: a fast pass over a handful of excerpts resolves
+  // in seconds and is what the "calibrating loudness" UI waits for; an exact
+  // whole-programme pass then starts automatically and refines the gain once
+  // it lands. Both passes run on their own engine over the same stems,
+  // advanced from `process` so the transport keeps its playhead and the
   // callback keeps its deadline.
   measure(weights) {
     if (!this.engine) return;
     this.endMeasure();
+    this.measureWeights = weights.length ? weights : [1];
+    const excerptFrames = Math.round(FAST_EXCERPT_SECONDS * sampleRate);
+    const prerollFrames = Math.round(FAST_EXCERPT_PREROLL_SECONDS * sampleRate);
+    this.beginMeasurePass("fast", (weightPtr, weightCount) =>
+      this.wasm.dsp_measure_begin_excerpts(
+        this.engine,
+        weightPtr,
+        weightCount,
+        FAST_EXCERPT_COUNT,
+        excerptFrames,
+        prerollFrames,
+      ),
+    );
+  }
+
+  beginMeasurePass(stage, begin) {
+    const weights = this.measureWeights;
     const count = Math.max(weights.length, 1);
     const weightBytes = count * 8;
     const weightPtr = this.wasm.dsp_alloc(weightBytes);
-    new Float64Array(this.wasm.memory.buffer, weightPtr, count).set(
-      weights.length ? weights : [1],
-    );
-    this.measurePass = this.wasm.dsp_measure_begin(this.engine, weightPtr, weights.length);
+    new Float64Array(this.wasm.memory.buffer, weightPtr, count).set(weights);
+    this.measurePass = begin(weightPtr, weights.length);
     this.wasm.dsp_free(weightPtr, weightBytes);
     if (!this.measurePass) {
       this.port.postMessage({ type: "error", message: "measurement could not start" });
       return;
     }
+    this.measureStage = stage;
     this.measureOut = this.wasm.dsp_alloc(16);
-    this.port.postMessage({ type: "measuring", progress: 0 });
+    this.measureReport = 0;
+    this.port.postMessage({ type: "measuring", stage, progress: 0 });
   }
 
   advanceMeasure() {
-    if (!this.measurePass || this.playing) return;
-    const done = this.wasm.dsp_measure_advance(
-      this.measurePass,
-      MEASURE_FRAMES_IDLE,
-      this.measureOut,
-    );
+    if (!this.measurePass) return;
+    // The exact pass only advances while paused; the fast pass also advances
+    // during playback, in a small slice, so pressing play right away doesn't
+    // stall the banner.
+    if (this.playing && this.measureStage !== "fast") return;
+    const step = this.playing
+      ? MEASURE_FRAMES_FAST_PLAYING
+      : this.measureStage === "fast"
+        ? MEASURE_FRAMES_FAST_IDLE
+        : MEASURE_FRAMES_IDLE;
+    const done = this.wasm.dsp_measure_advance(this.measurePass, step, this.measureOut);
     if (!done) {
-      this.measureReport = (this.measureReport || 0) - 1;
+      this.measureReport -= 1;
       if (this.measureReport <= 0) {
         this.measureReport = 64;
         this.port.postMessage({
           type: "measuring",
+          stage: this.measureStage,
           progress: this.wasm.dsp_measure_progress(this.measurePass),
         });
       }
@@ -258,8 +315,14 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     }
     const result = new Float64Array(this.wasm.memory.buffer, this.measureOut, 2);
     const [lkfs, dbtp] = [result[0], result[1]];
+    const stage = this.measureStage;
     this.endMeasure();
-    this.port.postMessage({ type: "measured", lkfs, dbtp });
+    this.port.postMessage({ type: "measured", stage, lkfs, dbtp });
+    if (stage === "fast") {
+      this.beginMeasurePass("exact", (weightPtr, weightCount) =>
+        this.wasm.dsp_measure_begin(this.engine, weightPtr, weightCount),
+      );
+    }
   }
 
   endMeasure() {
@@ -271,6 +334,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.wasm.dsp_free(this.measureOut, 16);
       this.measureOut = 0;
     }
+    this.measureStage = null;
   }
 
   report() {
@@ -342,6 +406,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.reportCountdown = sampleRate / 30;
       this.report();
     }
+    this.advanceMeasure();
     return true;
   }
 }

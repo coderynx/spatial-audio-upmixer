@@ -86,7 +86,7 @@ should be.
 |---|---|---|
 | P1 | **Live-parameter latency.** The worklet renders ahead of the playhead, so a control change lands after the render horizon rather than instantly. | ~100 ms |
 | P2 | **Seek warm-up.** A seek renders a discarded run-up so the filter states settle; without it the Haas-delayed sends would drop out and the compressor would re-attack. Inside the run-up the states are still converging. | 500 ms run-up; lands within 1e-6 of a straight play-through |
-| P3 | **Correction latency.** The loudness/true-peak correction is the real BS.1770 measurement of the whole programme, which costs ~0.12x realtime — far more than a render quantum allows. The pass is advanced in slices from the idle render callback, so the preview plays *uncorrected* until it completes. | ~2-3 min for an eight-minute track; only advances while paused (§4) |
+| P3 | **Correction latency, in two stages.** The loudness/true-peak correction is a real BS.1770 measurement. A fast pass over a handful of excerpts lands first and is what the "calibrating loudness" UI waits for; an exact pass over the whole programme then keeps running in the background and refines the gain once it lands. Both are advanced in slices from the render callback (`stream::measure`), so the preview plays *uncorrected* until the fast pass completes, and on the exact-but-not-yet-fast-refined gain in between. | Fast pass: a few seconds, advances while paused or playing. Exact pass: ~2-3 min for an eight-minute track, only advances while paused (§4) |
 
 Two former Tier-3 gaps are **closed**: the preview's loudness is now the real
 BS.1770 measurement over the whole render rather than an excerpt-sampled
@@ -120,12 +120,32 @@ mastering chain — one engine per process, and fails the build over budget:
 The first render of a play or seek fills both look-ahead queues from cold
 (~30 ms); it is reported but not budgeted.
 
-A loudness measurement (P3) is the one other thing competing for the quantum.
-It advances **only while paused**, where it may use most of the budget because
+A mix edit (mute, solo, a fader, a mastering toggle) reaches the engine
+through `update_params`/`dsp_engine_set_params`, not through P2's seek —
+it only retunes the stages whose parameters actually moved, keeping the
+playhead and both look-ahead queues, so it carries none of P2's 500 ms
+run-up and is held to the same render budget above rather than a looser one
+(`bench-preview-engine.mjs`'s `mixEditPlaying` case). P1's ~100 ms is what a
+mix edit costs the *listener* — the look-ahead already rendered under the
+old parameters has to drain first; this budget is what it costs the
+*audio thread* to make the switch, which is what actually risks silence if
+missed.
+
+A loudness measurement (P3) is the one other thing competing for the quantum,
+and its two stages are budgeted differently. The **exact** whole-programme
+pass advances only while paused, where it may use most of the budget because
 the render is not: playing already spends ~0.25x on average, and both the
 render and the measurement have periodic look-ahead strides that overrun the
-quantum when they land in the same callback. A pass is kept across playback, so
-it resumes rather than restarts.
+quantum when they land in the same callback. The **fast** excerpt pass also
+advances while paused, in a much larger slice — deliberately past the
+deadline, since the node's output is already silent while paused and an
+overrun there costs a dropped silent callback, not a glitch — and, in a small
+slice, while playing, so pressing play immediately after load doesn't stall
+it; that shared-quantum case is not silence-safe, so its budget only tolerates
+an occasional single-quantum click on the heaviest configuration, bounded to
+the fast pass's few-second window (`bench-preview-engine.mjs`'s
+`measuringFast` / `measuringPlaying` cases). A pass is kept across playback,
+so it resumes rather than restarts.
 
 **Run this after any change to `packages/dsp`'s streaming path.** A change that
 is numerically perfect and 3× too slow is a change that ships silence.
@@ -180,3 +200,4 @@ or that the port itself resolved.
 | D26 | The mono-maker's zero-phase pass filtered ~9,700 samples of context to emit each 128-frame quantum, ~75x redundant. | Fixed: it advances in 512-frame strides, which is where the §4 mean and p99 both sit inside budget. |
 | D27 | The loudness correction was measured in a single blocking call inside the render callback — ~57 s of frozen audio thread for an eight-minute track, on load and on every output-mode switch. | Fixed: `stream::measure` advances a forked engine in slices, with streaming BS.1770 meters pinned bit-identical to the offline ones. The correction now arrives late (P3) instead of stopping the audio. |
 | D24 | `dsp_master_bed` skipped LFE entirely for reference matching; LFE should take the level gain and skip only the spectral curve (D21). | Fixed — caught by the golden render's reference-match stage. The streaming engine was already correct. |
+| D28 | The whole-programme measurement D27 introduced (§ P3) advanced only while paused and only from a `resume()`d `AudioContext`; a fresh context starts suspended and the worklet never registered its own progress callback, so the "calibrating loudness" UI could hang indefinitely with no feedback, and at best took minutes on an eight-minute track. | Fixed: the context resumes on init (with a pointer-gesture fallback for autoplay policy), the worklet's progress reaches the UI, and measurement runs in two stages — a fast excerpt pass clears the UI in seconds, then the exact whole-programme pass keeps refining the gain in the background (§ P3). |

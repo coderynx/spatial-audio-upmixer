@@ -52,6 +52,16 @@ impl StreamingConvolver {
         self.part = None;
     }
 
+    /// Swap the kernel, keeping `history` — the next `process` call rebuilds
+    /// the partition's frequency-domain delay line by re-transforming the
+    /// retained input tail (the same machinery [`Self::prepare`] already uses
+    /// to stay exact across a hop change), so the new filter picks up from
+    /// the signal already in flight instead of starting cold.
+    pub fn retune_kernel(&mut self, kernel: Vec<f64>) {
+        self.kernel = kernel;
+        self.part = None;
+    }
+
     pub fn latency(&self) -> usize {
         0
     }

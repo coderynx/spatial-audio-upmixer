@@ -29,6 +29,14 @@ type DspExports = {
   dsp_engine_output_channels: (engine: number) => number;
   dsp_engine_meters: (engine: number, out: number, capacity: number) => number;
   dsp_measure_begin: (engine: number, weights: number, channels: number) => number;
+  dsp_measure_begin_excerpts: (
+    engine: number,
+    weights: number,
+    channels: number,
+    count: number,
+    excerptFrames: number,
+    prerollFrames: number,
+  ) => number;
   dsp_measure_advance: (pass: number, frames: number, out: number) => number;
   dsp_measure_progress: (pass: number) => number;
   dsp_measure_free: (pass: number) => void;
@@ -219,6 +227,10 @@ describe("shared DSP core (wasm)", () => {
     const outPtr = wasm.dsp_alloc(CHANNELS * 512 * 4);
     wasm.dsp_engine_render(engine, outPtr, CHANNELS, 512);
     const position = wasm.dsp_engine_position(engine);
+    const steadyStatePeak = new Float32Array(wasm.memory.buffer, outPtr, CHANNELS * 512).reduce(
+      (m, v) => Math.max(m, Math.abs(v)),
+      0,
+    );
 
     const muted = { ...PARAMS, stems: [{ ...PARAMS.stems[0], enabled: false }] };
     const encoded = new TextEncoder().encode(JSON.stringify(muted));
@@ -230,9 +242,23 @@ describe("shared DSP core (wasm)", () => {
     expect(wasm.dsp_engine_total_frames(engine)).toBe(FRAMES);
     expect(wasm.dsp_engine_position(engine)).toBe(position);
 
+    // The mute ramps rather than snapping — the quantum right after the
+    // swap must not come back short or silent, which is what a reload (or
+    // the old seek-based `update_params`) would have produced instead.
     wasm.dsp_engine_render(engine, outPtr, CHANNELS, 512);
-    const view = new Float32Array(wasm.memory.buffer, outPtr, CHANNELS * 512);
-    expect(view.reduce((m, v) => Math.max(m, Math.abs(v)), 0)).toBe(0);
+    let view = new Float32Array(wasm.memory.buffer, outPtr, CHANNELS * 512);
+    const rampedPeak = view.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    expect(rampedPeak).toBeGreaterThan(0);
+    expect(rampedPeak).toBeLessThan(steadyStatePeak);
+
+    // Well past the ramp's time constant, the mute has fully landed. The
+    // smoother is a one-pole, so it only ever approaches zero asymptotically
+    // rather than hitting it exactly — inaudible, but not bit-exact silence.
+    for (let i = 0; i < 8; i += 1) {
+      wasm.dsp_engine_render(engine, outPtr, CHANNELS, 512);
+    }
+    view = new Float32Array(wasm.memory.buffer, outPtr, CHANNELS * 512);
+    expect(view.reduce((m, v) => Math.max(m, Math.abs(v)), 0)).toBeLessThan(1e-4);
   });
 
   it("sets the decode bank on its own channel, surviving a later set_params", () => {
@@ -348,6 +374,44 @@ describe("shared DSP core (wasm)", () => {
     expect(got[1]).toBeCloseTo(wantDbtp, 4);
 
     wasm.dsp_measure_free(pass);
+    wasm.dsp_engine_free(engine);
+  });
+
+  // The fast excerpt pass (audioEngine.ts's two-stage measurement) drives
+  // this ABI instead. A plan that spans the whole programme is the fallback
+  // path `MeasurementPass::new_excerpts` takes on a short track, and should
+  // match a plain `dsp_measure_begin` pass exactly, not just approximately.
+  it("an excerpt pass covering the whole programme matches a direct pass", () => {
+    const wasm = instantiate();
+    const engine = createEngine(wasm, { ...PARAMS, output_mode: "stereo" });
+    const left = writeStem(wasm, tone(FRAMES));
+    const right = writeStem(wasm, tone(FRAMES));
+    wasm.dsp_engine_add_stem(engine, left.ptr, right.ptr, FRAMES);
+
+    const weightPtr = wasm.dsp_alloc(16);
+    new Float64Array(wasm.memory.buffer, weightPtr, 2).set([1, 1]);
+    const resultPtr = wasm.dsp_alloc(16);
+
+    const direct = wasm.dsp_measure_begin(engine, weightPtr, 2);
+    while (wasm.dsp_measure_advance(direct, 512, resultPtr) === 0) {
+      /* advance to completion */
+    }
+    const want = new Float64Array(wasm.memory.buffer.slice(resultPtr, resultPtr + 16));
+    wasm.dsp_measure_free(direct);
+
+    const excerpts = wasm.dsp_measure_begin_excerpts(engine, weightPtr, 2, 1, FRAMES, 0);
+    expect(excerpts).not.toBe(0);
+    let slices = 0;
+    while (wasm.dsp_measure_advance(excerpts, 512, resultPtr) === 0) {
+      slices += 1;
+      expect(slices).toBeLessThan(10_000);
+    }
+    expect(wasm.dsp_measure_progress(excerpts)).toBe(1);
+    const got = new Float64Array(wasm.memory.buffer, resultPtr, 2);
+    expect(got[0]).toBeCloseTo(want[0], 9);
+    expect(got[1]).toBeCloseTo(want[1], 9);
+
+    wasm.dsp_measure_free(excerpts);
     wasm.dsp_engine_free(engine);
   });
 

@@ -72,10 +72,13 @@ export function useStemPreview(
   const [error, setError] = React.useState<string | null>(null);
   const [ready, setReady] = React.useState(false);
   const [loadProgress, setLoadProgress] = React.useState(0);
-  // True only for the brief first-play loudness warm-up the engine runs —
-  // surfaced so the UI can show a "calibrating" status in place of the
-  // transport during that window instead of looking stalled.
+  // True while the fast excerpt loudness pass (see `measureIfNeeded` in
+  // audioEngine.ts) is in flight — surfaced so the UI can show a
+  // "calibrating" status in place of the transport during that window
+  // instead of looking stalled. The exact whole-programme pass that follows
+  // runs in the background and does not reopen this.
   const [measuring, setMeasuring] = React.useState(false);
+  const [measureProgress, setMeasureProgress] = React.useState(0);
   const [maxChannels, setMaxChannels] = React.useState(2);
   const [outputDevices, setOutputDevices] = React.useState<MediaDeviceInfo[]>([]);
   const [outputDeviceId, setOutputDeviceIdState] = React.useState("");
@@ -99,6 +102,7 @@ export function useStemPreview(
       onCurrentTime: setCurrentTime,
       onDuration: setDuration,
       onMeasuring: setMeasuring,
+      onMeasureProgress: setMeasureProgress,
       onMaxChannels: setMaxChannels,
       onVolume: setVolumeState,
       onMuted: setMutedState,
@@ -262,6 +266,7 @@ export function useStemPreview(
     ready,
     loadProgress,
     measuring,
+    measureProgress,
     playing,
     currentTime,
     duration,

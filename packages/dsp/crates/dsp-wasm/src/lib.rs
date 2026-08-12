@@ -518,6 +518,39 @@ pub unsafe extern "C" fn dsp_measure_begin(
     Box::into_raw(Box::new(MeasurementPass::new(engine, &w)))
 }
 
+/// Begin measuring `count` excerpts of `excerpt_frames` each, spread evenly
+/// across the programme, each preceded by `preroll_frames` of discarded
+/// warm-up. Falls back to the whole programme when it is shorter than the
+/// plan needs. Used for a fast first correction; a full [`dsp_measure_begin`]
+/// pass then refines it in the background — see `stream::measure`.
+///
+/// # Safety
+/// `weights` must address `n_channels` readable f64 values; `engine` must come
+/// from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_measure_begin_excerpts(
+    engine: *const PreviewEngine,
+    weights: *const f64,
+    n_channels: usize,
+    count: usize,
+    excerpt_frames: usize,
+    preroll_frames: usize,
+) -> *mut MeasurementPass {
+    let Some(engine) = engine.as_ref() else { return std::ptr::null_mut() };
+    let w = if weights.is_null() {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(weights, n_channels).to_vec()
+    };
+    Box::into_raw(Box::new(MeasurementPass::new_excerpts(
+        engine,
+        &w,
+        count,
+        excerpt_frames,
+        preroll_frames,
+    )))
+}
+
 /// Measure up to `frames` more. Returns 1 and writes `[lkfs, dbtp]` into `out`
 /// once the programme is exhausted, 0 while there is more to do.
 ///

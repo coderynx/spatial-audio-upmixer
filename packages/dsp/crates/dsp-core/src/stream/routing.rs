@@ -26,6 +26,26 @@ impl DelayLine {
         self.write = 0;
     }
 
+    /// Change the delay length in place, preserving as much of the buffered
+    /// signal as still fits — a Haas-delay edit re-times without the silent
+    /// gap a fresh zeroed buffer would leave.
+    pub fn resize(&mut self, delay_samples: usize) {
+        let new_len = delay_samples.max(1);
+        if new_len == self.buffer.len() {
+            return;
+        }
+        let (tail, head) = self.buffer.split_at(self.write);
+        let ordered: Vec<f64> = head.iter().chain(tail.iter()).copied().collect();
+        let mut buffer = vec![0.0; new_len];
+        if new_len >= ordered.len() {
+            buffer[new_len - ordered.len()..].copy_from_slice(&ordered);
+        } else {
+            buffer.copy_from_slice(&ordered[ordered.len() - new_len..]);
+        }
+        self.buffer = buffer;
+        self.write = 0;
+    }
+
     #[inline]
     pub fn tick(&mut self, x: f64) -> f64 {
         let out = self.buffer[self.write];
@@ -50,6 +70,27 @@ impl Send {
             f.reset();
         }
         self.delay.reset();
+    }
+
+    /// Re-derive a surround send's highpass and delay in place.
+    fn retune_surround(&mut self, sample_rate: u32, p: &SendParams, delay_ms: f64) {
+        let nyq = sample_rate as f64 / 2.0;
+        let hp = butter_sos(2, p.surround_bass_cutoff_hz / nyq, BandType::High);
+        self.filters[0].retune_flat(&hp);
+        self.delay.resize(delay_samples(sample_rate, delay_ms));
+        self.blend = p.diffuse_blend;
+    }
+
+    /// Re-derive a height send's low-rolloff/crossover and delay in place.
+    fn retune_height(&mut self, sample_rate: u32, p: &SendParams, delay_ms: f64) {
+        let nyq = sample_rate as f64 / 2.0;
+        let lp = butter_sos(1, p.height_low_rolloff_hz / nyq, BandType::Low);
+        let hp = butter_sos(2, p.height_crossover_hz / nyq, BandType::High);
+        self.filters[0].retune_flat(&lp);
+        self.filters[1].retune_flat(&hp);
+        self.delay.resize(delay_samples(sample_rate, delay_ms));
+        self.blend = p.diffuse_blend;
+        self.elevation = Some((p.height_low_rolloff_gain, p.height_high_shelf_gain));
     }
 
     #[inline]
@@ -124,6 +165,40 @@ impl StemRouteState {
         }
     }
 
+    /// Adopt new send shaping and/or a new stem EQ in place, keeping every
+    /// filter's carried state and the EQ convolvers' history — a live mix
+    /// edit re-derives coefficients rather than restarting this stem's
+    /// routing cold. `sends_changed`/`eq_changed` let the caller skip the
+    /// (still cheap, but non-zero) work when that half didn't move.
+    pub fn retune(
+        &mut self,
+        sample_rate: u32,
+        sends: &SendParams,
+        eq_fir: &[f64],
+        sends_changed: bool,
+        eq_changed: bool,
+    ) {
+        if sends_changed {
+            self.surround[0].retune_surround(sample_rate, sends, sends.surround_haas_ms.0);
+            self.surround[1].retune_surround(sample_rate, sends, sends.surround_haas_ms.1);
+            self.height[0].retune_height(sample_rate, sends, sends.height_haas_ms.0);
+            self.height[1].retune_height(sample_rate, sends, sends.height_haas_ms.1);
+        }
+        if eq_changed {
+            if eq_fir.is_empty() {
+                self.eq = None;
+            } else if let Some((l, r)) = &mut self.eq {
+                l.retune_kernel(eq_fir.to_vec());
+                r.retune_kernel(eq_fir.to_vec());
+            } else {
+                self.eq = Some((
+                    StreamingConvolver::new(eq_fir.to_vec()),
+                    StreamingConvolver::new(eq_fir.to_vec()),
+                ));
+            }
+        }
+    }
+
     /// Shape one stereo sample into the seven signals a speaker can draw on.
     #[inline]
     pub fn tick(&mut self, left: f64, right: f64) -> [f64; 7] {
@@ -174,6 +249,14 @@ impl LfeBus {
 
     pub fn reset(&mut self) {
         self.filter.reset();
+    }
+
+    /// Re-derive the lowpass and gain in place, keeping the filter state.
+    pub fn retune(&mut self, sample_rate: u32, p: &SendParams) {
+        let nyq = sample_rate as f64 / 2.0;
+        let sos = butter_sos(p.lfe_filter_order, p.lfe_cutoff_hz / nyq, BandType::Low);
+        self.filter.retune_flat(&sos);
+        self.gain = p.lfe_gain;
     }
 
     #[inline]

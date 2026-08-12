@@ -82,8 +82,11 @@ change what the limiter does. Meters are measured inside the core at the emit
 position, so they never lead the audio.
 
 **Loudness correction.** Measured once per output mode and profile by
-rendering the whole programme offline through the same engine and taking the
-real BS.1770 integrated loudness and true peak. The measurement runs against
+rendering the programme through the same engine and taking the real BS.1770
+integrated loudness and true peak — in two stages, a fast pass over a handful
+of excerpts followed by an exact pass over the whole programme that refines
+the gain once it lands in the background (see
+`docs/contracts/preview_export_parity.md` P3). The measurement runs against
 an uncorrected render, so a previous correction cannot fold into the next one.
 
 **Filter assets.** The decode banks, XTC matrices, and EQ FIRs still ship as

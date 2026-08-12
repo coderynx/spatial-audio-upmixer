@@ -71,6 +71,23 @@ impl SosFilter {
         }
     }
 
+    /// Replace the coefficients in place, keeping each section's delay
+    /// registers — a live parameter edit hears the new response starting at
+    /// the next sample rather than a cold-filter transient. Falls back to a
+    /// fresh build when the section count itself changes (a filter order
+    /// edit), which resets state same as [`Self::from_flat`] would.
+    pub fn retune_flat(&mut self, rows: &[[f64; 6]]) {
+        if rows.len() != self.sections.len() {
+            *self = Self::from_flat(rows);
+            return;
+        }
+        for (section, row) in self.sections.iter_mut().zip(rows.iter()) {
+            let a0 = row[3];
+            section.b = [row[0] / a0, row[1] / a0, row[2] / a0];
+            section.a = [1.0, row[4] / a0, row[5] / a0];
+        }
+    }
+
     /// Seed every section's registers with the `sosfilt_zi` steady state
     /// scaled by `x0`, matching how `sosfiltfilt` initializes its passes.
     pub fn set_step_state(&mut self, x0: f64) {

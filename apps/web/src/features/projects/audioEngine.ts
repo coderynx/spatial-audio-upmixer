@@ -76,6 +76,8 @@ export type EngineCallbacks = {
   onCurrentTime(time: number): void;
   onDuration(duration: number): void;
   onMeasuring(measuring: boolean): void;
+  /** Fraction of the current measurement stage measured, for a progress bar. */
+  onMeasureProgress(progress: number): void;
   onMaxChannels(maxChannels: number): void;
   onVolume(volume: number): void;
   onMuted(muted: boolean): void;
@@ -128,14 +130,18 @@ export class PreviewAudioEngine {
   private loadedDecodeProfile: SpatialProfile | null = null;
   private loadedXtcProfile: TransauralProfile | null = null;
   private stemEqTaps: Map<string, Float64Array> = new Map();
+  private masterEqAsset: string | null = null;
   private masterEqTaps: Float64Array | null = null;
   private referenceTaps: Float64Array | null = null;
   private measuredLkfs = -70;
   private measuredTpDbtp = -70;
   private measuredForMode: string | null = null;
+  /** Mode key the in-flight exact measurement's refinement belongs to. */
+  private exactMeasureKey: string | null = null;
   /** While set, render uncorrected so the measurement sees the raw program. */
   private measuringRaw = false;
   private measureToken = 0;
+  private resumeOnGesture: (() => void) | null = null;
   private stemOrder: string[] = [];
 
   readonly stemSpectrum: EngineRef<Map<string, { level: number; centroid: number }>> = engineRef(
@@ -306,10 +312,18 @@ export class PreviewAudioEngine {
     }
   }
 
+  /**
+   * Cached by asset name, like `loadStemEqFirs`'s per-stem cache: mastering
+   * changes unrelated to the EQ profile (a compressor threshold, a loudness
+   * target) still bump `masteringKey` and re-run this, so without a cache
+   * every one of them would re-fetch and re-decode the same WAV.
+   */
   private async loadMasteringFirs() {
     if (!this.context || !this.constants) return;
     const profile = this.mastering?.eq?.profile as EqProfileName | null | undefined;
     const asset = profile ? this.constants.eqFirAssets[profile] : null;
+    if (asset === this.masterEqAsset && (asset === null || this.masterEqTaps)) return;
+    this.masterEqAsset = asset ?? null;
     this.masterEqTaps = asset
       ? await loadFirTaps(`/eq_fir/${asset}.wav`, this.context).catch(() => null)
       : null;
@@ -451,7 +465,9 @@ export class PreviewAudioEngine {
     if (this.measuredForMode === key) return;
 
     const token = ++this.measureToken;
+    this.exactMeasureKey = key;
     this.callbacks.onMeasuring(true);
+    this.callbacks.onMeasureProgress(0);
     this.measuringRaw = true;
     this.apply();
     const result = await this.client.measure([1, 1]);
@@ -488,10 +504,25 @@ export class PreviewAudioEngine {
       this.context = context;
       this.callbacks.onMaxChannels(context.destination.maxChannelCount);
 
+      // A fresh context starts suspended; without a resume the worklet's
+      // `process` never runs, so a paused measurement never advances either.
+      // Autoplay policy can refuse this outside a user gesture, so also arm a
+      // one-shot fallback that resumes on the next pointer interaction.
+      await context.resume().catch(() => {});
+      if (context.state === "suspended") this.armResumeOnGesture(context);
+
       const channelCount = Math.max(this.layoutChannels.length, 2);
       const client = await DspEngineClient.create(context, channelCount, {
         onFrame: (frame) => this.onFrame(frame),
         onEnded: () => this.onEnded(),
+        onMeasureProgress: (progress) => this.callbacks.onMeasureProgress(progress),
+        onMeasured: (result) => {
+          if (!this.exactMeasureKey) return;
+          this.measuredLkfs = result.lkfs;
+          this.measuredTpDbtp = result.dbtp;
+          this.measuredForMode = this.exactMeasureKey;
+          this.apply();
+        },
         onError: (message) => this.callbacks.onError(message),
       });
       if (token !== this.loadToken) {
@@ -622,6 +653,28 @@ export class PreviewAudioEngine {
     };
   }
 
+  /**
+   * Autoplay policy can leave a freshly created context suspended outside a
+   * user gesture; catch the next pointer interaction and resume it then, so
+   * a paused measurement started on load isn't stuck forever waiting for one.
+   */
+  private armResumeOnGesture(context: AudioContext) {
+    this.disarmResumeOnGesture();
+    const resume = () => {
+      this.disarmResumeOnGesture();
+      if (context.state === "suspended") void context.resume();
+    };
+    this.resumeOnGesture = resume;
+    window.addEventListener("pointerdown", resume, { once: true });
+  }
+
+  private disarmResumeOnGesture() {
+    if (this.resumeOnGesture) {
+      window.removeEventListener("pointerdown", this.resumeOnGesture);
+      this.resumeOnGesture = null;
+    }
+  }
+
   private onEnded() {
     this.playing = false;
     this.callbacks.onPlaying(false);
@@ -634,6 +687,7 @@ export class PreviewAudioEngine {
     this.duration = 0;
     this.currentTimeRef.current = 0;
     this.measuredForMode = null;
+    this.exactMeasureKey = null;
     this.measureToken += 1;
     this.measuringRaw = false;
     this.stemEqTaps = new Map();
@@ -643,6 +697,7 @@ export class PreviewAudioEngine {
     this.monitorGain = null;
     void this.context?.close();
     this.context = null;
+    this.disarmResumeOnGesture();
     this.stemLevels.current = new Map();
     this.channelLevels.current = new Map();
     this.headphoneLevels.current = { left: SILENT_METER_LEVEL, right: SILENT_METER_LEVEL };
