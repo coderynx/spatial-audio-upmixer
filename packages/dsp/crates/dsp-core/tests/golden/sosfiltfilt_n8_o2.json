@@ -1,0 +1,23 @@
+{
+  "name": "sosfiltfilt_n8_o2",
+  "params": {
+    "n": 8,
+    "order": 2,
+    "wn": 0.1
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "sos": {
+      "file": "sosfiltfilt_n8_o2.sos.f64",
+      "len": 6
+    },
+    "input": {
+      "file": "sosfiltfilt_n8_o2.input.f64",
+      "len": 8
+    },
+    "output": {
+      "file": "sosfiltfilt_n8_o2.output.f64",
+      "len": 8
+    }
+  }
+}

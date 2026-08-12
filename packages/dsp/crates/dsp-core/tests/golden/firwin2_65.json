@@ -1,0 +1,31 @@
+{
+  "name": "firwin2_65",
+  "params": {
+    "ntaps": 65,
+    "freq": [
+      0.0,
+      0.5,
+      1.0
+    ],
+    "gain": [
+      1.0,
+      0.5,
+      1.0
+    ]
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "freq": {
+      "file": "firwin2_65.freq.f64",
+      "len": 3
+    },
+    "gain": {
+      "file": "firwin2_65.gain.f64",
+      "len": 3
+    },
+    "taps": {
+      "file": "firwin2_65.taps.f64",
+      "len": 65
+    }
+  }
+}

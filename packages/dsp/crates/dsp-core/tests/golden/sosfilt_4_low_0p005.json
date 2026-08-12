@@ -1,0 +1,23 @@
+{
+  "name": "sosfilt_4_low_0p005",
+  "params": {
+    "order": 4,
+    "wn": 0.005,
+    "btype": "low"
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "sos": {
+      "file": "sosfilt_4_low_0p005.sos.f64",
+      "len": 12
+    },
+    "input": {
+      "file": "sosfilt_4_low_0p005.input.f64",
+      "len": 4096
+    },
+    "output": {
+      "file": "sosfilt_4_low_0p005.output.f64",
+      "len": 4096
+    }
+  }
+}

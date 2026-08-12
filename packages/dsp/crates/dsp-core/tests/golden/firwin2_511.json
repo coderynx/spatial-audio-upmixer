@@ -1,0 +1,33 @@
+{
+  "name": "firwin2_511",
+  "params": {
+    "ntaps": 511,
+    "freq": [
+      0.0,
+      0.25,
+      0.5,
+      1.0
+    ],
+    "gain": [
+      0.8,
+      1.4,
+      1.0,
+      0.6
+    ]
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "freq": {
+      "file": "firwin2_511.freq.f64",
+      "len": 4
+    },
+    "gain": {
+      "file": "firwin2_511.gain.f64",
+      "len": 4
+    },
+    "taps": {
+      "file": "firwin2_511.taps.f64",
+      "len": 511
+    }
+  }
+}

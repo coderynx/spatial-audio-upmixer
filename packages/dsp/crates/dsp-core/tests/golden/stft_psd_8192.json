@@ -1,0 +1,18 @@
+{
+  "name": "stft_psd_8192",
+  "params": {
+    "nperseg": 8192,
+    "noverlap": 6144
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "input": {
+      "file": "stft_psd_8192.input.f64",
+      "len": 48000
+    },
+    "psd": {
+      "file": "stft_psd_8192.psd.f64",
+      "len": 4097
+    }
+  }
+}

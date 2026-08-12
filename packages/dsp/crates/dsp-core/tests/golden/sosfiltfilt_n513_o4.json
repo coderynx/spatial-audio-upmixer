@@ -1,0 +1,23 @@
+{
+  "name": "sosfiltfilt_n513_o4",
+  "params": {
+    "n": 513,
+    "order": 4,
+    "wn": 0.02
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "sos": {
+      "file": "sosfiltfilt_n513_o4.sos.f64",
+      "len": 12
+    },
+    "input": {
+      "file": "sosfiltfilt_n513_o4.input.f64",
+      "len": 513
+    },
+    "output": {
+      "file": "sosfiltfilt_n513_o4.output.f64",
+      "len": 513
+    }
+  }
+}

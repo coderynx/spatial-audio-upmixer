@@ -11,6 +11,7 @@ resolution-markers = [
 members = [
     "upmixer",
     "upmixer-cli",
+    "upmixer-dsp",
     "upmixer-web",
 ]
 
@@ -2003,6 +2004,11 @@ requires-dist = [
     { name = "upmixer", extras = ["separation-gpu"], marker = "extra == 'separation-gpu'", editable = "packages/core" },
 ]
 provides-extras = ["dev", "manifest", "separation-cpu", "separation-gpu"]
+
+[[package]]
+name = "upmixer-dsp"
+version = "0.1.0"
+source = { editable = "packages/dsp" }
 
 [[package]]
 name = "upmixer-web"

@@ -1,0 +1,23 @@
+{
+  "name": "sosfilt_2_high_0p125",
+  "params": {
+    "order": 2,
+    "wn": 0.125,
+    "btype": "high"
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "sos": {
+      "file": "sosfilt_2_high_0p125.sos.f64",
+      "len": 6
+    },
+    "input": {
+      "file": "sosfilt_2_high_0p125.input.f64",
+      "len": 4096
+    },
+    "output": {
+      "file": "sosfilt_2_high_0p125.output.f64",
+      "len": 4096
+    }
+  }
+}

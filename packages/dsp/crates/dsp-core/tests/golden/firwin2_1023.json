@@ -1,0 +1,35 @@
+{
+  "name": "firwin2_1023",
+  "params": {
+    "ntaps": 1023,
+    "freq": [
+      0.0,
+      0.1,
+      0.35,
+      0.7,
+      1.0
+    ],
+    "gain": [
+      1.0,
+      1.2,
+      0.9,
+      1.05,
+      1.0
+    ]
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "freq": {
+      "file": "firwin2_1023.freq.f64",
+      "len": 5
+    },
+    "gain": {
+      "file": "firwin2_1023.gain.f64",
+      "len": 5
+    },
+    "taps": {
+      "file": "firwin2_1023.taps.f64",
+      "len": 1023
+    }
+  }
+}

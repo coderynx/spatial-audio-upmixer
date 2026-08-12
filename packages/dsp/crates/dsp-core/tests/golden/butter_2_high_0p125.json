@@ -1,0 +1,15 @@
+{
+  "name": "butter_2_high_0p125",
+  "params": {
+    "order": 2,
+    "wn": 0.125,
+    "btype": "high"
+  },
+  "tolerance": 1e-14,
+  "arrays": {
+    "sos": {
+      "file": "butter_2_high_0p125.sos.f64",
+      "len": 6
+    }
+  }
+}

@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "upmixer-dsp"
+version = "0.1.0"
+description = "Shared Rust DSP core for the upmixer export pipeline and web preview"
+requires-python = ">=3.11"
+classifiers = ["Programming Language :: Rust"]
+
+[tool.maturin]
+manifest-path = "crates/dsp-py/Cargo.toml"
+module-name = "upmixer_dsp"
+features = ["pyo3/extension-module"]

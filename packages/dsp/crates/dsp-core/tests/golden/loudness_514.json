@@ -1,0 +1,76 @@
+{
+  "name": "loudness_514",
+  "params": {
+    "sample_rate": 48000,
+    "format": "5.1.4",
+    "channels": [
+      "FL",
+      "FR",
+      "C",
+      "LFE",
+      "SL",
+      "SR",
+      "TFL",
+      "TFR",
+      "TBL",
+      "TBR"
+    ],
+    "weights": [
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      1.41,
+      1.41,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "lkfs": -4.947291766564728,
+    "true_peak_dbtp": 1.5669816406403847
+  },
+  "tolerance": 1e-10,
+  "arrays": {
+    "ch_FL": {
+      "file": "loudness_514.ch_FL.f64",
+      "len": 144000
+    },
+    "ch_FR": {
+      "file": "loudness_514.ch_FR.f64",
+      "len": 144000
+    },
+    "ch_C": {
+      "file": "loudness_514.ch_C.f64",
+      "len": 144000
+    },
+    "ch_LFE": {
+      "file": "loudness_514.ch_LFE.f64",
+      "len": 144000
+    },
+    "ch_SL": {
+      "file": "loudness_514.ch_SL.f64",
+      "len": 144000
+    },
+    "ch_SR": {
+      "file": "loudness_514.ch_SR.f64",
+      "len": 144000
+    },
+    "ch_TFL": {
+      "file": "loudness_514.ch_TFL.f64",
+      "len": 144000
+    },
+    "ch_TFR": {
+      "file": "loudness_514.ch_TFR.f64",
+      "len": 144000
+    },
+    "ch_TBL": {
+      "file": "loudness_514.ch_TBL.f64",
+      "len": 144000
+    },
+    "ch_TBR": {
+      "file": "loudness_514.ch_TBR.f64",
+      "len": 144000
+    }
+  }
+}

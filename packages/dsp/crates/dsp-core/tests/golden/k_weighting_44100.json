@@ -1,0 +1,13 @@
+{
+  "name": "k_weighting_44100",
+  "params": {
+    "sample_rate": 44100
+  },
+  "tolerance": 1e-14,
+  "arrays": {
+    "sos": {
+      "file": "k_weighting_44100.sos.f64",
+      "len": 12
+    }
+  }
+}
