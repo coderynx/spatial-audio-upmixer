@@ -545,6 +545,7 @@ export type ServedEngineConstants = {
   surround_downmix_coeff: number;
   itu_center_coeff: number;
   diffuse_send_blend: number;
+  speaker_directions: Record<string, { azimuth_rad: number; elevation_rad: number }>;
   surround_haas_ms: { left: number; right: number };
   height_haas_ms: { left: number; right: number };
   comp_profiles: Record<string, CompProfile>;
@@ -578,6 +579,8 @@ export type EngineConstants = {
   surroundDownmixCoeff: number;
   ituCenterCoeff: number;
   diffuseSendBlend: number;
+  /** Ambisonic encode angles, served so the browser never re-derives them. */
+  speakerDirections: Record<string, { azimuth_rad: number; elevation_rad: number }>;
   surroundHaasMs: { left: number; right: number };
   heightHaasMs: { left: number; right: number };
   compProfiles: Record<CompProfileName, CompProfile>;
@@ -639,6 +642,7 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     surroundDownmixCoeff: s.surround_downmix_coeff,
     ituCenterCoeff: s.itu_center_coeff,
     diffuseSendBlend: s.diffuse_send_blend,
+    speakerDirections: s.speaker_directions,
     surroundHaasMs: s.surround_haas_ms,
     heightHaasMs: s.height_haas_ms,
     compProfiles: s.comp_profiles as Record<CompProfileName, CompProfile>,

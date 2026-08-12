@@ -40,6 +40,7 @@ def engine_constants() -> dict[str, Any]:
         SURROUND_HAAS_DELAY_MS_L,
         SURROUND_HAAS_DELAY_MS_R,
     )
+    from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
     from upmixer.utils import DIFFUSE_SEND_BLEND, ITU_CENTER_COEFF
 
     cfg = UpmixConfig()
@@ -65,6 +66,15 @@ def engine_constants() -> dict[str, Any]:
         "surround_downmix_coeff": cfg.surround_downmix_coeff,
         "itu_center_coeff": ITU_CENTER_COEFF,
         "diffuse_send_blend": DIFFUSE_SEND_BLEND,
+        # The shared DSP core encodes the ambisonic bus, so the browser must
+        # not re-derive these angles from its own coordinate table.
+        "speaker_directions": {
+            label.value: {
+                "azimuth_rad": position.azimuth_rad,
+                "elevation_rad": position.elevation_rad,
+            }
+            for label, position in SPEAKER_AZIMUTH_ELEVATION.items()
+        },
         "surround_haas_ms": {"left": SURROUND_HAAS_DELAY_MS_L, "right": SURROUND_HAAS_DELAY_MS_R},
         "height_haas_ms": {"left": HEIGHT_HAAS_DELAY_MS_L, "right": HEIGHT_HAAS_DELAY_MS_R},
         "comp_profiles": COMP_PROFILES,
