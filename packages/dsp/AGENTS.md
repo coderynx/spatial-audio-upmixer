@@ -50,6 +50,29 @@ source, not re-derivations. They were taken against **SciPy 1.18.0**; if that
 pin moves, regenerate the fixtures and expect the diff to tell you whether
 SciPy changed behaviour.
 
+## The streaming path also has a time budget
+
+`stream/` runs on the browser's audio thread, where a 128-frame quantum must
+complete in 2.67 ms. Numerical correctness is not sufficient there: a render
+that overruns starves the callback, and because the worklet is the audio
+*source* the result is silence, not a glitch. `cargo test` cannot see this.
+
+So any change to `stream/conv.rs`, `stream/master.rs`, `stream/output.rs`, or
+`stream/engine.rs` gets checked with `npm run bench:engine` from `apps/web`
+(after `npm run build:wasm`). Budget and rationale:
+`docs/contracts/preview_export_parity.md` §4.
+
+Two structural choices exist for that budget alone, and both must survive
+refactoring:
+
+- `StreamingConvolver` is uniform-partitioned overlap-save with the kernel
+  transformed **once**. The obvious implementation — `fftconvolve(block,
+  kernel)` per call — re-transforms a 6,128-tap decode filter every 128
+  samples and lands the binaural path at 1.4x realtime.
+- The mono-maker advances in `MONO_STRIDE` frames, not one quantum at a time.
+  Its zero-phase pass reads `MONO_HORIZON_MS` either side of what it emits, so
+  per-quantum granularity redoes that context ~75 times over.
+
 ## Fixtures
 
 `tests/golden/` holds vectors dumped from the Python implementation:

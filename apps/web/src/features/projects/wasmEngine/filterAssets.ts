@@ -2,7 +2,7 @@
 // shared core expects.
 //
 // The assets themselves are backend-owned and byte-identical to the ones the
-// export convolves — see docs/contracts/preview_export_parity.md §4. Nothing
+// export convolves — see docs/contracts/preview_export_parity.md §2. Nothing
 // here designs a filter; it only rearranges what the server built.
 
 import { fetchDecodeFilterPart, fetchXtcFilterSet } from "../audioLoaders";

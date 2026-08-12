@@ -6,7 +6,7 @@
  *
  * Web-only monitor-UI concern, deliberately kept out of the preview engine's
  * DSP path — the Tier-1 DSP constants are single-sourced from core (served via
- * GET /api/v1/configuration, see docs/contracts/preview_export_parity.md §4),
+ * GET /api/v1/configuration, see docs/contracts/preview_export_parity.md §2),
  * and monitor gain never reaches the exported render (see useStemPreview.ts's
  * PROGRAM/MONITOR gain split), so it has no parity contract to keep. */
 

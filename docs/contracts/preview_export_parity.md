@@ -11,8 +11,8 @@ were kept in agreement. There is only one implementation now: the Rust core in
 this contract governed — matching constants, matching filter realizations,
 matching stage order — is no longer possible to get wrong.
 
-What remains is this file's subject: the three things that *can* still differ,
-and the checks that catch them.
+What remains is this file's subject: the things that *can* still differ — in
+behaviour and in timing — and the checks that catch them.
 
 Read [`README.md`](README.md) first for the change protocol. The binaural
 geometry/ambisonic/decode-filter/voicing specification lives in
@@ -51,7 +51,7 @@ after loudness rather than before is deliberate; see
 The one thing that can break identity is **build provenance**: the browser
 loads a committed `apps/web/public/wasm/upmixer_dsp.wasm`, not a wasm built on
 install, so it can fall behind the installed `upmixer_dsp` wheel. Both bindings
-export `dsp_core_version`, and the golden render (§4) fails if the two builds
+export `dsp_core_version`, and the golden render (§5) fails if the two builds
 disagree numerically. **Rebuild the artifact (`npm run build:wasm`) after any
 change under `packages/dsp`.**
 
@@ -99,7 +99,31 @@ One remains open: `estimateRouteScale`
 the decoded stems (ledger D3). The core could compute it exactly — it owns the
 stems — but only on a debounce, since it needs a full pass per routing change.
 
-## 4. Golden render
+## 4. Realtime budget
+
+The preview has one constraint the export does not: the worklet renders on the
+audio thread, so a 128-frame quantum has **2.67 ms** at 48 kHz. Overrunning it
+does not degrade gracefully — this node is the *source*, so a starved callback
+emits silence. Nothing in §1–§3 can detect that: the samples are correct, they
+just arrive too late to be heard.
+
+`apps/web/scripts/bench-preview-engine.mjs` (`npm run bench:engine`) renders the
+worst case we ship — full 7.1.4 bed, nine stems, order-3 decode, whole
+mastering chain — one engine per process, and fails the build over budget:
+
+| Metric | Budget |
+|---|---|
+| Mean per quantum | ≤ 0.4 × deadline |
+| p99 | ≤ 1.0 × deadline |
+| Worst steady-state | ≤ 1.5 × deadline |
+
+The first render of a play or seek fills both look-ahead queues from cold
+(~30 ms); it is reported but not budgeted.
+
+**Run this after any change to `packages/dsp`'s streaming path.** A change that
+is numerically perfect and 3× too slow is a change that ships silence.
+
+## 5. Golden render
 
 `packages/core/tests/test_preview_export_golden.py` renders a fixed
 deterministic bed through both builds and compares. It runs in the default
@@ -130,7 +154,7 @@ test. The reference-match stage needs its gitignored fixture pair, produced by
 packages/core/tests/test_preview_export_golden.py`; without it that stage is
 skipped rather than silently compared against stale numbers.
 
-## 5. Discrepancy ledger
+## 6. Discrepancy ledger
 
 Rows are kept after they are fixed so the history of what was found stays
 visible. D1–D22 predate the Rust port and are preserved in git history at
@@ -145,4 +169,6 @@ or that the port itself resolved.
 | D14 | The look-ahead limiter existed only on the native path, with the collapse paths on the old tanh saturator. | Fixed by the port; the split now follows the export exactly — limiter on native, soft limit on the collapse paths. |
 | D18 | The true-peak kernel existed as two hand-synced copies. | Fixed by the port: one table, in the core. |
 | D23 | The preview's `AudioContext` ran at the device rate while every shipped FIR is designed at 48 kHz, so the taps were reinterpreted at whatever rate the OS gave. | Fixed: the context is pinned to 48 kHz. |
+| D25 | `StreamingConvolver` re-transformed its kernel on every block, so the order-3 decode alone ran at 1.4x realtime and the audio thread starved — correct samples, delivered too late, heard as silence. | Fixed: uniform-partitioned overlap-save, kernel transformed once. Guarded by the §4 budget. |
+| D26 | The mono-maker's zero-phase pass filtered ~9,700 samples of context to emit each 128-frame quantum, ~75x redundant. | Fixed: it advances in 512-frame strides, which is where the §4 mean and p99 both sit inside budget. |
 | D24 | `dsp_master_bed` skipped LFE entirely for reference matching; LFE should take the level gain and skip only the spectral curve (D21). | Fixed — caught by the golden render's reference-match stage. The streaming engine was already correct. |

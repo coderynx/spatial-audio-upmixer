@@ -9,7 +9,7 @@
 // FIR asset basenames (EngineConstants.eqFirAssets / .stemEqFirAssets) map each
 // profile to its precomputed `/eq_fir/<name>.wav`. These are backend-owned and
 // fetched, not hardcoded here — see resolveEngineConstants and
-// docs/contracts/preview_export_parity.md §4.
+// docs/contracts/preview_export_parity.md §2.
 export type EqProfileName =
   | "spatial-transparent"
   | "spatial-air"

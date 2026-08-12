@@ -18,6 +18,10 @@ use super::state::StreamingCompressor;
 /// the Haas delays, the compressor's release, and the mono-maker's horizon.
 const SEEK_PREROLL_MS: f64 = 500.0;
 
+/// Frames the mono-maker advances per call. Larger amortizes its zero-phase
+/// context further but raises the worst-case cost of a single render.
+const MONO_STRIDE: usize = 512;
+
 /// Decoded stereo PCM for one stem, as the host transfers it.
 pub struct StemSource {
     pub left: Vec<f32>,
@@ -243,10 +247,13 @@ impl PreviewEngine {
 
     /// Run the mono-maker until `post` reaches `target` frames.
     fn fill_post(&mut self, target: usize) {
-        let target = target.min(self.total_frames);
-        if self.mono_done >= target {
+        if self.mono_done >= target.min(self.total_frames) {
             return;
         }
+        // The mono-maker's zero-phase pass filters `horizon` samples either
+        // side of what it emits, so emitting a render quantum at a time would
+        // redo that context ~75 times over. Advance in strides instead.
+        let target = target.max(self.mono_done + MONO_STRIDE).min(self.total_frames);
         let horizon = if self.mono.is_some() { self.mono_horizon } else { 0 };
         self.fill_pre(target + horizon);
 

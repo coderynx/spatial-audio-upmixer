@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "format": "prettier --write src vite.config.ts eslint.config.js package.json",
-    "golden:render": "node scripts/render-preview-golden.mjs"
+    "golden:render": "node scripts/render-preview-golden.mjs",
+    "bench:engine": "node scripts/bench-preview-engine.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.6",

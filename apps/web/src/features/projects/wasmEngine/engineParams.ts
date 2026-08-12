@@ -3,7 +3,7 @@
 //
 // This file holds no DSP and no acoustic constants of its own: every value
 // either comes from the served `EngineConstants` or from the project's own
-// mix. See docs/contracts/preview_export_parity.md §4.
+// mix. See docs/contracts/preview_export_parity.md §2.
 
 import type {
   BassProfileName,

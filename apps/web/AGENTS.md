@@ -31,3 +31,9 @@ After any change under `packages/dsp`, rebuild the committed artifact with
 `npm run build:wasm` — it is not built on install, and a stale one ships a
 different algorithm to the browser. See `docs/web_architecture.md` and
 `docs/contracts/preview_export_parity.md`.
+
+Then run `npm run bench:engine`. The preview renders on the audio thread, so
+every 128-frame quantum has 2.67 ms; over budget the callback starves and the
+node — which is the *source* — emits silence rather than degrading. No
+correctness test can see that, so the budget in
+`docs/contracts/preview_export_parity.md` §4 is its own gate.
