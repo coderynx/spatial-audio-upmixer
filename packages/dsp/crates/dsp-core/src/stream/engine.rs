@@ -8,10 +8,15 @@
 //! offline algorithm rather than a causal approximation of one.
 
 use super::master::{linked_rms, CausalChain, MonoMaker, StreamingLimiter, MONO_HORIZON_MS};
+use super::meters::{Level, Meters};
 use super::output::OutputStage;
 use super::params::EngineParams;
 use super::routing::{shape_index, LfeBus, StemRouteState};
 use super::state::StreamingCompressor;
+
+/// Run-up rendered and discarded before a seek lands, long enough to cover
+/// the Haas delays, the compressor's release, and the mono-maker's horizon.
+const SEEK_PREROLL_MS: f64 = 500.0;
 
 /// Decoded stereo PCM for one stem, as the host transfers it.
 pub struct StemSource {
@@ -73,6 +78,7 @@ pub struct PreviewEngine {
     emitted: usize,
     mono_horizon: usize,
     total_frames: usize,
+    meters: Meters,
 }
 
 impl PreviewEngine {
@@ -120,6 +126,7 @@ impl PreviewEngine {
             emitted: 0,
             mono_horizon: (sample_rate as f64 * MONO_HORIZON_MS / 1000.0) as usize,
             total_frames,
+            meters: Meters::default(),
         }
     }
 
@@ -319,6 +326,37 @@ impl PreviewEngine {
             out[base..base + count].copy_from_slice(&rendered[..count]);
         }
 
+        self.meters.stems = self
+            .stems
+            .iter()
+            .enumerate()
+            .map(|(i, stem)| {
+                let sp = self.params.stems.get(i);
+                let enabled = sp.map(|p| p.enabled).unwrap_or(true);
+                if !enabled {
+                    return Level::default();
+                }
+                let gain = sp
+                    .map(|p| 10.0_f64.powf(p.rebalance_db / 20.0))
+                    .unwrap_or(1.0);
+                let to = (self.emitted + emit).min(stem.left.len());
+                if self.emitted >= to {
+                    return Level::default();
+                }
+                Level::measure_f32(&stem.left[self.emitted..to], gain)
+            })
+            .collect();
+        self.meters.channels = self
+            .post
+            .channels
+            .iter()
+            .map(|c| Level::measure(&c[start..end]))
+            .collect();
+        self.meters.output = [
+            Level::measure(self.collapsed.first().map(|c| &c[..]).unwrap_or(&[])),
+            Level::measure(self.collapsed.get(1).map(|c| &c[..]).unwrap_or(&[])),
+        ];
+
         self.emitted += emit;
         self.post.drain_to(self.emitted);
         self.pre.drain_to(self.emitted.saturating_sub(self.mono_horizon));
@@ -361,6 +399,71 @@ impl PreviewEngine {
             crate::loudness::measure_integrated_loudness(&weighted, self.sample_rate),
             crate::loudness::measure_true_peak(&refs),
         )
+    }
+
+    /// Levels from the most recent render.
+    pub fn meters(&self) -> &Meters {
+        &self.meters
+    }
+
+    /// Jump to `frame`, warming the filter states up from shortly before it.
+    ///
+    /// Starting cold would be audible: the surround and height sends are
+    /// Haas-delayed by up to 37 ms and would drop out, and the compressor
+    /// would re-attack from silence. Rendering a discarded run-up instead
+    /// lets every state settle, so a seek lands on the audio the export
+    /// would have produced there.
+    pub fn seek(&mut self, frame: usize) {
+        let target = frame.min(self.total_frames);
+        self.rewind();
+
+        let preroll = (self.sample_rate as f64 * SEEK_PREROLL_MS / 1000.0) as usize;
+        let start = target.saturating_sub(preroll);
+        self.emitted = start;
+        self.mono_done = start;
+        self.pre.base = start;
+        self.post.base = start;
+
+        let block = 4096;
+        let width = self.params.speakers.len().max(2);
+        let mut scratch = vec![0.0; width * block];
+        while self.emitted < target {
+            let step = block.min(target - self.emitted);
+            if self.render(&mut scratch, step) == 0 {
+                break;
+            }
+        }
+    }
+
+    /// Replace the parameter block, keeping the loaded stems and playhead.
+    ///
+    /// Mute, solo, rebalance, routing, mastering and output-mode changes all
+    /// arrive this way, so there is one path for "the mix changed" rather
+    /// than a special case per control.
+    pub fn update_params(&mut self, params: EngineParams) {
+        let position = self.emitted;
+        self.params = params;
+        self.output = OutputStage::new(self.sample_rate, &self.params);
+        let n_channels = self.params.speakers.len();
+        self.collapsed = vec![Vec::new(); n_channels.max(2)];
+        self.routes = self
+            .params
+            .stems
+            .iter()
+            .map(|s| StemRouteState::new(self.sample_rate, &self.params.sends, &s.eq_fir))
+            .collect();
+        self.compressor = self
+            .params
+            .master
+            .compressor
+            .map(|c| StreamingCompressor::new(c, self.sample_rate));
+        self.mono = self
+            .params
+            .master
+            .bass
+            .and_then(|b| b.mono_cutoff_hz)
+            .map(|hz| MonoMaker::new(self.sample_rate, hz, self.params.master.stereo_pairs.clone()));
+        self.seek(position);
     }
 
     /// Reset transport and every filter state to the top of the programme.

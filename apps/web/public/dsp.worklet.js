@@ -20,7 +20,12 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.engine = 0;
     this.outPtr = 0;
     this.outBytes = 0;
+    this.meterPtr = 0;
+    this.meterBytes = 0;
     this.ended = false;
+    this.playing = false;
+    this.loop = false;
+    this.reportCountdown = 0;
 
     try {
       this.instance = new WebAssembly.Instance(module);
@@ -67,6 +72,20 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
         if (this.engine) this.wasm.dsp_engine_rewind(this.engine);
         this.ended = false;
         break;
+      case "update":
+        this.updateParams(message.json);
+        break;
+      case "transport":
+        if (message.playing !== undefined) this.playing = Boolean(message.playing);
+        if (message.loop !== undefined) this.loop = Boolean(message.loop);
+        break;
+      case "seek":
+        if (this.engine) {
+          this.wasm.dsp_engine_seek(this.engine, message.frame >>> 0);
+          this.ended = false;
+          this.report();
+        }
+        break;
       case "dispose":
         this.dispose();
         break;
@@ -91,6 +110,23 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.ended = false;
   }
 
+  // Replacing the parameter block keeps the loaded stems and the playhead,
+  // so mute, solo, rebalance, routing, mastering and output-mode changes all
+  // take effect without a reload.
+  updateParams(json) {
+    if (!this.engine) return;
+    const encoded = new TextEncoder().encode(json);
+    const ptr = this.wasm.dsp_alloc(encoded.length);
+    new Uint8Array(this.wasm.memory.buffer, ptr, encoded.length).set(encoded);
+    const ok = this.wasm.dsp_engine_set_params(this.engine, ptr, encoded.length);
+    this.wasm.dsp_free(ptr, encoded.length);
+    if (!ok) {
+      this.port.postMessage({ type: "error", message: "engine parameters rejected" });
+      return;
+    }
+    this.channelCount = this.wasm.dsp_engine_output_channels(this.engine) || this.channelCount;
+  }
+
   addStem(left, right) {
     if (!this.engine) return;
     const l = this.copyIn(left);
@@ -113,6 +149,25 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.wasm.dsp_free(this.outPtr, this.outBytes);
       this.outPtr = 0;
     }
+    if (this.meterPtr) {
+      this.wasm.dsp_free(this.meterPtr, this.meterBytes);
+      this.meterPtr = 0;
+    }
+  }
+
+  report() {
+    if (!this.engine) return;
+    const capacity = 256;
+    if (!this.meterPtr) {
+      this.meterBytes = capacity * 4;
+      this.meterPtr = this.wasm.dsp_alloc(this.meterBytes);
+    }
+    const written = this.wasm.dsp_engine_meters(this.engine, this.meterPtr, capacity);
+    this.port.postMessage({
+      type: "frame",
+      position: this.wasm.dsp_engine_position(this.engine),
+      meters: Array.from(this.heapF32(this.meterPtr, written)),
+    });
   }
 
   ensureOutput(frames) {
@@ -129,6 +184,10 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       return true;
     }
     const frames = output[0].length || RENDER_QUANTUM;
+    if (!this.playing) {
+      for (const channel of output) channel.fill(0);
+      return true;
+    }
     this.ensureOutput(frames);
 
     const written = this.wasm.dsp_engine_render(
@@ -147,9 +206,22 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       }
     }
 
-    if (written < frames && !this.ended) {
-      this.ended = true;
-      this.port.postMessage({ type: "ended" });
+    if (written < frames) {
+      if (this.loop) {
+        this.wasm.dsp_engine_rewind(this.engine);
+      } else if (!this.ended) {
+        this.ended = true;
+        this.playing = false;
+        this.port.postMessage({ type: "ended" });
+      }
+    }
+
+    // ~30 Hz is enough for a meter and a playhead; posting every quantum
+    // would flood the main thread with 375 messages a second.
+    this.reportCountdown -= frames;
+    if (this.reportCountdown <= 0) {
+      this.reportCountdown = sampleRate / 30;
+      this.report();
     }
     return true;
   }

@@ -285,3 +285,73 @@ fn measuring_leaves_the_transport_where_it_found_it() {
     let (again, _) = engine.measure(&[1.0, 1.0]);
     assert!((again - lkfs).abs() < 1e-12, "{again} vs {lkfs}");
 }
+
+#[test]
+fn seeking_resumes_the_same_audio_the_first_pass_produced() {
+    let params: EngineParams = serde_json::from_str(&params_json(true)).expect("engine params");
+    let n_channels = params.speakers.len();
+    let mut engine = PreviewEngine::new(SR, params, stems());
+
+    let block = 512;
+    let mut scratch = vec![0.0; n_channels * block];
+    let mut straight = Vec::new();
+    loop {
+        let written = engine.render(&mut scratch, block);
+        if written == 0 {
+            break;
+        }
+        straight.extend_from_slice(&scratch[..written]);
+    }
+
+    // Seek past the point where every filter state has settled, then compare.
+    let target = 12_000;
+    engine.seek(target);
+    assert_eq!(engine.position(), target);
+    let written = engine.render(&mut scratch, block);
+    assert_eq!(written, block);
+
+    // The run-up settles every state, so the seek lands on the same audio a
+    // straight play-through produces there.
+    for i in 0..block {
+        let diff = (scratch[i] - straight[target + i]).abs();
+        assert!(diff < 1e-6, "sample {i} after seek: {} vs {}", scratch[i], straight[target + i]);
+    }
+}
+
+#[test]
+fn meters_track_the_emitted_block() {
+    let params: EngineParams = serde_json::from_str(&params_json(true)).expect("engine params");
+    let n_channels = params.speakers.len();
+    let mut engine = PreviewEngine::new(SR, params, stems());
+    let mut scratch = vec![0.0; n_channels * 512];
+    engine.render(&mut scratch, 512);
+
+    let meters = engine.meters();
+    assert_eq!(meters.stems.len(), 2, "one level per stem");
+    assert_eq!(meters.channels.len(), n_channels);
+    assert!(meters.stems.iter().all(|l| l.peak > 0.0), "stems should register");
+    assert!(meters.channels[0].peak > 0.0, "FL should register");
+    assert!(meters.channels[0].rms <= meters.channels[0].peak);
+}
+
+#[test]
+fn disabling_a_stem_through_update_params_silences_it_without_a_reload() {
+    let params: EngineParams = serde_json::from_str(&params_json(false)).expect("engine params");
+    let n_channels = params.speakers.len();
+    let mut engine = PreviewEngine::new(SR, params, stems());
+    let mut scratch = vec![0.0; n_channels * 512];
+    engine.render(&mut scratch, 512);
+    let before = engine.meters().stems[0].peak;
+    assert!(before > 0.0);
+
+    let muted = params_json(false).replace(
+        r#"{"routing": [["FL", 0.9], ["FR", 0.9], ["SL", 0.4], ["LFE", 0.3]],
+              "rebalance_db": 0.0, "enabled": true}"#,
+        r#"{"routing": [["FL", 0.9], ["FR", 0.9], ["SL", 0.4], ["LFE", 0.3]],
+              "rebalance_db": 0.0, "enabled": false}"#,
+    );
+    engine.update_params(serde_json::from_str(&muted).expect("engine params"));
+    engine.render(&mut scratch, 512);
+    assert_eq!(engine.meters().stems[0].peak, 0.0);
+    assert!(engine.meters().stems[1].peak > 0.0, "the other stem keeps playing");
+}

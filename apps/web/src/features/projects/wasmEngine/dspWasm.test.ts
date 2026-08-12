@@ -21,6 +21,11 @@ type DspExports = {
   dsp_engine_total_frames: (engine: number) => number;
   dsp_engine_rewind: (engine: number) => void;
   dsp_engine_free: (engine: number) => void;
+  dsp_engine_set_params: (engine: number, ptr: number, len: number) => number;
+  dsp_engine_seek: (engine: number, frame: number) => void;
+  dsp_engine_position: (engine: number) => number;
+  dsp_engine_output_channels: (engine: number) => number;
+  dsp_engine_meters: (engine: number, out: number, capacity: number) => number;
 };
 
 function instantiate(): DspExports {
@@ -160,6 +165,71 @@ describe("shared DSP core (wasm)", () => {
         expect(Math.abs(a[ch][i] - b[ch][i])).toBeLessThan(1e-6);
       }
     }
+  });
+
+  it("reports levels for each stem, bed channel, and the output pair", () => {
+    const wasm = instantiate();
+    const engine = createEngine(wasm, PARAMS);
+    const left = writeStem(wasm, tone(FRAMES));
+    const right = writeStem(wasm, tone(FRAMES));
+    wasm.dsp_engine_add_stem(engine, left.ptr, right.ptr, FRAMES);
+
+    const outPtr = wasm.dsp_alloc(CHANNELS * 512 * 4);
+    wasm.dsp_engine_render(engine, outPtr, CHANNELS, 512);
+
+    const meterPtr = wasm.dsp_alloc(256 * 4);
+    const written = wasm.dsp_engine_meters(engine, meterPtr, 256);
+    // One stem, three bed channels, one output pair — two floats each.
+    expect(written).toBe(2 * (1 + CHANNELS + 2));
+
+    const meters = new Float32Array(wasm.memory.buffer, meterPtr, written);
+    expect(meters[1]).toBeGreaterThan(0);
+    expect(wasm.dsp_engine_position(engine)).toBe(512);
+  });
+
+  it("swaps parameters in place without dropping the stems or playhead", () => {
+    const wasm = instantiate();
+    const engine = createEngine(wasm, PARAMS);
+    const left = writeStem(wasm, tone(FRAMES));
+    const right = writeStem(wasm, tone(FRAMES));
+    wasm.dsp_engine_add_stem(engine, left.ptr, right.ptr, FRAMES);
+
+    const outPtr = wasm.dsp_alloc(CHANNELS * 512 * 4);
+    wasm.dsp_engine_render(engine, outPtr, CHANNELS, 512);
+    const position = wasm.dsp_engine_position(engine);
+
+    const muted = { ...PARAMS, stems: [{ ...PARAMS.stems[0], enabled: false }] };
+    const encoded = new TextEncoder().encode(JSON.stringify(muted));
+    const ptr = wasm.dsp_alloc(encoded.length);
+    new Uint8Array(wasm.memory.buffer, ptr, encoded.length).set(encoded);
+    expect(wasm.dsp_engine_set_params(engine, ptr, encoded.length)).toBe(1);
+    wasm.dsp_free(ptr, encoded.length);
+
+    expect(wasm.dsp_engine_total_frames(engine)).toBe(FRAMES);
+    expect(wasm.dsp_engine_position(engine)).toBe(position);
+
+    wasm.dsp_engine_render(engine, outPtr, CHANNELS, 512);
+    const view = new Float32Array(wasm.memory.buffer, outPtr, CHANNELS * 512);
+    expect(view.reduce((m, v) => Math.max(m, Math.abs(v)), 0)).toBe(0);
+  });
+
+  it("reports the collapse channel count per output mode", () => {
+    const wasm = instantiate();
+    const native = createEngine(wasm, PARAMS);
+    expect(wasm.dsp_engine_output_channels(native)).toBe(CHANNELS);
+    const stereo = createEngine(wasm, { ...PARAMS, output_mode: "stereo" });
+    expect(wasm.dsp_engine_output_channels(stereo)).toBe(2);
+  });
+
+  it("seeking moves the playhead", () => {
+    const wasm = instantiate();
+    const engine = createEngine(wasm, PARAMS);
+    const left = writeStem(wasm, tone(FRAMES));
+    const right = writeStem(wasm, tone(FRAMES));
+    wasm.dsp_engine_add_stem(engine, left.ptr, right.ptr, FRAMES);
+
+    wasm.dsp_engine_seek(engine, 2400);
+    expect(wasm.dsp_engine_position(engine)).toBe(2400);
   });
 
   it("rewinding replays the programme from the top", () => {

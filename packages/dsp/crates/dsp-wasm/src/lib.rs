@@ -224,6 +224,76 @@ pub unsafe extern "C" fn dsp_engine_total_frames(engine: *const PreviewEngine) -
     engine.as_ref().map(|e| e.total_frames()).unwrap_or(0)
 }
 
+/// Replace the parameter block, keeping the stems and playhead.
+///
+/// Returns 1 on success, 0 if the JSON does not parse — in which case the
+/// engine keeps rendering with the parameters it already had.
+///
+/// # Safety
+/// `params_ptr`/`params_len` must address a UTF-8 JSON object and `engine`
+/// must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_set_params(
+    engine: *mut PreviewEngine,
+    params_ptr: *const u8,
+    params_len: usize,
+) -> u32 {
+    let Some(engine) = engine.as_mut() else { return 0 };
+    let json = std::slice::from_raw_parts(params_ptr, params_len);
+    match serde_json::from_slice::<EngineParams>(json) {
+        Ok(params) => {
+            engine.update_params(params);
+            1
+        }
+        Err(_) => 0,
+    }
+}
+
+/// Move the playhead, warming filter states up from before the target.
+///
+/// # Safety
+/// `engine` must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_seek(engine: *mut PreviewEngine, frame: usize) {
+    if let Some(engine) = engine.as_mut() {
+        engine.seek(frame);
+    }
+}
+
+/// Frames emitted so far, which is the playhead.
+///
+/// # Safety
+/// `engine` must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_position(engine: *const PreviewEngine) -> usize {
+    engine.as_ref().map(|e| e.position()).unwrap_or(0)
+}
+
+/// Channels the collapse writes: two for every mode but native.
+///
+/// # Safety
+/// `engine` must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_output_channels(engine: *const PreviewEngine) -> usize {
+    engine.as_ref().map(|e| e.output_channels()).unwrap_or(0)
+}
+
+/// Copy the latest levels into `out` as `[rms, peak]` pairs — stems, then
+/// bed channels, then the output pair. Returns the number of floats written.
+///
+/// # Safety
+/// `out` must address `capacity` writable f32 values.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_meters(
+    engine: *const PreviewEngine,
+    out: *mut f32,
+    capacity: usize,
+) -> usize {
+    let Some(engine) = engine.as_ref() else { return 0 };
+    let dst = std::slice::from_raw_parts_mut(out, capacity);
+    engine.meters().write(dst).min(capacity)
+}
+
 /// Measure the collapsed programme, writing `[lkfs, dbtp]` into `out`.
 ///
 /// # Safety

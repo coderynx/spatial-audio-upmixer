@@ -6,9 +6,17 @@
 
 export type DspEngineParams = Record<string, unknown>;
 
+/** `[rms, peak]` pairs: stems, then bed channels, then the output pair. */
+export type DspMeterFrame = {
+  position: number;
+  meters: number[];
+};
+
 export type DspEngineCallbacks = {
   onReady?: (coreVersion: string) => void;
   onLoaded?: (totalFrames: number) => void;
+  /** ~30 Hz playhead and level report. */
+  onFrame?: (frame: DspMeterFrame) => void;
   onEnded?: () => void;
   onError?: (message: string) => void;
 };
@@ -85,6 +93,12 @@ export class DspEngineClient {
         case "loaded":
           callbacks.onLoaded?.(Number(message.totalFrames));
           break;
+        case "frame":
+          callbacks.onFrame?.({
+            position: Number(message.position),
+            meters: (message.meters as number[]) ?? [],
+          });
+          break;
         case "ended":
           callbacks.onEnded?.();
           break;
@@ -102,8 +116,26 @@ export class DspEngineClient {
     return new DspEngineClient(node, callbacks, ready);
   }
 
+  /** Create the engine. Stems must be added afterwards. */
   setParams(params: DspEngineParams): void {
     this.node.port.postMessage({ type: "params", json: JSON.stringify(params) });
+  }
+
+  /**
+   * Replace the parameter block in place, keeping the loaded stems and the
+   * playhead — the one path for "the mix changed", whether that means mute,
+   * solo, rebalance, routing, mastering, or the output mode.
+   */
+  updateParams(params: DspEngineParams): void {
+    this.node.port.postMessage({ type: "update", json: JSON.stringify(params) });
+  }
+
+  setTransport(state: { playing?: boolean; loop?: boolean }): void {
+    this.node.port.postMessage({ type: "transport", ...state });
+  }
+
+  seek(frame: number): void {
+    this.node.port.postMessage({ type: "seek", frame: Math.max(0, Math.round(frame)) });
   }
 
   /**
