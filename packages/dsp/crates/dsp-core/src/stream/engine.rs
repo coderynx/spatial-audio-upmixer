@@ -78,6 +78,13 @@ pub struct PreviewEngine {
     mono: Option<MonoMaker>,
     limiter: Option<StreamingLimiter>,
     output: OutputStage,
+    /// Set once the host ships the decode/XTC banks over their own binary
+    /// channel (`set_decode_taps`/`set_xtc_taps`); overrides whatever
+    /// `params.decode_taps`/`xtc_taps` carries. `None` falls back to the
+    /// JSON-embedded taps, which keeps every offline/test caller that never
+    /// touches the setters working unchanged.
+    decode_taps_override: Option<Vec<f64>>,
+    xtc_taps_override: Option<Vec<f64>>,
     collapsed: Vec<Vec<f64>>,
     pre: Queue,
     post: Queue,
@@ -86,6 +93,23 @@ pub struct PreviewEngine {
     mono_horizon: usize,
     total_frames: usize,
     meters: Meters,
+}
+
+/// `OutputStage::new` reads its taps from whichever engine field currently
+/// owns them — the persistent override if the host has set one, otherwise
+/// the parameter block's own `decode_taps`/`xtc_taps`.
+fn build_output(
+    sample_rate: u32,
+    params: &EngineParams,
+    decode_override: &Option<Vec<f64>>,
+    xtc_override: &Option<Vec<f64>>,
+) -> OutputStage {
+    OutputStage::new(
+        sample_rate,
+        params,
+        decode_override.as_deref().unwrap_or(&params.decode_taps),
+        xtc_override.as_deref().unwrap_or(&params.xtc_taps),
+    )
 }
 
 impl PreviewEngine {
@@ -114,12 +138,16 @@ impl PreviewEngine {
             .map(|l| StreamingLimiter::new(l, sample_rate, n_channels));
         let total_frames = stems.iter().map(|s| s.len()).max().unwrap_or(0);
 
-        let output = OutputStage::new(sample_rate, &params);
+        let decode_taps_override = None;
+        let xtc_taps_override = None;
+        let output = build_output(sample_rate, &params, &decode_taps_override, &xtc_taps_override);
         Self {
             sample_rate,
             lfe_bus: LfeBus::new(sample_rate, &params.sends),
             collapsed: vec![Vec::new(); n_channels.max(2)],
             output,
+            decode_taps_override,
+            xtc_taps_override,
             params,
             stems,
             routes,
@@ -151,7 +179,31 @@ impl PreviewEngine {
     /// programme. Used to measure without disturbing the live transport; the
     /// stems are shared, not copied, so this costs filter state only.
     pub fn fork(&self) -> Self {
-        Self::new(self.sample_rate, self.params.clone(), self.stems.clone())
+        let mut engine = Self::new(self.sample_rate, self.params.clone(), self.stems.clone());
+        engine.decode_taps_override = self.decode_taps_override.clone();
+        engine.xtc_taps_override = self.xtc_taps_override.clone();
+        engine.output = build_output(
+            engine.sample_rate,
+            &engine.params,
+            &engine.decode_taps_override,
+            &engine.xtc_taps_override,
+        );
+        engine
+    }
+
+    /// Replace the binaural decode bank, independent of `update_params` — it
+    /// travels its own channel because it is large (order-3 ambisonics is 16
+    /// channels x 2 ears x several thousand taps) and changes only when the
+    /// spatial profile does, unlike the rest of the mix.
+    pub fn set_decode_taps(&mut self, taps: Vec<f64>) {
+        self.decode_taps_override = Some(taps);
+        self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
+    }
+
+    /// Replace the crosstalk-cancellation matrix. See `set_decode_taps`.
+    pub fn set_xtc_taps(&mut self, taps: Vec<f64>) {
+        self.xtc_taps_override = Some(taps);
+        self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
     }
 
     pub fn total_frames(&self) -> usize {
@@ -460,7 +512,7 @@ impl PreviewEngine {
     pub fn update_params(&mut self, params: EngineParams) {
         let position = self.emitted;
         self.params = params;
-        self.output = OutputStage::new(self.sample_rate, &self.params);
+        self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
         let n_channels = self.params.speakers.len();
         self.collapsed = vec![Vec::new(); n_channels.max(2)];
         self.routes = self
@@ -501,7 +553,7 @@ impl PreviewEngine {
         if let Some(l) = self.params.master.limiter {
             self.limiter = Some(StreamingLimiter::new(l, self.sample_rate, n_channels));
         }
-        self.output = OutputStage::new(self.sample_rate, &self.params);
+        self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
         self.pre = Queue::new(n_channels);
         self.post = Queue::new(n_channels);
         self.mono_done = 0;

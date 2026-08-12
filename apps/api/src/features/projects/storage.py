@@ -29,11 +29,13 @@ rectangular array the browser can slice without parsing a header. A timeline
 lane is at most ~1200 CSS px wide showing the whole track, so this covers a 2x
 device-pixel-ratio display with headroom."""
 
-PREVIEW_SAMPLE_RATE = 44100
-"""Full audible bandwidth: the mix preview drives HRTF spatialization, and a
-sub-Nyquist rate here would audibly dull it below the final master's output.
-This remains the "high" preview quality tier's rate — see
-`PREVIEW_QUALITY_LEVELS` for the lighter, user-selectable tiers."""
+PREVIEW_SAMPLE_RATE = 48000
+"""Full audible bandwidth at the rate the web preview actually runs: every
+shipped FIR (HRIR, XTC, EQ) is designed at 48 kHz, so the preview's
+`AudioContext` is pinned there too — matching it here means `decodeAudioData`
+loads the proxy as-is instead of resampling every stem on the main thread
+before playback can start. This remains the "high" preview quality tier's
+rate — see `PREVIEW_QUALITY_LEVELS` for the lighter, user-selectable tiers."""
 
 _PREVIEW_VORBIS_COMPRESSION_LEVEL = 0.3
 """Low compression (high VBR quality): keeps the proxy near-transparent so

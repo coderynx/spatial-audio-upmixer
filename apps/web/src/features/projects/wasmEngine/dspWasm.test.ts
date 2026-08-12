@@ -17,6 +17,8 @@ type DspExports = {
   dsp_core_version_ptr: () => number;
   dsp_engine_new: (sampleRate: number, ptr: number, len: number) => number;
   dsp_engine_add_stem: (engine: number, left: number, right: number, frames: number) => void;
+  dsp_engine_set_decode_taps: (engine: number, ptr: number, nTaps: number) => void;
+  dsp_engine_set_xtc_taps: (engine: number, ptr: number, nTaps: number) => void;
   dsp_engine_render: (engine: number, out: number, channels: number, frames: number) => number;
   dsp_engine_total_frames: (engine: number) => number;
   dsp_engine_rewind: (engine: number) => void;
@@ -113,6 +115,14 @@ function renderAll(wasm: DspExports, engine: number, block: number): Float32Arra
   }
   wasm.dsp_free(outPtr, CHANNELS * block * 4);
   return channels.map((c) => Float32Array.from(c));
+}
+
+// A single unity tap per (acn, ear) — [acn][ear][tap] flattened. Not a
+// well-formed decode filter, just enough to prove the wiring: silent when
+// unset, audible once set, and unaffected by a later `set_params` call.
+function decodeTapsFlat(): Float64Array {
+  const N_ACN = 16;
+  return new Float64Array(N_ACN * 2).fill(1);
 }
 
 describe("shared DSP core (wasm)", () => {
@@ -223,6 +233,59 @@ describe("shared DSP core (wasm)", () => {
     wasm.dsp_engine_render(engine, outPtr, CHANNELS, 512);
     const view = new Float32Array(wasm.memory.buffer, outPtr, CHANNELS * 512);
     expect(view.reduce((m, v) => Math.max(m, Math.abs(v)), 0)).toBe(0);
+  });
+
+  it("sets the decode bank on its own channel, surviving a later set_params", () => {
+    const wasm = instantiate();
+    // No LFE here (unlike PARAMS): the binaural collapse sums LFE straight
+    // into both ears ahead of the decode stage, which would make the
+    // "silent before taps arrive" baseline below untrue for the wrong
+    // reason.
+    const binaural = {
+      ...PARAMS,
+      output_mode: "binaural",
+      lfe_index: null,
+      stems: [{ routing: [["FL", 0.9], ["FR", 0.9]], enabled: true }],
+    };
+    const engine = createEngine(wasm, binaural);
+    const left = writeStem(wasm, tone(FRAMES));
+    const right = writeStem(wasm, tone(FRAMES));
+    wasm.dsp_engine_add_stem(engine, left.ptr, right.ptr, FRAMES);
+
+    const outPtr = wasm.dsp_alloc(2 * 512 * 4);
+    const peak = () => {
+      wasm.dsp_engine_rewind(engine);
+      wasm.dsp_engine_render(engine, outPtr, 2, 512);
+      const view = new Float32Array(wasm.memory.buffer, outPtr, 2 * 512);
+      return view.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    };
+
+    // No `decode_taps` in the JSON block and no override set yet: the
+    // ambisonic decode convolvers are empty, so the binaural collapse is
+    // silent — this is the state a fresh engine renders into before its
+    // profile's HRIR bank has been fetched.
+    expect(peak()).toBe(0);
+
+    const taps = decodeTapsFlat();
+    const tapsPtr = wasm.dsp_alloc(taps.length * 8);
+    new Float64Array(wasm.memory.buffer, tapsPtr, taps.length).set(taps);
+    wasm.dsp_engine_set_decode_taps(engine, tapsPtr, taps.length);
+    wasm.dsp_free(tapsPtr, taps.length * 8);
+
+    expect(peak()).toBeGreaterThan(0);
+
+    // A mix edit through `set_params` never carries `decode_taps` of its
+    // own (the web client stopped sending it once it had its own channel) —
+    // the override must outlive that call rather than reverting to silence.
+    const encoded = new TextEncoder().encode(JSON.stringify(binaural));
+    const ptr = wasm.dsp_alloc(encoded.length);
+    new Uint8Array(wasm.memory.buffer, ptr, encoded.length).set(encoded);
+    expect(wasm.dsp_engine_set_params(engine, ptr, encoded.length)).toBe(1);
+    wasm.dsp_free(ptr, encoded.length);
+
+    expect(peak()).toBeGreaterThan(0);
+
+    wasm.dsp_engine_free(engine);
   });
 
   it("reports the collapse channel count per output mode", () => {

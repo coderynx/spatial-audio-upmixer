@@ -5,6 +5,7 @@
       <sourceFolder url="file://$MODULE_DIR$/apps/api/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/apps/api/.venv" />
     </content>
+    <orderEntry type="jdk" jdkName="~/Projects/upmixer/apps/api/.venv" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>

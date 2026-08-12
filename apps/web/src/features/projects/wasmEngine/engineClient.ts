@@ -191,6 +191,27 @@ export class DspEngineClient {
     ]);
   }
 
+  /**
+   * Replace the binaural decode bank, independent of `updateParams` — the
+   * bank is large (order-3 ambisonics: 16 channels x 2 ears x several
+   * thousand taps) and changes only when the spatial profile does, so it
+   * travels its own transferred channel instead of riding along in every
+   * mix edit's JSON block. The engine keeps whatever was last set here
+   * across every later `updateParams` call.
+   *
+   * `taps` is transferred like `addStem`'s buffers: if the caller keeps its
+   * own cache of the profile's taps (to skip re-fetching it later), it must
+   * pass a copy here, not the cached array itself.
+   */
+  setDecodeTaps(taps: Float64Array): void {
+    this.node.port.postMessage({ type: "decodeTaps", taps }, [taps.buffer as ArrayBuffer]);
+  }
+
+  /** Replace the crosstalk-cancellation matrix. See `setDecodeTaps`. */
+  setXtcTaps(taps: Float64Array): void {
+    this.node.port.postMessage({ type: "xtcTaps", taps }, [taps.buffer as ArrayBuffer]);
+  }
+
   rewind(): void {
     this.node.port.postMessage({ type: "rewind" });
   }

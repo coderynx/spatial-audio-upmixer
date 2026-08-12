@@ -116,7 +116,13 @@ fn split_taps(flat: &[f64], groups: usize) -> Vec<[Vec<f64>; 2]> {
 }
 
 impl OutputStage {
-    pub fn new(sample_rate: u32, params: &EngineParams) -> Self {
+    /// `decode_taps`/`xtc_taps` are passed separately from `params` rather
+    /// than read off it: the caller may be carrying them as a persistent
+    /// override set once over its own binary channel (see
+    /// `PreviewEngine::set_decode_taps`) instead of on every parameter
+    /// update, since the bank is large and changes far less often than the
+    /// rest of the mix.
+    pub fn new(sample_rate: u32, params: &EngineParams, decode_taps: &[f64], xtc_taps: &[f64]) -> Self {
         let n_channels = params.speakers.len();
         let encoders = params
             .speakers
@@ -128,12 +134,12 @@ impl OutputStage {
             })
             .collect();
 
-        let decode = split_taps(&params.decode_taps, N_ACN_CHANNELS)
+        let decode = split_taps(decode_taps, N_ACN_CHANNELS)
             .into_iter()
             .map(|[l, r]| [StreamingConvolver::new(l), StreamingConvolver::new(r)])
             .collect();
         let xtc = {
-            let sets = split_taps(&params.xtc_taps, 2);
+            let sets = split_taps(xtc_taps, 2);
             (sets.len() == 2).then(|| {
                 let mut it = sets.into_iter();
                 let [ll, lr] = it.next().expect("left speaker row");

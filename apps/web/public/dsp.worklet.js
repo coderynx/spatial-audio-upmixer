@@ -80,6 +80,17 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     return { ptr, bytes };
   }
 
+  heapF64(ptr, length) {
+    return new Float64Array(this.wasm.memory.buffer, ptr, length);
+  }
+
+  copyF64(values) {
+    const bytes = values.length * 8;
+    const ptr = this.wasm.dsp_alloc(bytes);
+    this.heapF64(ptr, values.length).set(values);
+    return { ptr, bytes };
+  }
+
   handle(message) {
     if (!this.wasm) return;
     switch (message.type) {
@@ -88,6 +99,12 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
         break;
       case "stem":
         this.addStem(message.left, message.right);
+        break;
+      case "decodeTaps":
+        this.setDecodeTaps(message.taps);
+        break;
+      case "xtcTaps":
+        this.setXtcTaps(message.taps);
         break;
       case "rewind":
         if (this.engine) this.wasm.dsp_engine_rewind(this.engine);
@@ -160,6 +177,25 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       type: "loaded",
       totalFrames: this.wasm.dsp_engine_total_frames(this.engine),
     });
+  }
+
+  // Taps arrive as raw f64 bytes rather than riding along in the JSON
+  // parameter block — the decode bank alone is 16 ACN x 2 ears x several
+  // thousand taps, and re-encoding/re-parsing that as float text on every
+  // mix edit is most of what made loading slow. The engine keeps whatever
+  // was set here across every later `updateParams` call.
+  setDecodeTaps(taps) {
+    if (!this.engine) return;
+    const { ptr, bytes } = this.copyF64(taps);
+    this.wasm.dsp_engine_set_decode_taps(this.engine, ptr, taps.length);
+    this.wasm.dsp_free(ptr, bytes);
+  }
+
+  setXtcTaps(taps) {
+    if (!this.engine) return;
+    const { ptr, bytes } = this.copyF64(taps);
+    this.wasm.dsp_engine_set_xtc_taps(this.engine, ptr, taps.length);
+    this.wasm.dsp_free(ptr, bytes);
   }
 
   dispose() {

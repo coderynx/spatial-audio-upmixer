@@ -31,8 +31,9 @@ function flattenPairs(channels: Float32Array[], groups: number): Float64Array {
   for (let group = 0; group < groups; group += 1) {
     for (let ear = 0; ear < 2; ear += 1) {
       const source = channels[group * 2 + ear];
-      const base = (group * 2 + ear) * taps;
-      for (let i = 0; i < taps; i += 1) out[base + i] = source ? source[i] : 0;
+      // `TypedArray.set` converts f32 -> f64 natively; the per-sample loop
+      // it replaces paid V8's boxed-element path for 196,096 taps.
+      if (source) out.set(source, (group * 2 + ear) * taps);
     }
   }
   return out;
@@ -80,5 +81,5 @@ export async function loadFirTaps(url: string, ctx: BaseAudioContext): Promise<F
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status}`);
   const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
-  return Float64Array.from(buffer.getChannelData(0));
+  return new Float64Array(buffer.getChannelData(0));
 }

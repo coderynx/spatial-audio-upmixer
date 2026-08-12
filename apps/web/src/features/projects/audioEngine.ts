@@ -26,9 +26,20 @@ import type {
 } from "./masteringProfiles";
 import { estimateRouteScale } from "./masteringProfiles";
 import type { MasterPreview } from "./masterPreview";
+import { loadBuffer } from "./audioLoaders";
 import { DspEngineClient } from "./wasmEngine/engineClient";
 import { buildEngineParams, type StemMix } from "./wasmEngine/engineParams";
 import { loadDecodeTaps, loadFirTaps, loadXtcTaps } from "./wasmEngine/filterAssets";
+
+/**
+ * Stems decode concurrently but must reach the engine in `this.stems` order
+ * (its stem index is push order — see `push_stem` in stream/engine.rs), so a
+ * stem that finishes decoding out of turn has to be held in memory until its
+ * turn comes. Bounding the batch caps that retained set: a 5-minute 48 kHz
+ * stereo stem is ~115 MB decoded, so unbounded parallelism risks holding
+ * every stem of a long project at once.
+ */
+const STEM_DECODE_CONCURRENCY = 3;
 
 export { applyTruePeakCeiling } from "./audioAnalysis";
 
@@ -272,7 +283,10 @@ export class PreviewAudioEngine {
     try {
       this.decodeTaps = await loadDecodeTaps(this.context, this.constants.decodeFilterSet[profile]);
       this.loadedDecodeProfile = profile;
-      this.apply();
+      // A slice, not the cached field itself: `setDecodeTaps` transfers its
+      // argument's buffer, which would detach `this.decodeTaps` and break
+      // the cache-hit path above the next time this profile is requested.
+      this.client?.setDecodeTaps(this.decodeTaps.slice());
       return true;
     } catch {
       return false;
@@ -285,7 +299,7 @@ export class PreviewAudioEngine {
     try {
       this.xtcTaps = await loadXtcTaps(this.context, this.constants.xtcFilterSet[profile]);
       this.loadedXtcProfile = profile;
-      this.apply();
+      this.client?.setXtcTaps(this.xtcTaps.slice());
       return true;
     } catch {
       return false;
@@ -304,22 +318,33 @@ export class PreviewAudioEngine {
   private async loadStemEqFirs() {
     if (!this.context || !this.constants) return;
     const wanted = this.mix?.stem_eq ?? {};
-    const next = new Map<string, Float64Array>();
-    for (const [stemKey, profile] of Object.entries(wanted)) {
-      const asset = this.constants.stemEqFirAssets[profile as StemEqProfileName];
-      if (!asset) continue;
-      const taps =
-        this.stemEqTaps.get(stemKey) ??
-        (await loadFirTaps(`/eq_fir/${asset}.wav`, this.context).catch(() => null));
-      if (taps) next.set(stemKey, taps);
-    }
-    this.stemEqTaps = next;
+    const entries = await Promise.all(
+      Object.entries(wanted).map(async ([stemKey, profile]) => {
+        const asset = this.constants.stemEqFirAssets[profile as StemEqProfileName];
+        if (!asset) return null;
+        const taps =
+          this.stemEqTaps.get(stemKey) ??
+          (await loadFirTaps(`/eq_fir/${asset}.wav`, this.context!).catch(() => null));
+        return taps ? ([stemKey, taps] as const) : null;
+      }),
+    );
+    this.stemEqTaps = new Map(entries.filter((entry): entry is readonly [string, Float64Array] => entry !== null));
+  }
+
+  /**
+   * Stems the engine actually loads. `resolveStems`, `stemOrder` and
+   * `loadStems` must all iterate this same filtered list — the engine's stem
+   * index is push order, so a stem dropped by one of them but not the others
+   * shifts every later index and desyncs routing, rebalance and meters.
+   */
+  private previewableStems(): ProjectStem[] {
+    return this.stems.filter((stem) => stem.preview_url || stem.audio_url);
   }
 
   /** Resolve the project's mix into the core's per-stem parameters. */
   private resolveStems(): StemMix[] {
     const anchor = this.mix?.stem_source_anchor_strength || 0;
-    return this.stems.map((stem) => {
+    return this.previewableStems().map((stem) => {
       const base = stem.stem_key.split("@", 1)[0];
       const scene = this.scene.stems?.[stem.stem_key] || this.scene.stems?.[base] || {};
       let routing = this.mix?.stem_routing?.[stem.stem_key] || this.mix?.stem_routing?.[base];
@@ -388,7 +413,7 @@ export class PreviewAudioEngine {
             this.mastering?.loudness?.max_tp ?? -1,
           );
 
-    this.stemOrder = this.stems.map((stem) => stem.id);
+    this.stemOrder = this.previewableStems().map((stem) => stem.id);
     return buildEngineParams({
       constants: this.constants,
       layoutChannels: this.layoutChannels,
@@ -407,8 +432,6 @@ export class PreviewAudioEngine {
       outputMode: this.outputMode,
       spatialProfile: this.spatialProfile,
       transauralProfile: this.transauralProfile,
-      decodeTaps: this.decodeTaps ?? undefined,
-      xtcTaps: this.xtcTaps ?? undefined,
     });
   }
 
@@ -482,16 +505,29 @@ export class PreviewAudioEngine {
       this.monitorGain.gain.value = this.muted ? 0 : this.volume;
       client.node.connect(this.monitorGain).connect(context.destination);
 
+      // The engine is created before its convolvers have taps — they render
+      // silence until `apply()` lands, same as the old graph's `void`-fired
+      // filter loads — so stems can start fetching immediately instead of
+      // waiting behind ~800 KB of HRIR/XTC/EQ WAV. `setParams` always builds
+      // a fresh engine with no taps of its own (they ride their own binary
+      // channel, not the JSON block), so a profile already cached from a
+      // prior init has to be re-pushed onto it explicitly here — otherwise
+      // `loadDecodeFilterSet`'s cache-hit path finds nothing to fetch and
+      // never sends the taps this new engine actually needs.
+      client.setParams(this.buildParams());
+      if (this.loadedDecodeProfile === this.spatialProfile && this.decodeTaps) {
+        client.setDecodeTaps(this.decodeTaps.slice());
+      }
+      if (this.loadedXtcProfile === this.transauralProfile && this.xtcTaps) {
+        client.setXtcTaps(this.xtcTaps.slice());
+      }
       await Promise.all([
         this.loadDecodeFilterSet(this.spatialProfile),
         this.loadXtcFilterSet(this.transauralProfile),
-        this.loadMasteringFirs(),
-        this.loadStemEqFirs(),
+        this.loadMasteringFirs().then(() => this.apply()),
+        this.loadStemEqFirs().then(() => this.apply()),
+        this.loadStems(token, context, client),
       ]);
-      if (token !== this.loadToken) return;
-
-      client.setParams(this.buildParams());
-      await this.loadStems(token, context, client);
       if (token !== this.loadToken) return;
 
       this.callbacks.onReady(true);
@@ -503,28 +539,58 @@ export class PreviewAudioEngine {
     }
   }
 
+  /**
+   * Fetch and decode the stems concurrently, but hand them to the engine
+   * strictly in `previewableStems()` order — the engine's stem index is push
+   * order (`push_stem` appends), and `stemOrder`/`buildEngineParams` both
+   * address stems by position, so the network is not allowed to decide it.
+   */
   private async loadStems(token: number, context: AudioContext, client: DspEngineClient) {
-    const sources = this.stems;
-    let loaded = 0;
-    for (const stem of sources) {
-      const url = stem.preview_url || stem.audio_url;
-      if (!url) continue;
-      const response = await fetch(url);
-      if (!response.ok) throw new Error("Preview stem could not be loaded");
-      const buffer = await context.decodeAudioData(await response.arrayBuffer());
+    const sources = this.previewableStems();
+    if (!sources.length) {
+      this.callbacks.onLoadProgress(1);
+      return;
+    }
+
+    // Stems finish decoding in tight clusters, not evenly spaced — flushing
+    // progress straight from each completion would fire a full page
+    // re-render per stem in that cluster, right when the main thread is
+    // busiest with decode work. Coalesce same-frame completions instead.
+    let decoded = 0;
+    let progressFlushScheduled = false;
+    const scheduleProgressFlush = () => {
+      if (progressFlushScheduled) return;
+      progressFlushScheduled = true;
+      window.requestAnimationFrame(() => {
+        progressFlushScheduled = false;
+        if (token !== this.loadToken) return;
+        this.callbacks.onLoadProgress(decoded / sources.length);
+      });
+    };
+
+    for (let start = 0; start < sources.length; start += STEM_DECODE_CONCURRENCY) {
+      const chunk = sources.slice(start, start + STEM_DECODE_CONCURRENCY);
+      const buffers = await Promise.all(
+        chunk.map((stem) => loadBuffer(context, (stem.preview_url || stem.audio_url)!)),
+      );
       if (token !== this.loadToken) return;
 
-      // Transferring avoids holding a second copy of every stem on the main
-      // thread; a multi-stem project would otherwise double its footprint.
-      const left = Float32Array.from(buffer.getChannelData(0));
-      const right = Float32Array.from(buffer.getChannelData(Math.min(1, buffer.numberOfChannels - 1)));
-      client.addStem(left, right);
+      for (const buffer of buffers) {
+        // `.slice()` is a memcpy of the channel view; `Float32Array.from`
+        // takes V8's generic per-element iterator path over the same bytes.
+        // The copies are transferred, so they leave the main thread with the
+        // call below rather than sitting alongside the AudioBuffer.
+        const left = buffer.getChannelData(0).slice();
+        const right = buffer.getChannelData(Math.min(1, buffer.numberOfChannels - 1)).slice();
+        client.addStem(left, right);
+        this.duration = Math.max(this.duration, buffer.duration);
+        this.callbacks.onDuration(this.duration);
+      }
 
-      loaded += 1;
-      this.callbacks.onLoadProgress(loaded / Math.max(sources.length, 1));
-      this.duration = Math.max(this.duration, buffer.duration);
-      this.callbacks.onDuration(this.duration);
+      decoded += chunk.length;
+      scheduleProgressFlush();
     }
+    this.callbacks.onLoadProgress(1);
   }
 
   private onFrame(frame: { position: number; meters: number[] }) {

@@ -354,6 +354,43 @@ pub unsafe extern "C" fn dsp_engine_add_stem(
     });
 }
 
+/// Replace the binaural decode bank on a live engine.
+///
+/// Ships separately from the JSON parameter block: order-3 ambisonics is 16
+/// channels x 2 ears x several thousand taps, and the bank changes only when
+/// the spatial profile does, so folding it into every `dsp_engine_set_params`
+/// call would re-encode and re-parse megabytes of float text for edits that
+/// never touch it.
+///
+/// # Safety
+/// `taps_ptr` must address `n_taps` readable f64 samples, and `engine` must
+/// come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_set_decode_taps(
+    engine: *mut PreviewEngine,
+    taps_ptr: *const f64,
+    n_taps: usize,
+) {
+    let Some(engine) = engine.as_mut() else { return };
+    engine.set_decode_taps(std::slice::from_raw_parts(taps_ptr, n_taps).to_vec());
+}
+
+/// Replace the crosstalk-cancellation matrix on a live engine. See
+/// [`dsp_engine_set_decode_taps`].
+///
+/// # Safety
+/// `taps_ptr` must address `n_taps` readable f64 samples, and `engine` must
+/// come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_set_xtc_taps(
+    engine: *mut PreviewEngine,
+    taps_ptr: *const f64,
+    n_taps: usize,
+) {
+    let Some(engine) = engine.as_mut() else { return };
+    engine.set_xtc_taps(std::slice::from_raw_parts(taps_ptr, n_taps).to_vec());
+}
+
 /// Render `n_frames` into `out`, channel-major, as f32 for Web Audio.
 ///
 /// Returns the number of frames written; a short count means the programme

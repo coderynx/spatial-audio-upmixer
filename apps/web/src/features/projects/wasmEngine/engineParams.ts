@@ -117,10 +117,6 @@ export type BuildEngineParamsInput = {
   outputMode: OutputMode;
   spatialProfile: SpatialProfile;
   transauralProfile: TransauralProfile;
-  /** Flattened `[acn][ear][tap]` decode bank for the spatial profile. */
-  decodeTaps?: Float64Array | number[];
-  /** Flattened `[speaker][ear][tap]` crosstalk matrix. */
-  xtcTaps?: Float64Array | number[];
   /** Per-speaker mute; a muted speaker contributes nothing to any render. */
   speakerEnabled?: Record<string, boolean>;
   /** Transport A/B: render the bed without any mastering stage. */
@@ -227,8 +223,9 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
       output_gain: master.outputGain ?? 1,
     },
     output_mode: outputMode,
-    decode_taps: input.decodeTaps ? Array.from(input.decodeTaps) : [],
-    xtc_taps: input.xtcTaps ? Array.from(input.xtcTaps) : [],
+    // The decode/XTC banks travel over `DspEngineClient.setDecodeTaps` /
+    // `setXtcTaps` instead — see those methods' doc comments — so this block
+    // never carries them.
     voicing: voicing ? voicingToWire(voicing) : null,
     // Only the collapse paths soft-limit; native output has the look-ahead
     // limiter as its safety net instead.
