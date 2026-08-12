@@ -1,61 +1,49 @@
 #!/usr/bin/env node
-// Cross-engine golden render diff — web (preview) side.
+// Golden render — browser side.
 //
-// See docs/contracts/preview_export_parity.md §5 and
-// tests/test_preview_export_golden.py (the Python/export side of this same
-// comparison). This script:
-//   1. Bundles the real, framework-free `previewGraph.ts` (the extraction
-//      from `useStemPreview.ts`'s `buildMasteringTopology`, see Ledger
-//      item D7) with esbuild, so it runs under plain Node.
-//   2. Builds the exact same deterministic multichannel bed
-//      `test_preview_export_golden.py::_deterministic_bed` generates (see
-//      `deterministicBed` below — same formula, ported by hand since
-//      matching a NumPy RNG bitstream in JS isn't practical, but this
-//      formula has no RNG to begin with).
-//   3. Renders it through `buildMasteringGraph` on a real `OfflineAudioContext`
-//      (via `node-web-audio-api`, a spec-compliant Web Audio implementation
-//      for Node — not a mock or re-implementation) with the same mastering
-//      config `_mastering_config()` uses.
-//   4. Measures BS.1770-ish integrated loudness, an approximate true peak,
-//      and per-channel RMS, and writes them to
-//      packages/core/tests/fixtures/preview_export_golden/web_bed_metrics.json
-//      in the shape `test_preview_export_golden.py::_metrics` produces.
+// The preview and the export now run the *same* code: packages/dsp, reached
+// through PyO3 on the export side and through the WebAssembly artifact this
+// script loads on the browser side. So this is no longer a diff between two
+// implementations of the same DSP (it was, until the Rust port — see
+// docs/contracts/preview_export_parity.md). What it checks now is build
+// provenance: that public/wasm/upmixer_dsp.wasm computes what the installed
+// upmixer_dsp wheel computes. A stale artifact — the easy mistake, since the
+// wasm is committed rather than built on install — fails here instead of
+// silently shipping a different algorithm to the browser.
 //
-// Run: `node apps/web/scripts/render-preview-golden.mjs` (or via
-// `npm run golden:render` from `web/`).
+// Run: `npm run golden:render` from apps/web/, then
+// `uv run pytest packages/core/tests/test_preview_export_golden.py`.
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
-import esbuild from "esbuild";
-import { OfflineAudioContext } from "node-web-audio-api";
+import { execFileSync } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(__dirname, "..");
-// Monorepo root (apps/web -> repo root), so the fixtures land where
-// packages/core/tests/test_preview_export_golden.py reads them.
 const repoRoot = path.resolve(webRoot, "..", "..");
+const fixtureDir = path.join(repoRoot, "packages/core/tests/fixtures/preview_export_golden");
 
 const SR = 48000;
-const DURATION_S = 5; // must match tests/test_preview_export_golden.py::_DURATION_S
+const DURATION_S = 5; // must match test_preview_export_golden.py::_DURATION_S
 
-// upmixer/formats.py SURROUND_714 channel order: FL, FR, C, LFE, BL, BR,
-// SL, SR, TFL, TFR, TBL, TBR (back before side, unlike 7.1/7.1.2).
+// upmixer/formats.py SURROUND_714 order: back before side, unlike 7.1/7.1.2.
 const CHANNELS = ["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR"];
 
-// upmixer/loudness.py CHANNEL_WEIGHT: L/R/C/back/height = 1.0, LFE excluded
-// (0), ear-level side (SL/SR) = 1.41 (+1.5 dB) per BS.1770-5 Annex 3 Table 5.
-const LOUDNESS_WEIGHT = { FL: 1, FR: 1, C: 1, LFE: 0, BL: 1, BR: 1, SL: 1.41, SR: 1.41, TFL: 1, TFR: 1, TBL: 1, TBR: 1 };
+// upmixer/loudness.py CHANNEL_WEIGHT.
+const LOUDNESS_WEIGHT = {
+  FL: 1, FR: 1, C: 1, LFE: 0, BL: 1, BR: 1,
+  SL: 1.41, SR: 1.41, TFL: 1, TFR: 1, TBL: 1, TBR: 1,
+};
 
-/** Same formula as test_preview_export_golden.py::_deterministic_bed — a
- * fixed multi-tone signal (not RNG-based noise, see that function's
- * docstring for why) so both engines process byte-identical input without
- * needing to match a NumPy PCG64 bitstream in JS. */
+const BINAURAL_WEIGHT = { FL: 1, FR: 1 };
+
+/** Same formula as test_preview_export_golden.py::_deterministic_bed. */
 function deterministicBed(sr, durationS) {
   const n = Math.floor(sr * durationS);
   const channels = {};
   CHANNELS.forEach((name, i) => {
     const baseFreq = 110.0 * (i + 1);
-    const data = new Float32Array(n);
+    const data = new Float64Array(n);
     for (let s = 0; s < n; s++) {
       const t = s / sr;
       data[s] =
@@ -69,447 +57,163 @@ function deterministicBed(sr, durationS) {
   return { n, channels };
 }
 
-// --- Minimal BS.1770-flavored loudness + true-peak measurement --------
-// Deliberately not a bit-exact port of upmixer/loudness.py (that's Tier 3,
-// bounded by this module's tolerance, not Tier 1 — see
-// docs/contracts/preview_export_parity.md §3/§5). K-weighting coefficients
-// are the published ITU-R BS.1770-4 Annex 1 values (see
-// docs/standards/loudness_dsp_bs1770.md), the same public table
-// upmixer/loudness.py implements.
-const K_STAGE1 = { b0: 1.53512485958697, b1: -2.69169618940638, b2: 1.19839281085285, a1: -1.69065929318241, a2: 0.73248077421585 };
-const K_STAGE2 = { b0: 1.0, b1: -2.0, b2: 1.0, a1: -1.99004745483398, a2: 0.99007225036621 };
-
-function biquad(x, c) {
-  const y = new Float64Array(x.length);
-  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-  for (let i = 0; i < x.length; i++) {
-    const xi = x[i];
-    const yi = c.b0 * xi + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2;
-    y[i] = yi;
-    x2 = x1; x1 = xi;
-    y2 = y1; y1 = yi;
-  }
-  return y;
+function instantiate() {
+  const bytes = fs.readFileSync(path.join(webRoot, "public/wasm/upmixer_dsp.wasm"));
+  return new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
 }
 
-function kWeight(x) {
-  return biquad(biquad(x, K_STAGE1), K_STAGE2);
-}
-
-const BLOCK_S = 0.4;
-const HOP_S = 0.1;
-const ABS_GATE = -70.0;
-const REL_GATE_OFFSET = -10.0;
-
-/** BS.1770-style two-pass-gated integrated loudness across the given
- * per-channel arrays, weighted per LOUDNESS_WEIGHT. Mirrors
- * upmixer/loudness.py::measure_integrated_loudness's algorithm shape. */
-function measureIntegratedLkfs(channels, sr) {
-  const blockLen = Math.floor(BLOCK_S * sr);
-  const hopLen = Math.floor(HOP_S * sr);
-  const weighted = [];
-  for (const name of Object.keys(channels)) {
-    const weight = LOUDNESS_WEIGHT[name] ?? 0;
-    if (weight === 0) continue;
-    weighted.push({ weight, filtered: kWeight(channels[name]) });
-  }
-  if (weighted.length === 0) return -70.0;
-
-  const n = weighted[0].filtered.length;
-  const nBlocks = Math.max(0, Math.floor((n - blockLen) / hopLen) + 1);
-  if (nBlocks <= 0) return -70.0;
-
-  const blockPower = new Float64Array(nBlocks);
-  for (const { weight, filtered } of weighted) {
-    for (let b = 0; b < nBlocks; b++) {
-      const start = b * hopLen;
-      let sum = 0;
-      for (let i = 0; i < blockLen; i++) {
-        const v = filtered[start + i];
-        sum += v * v;
-      }
-      blockPower[b] += weight * (sum / blockLen);
-    }
+class Heap {
+  constructor(wasm) {
+    this.wasm = wasm;
+    this.blocks = [];
   }
 
-  const blockLkfs = new Float64Array(nBlocks);
-  for (let b = 0; b < nBlocks; b++) blockLkfs[b] = -0.691 + 10 * Math.log10(Math.max(blockPower[b], 1e-30));
-
-  const absMask = [];
-  for (let b = 0; b < nBlocks; b++) if (blockLkfs[b] >= ABS_GATE) absMask.push(b);
-  if (absMask.length === 0) return -70.0;
-
-  const meanAbs = absMask.reduce((s, b) => s + blockPower[b], 0) / absMask.length;
-  const ungatedLkfs = -0.691 + 10 * Math.log10(Math.max(meanAbs, 1e-30));
-
-  const relMask = absMask.filter((b) => blockLkfs[b] >= ungatedLkfs + REL_GATE_OFFSET);
-  const gated = relMask.length > 0 ? relMask : absMask;
-  const meanGated = gated.reduce((s, b) => s + blockPower[b], 0) / gated.length;
-  return -0.691 + 10 * Math.log10(Math.max(meanGated, 1e-30));
-}
-
-// True-peak measurement (4x-oversampled windowed-sinc, Tier-3 approximation)
-// is implemented once, in masteringProfiles.ts's `measureBufferTruePeakDbtp`
-// — shared with the live preview's own true-peak safety net
-// (useStemPreview.ts) so there's exactly one JS implementation of this
-// approximation. `measureTruePeakDbtp` here just applies it per channel and
-// takes the max; see `main()` below for where the module is loaded.
-function measureTruePeakDbtp(channels, measureBufferTruePeakDbtpFn) {
-  let maxDbtp = -Infinity;
-  for (const data of Object.values(channels)) {
-    const dbtp = measureBufferTruePeakDbtpFn(data);
-    if (dbtp > maxDbtp) maxDbtp = dbtp;
+  f64(values) {
+    const bytes = values.length * 8;
+    const ptr = this.wasm.dsp_alloc(bytes);
+    new Float64Array(this.wasm.memory.buffer, ptr, values.length).set(values);
+    this.blocks.push([ptr, bytes]);
+    return ptr;
   }
-  return maxDbtp;
+
+  bytes(count) {
+    const ptr = this.wasm.dsp_alloc(count);
+    this.blocks.push([ptr, count]);
+    return ptr;
+  }
+
+  json(value) {
+    const encoded = new TextEncoder().encode(JSON.stringify(value));
+    const ptr = this.bytes(encoded.length);
+    new Uint8Array(this.wasm.memory.buffer, ptr, encoded.length).set(encoded);
+    return { ptr, len: encoded.length };
+  }
+
+  free() {
+    for (const [ptr, bytes] of this.blocks) this.wasm.dsp_free(ptr, bytes);
+    this.blocks = [];
+  }
 }
 
-function rms(x) {
-  let sum = 0;
-  for (let i = 0; i < x.length; i++) sum += x[i] * x[i];
-  return Math.sqrt(sum / x.length);
+/** Flatten a channel map into the core's channel-major layout. */
+function flatten(channels, names, n) {
+  const flat = new Float64Array(names.length * n);
+  names.forEach((name, i) => flat.set(channels[name].subarray(0, n), i * n));
+  return flat;
 }
 
-// --- Bundle a source module with esbuild so it runs under plain Node ----
-async function loadBundledModule(entry, tag) {
-  const result = await esbuild.build({
-    entryPoints: [entry],
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "node",
-    target: "node22",
+function unflatten(wasm, ptr, names, n) {
+  const view = new Float64Array(wasm.memory.buffer, ptr, names.length * n);
+  const out = {};
+  names.forEach((name, i) => {
+    out[name] = Float64Array.from(view.subarray(i * n, (i + 1) * n));
   });
-  const code = result.outputFiles[0].text;
-  const tmpFile = path.join(webRoot, "scripts", `.${tag}.bundle.${process.pid}.mjs`);
-  fs.writeFileSync(tmpFile, code);
-  try {
-    return await import(`file://${tmpFile}`);
-  } finally {
-    fs.unlinkSync(tmpFile);
-  }
+  return out;
 }
 
-async function loadPreviewGraphModule() {
-  return loadBundledModule(path.join(webRoot, "src/features/projects/previewGraph.ts"), "previewGraph");
-}
-
-async function loadSpatialModule() {
-  return loadBundledModule(path.join(webRoot, "src/lib/spatial.ts"), "spatial");
-}
-
-async function loadMasteringProfilesModule() {
-  return loadBundledModule(path.join(webRoot, "src/features/projects/masteringProfiles.ts"), "masteringProfiles");
-}
-
-// The preview graph builders take their tunable DSP constants as a parameter
-// (the live app fetches them from GET /api/v1/configuration). This harness is
-// test infrastructure, so it feeds them the shared web test fixture — the same
-// values the backend serves. Any drift from the real core values is caught by
-// the golden diff in tests/test_preview_export_golden.py (which renders with
-// the real core constants), so this fixture never silently diverges.
-async function loadEngineConstantsFixture() {
-  const { TEST_ENGINE_CONSTANTS } = await loadBundledModule(
-    path.join(webRoot, "src/features/projects/engineConstants.fixture.ts"),
-    "engineConstants",
-  );
-  return TEST_ENGINE_CONSTANTS;
-}
-
-// --- Disk-based EQ FIR loader (harness has no browser `fetch`) ---------
-async function loadFirFromDisk(ctx, assetName) {
-  const filePath = path.join(webRoot, "public/eq_fir", `${assetName}.wav`);
-  const bytes = fs.readFileSync(filePath);
-  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  return ctx.decodeAudioData(arrayBuffer);
-}
-
-// --- Disk-based decode-filter-set part loader (same pattern as EQ) -----
-async function loadDecodeFilterPartFromDisk(ctx, partName) {
-  const filePath = path.join(webRoot, "public/hrir", `${partName}.wav`);
-  const bytes = fs.readFileSync(filePath);
-  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  return ctx.decodeAudioData(arrayBuffer);
-}
-
-// --- Disk-based reference-match FIR loader ------------------------------
-// Unlike eq_fir, this isn't a production build artifact — every real
-// reference-match FIR is computed per-project and served live from
-// GET /api/v1/projects/{id}/reference-match/fir. This fixture exists purely
-// for this golden diff; see
-// packages/core/tests/test_preview_export_golden.py's
-// `_write_reference_match_fixture` (Ledger D21).
-const REFMATCH_FIXTURE_DIR = path.join(repoRoot, "packages/core/tests/fixtures/preview_export_golden");
-
-async function loadRefMatchFirFromDisk(ctx, _url) {
-  const filePath = path.join(REFMATCH_FIXTURE_DIR, "reference_match_fir.wav");
-  const bytes = fs.readFileSync(filePath);
-  const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-  return ctx.decodeAudioData(arrayBuffer);
-}
-
-function loadRefMatchMeta() {
-  const metaPath = path.join(REFMATCH_FIXTURE_DIR, "reference_match_meta.json");
-  return JSON.parse(fs.readFileSync(metaPath, "utf-8"));
-}
-
-// upmixer/config.py loudness_target_lkfs default — the Studio/Flat profiles'
-// own voicing loudnessTargetLkfs is null, so `apply()` in useStemPreview.ts
-// falls back to this same default in the live preview. Not part of the served
-// engine constants (a UpmixConfig default), so it stays local here.
-const LOUDNESS_TARGET_LKFS = -18.0;
-const BINAURAL_PROFILE = "studio";
-// masteringProfiles.ts DECODE_FILTER_SET[BINAURAL_PROFILE] — only the
-// "studio" entry is needed since this harness is fixed to that profile.
-const DECODE_FILTER_SET_NAME = "studio_o3_decode";
-
-// Mirrors useStemPreview.ts's `loudnessGainFor` exactly — this is the one
-// number the live preview actually computes and applies (a single measured
-// pre-gain, no true-peak safety net, unlike the backend's `normalize_loudness`
-// — see this stage's comment in `main()` for why the harness deliberately
-// does not add that safety net either).
-function loudnessGainFor(measuredLkfs, targetLkfs, maxGainDb) {
-  if (measuredLkfs <= -70) return 1;
-  const gainDb = Math.min(targetLkfs - measuredLkfs, maxGainDb);
-  return 10 ** (gainDb / 20);
-}
-
-/** Renders the deterministic bed through `buildMasteringGraph` with the
- * given `masterConfig`, exactly like `main()`'s Stage 1 used to do inline —
- * extracted so it can run twice: once for the plain bed-stage fixture
- * (`web_bed_metrics.json`) and once with reference matching added as
- * mastering step 0 (`web_reference_match_metrics.json`, Ledger D21). */
-async function renderBedStage({
-  buildMasteringGraph, measureBufferTruePeakDbtp, constants, n, bedSamples, masterConfig, refMatchLoader,
-}) {
-  const ctx = new OfflineAudioContext(CHANNELS.length, n, SR);
-
-  const merger = ctx.createChannelMerger(CHANNELS.length);
-  merger.connect(ctx.destination);
-
-  const channelPorts = new Map();
-  const sources = [];
-  CHANNELS.forEach((name, index) => {
-    const buffer = ctx.createBuffer(1, n, SR);
-    buffer.copyToChannel(bedSamples[name], 0);
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    const output = ctx.createGain();
-    output.connect(merger, 0, index);
-    channelPorts.set(name, { input: source, output });
-    sources.push(source);
-  });
-
-  const handle = buildMasteringGraph(ctx, channelPorts, masterConfig, new Map(), constants, {
-    firLoader: loadFirFromDisk,
-    refMatchBufferCache: new Map(),
-    refMatchLoader,
-  });
-
-  // Let the FIR asset's disk-read + decodeAudioData resolve (see
-  // buildMasteringGraph's non-blocking loader comment) before rendering —
-  // otherwise the convolver could still be silent when startRendering runs.
-  await new Promise((resolve) => setTimeout(resolve, 50));
-
-  sources.forEach((source) => {
-    source.start(0);
-    source.stop(DURATION_S);
-  });
-
-  // Suspend/resume-scheduled polling replaces the live hook's
-  // requestAnimationFrame-driven `tick()` — OfflineAudioContext has no real
-  // time to poll against, but suspend() lets us run JS at an exact
-  // rendered timestamp and read `.reduction` there instead. Ticks are
-  // computed as `i / 60` (not accumulated by repeated addition) and kept a
-  // couple hops clear of `DURATION_S` — repeated float addition drift can
-  // land the last accumulated tick a few ULPs past the render's actual
-  // sample count, which node-web-audio-api's `suspend()` rejects.
-  const hop = 1 / 60;
-  const lastTick = Math.floor(DURATION_S / hop) - 2;
-  for (let i = 1; i <= lastTick; i++) {
-    const t = i * hop;
-    ctx.suspend(t)
-      .then(() => {
-        handle.applyCompressorReduction();
-        ctx.resume();
-      })
-      .catch(() => {});
-  }
-
-  const rendered = await ctx.startRendering();
-
-  const outputChannels = {};
-  CHANNELS.forEach((name, index) => {
-    outputChannels[name] = rendered.getChannelData(index);
-  });
-
-  const metrics = {
-    measured_lkfs: measureIntegratedLkfs(outputChannels, SR),
-    measured_tp_dbtp: measureTruePeakDbtp(outputChannels, measureBufferTruePeakDbtp),
-    channel_rms: Object.fromEntries(CHANNELS.map((name) => [name, rms(outputChannels[name])])),
+function measure(wasm, heap, channels, names, weights) {
+  const n = channels[names[0]].length;
+  const ptr = heap.f64(flatten(channels, names, n));
+  const weightPtr = heap.f64(Float64Array.from(names.map((name) => weights[name] ?? 0)));
+  return {
+    measured_lkfs: wasm.dsp_integrated_loudness(ptr, weightPtr, names.length, n, SR),
+    measured_tp_dbtp: wasm.dsp_true_peak_dbtp(ptr, names.length, n),
+    channel_rms: Object.fromEntries(
+      names.map((name) => {
+        let sum = 0;
+        for (const v of channels[name]) sum += v * v;
+        return [name, Math.sqrt(sum / channels[name].length)];
+      }),
+    ),
   };
-
-  return { outputChannels, metrics };
 }
 
-async function main() {
-  const { buildMasteringGraph } = await loadPreviewGraphModule();
-  const { buildSoftLimitCurve, measureBufferTruePeakDbtp } = await loadMasteringProfilesModule();
-  const constants = await loadEngineConstantsFixture();
-
-  const { n, channels: bedSamples } = deterministicBed(SR, DURATION_S);
-
-  // Same mastering config as test_preview_export_golden.py::_mastering_config.
-  const masterConfig = {
-    eq: { profile: "spatial-air", strength: 1 },
-    compressor: { profile: "glue" },
-    bass: { profile: "enhance" },
-  };
-
-  const { outputChannels, metrics } = await renderBedStage({
-    buildMasteringGraph, measureBufferTruePeakDbtp, constants, n, bedSamples, masterConfig,
+/** Every constant and filter asset, straight from the core that owns them. */
+function loadInputs() {
+  const script = path.join(webRoot, "scripts/golden-inputs.py");
+  const raw = execFileSync("uv", ["run", "python", script], {
+    cwd: repoRoot,
+    maxBuffer: 512 * 1024 * 1024,
+    encoding: "utf8",
   });
-
-  const outDir = path.join(repoRoot, "packages/core/tests/fixtures/preview_export_golden");
-  fs.mkdirSync(outDir, { recursive: true });
-  const outPath = path.join(outDir, "web_bed_metrics.json");
-  fs.writeFileSync(outPath, JSON.stringify(metrics, null, 2));
-  console.log(`Wrote ${outPath}`);
-  console.log(JSON.stringify(metrics, null, 2));
-
-  // --- Stage 1b: same bed and mastering config, plus reference matching as
-  // mastering step 0 (Ledger D21) — see
-  // test_preview_export_golden.py::test_cross_engine_reference_match_golden_diff.
-  // `fir_url` is a placeholder: `loadRefMatchFirFromDisk` ignores it and
-  // reads the fixture FIR directly, since there is no live server here.
-  const refMatchMeta = loadRefMatchMeta();
-  const refMatchConfig = {
-    ...masterConfig,
-    match_reference: {
-      fir_url: "fixture://reference-match",
-      strength: 0.6,
-      spectrum: true,
-      rms: true,
-      max_db: 6.0,
-      rms_gain_db: refMatchMeta.rms_gain_db,
-    },
-  };
-  const { metrics: refMatchMetrics } = await renderBedStage({
-    buildMasteringGraph, measureBufferTruePeakDbtp, constants, n, bedSamples,
-    masterConfig: refMatchConfig, refMatchLoader: loadRefMatchFirFromDisk,
-  });
-  const refMatchOutPath = path.join(outDir, "web_reference_match_metrics.json");
-  fs.writeFileSync(refMatchOutPath, JSON.stringify(refMatchMetrics, null, 2));
-  console.log(`Wrote ${refMatchOutPath}`);
-  console.log(JSON.stringify(refMatchMetrics, null, 2));
-
-  // --- Stage 2: binaural collapse + loudness + soft-limit -----------------
-  // Feeds the same mastered bed (`outputChannels` above) through the
-  // ambisonic-encode -> HOA-decode -> voicing graph `buildBinauralGraph`
-  // extracts from useStemPreview.ts's `initialize()`, then reproduces the
-  // live preview's own downstream stages exactly: `measureOutputLoudness`'s
-  // one-shot LKFS read -> `loudnessGainFor`'s capped gain -> the soft-limit
-  // WaveShaper. Mirrors upmixer/binaural/renderer.py::render_binaural_delivery
-  // on the Python side (see tests/test_preview_export_golden.py). See Ledger
-  // D10/D11 in docs/contracts/preview_export_parity.md.
-  const { buildBinauralGraph, createPositionalEncoder, loadDecodeFilterChannels, assignDecodeFilterBuffers } =
-    await loadPreviewGraphModule();
-  const { speakerCoordinates, positionToAzimuthElevation } = await loadSpatialModule();
-
-  const positionalChannels = CHANNELS.filter((name) => name !== "LFE");
-  // Generous tail margin for the decode filters' convolution ringout
-  // (~6.1k taps / 0.13s at 48kHz as of this writing) — trimmed back to
-  // exactly `n` samples before measurement anyway, matching
-  // `decode_to_binaural`'s own truncation to the bed's original length.
-  const tailMargin = SR;
-  const stageBCtx = new OfflineAudioContext(2, n + tailMargin, SR);
-
-  const binaural = buildBinauralGraph(stageBCtx, BINAURAL_PROFILE, constants);
-  positionalChannels.forEach((name) => {
-    const buffer = stageBCtx.createBuffer(1, n, SR);
-    buffer.copyToChannel(outputChannels[name], 0);
-    const source = stageBCtx.createBufferSource();
-    source.buffer = buffer;
-    const { azim, elev } = positionToAzimuthElevation(speakerCoordinates[name]);
-    const encoder = createPositionalEncoder(stageBCtx, azim, elev);
-    source.connect(encoder.in);
-    encoder.out.connect(binaural.hoaBus);
-    source.start(0);
-  });
-
-  // LFE: lowpass + gain, summed directly into both of `binaural.preVoicing`'s
-  // channels — a ChannelMergerNode sums multiple sources landing on the
-  // same input index, reproducing the live preview's LFE wiring (Ledger
-  // D11, fixed: before the voicing chain, matching render_binaural's own
-  // `left = left + lfe` / `right = right + lfe` ahead of `apply_voicing`).
-  const lfeBuffer = stageBCtx.createBuffer(1, n, SR);
-  lfeBuffer.copyToChannel(outputChannels.LFE, 0);
-  const lfeSource = stageBCtx.createBufferSource();
-  lfeSource.buffer = lfeBuffer;
-  const lfeLowpass = stageBCtx.createBiquadFilter();
-  lfeLowpass.type = "lowpass";
-  lfeLowpass.frequency.value = constants.lfeLowpassHz;
-  const lfeGainNode = stageBCtx.createGain();
-  lfeGainNode.gain.value = constants.lfeGain;
-  lfeSource.connect(lfeLowpass).connect(lfeGainNode);
-  lfeGainNode.connect(binaural.preVoicing, 0, 0);
-  lfeGainNode.connect(binaural.preVoicing, 0, 1);
-  lfeSource.start(0);
-
-  binaural.output.connect(stageBCtx.destination);
-
-  const decodeChannels = await loadDecodeFilterChannels(
-    stageBCtx, DECODE_FILTER_SET_NAME, loadDecodeFilterPartFromDisk,
-  );
-  assignDecodeFilterBuffers(stageBCtx, binaural.convolverPairs, decodeChannels);
-
-  const stageBRendered = await stageBCtx.startRendering();
-  // Truncate to `n` samples — matches Python's `decode_to_binaural`
-  // returning `left[:n_samples], right[:n_samples]` rather than keeping the
-  // convolution's ringout tail.
-  const rawLeft = stageBRendered.getChannelData(0).slice(0, n);
-  const rawRight = stageBRendered.getChannelData(1).slice(0, n);
-
-  const preGainLkfs = measureIntegratedLkfs({ FL: rawLeft, FR: rawRight }, SR);
-  const gain = loudnessGainFor(preGainLkfs, LOUDNESS_TARGET_LKFS, constants.binauralLoudnessMaxGainDb);
-
-  // Stage 3: gain -> soft-limit, in that order (see the "Limiting the raw
-  // pre-gain sum would bake in saturation..." comment on this same ordering
-  // in useStemPreview.ts) — a real WaveShaperNode with 4x oversampling, not
-  // a naive per-sample tanh eval, to match what the browser's native node
-  // actually does.
-  const stageCCtx = new OfflineAudioContext(2, rawLeft.length, SR);
-  const stageCBuffer = stageCCtx.createBuffer(2, rawLeft.length, SR);
-  stageCBuffer.copyToChannel(rawLeft, 0);
-  stageCBuffer.copyToChannel(rawRight, 1);
-  const stageCSource = stageCCtx.createBufferSource();
-  stageCSource.buffer = stageCBuffer;
-  const gainNode = stageCCtx.createGain();
-  gainNode.gain.value = gain;
-  const softLimitNode = stageCCtx.createWaveShaper();
-  softLimitNode.curve = buildSoftLimitCurve(constants.softLimitThreshold);
-  softLimitNode.oversample = "4x";
-  stageCSource.connect(gainNode).connect(softLimitNode).connect(stageCCtx.destination);
-  stageCSource.start(0);
-  const stageCRendered = await stageCCtx.startRendering();
-
-  const finalChannels = {
-    FL: stageCRendered.getChannelData(0).slice(0, n),
-    FR: stageCRendered.getChannelData(1).slice(0, n),
-  };
-
-  const binauralMetrics = {
-    measured_lkfs: measureIntegratedLkfs(finalChannels, SR),
-    measured_tp_dbtp: measureTruePeakDbtp(finalChannels, measureBufferTruePeakDbtp),
-    channel_rms: { FL: rms(finalChannels.FL), FR: rms(finalChannels.FR) },
-  };
-
-  const binauralOutPath = path.join(outDir, "web_binaural_metrics.json");
-  fs.writeFileSync(binauralOutPath, JSON.stringify(binauralMetrics, null, 2));
-  console.log(`Wrote ${binauralOutPath}`);
-  console.log(JSON.stringify(binauralMetrics, null, 2));
+  return JSON.parse(raw);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+/** `_mastering_config()`: spatial-air EQ, glue compression, enhance bass. */
+function masterParams(inputs, referenceFir, referenceGain) {
+  const lfeIndex = CHANNELS.indexOf("LFE");
+  const pairs = [["FL", "FR"], ["SL", "SR"], ["BL", "BR"], ["TFL", "TFR"], ["TBL", "TBR"]];
+  return {
+    lfe_index: lfeIndex,
+    stereo_pairs: pairs
+      .map(([l, r]) => [CHANNELS.indexOf(l), CHANNELS.indexOf(r)])
+      .filter(([l, r]) => l >= 0 && r >= 0),
+    reference_gain: referenceGain ?? 1,
+    reference_fir: referenceFir ? Array.from(referenceFir) : [],
+    eq_fir: inputs.eq_fir,
+    eq_strength: 1,
+    compressor: inputs.compressor,
+    bass: inputs.bass,
+    // The bed stage deliberately stops before loudness and the limiter; both
+    // belong to the later collapse stage.
+    limiter: null,
+  };
+}
+
+function masterBed(wasm, heap, bed, n, params) {
+  const ptr = heap.f64(flatten(bed, CHANNELS, n));
+  const json = heap.json(params);
+  wasm.dsp_master_bed(ptr, CHANNELS.length, n, SR, json.ptr, json.len);
+  return unflatten(wasm, ptr, CHANNELS, n);
+}
+
+function write(name, metrics) {
+  fs.mkdirSync(fixtureDir, { recursive: true });
+  const file = path.join(fixtureDir, name);
+  fs.writeFileSync(file, `${JSON.stringify(metrics, null, 2)}\n`);
+  console.log(`Wrote ${path.relative(repoRoot, file)}`);
+}
+
+/** Ambisonic encode, HOA decode, LFE before voicing, then voicing. */
+function renderBinaural(wasm, heap, bed, n, inputs) {
+  const ptr = heap.f64(flatten(bed, CHANNELS, n));
+  const json = heap.json(inputs.collapse);
+  const outPtr = heap.bytes(2 * n * 8);
+  const ok = wasm.dsp_render_binaural(ptr, CHANNELS.length, n, SR, json.ptr, json.len, outPtr);
+  if (!ok) throw new Error("binaural collapse rejected its parameters");
+  const view = new Float64Array(wasm.memory.buffer, outPtr, 2 * n);
+  return {
+    FL: Float64Array.from(view.subarray(0, n)),
+    FR: Float64Array.from(view.subarray(n, 2 * n)),
+  };
+}
+
+function main() {
+  const inputs = loadInputs();
+  const wasm = instantiate();
+  const heap = new Heap(wasm);
+  const { n, channels } = deterministicBed(SR, DURATION_S);
+
+  const bed = masterBed(wasm, heap, channels, n, masterParams(inputs, null, 1));
+  write("web_bed_metrics.json", measure(wasm, heap, bed, CHANNELS, LOUDNESS_WEIGHT));
+
+  if (inputs.reference) {
+    const matched = masterBed(
+      wasm, heap, channels, n,
+      masterParams(inputs, inputs.reference.fir, inputs.reference.gain),
+    );
+    write("web_reference_match_metrics.json", measure(wasm, heap, matched, CHANNELS, LOUDNESS_WEIGHT));
+  } else {
+    console.warn(
+      "Skipping the reference-match stage: regenerate its fixture with " +
+        "REGENERATE_GOLDEN=1 uv run pytest packages/core/tests/test_preview_export_golden.py",
+    );
+  }
+
+  const collapsed = renderBinaural(wasm, heap, bed, n, inputs);
+  write("web_binaural_metrics.json", measure(wasm, heap, collapsed, ["FL", "FR"], BINAURAL_WEIGHT));
+
+  heap.free();
+}
+
+main();
