@@ -33,7 +33,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from scipy.signal import fftconvolve, firwin2, minimum_phase
+import upmixer_dsp
 
 _log = logging.getLogger("upmixer")
 
@@ -68,38 +68,12 @@ def _build_fir_from_breakpoints(
     if cache_key in _PC_FIR_CACHE:
         return _PC_FIR_CACHE[cache_key]
 
-    nyquist = sample_rate / 2.0
-    freqs_hz = [f for f, _ in breakpoints]
-    gains_db = [g for _, g in breakpoints]
-
-    freqs_norm = [f / nyquist for f in freqs_hz]
-    gains_lin = [10.0 ** (g / 20.0) for g in gains_db]
-
-    if freqs_norm[0] > 0.0:
-        freqs_norm = [0.0] + freqs_norm
-        gains_lin = [gains_lin[0]] + gains_lin
-
-    freqs_norm = [min(f, 1.0) for f in freqs_norm]
-
-    if freqs_norm[-1] < 1.0:
-        freqs_norm.append(1.0)
-        gains_lin.append(gains_lin[-1])
-
-    seen: set[float] = set()
-    pairs: list[tuple[float, float]] = []
-    for f, g in zip(freqs_norm, gains_lin):
-        f_r = round(f, 9)
-        if f_r not in seen:
-            seen.add(f_r)
-            pairs.append((f, g))
-    freqs_norm = [p[0] for p in pairs]
-    gains_lin = [p[1] for p in pairs]
-
-    h_lp = firwin2(n_taps, freqs_norm, gains_lin)
-    # ``half=True`` (SciPy default) returns a half-length filter whose
-    # magnitude is the square root of the requested response.  Keep full
-    # length so breakpoint dB values remain exact.
-    h_mp = minimum_phase(h_lp, half=False)
+    # The core designs a full-length minimum-phase filter: SciPy's half-length
+    # default returns the square root of the requested response, which would
+    # halve every breakpoint's dB value.
+    h_mp = upmixer_dsp.build_eq_fir(
+        [(float(f), float(g)) for f, g in breakpoints], sample_rate, n_taps
+    )
     _PC_FIR_CACHE[cache_key] = h_mp
     return h_mp
 
@@ -156,39 +130,9 @@ def _build_fir(profile: str, sample_rate: int, n_taps: int) -> np.ndarray:
     if cache_key in _FIR_CACHE:
         return _FIR_CACHE[cache_key]
 
-    nyquist = sample_rate / 2.0
-    breakpoints = EQ_PROFILES[profile]
-
-    freqs_hz = [f for f, _ in breakpoints]
-    gains_db = [g for _, g in breakpoints]
-
-    freqs_norm: list[float] = [f / nyquist for f in freqs_hz]
-    gains_lin: list[float] = [10.0 ** (g / 20.0) for g in gains_db]
-
-    if freqs_norm[0] > 0.0:
-        freqs_norm = [0.0] + freqs_norm
-        gains_lin = [gains_lin[0]] + gains_lin
-
-    freqs_norm = [min(f, 1.0) for f in freqs_norm]
-
-    if freqs_norm[-1] < 1.0:
-        freqs_norm.append(1.0)
-        gains_lin.append(gains_lin[-1])
-
-    seen: set[float] = set()
-    pairs: list[tuple[float, float]] = []
-    for f, g in zip(freqs_norm, gains_lin):
-        f_r = round(f, 9)
-        if f_r not in seen:
-            seen.add(f_r)
-            pairs.append((f, g))
-    freqs_norm = [p[0] for p in pairs]
-    gains_lin = [p[1] for p in pairs]
-
-    h_lp = firwin2(n_taps, freqs_norm, gains_lin)
-
-    h_mp = minimum_phase(h_lp, half=False)
-
+    h_mp = upmixer_dsp.build_eq_fir(
+        [(float(f), float(g)) for f, g in EQ_PROFILES[profile]], sample_rate, n_taps
+    )
     _FIR_CACHE[cache_key] = h_mp
     return h_mp
 
@@ -196,12 +140,12 @@ def _build_fir(profile: str, sample_rate: int, n_taps: int) -> np.ndarray:
 
 def _apply_fir(ch: np.ndarray, ir: np.ndarray, strength: float) -> np.ndarray:
     """Apply *ir* to *ch* with wet/dry *strength* blend."""
-    ch64 = ch.astype(np.float64)
-    filtered = fftconvolve(ch64, ir, mode="full")[: len(ch64)]
-    if strength >= 1.0:
-        return filtered.astype(ch.dtype)
-    blended = (1.0 - strength) * ch64 + strength * filtered
-    return blended.astype(ch.dtype)
+    out = upmixer_dsp.apply_fir(
+        np.ascontiguousarray(ch, dtype=np.float64),
+        np.ascontiguousarray(ir, dtype=np.float64),
+        strength,
+    )
+    return out.astype(ch.dtype)
 
 
 

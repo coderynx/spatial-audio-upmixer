@@ -68,8 +68,12 @@ is a regression pin, not an independent reference.
 - `cd packages/dsp && cargo test` — kernel and stage parity.
 - `uv run maturin develop --manifest-path packages/dsp/crates/dsp-py/Cargo.toml`
   — fast rebuild of the Python extension during iteration.
-- `uv sync --reinstall-package upmixer-dsp` — clean rebuild when uv has
-  cached a stale wheel. `uv run` alone will not notice Rust edits.
+- `uv sync --all-packages --extra dev --extra web-dev --extra manifest
+  --extra separation-cpu --reinstall-package upmixer-dsp` — clean rebuild
+  after a Rust edit. This is the one that bites: `uv run` and a plain `uv
+  sync` both reuse the cached wheel and silently keep running the *old*
+  Rust, and dropping `--all-packages`/the extras uninstalls the other
+  workspace packages out from under the test suite.
 - `cargo build --release --target wasm32-unknown-unknown -p upmixer-dsp-wasm`
   — the browser artifact.
 

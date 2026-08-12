@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-from scipy.signal import butter, sosfilt, sosfiltfilt
+import upmixer_dsp
 
 _log = logging.getLogger("upmixer")
 
@@ -123,36 +123,6 @@ class BassController:
         self._lfe_db = float(lfe_gain_db)
         self._sr = sample_rate
 
-        nyq = sample_rate / 2.0
-
-        self._sos_sub_lp = butter(2, SUB_CUTOFF_HZ / nyq, btype="low", output="sos")
-
-        self._sos_mid_lp = butter(2, MID_CUTOFF_HZ / nyq, btype="low", output="sos")
-        self._sos_mid_hp = butter(2, SUB_CUTOFF_HZ / nyq, btype="high", output="sos")
-
-        if self._mono_hz is not None:
-            mono_norm = float(np.clip(self._mono_hz / nyq, 1e-4, 0.999))
-            self._sos_mono_lp = butter(2, mono_norm, btype="low",  output="sos")
-        else:
-            self._sos_mono_lp = None
-
-
-    def _apply_band_gain(
-        self, ch: np.ndarray,
-        band_lin: float,
-        sos_lp: np.ndarray,
-        sos_hp: np.ndarray | None = None,
-    ) -> np.ndarray:
-        """Boost/cut a frequency band in *ch*.
-
-        If *sos_hp* is ``None``, the band is everything below the LP cutoff
-        (sub-bass).  Otherwise the band is the bandpass (LP then HP, mid-bass).
-        """
-        band = sosfilt(sos_lp, ch)
-        if sos_hp is not None:
-            band = sosfilt(sos_hp, band)
-        return (ch - band) + band * band_lin
-
 
     def process(
         self,
@@ -169,61 +139,40 @@ class BassController:
             Modified channel dict (new arrays for processed channels;
             unmodified channels share the original array objects).
         """
-        sub_lin = 10.0 ** (self._sub_db / 20.0)
-        mid_lin = 10.0 ** (self._mid_db / 20.0)
+        names = list(channels)
+        index = {name: i for i, name in enumerate(names)}
+        pairs = [
+            (index[left], index[right])
+            for left, right in STEREO_PAIRS
+            if left in index and right in index
+        ]
 
-        out: dict[str, np.ndarray] = dict(channels)
-        non_lfe_names = [name for name in channels if name != lfe_key]
+        shaped = upmixer_dsp.bass_control(
+            [np.ascontiguousarray(channels[name], dtype=np.float64) for name in names],
+            index.get(lfe_key),
+            pairs,
+            self._sr,
+            self._sub_db,
+            self._mid_db,
+            self._mono_hz,
+            self._excite,
+            self._lfe_db,
+            SUB_CUTOFF_HZ,
+            MID_CUTOFF_HZ,
+            EXCITE_BLEND,
+            EXCITE_DRIVE,
+        )
 
-        if non_lfe_names and (self._sub_db != 0.0 or self._mid_db != 0.0):
-            for name in non_lfe_names:
-                shaped = channels[name].astype(np.float64)
-                if self._sub_db != 0.0:
-                    sub_band = sosfilt(self._sos_sub_lp, shaped)
-                    shaped = (shaped - sub_band) + sub_band * sub_lin
-                if self._mid_db != 0.0:
-                    mid_lp = sosfilt(self._sos_mid_lp, shaped)
-                    mid_band = sosfilt(self._sos_mid_hp, mid_lp)
-                    shaped = (shaped - mid_band) + mid_band * mid_lin
-                out[name] = shaped
+        if self._sub_db != 0.0 or self._mid_db != 0.0:
             _log.debug(
                 "  BassController: sub=%+.1f dB  mid=%+.1f dB",
                 self._sub_db, self._mid_db,
             )
-
-        if self._sos_mono_lp is not None:
-            for l_key, r_key in STEREO_PAIRS:
-                if l_key not in out or r_key not in out:
-                    continue
-                LR = np.stack([
-                    out[l_key].astype(np.float64),
-                    out[r_key].astype(np.float64),
-                ], axis=0)
-                if LR.shape[-1] > 15:
-                    lr_low = sosfiltfilt(self._sos_mono_lp, LR, axis=-1)
-                else:
-                    lr_low = sosfilt(self._sos_mono_lp, LR, axis=-1)
-                mono_bass = (lr_low[0] + lr_low[1]) * 0.5
-                out[l_key] = mono_bass + (LR[0] - lr_low[0])
-                out[r_key] = mono_bass + (LR[1] - lr_low[1])
-            _log.debug(
-                "  BassController: bass-mono at %.0f Hz", self._mono_hz
-            )
-
+        if self._mono_hz is not None:
+            _log.debug("  BassController: bass-mono at %.0f Hz", self._mono_hz)
         if self._excite:
-            excite_names = [name for name in out if name != lfe_key]
-            for name in excite_names:
-                signal = out[name].astype(np.float64)
-                sub = sosfilt(self._sos_sub_lp, signal)
-                harmonics = np.tanh(sub * EXCITE_DRIVE) * EXCITE_BLEND
-                out[name] = signal + harmonics
             _log.debug("  BassController: harmonic exciter enabled")
+        if self._lfe_db != 0.0:
+            _log.debug("  BassController: LFE %+.1f dB", self._lfe_db)
 
-        if self._lfe_db != 0.0 and lfe_key in out:
-            lfe_lin = 10.0 ** (self._lfe_db / 20.0)
-            out[lfe_key] = out[lfe_key].astype(np.float64) * lfe_lin
-            _log.debug(
-                "  BassController: LFE %+.1f dB", self._lfe_db
-            )
-
-        return out
+        return dict(zip(names, shaped))

@@ -29,7 +29,7 @@ pub struct LimiterParams {
 
 /// `result[n] = min(values[n .. n + window])`, treating positions past the
 /// end as 1.0 — there is no more signal to protect against.
-fn forward_window_min(values: &[f64], window: usize) -> Vec<f64> {
+pub fn forward_window_min(values: &[f64], window: usize) -> Vec<f64> {
     if window <= 1 {
         return values.to_vec();
     }

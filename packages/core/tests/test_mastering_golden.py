@@ -52,7 +52,11 @@ _GOLDEN_TP_HEX      = "9bfddc17d6692fc0"
 _GOLDEN_GAIN_HEX    = "38c860dbfd232cc0"
 _GOLDEN_TP_LIMITED  = False
 
-_GOLDEN_RAW_LKFS_HEX = "867969f8b14b00c0"  # BS.1770-5 Annex 3 weights
+# BS.1770-5 Annex 3 weights. Moved by 29 ULP (1.3e-14 LKFS) when gating-block
+# power moved from a cumulative-sum difference to direct per-block summation:
+# the new value is the correctly-rounded result (it matches math.fsum exactly,
+# the old one did not).
+_GOLDEN_RAW_LKFS_HEX = "697969f8b14b00c0"
 _GOLDEN_RAW_TP_HEX   = "8bf2b30ef3c503c0"  # BS.1770-5 FIR
 
 

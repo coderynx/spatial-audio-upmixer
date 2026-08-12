@@ -1,7 +1,7 @@
 import math
 
 import numpy as np
-from scipy.signal import butter, sosfilt
+import upmixer_dsp
 
 ITU_CENTER_COEFF: float = 1.0 / math.sqrt(2)
 
@@ -26,14 +26,9 @@ def rms(signal: np.ndarray) -> float:
 
 def soft_limit(signal: np.ndarray, threshold: float = 0.95) -> np.ndarray:
     """Soft limiter using tanh saturation above threshold."""
-    out = signal.copy()
-    mask = np.abs(signal) > threshold
-    if not np.any(mask):
-        return out
-    over = np.abs(signal[mask]) - threshold
-    compressed = threshold + (1.0 - threshold) * np.tanh(over / (1.0 - threshold))
-    out[mask] = np.sign(signal[mask]) * compressed
-    return out
+    return upmixer_dsp.soft_limit(
+        np.ascontiguousarray(signal, dtype=np.float64), threshold
+    )
 
 
 def elevation_eq(
@@ -52,13 +47,14 @@ def elevation_eq(
     Moved from upmixer.upmix.multichannel so the stem pipeline can
     reuse it without a circular import.
     """
-    nyq = sr / 2.0
-    sos_lp = butter(1, low_rolloff_hz / nyq, btype="low", output="sos")
-    low_comp = sosfilt(sos_lp, signal)
-    bass_shaped = signal - low_comp * (1.0 - low_rolloff_gain)
-    sos_hp = butter(2, high_shelf_hz / nyq, btype="high", output="sos")
-    hp = sosfilt(sos_hp, bass_shaped)
-    return bass_shaped + hp * (high_shelf_gain - 1.0)
+    return upmixer_dsp.elevation_eq(
+        np.ascontiguousarray(signal, dtype=np.float64),
+        sr,
+        low_rolloff_hz,
+        low_rolloff_gain,
+        high_shelf_hz,
+        high_shelf_gain,
+    )
 
 
 def haas_decorrelate(signal: np.ndarray, delay_samples: int) -> np.ndarray:
@@ -69,12 +65,9 @@ def haas_decorrelate(signal: np.ndarray, delay_samples: int) -> np.ndarray:
     delay. Varying delays per channel pair (13–23 ms) prevents comb filtering
     while creating perceived spatial width.
     """
-    if delay_samples <= 0:
-        return signal.copy()
-    out = np.empty_like(signal)
-    out[:delay_samples] = 0.0
-    out[delay_samples:] = signal[:-delay_samples]
-    return out
+    return upmixer_dsp.haas_decorrelate(
+        np.ascontiguousarray(signal, dtype=np.float64), max(0, delay_samples)
+    )
 
 
 def diffuse_send(
@@ -95,9 +88,9 @@ def diffuse_send(
         delay_ms: Early reflection delay in ms (default 35 ms).
         blend:    Wet mix level (1 - blend = dry).  Range [0, 1].
     """
-    delay_n = int(sr * delay_ms / 1000.0)
-    delayed = haas_decorrelate(signal, delay_n)
-    return signal * (1.0 - blend) + delayed * blend
+    return upmixer_dsp.diffuse_send(
+        np.ascontiguousarray(signal, dtype=np.float64), sr, delay_ms, blend
+    )
 
 
 def preview_slice(
@@ -130,6 +123,22 @@ def preview_slice(
     return audio[start:end], start / sr, end / sr
 
 
+_DOWNMIX_SOURCES = ("FL", "FR", "C", "SL", "SR", "BL", "BR")
+
+
+def _downmix_sources(
+    channels: dict[str, np.ndarray],
+) -> tuple[list[str], list[np.ndarray]]:
+    """Select the channels a BS.775 downmix draws from, in a fixed order.
+
+    LFE and height channels are excluded by the standard.
+    """
+    present = [name for name in _DOWNMIX_SOURCES if name in channels]
+    return present, [
+        np.ascontiguousarray(channels[name], dtype=np.float64) for name in present
+    ]
+
+
 def itu_downmix_stereo(
     channels: dict[str, np.ndarray],
     surround_coeff: float = ITU_CENTER_COEFF,
@@ -150,21 +159,10 @@ def itu_downmix_stereo(
     Returns:
         (L_out, R_out) 1D float64 arrays.
     """
-    _skip = {"LFE", "TFL", "TFR", "TBL", "TBR"}
-    n = next((len(v) for k, v in channels.items() if k not in _skip), 0)
-    if n == 0:
+    names, audio = _downmix_sources(channels)
+    if not names:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
-
-    def _ch(key: str) -> np.ndarray:
-        return channels.get(key, np.zeros(n, dtype=np.float64))
-
-    SL = _ch("SL") + (ITU_CENTER_COEFF * _ch("BL") if "BL" in channels else 0.0)
-    SR = _ch("SR") + (ITU_CENTER_COEFF * _ch("BR") if "BR" in channels else 0.0)
-
-    L_out = _ch("FL") + ITU_CENTER_COEFF * _ch("C") + surround_coeff * SL
-    R_out = _ch("FR") + ITU_CENTER_COEFF * _ch("C") + surround_coeff * SR
-
-    return L_out.astype(np.float64), R_out.astype(np.float64)
+    return upmixer_dsp.itu_downmix_stereo(names, audio, surround_coeff)
 
 
 def itu_downmix_mono(
@@ -185,15 +183,7 @@ def itu_downmix_mono(
     Returns:
         M 1D float64 array.
     """
-    _skip = {"LFE", "TFL", "TFR", "TBL", "TBR"}
-    n = next((len(v) for k, v in channels.items() if k not in _skip), 0)
-    if n == 0:
+    names, audio = _downmix_sources(channels)
+    if not names:
         return np.zeros(0, dtype=np.float64)
-
-    def _ch(key: str) -> np.ndarray:
-        return channels.get(key, np.zeros(n, dtype=np.float64))
-
-    SL = _ch("SL") + (ITU_CENTER_COEFF * _ch("BL") if "BL" in channels else 0.0)
-    SR = _ch("SR") + (ITU_CENTER_COEFF * _ch("BR") if "BR" in channels else 0.0)
-
-    return (ITU_CENTER_COEFF * (_ch("FL") + _ch("FR")) + _ch("C") + surround_coeff * (SL + SR)).astype(np.float64)
+    return upmixer_dsp.itu_downmix_mono(names, audio, surround_coeff)

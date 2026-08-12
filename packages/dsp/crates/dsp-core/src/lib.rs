@@ -5,6 +5,8 @@
 pub mod kernels;
 pub mod loudness;
 pub mod mastering;
+pub mod routing;
+pub mod spatial;
 
 /// Revision marker both bindings surface so a wheel/wasm mismatch is loud.
 pub fn version() -> &'static str {
