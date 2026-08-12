@@ -16,7 +16,12 @@ const sentParams: Record<string, unknown>[] = [];
 const transportCalls: { playing?: boolean; loop?: boolean }[] = [];
 const seekCalls: number[] = [];
 const addedStems: number[] = [];
+const measureCalls: number[] = [];
 let capturedCallbacks: Record<string, ((...args: never[]) => void) | undefined> = {};
+// Lets a test hold `measure()` open to assert playback stays gated while
+// calibration is still in flight; null (the default) resolves immediately.
+let measureGate: Promise<void> | null = null;
+let measureResult = { lkfs: -18, dbtp: -2 };
 
 vi.mock("./wasmEngine/engineClient", () => ({
   DspEngineClient: {
@@ -29,7 +34,11 @@ vi.mock("./wasmEngine/engineClient", () => ({
         updateParams: (params: Record<string, unknown>) => sentParams.push(params),
         setTransport: (state: { playing?: boolean; loop?: boolean }) => transportCalls.push(state),
         seek: (frame: number) => seekCalls.push(frame),
-        measure: async () => ({ lkfs: -18, dbtp: -2 }),
+        measure: async () => {
+          measureCalls.push(measureCalls.length);
+          if (measureGate) await measureGate;
+          return measureResult;
+        },
         addStem: (left: Float32Array) => addedStems.push(left.length),
         dispose: () => {},
       };
@@ -86,8 +95,8 @@ function Harness(props: Record<string, unknown>) {
     props.mastering as never,
     ["FL", "FR", "C", "LFE", "SL", "SR"],
     (props.outputMode as never) ?? "binaural",
-    "studio",
-    "stereo",
+    (props.spatialProfile as never) ?? "studio",
+    (props.transauralProfile as never) ?? "stereo",
     TEST_ENGINE_CONSTANTS,
   );
   (globalThis as Record<string, unknown>).preview = preview;
@@ -108,6 +117,9 @@ beforeEach(() => {
   transportCalls.length = 0;
   seekCalls.length = 0;
   addedStems.length = 0;
+  measureCalls.length = 0;
+  measureGate = null;
+  measureResult = { lkfs: -18, dbtp: -2 };
   (window as unknown as { AudioContext: unknown }).AudioContext = FakeAudioContext;
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })));
 });
@@ -279,6 +291,104 @@ describe("useStemPreview metering", () => {
     expect(preview.headphoneLevels.current.left.rms).toBe(0);
     expect(preview.headphoneLevels.current.right.rms).toBe(0);
     expect(preview.stemSpectrum.current.get("Vocals")?.level).toBe(0);
+  });
+});
+
+describe("useStemPreview loudness calibration", () => {
+  it("re-measures when the spatial profile changes, not just the output mode", async () => {
+    const result = await renderPreview({ spatialProfile: "studio" });
+    expect(measureCalls).toHaveLength(1);
+
+    await act(async () => {
+      result.rerender(<Harness spatialProfile="listening" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(measureCalls).toHaveLength(2);
+  });
+
+  it("re-measures when the transaural profile changes", async () => {
+    const result = await renderPreview({ outputMode: "transaural", transauralProfile: "stereo" });
+    expect(measureCalls).toHaveLength(1);
+
+    await act(async () => {
+      result.rerender(<Harness outputMode="transaural" transauralProfile="car" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(measureCalls).toHaveLength(2);
+  });
+
+  it("measures native mode too, instead of skipping calibration for it", async () => {
+    await renderPreview({ outputMode: "native" });
+    expect(measureCalls).toHaveLength(1);
+  });
+
+  it("applies the same loudness-correction budget to native and binaural for an identical measurement", async () => {
+    // 22 dB below target: inside the 30 dB native budget, but the old
+    // binaural-only cap (6 dB) would have left binaural far short of it.
+    measureResult = { lkfs: -40, dbtp: -30 };
+    await renderPreview({ outputMode: "native" });
+    const nativeGain = (sentParams.at(-1) as { master: { output_gain: number } }).master.output_gain;
+
+    measureResult = { lkfs: -40, dbtp: -30 };
+    await renderPreview({ outputMode: "binaural" });
+    const binauralGain = (sentParams.at(-1) as { master: { output_gain: number } }).master.output_gain;
+
+    expect(binauralGain).toBeCloseTo(nativeGain, 6);
+    expect(20 * Math.log10(nativeGain)).toBeCloseTo(22, 6);
+  });
+
+  it("blocks playback until the in-flight measurement resolves, then allows it", async () => {
+    let resolveGate: () => void = () => {};
+    measureGate = new Promise((resolve) => {
+      resolveGate = resolve;
+    });
+    await renderPreview();
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      playPause: () => Promise<void>;
+    };
+
+    await act(async () => {
+      await preview.playPause();
+    });
+    expect(transportCalls).toHaveLength(0);
+
+    await act(async () => {
+      resolveGate();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await preview.playPause();
+    });
+    expect(transportCalls.at(-1)).toMatchObject({ playing: true });
+  });
+
+  it("pauses playback when a profile switch invalidates the current calibration", async () => {
+    const result = await renderPreview({ spatialProfile: "studio" });
+    const getPreview = () =>
+      (globalThis as unknown as Record<string, unknown>).preview as {
+        playPause: () => Promise<void>;
+        playing: boolean;
+      };
+
+    await act(async () => {
+      await getPreview().playPause();
+    });
+    expect(transportCalls.at(-1)).toMatchObject({ playing: true });
+
+    await act(async () => {
+      result.rerender(<Harness spatialProfile="listening" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(transportCalls.at(-1)).toMatchObject({ playing: false });
+    expect(getPreview().playing).toBe(false);
   });
 });
 

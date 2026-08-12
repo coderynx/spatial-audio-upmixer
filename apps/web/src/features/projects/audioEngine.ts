@@ -203,6 +203,12 @@ export class PreviewAudioEngine {
 
   async playFrom(time: number): Promise<boolean> {
     if (!this.client || !this.context) return false;
+    // Loudness calibration is mandatory: a mode/profile combination that
+    // hasn't been measured yet has no valid `outputGain`, so refuse to start
+    // rather than play at whatever gain happened to be left over from a
+    // previous mode. `measureIfNeeded()` always re-fires on the state changes
+    // that invalidate this (see its callers), so the gate lifts on its own.
+    if (this.measuredForMode !== this.measureKey()) return false;
     if (this.context.state === "suspended") await this.context.resume();
     if (time !== this.currentTimeRef.current) this.moveTo(time);
     this.playing = true;
@@ -304,11 +310,13 @@ export class PreviewAudioEngine {
   retuneVoicing(profile: SpatialProfile) {
     this.spatialProfile = profile;
     this.apply();
+    void this.measureIfNeeded();
   }
 
   retuneCrosstalkVoicing(profile: TransauralProfile) {
     this.transauralProfile = profile;
     this.apply();
+    void this.measureIfNeeded();
   }
 
   async loadDecodeFilterSet(profile: SpatialProfile): Promise<boolean> {
@@ -456,15 +464,15 @@ export class PreviewAudioEngine {
     const bass = (this.mastering?.bass?.profile ?? null) as BassProfileName | null;
     const target = this.mastering?.loudness?.target ?? -18;
     const normalize = this.mastering?.loudness?.normalize ?? true;
-    // The collapse correction is capped small — the bed is already
-    // loudness-matched, so this only nudges for the collapse's own shift.
-    const maxGainDb =
-      this.outputMode === "binaural"
-        ? this.constants.binauralLoudnessMaxGainDb
-        : this.outputMode === "transaural"
-          ? this.constants.crosstalkLoudnessMaxGainDb
-          : this.constants.loudnessMaxGainDb;
-    const loudnessGain = normalize ? loudnessGainFor(this.measuredLkfs, target, maxGainDb) : 1;
+    // Unlike the offline export chain, this engine has no first-stage
+    // normalize on the discrete bed before the spatial collapse — one gain
+    // stage does the whole job for every mode, so every mode needs the same
+    // full budget. A collapse-only cap here (correct for the *second* of the
+    // offline chain's two stages) would leave binaural/transaural under-
+    // corrected relative to native whenever the raw mix sits far from target.
+    const loudnessGain = normalize
+      ? loudnessGainFor(this.measuredLkfs, target, this.constants.loudnessMaxGainDb)
+      : 1;
     const outputGain =
       this.measuringRaw || !normalize
         ? 1
@@ -505,16 +513,21 @@ export class PreviewAudioEngine {
    * mode switch re-measures rather than reusing a stale correction.
    *
    * The pass walks the whole programme in slices taken from the render
-   * callback, so this resolves minutes later on a long track. Until it does,
-   * the preview plays uncorrected — which is also what the measurement needs
-   * to see, since measuring through a previous correction would fold that
-   * gain into the next one.
+   * callback, so this resolves minutes later on a long track. Playback is
+   * mandatory-calibrated (see `playFrom`): a mode/profile switch that
+   * invalidates the current measurement pauses transport here rather than
+   * leaving it running uncorrected until the user notices.
    */
+  private measureKey(): string {
+    return `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}`;
+  }
+
   private async measureIfNeeded() {
-    if (!this.client || this.outputMode === "native") return;
-    const key = `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}`;
+    if (!this.client) return;
+    const key = this.measureKey();
     if (this.measuredForMode === key) return;
 
+    if (this.playing) this.pause();
     const token = ++this.measureToken;
     this.exactMeasureKey = key;
     this.callbacks.onMeasuring(true);

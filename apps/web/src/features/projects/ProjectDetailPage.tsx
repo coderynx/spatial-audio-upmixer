@@ -442,7 +442,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       || (solo.length > 0 && !solo.includes(stem))
     ));
   }, [effectiveManifest, orderedStems]);
-  const transportDisabled = !preview.supported || !preview.ready || !previewStems.length;
+  const transportDisabled =
+    !preview.supported || !preview.ready || !previewStems.length || preview.measuring;
   const { shortcutsOpen, setShortcutsOpen } = useKeyCommands({
     transportEnabled: !transportDisabled,
     preview,
