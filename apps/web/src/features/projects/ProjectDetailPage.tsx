@@ -41,7 +41,7 @@ import { StemChannelStrip, StripResizeHandle } from "./ChannelStrip";
 import { MasterBypassButton } from "./MasterBypassButton";
 import { MixerView } from "./MixerView";
 import { OutputModeSelect } from "./OutputModeSelect";
-import { monitorMastering } from "./previewGraph";
+import { monitorMastering } from "./masterPreview";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
 import { TimelineView } from "./TimelineView";

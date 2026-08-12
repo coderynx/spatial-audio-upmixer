@@ -86,6 +86,9 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
           this.report();
         }
         break;
+      case "measure":
+        this.measure(message.weights || []);
+        break;
       case "dispose":
         this.dispose();
         break;
@@ -153,6 +156,25 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.wasm.dsp_free(this.meterPtr, this.meterBytes);
       this.meterPtr = 0;
     }
+  }
+
+  // Renders the whole programme offline to get real BS.1770 loudness and
+  // true peak, then rewinds — the correction gain a bounce would need,
+  // rather than an estimate from a few seconds of it.
+  measure(weights) {
+    if (!this.engine) return;
+    const weightBytes = Math.max(weights.length, 1) * 8;
+    const weightPtr = this.wasm.dsp_alloc(weightBytes);
+    new Float64Array(this.wasm.memory.buffer, weightPtr, Math.max(weights.length, 1)).set(
+      weights.length ? weights : [1],
+    );
+    const outPtr = this.wasm.dsp_alloc(16);
+    this.wasm.dsp_engine_measure(this.engine, weightPtr, weights.length, outPtr);
+    const result = new Float64Array(this.wasm.memory.buffer, outPtr, 2);
+    const [lkfs, dbtp] = [result[0], result[1]];
+    this.wasm.dsp_free(weightPtr, weightBytes);
+    this.wasm.dsp_free(outPtr, 16);
+    this.port.postMessage({ type: "measured", lkfs, dbtp });
   }
 
   report() {

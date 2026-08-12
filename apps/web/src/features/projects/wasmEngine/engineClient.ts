@@ -46,6 +46,8 @@ export class DspEngineClient {
   /** Resolves once the processor has instantiated the wasm. */
   readonly ready: Promise<string>;
 
+  private pendingMeasure: ((result: { lkfs: number; dbtp: number }) => void) | null = null;
+
   private constructor(
     node: AudioWorkletNode,
     callbacks: DspEngineCallbacks,
@@ -76,6 +78,7 @@ export class DspEngineClient {
       processorOptions: { module, channelCount },
     });
 
+    let client: DspEngineClient | null = null;
     let resolveReady: (version: string) => void = () => {};
     let rejectReady: (reason: Error) => void = () => {};
     const ready = new Promise<string>((resolve, reject) => {
@@ -99,6 +102,12 @@ export class DspEngineClient {
             meters: (message.meters as number[]) ?? [],
           });
           break;
+        case "measured":
+          client?.resolveMeasure({
+            lkfs: Number(message.lkfs),
+            dbtp: Number(message.dbtp),
+          });
+          break;
         case "ended":
           callbacks.onEnded?.();
           break;
@@ -113,7 +122,8 @@ export class DspEngineClient {
       }
     };
 
-    return new DspEngineClient(node, callbacks, ready);
+    client = new DspEngineClient(node, callbacks, ready);
+    return client;
   }
 
   /** Create the engine. Stems must be added afterwards. */
@@ -134,6 +144,17 @@ export class DspEngineClient {
     this.node.port.postMessage({ type: "transport", ...state });
   }
 
+  /**
+   * Measure the whole collapsed programme. Resolves with real BS.1770
+   * integrated loudness and true peak; the transport is left where it was.
+   */
+  measure(weights: number[] = []): Promise<{ lkfs: number; dbtp: number }> {
+    return new Promise((resolve) => {
+      this.pendingMeasure = resolve;
+      this.node.port.postMessage({ type: "measure", weights });
+    });
+  }
+
   seek(frame: number): void {
     this.node.port.postMessage({ type: "seek", frame: Math.max(0, Math.round(frame)) });
   }
@@ -152,6 +173,12 @@ export class DspEngineClient {
 
   rewind(): void {
     this.node.port.postMessage({ type: "rewind" });
+  }
+
+  /** Called from the port handler; not part of the public surface. */
+  resolveMeasure(result: { lkfs: number; dbtp: number }): void {
+    this.pendingMeasure?.(result);
+    this.pendingMeasure = null;
   }
 
   dispose(): void {

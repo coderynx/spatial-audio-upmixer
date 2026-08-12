@@ -2,7 +2,7 @@ import * as React from "react";
 import type { ProjectStem, StemScene } from "@/api";
 import { speakerCoordinates } from "@/lib/spatial";
 import type { EngineConstants, SpatialProfile, TransauralProfile } from "./masteringProfiles";
-import type { MasterPreview } from "./previewGraph";
+import type { MasterPreview } from "./masterPreview";
 import {
   PreviewAudioEngine,
   POSITIONAL_CHANNELS,

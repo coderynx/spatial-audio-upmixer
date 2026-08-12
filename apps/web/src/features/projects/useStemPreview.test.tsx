@@ -1,782 +1,248 @@
 import * as React from "react";
 import { act, render } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectStem } from "@/api";
-import { applyTruePeakCeiling, useStemPreview, type OutputMode, type SpatialProfile } from "./useStemPreview";
+import { applyTruePeakCeiling, useStemPreview } from "./useStemPreview";
 import { TEST_ENGINE_CONSTANTS } from "./engineConstants.fixture";
-import { monitorMastering } from "./previewGraph";
 
-class FakeAudioParam {
-  value = 0;
-  // Ramped writes (see rampGainTo in useStemPreview.ts) settle immediately
-  // in this fake — tests assert the resulting gain value, not ramp timing.
-  setTargetAtTime(target: number) {
-    this.value = target;
-  }
-}
+// The preview's DSP now runs in the shared Rust core inside the worklet, so
+// there is no node graph left to inspect here. What this file covers is the
+// binding: that the hook resolves the project's mix into the core's parameter
+// block, drives the transport, and surfaces what comes back. The DSP itself is
+// covered by packages/dsp; the parameter mapping by engineParams.test.ts; the
+// ABI by dspWasm.test.ts.
 
-class FakeNode {
-  connections: FakeNode[] = [];
-  connect(target: FakeNode) {
-    this.connections.push(target);
+const sentParams: Record<string, unknown>[] = [];
+const transportCalls: { playing?: boolean; loop?: boolean }[] = [];
+const seekCalls: number[] = [];
+const addedStems: number[] = [];
+let capturedCallbacks: Record<string, ((...args: never[]) => void) | undefined> = {};
+
+vi.mock("./wasmEngine/engineClient", () => ({
+  DspEngineClient: {
+    create: vi.fn(async (_ctx: unknown, _channels: number, callbacks: Record<string, never>) => {
+      capturedCallbacks = callbacks;
+      return {
+        node: { connect: (target: unknown) => target, disconnect: () => {} },
+        ready: Promise.resolve("0.1.0"),
+        setParams: (params: Record<string, unknown>) => sentParams.push(params),
+        updateParams: (params: Record<string, unknown>) => sentParams.push(params),
+        setTransport: (state: { playing?: boolean; loop?: boolean }) => transportCalls.push(state),
+        seek: (frame: number) => seekCalls.push(frame),
+        measure: async () => ({ lkfs: -18, dbtp: -2 }),
+        addStem: (left: Float32Array) => addedStems.push(left.length),
+        dispose: () => {},
+      };
+    }),
+  },
+}));
+
+vi.mock("./wasmEngine/filterAssets", () => ({
+  loadDecodeTaps: vi.fn(async () => new Float64Array(32)),
+  loadXtcTaps: vi.fn(async () => new Float64Array(8)),
+  loadFirTaps: vi.fn(async () => new Float64Array(4)),
+}));
+
+class FakeGain {
+  gain = { value: 1, setTargetAtTime: (v: number) => { this.gain.value = v; } };
+  connect(target: unknown) {
     return target;
   }
   disconnect() {}
 }
 
-class FakeGain extends FakeNode {
-  gain = new FakeAudioParam();
-}
-
-class FakeBiquadFilter extends FakeNode {
-  type = "";
-  frequency = new FakeAudioParam();
-  Q = new FakeAudioParam();
-  gain = new FakeAudioParam();
-}
-
-class FakeWaveShaper extends FakeNode {
-  curve: Float32Array | null = null;
-  oversample = "none";
-}
-
-class FakeDynamicsCompressor extends FakeNode {
-  threshold = new FakeAudioParam();
-  knee = new FakeAudioParam();
-  ratio = new FakeAudioParam();
-  attack = new FakeAudioParam();
-  release = new FakeAudioParam();
-}
-
-class FakeChannelSplitter extends FakeNode {
-  connect(target: FakeNode) {
-    this.connections.push(target);
-    return target;
-  }
-}
-
-class FakeDelay extends FakeNode {
-  delayTime = new FakeAudioParam();
-}
-
-// Fake for the `ambisonics` package's mono encoder (imported directly rather
-// than the barrel — see ambisonics.d.ts for why); the decode stage no longer
-// uses this library (see useStemPreview.ts's ConvolverNode bank). The real
-// class builds a WebAudio graph with channel counts jsdom's fake context
-// doesn't model, so it's mocked. Defined inline (no outer-scope references)
-// since `vi.mock` factories run before the rest of this module's top-level code.
-vi.mock("ambisonics/dist/ambi-monoEncoder", () => {
-  class MockNode {
-    connections: MockNode[] = [];
-    connect(target: MockNode) {
-      this.connections.push(target);
-      return target;
-    }
-    disconnect() {}
-  }
-  class MockGain extends MockNode {
-    gain = { value: 0 };
-  }
-  class monoEncoder extends MockNode {
-    static instanceCount = 0;
-    in = new MockGain();
-    out = new MockGain();
-    azim = 0;
-    elev = 0;
-    updateGains = vi.fn();
-    constructor() {
-      super();
-      monoEncoder.instanceCount++;
-    }
-  }
-  return { default: monoEncoder };
-});
-
-class FakeConvolver extends FakeNode {
-  buffer: unknown = null;
-  normalize = true;
-}
-
-// Fake for the native path's look-ahead limiter (limiter.worklet.js,
-// "limiter-processor") — see the "native limiter worklet" describe block
-// below. `installAudio` stubs both `AudioWorkletNode` (this class) and
-// `FakeAudioContext.audioWorklet.addModule` so tests can choose whether the
-// module "loads" successfully (real worklet path) or not (fallback tanh
-// WaveShaper path — see useStemPreview.ts's `initialize()`).
-class FakeAudioWorkletNode extends FakeNode {
-  static instances: FakeAudioWorkletNode[] = [];
-  port = { postMessage: vi.fn() };
-  parameters = new Map();
-  name: string;
-  options: unknown;
-  constructor(_context: unknown, name: string, options: unknown) {
-    super();
-    this.name = name;
-    this.options = options;
-    FakeAudioWorkletNode.instances.push(this);
-  }
-}
-
-class FakeAnalyser extends FakeNode {
-  fftSize = 2048;
-  frequencyBinCount = 1024;
-  smoothingTimeConstant = 0;
-  getByteTimeDomainData(array: Uint8Array) {
-    array.fill(128);
-  }
-  getByteFrequencyData(array: Uint8Array) {
-    array.fill(0);
-  }
-  // Read by the channel/stem/headphone level meters (measureAnalyser in
-  // audioEngine.ts) — silence here is fine, these tests assert graph wiring,
-  // not meter values. Loudness/true-peak correction no longer reads any live
-  // analyser at all — see `precomputeCorrection`'s offline measurement.
-  getFloatTimeDomainData(array: Float32Array) {
-    array.fill(0);
-  }
-}
-
-class FakeBufferSource extends FakeNode {
-  buffer: FakeAudioBuffer | null = null;
-  loop = false;
-  loopStart = 0;
-  loopEnd = 0;
-  start = vi.fn();
-  stop = vi.fn();
-}
-
-class FakeAudioBuffer {
-  duration = 10;
-  length = 8;
-  numberOfChannels = 2;
-  getChannelData() {
-    return new Float32Array(this.length).fill(0.2);
-  }
-  copyToChannel() {}
-}
-
-// Shared node-factory surface for both the live `AudioContext` fake and the
-// `OfflineAudioContext` fake `precomputeCorrection()`'s tests exercise below
-// — both are genuine `BaseAudioContext` implementers in the real API (see
-// audioEngine.ts's/previewGraph.ts's widened `BaseAudioContext` param types),
-// so both fakes get the same node factories here, each with its own
-// instance-tracking arrays (so `lastContext()` assertions about the live
-// context are never polluted by nodes an offline precompute pass built).
-class FakeAudioGraphContext {
-  eqFilters: FakeBiquadFilter[] = [];
-  compressors: FakeDynamicsCompressor[] = [];
-  waveShapers: FakeWaveShaper[] = [];
-  delays: FakeDelay[] = [];
-  gains: FakeGain[] = [];
-  bufferSources: FakeBufferSource[] = [];
-  convolvers: FakeConvolver[] = [];
+class FakeAudioContext {
+  state = "running";
+  currentTime = 0;
+  destination = { maxChannelCount: 12 };
+  audioWorklet = { addModule: async () => {} };
   createGain() {
-    const gain = new FakeGain();
-    this.gains.push(gain);
-    return gain;
+    return new FakeGain();
   }
-  createDelay() {
-    const delay = new FakeDelay();
-    this.delays.push(delay);
-    return delay;
+  async resume() {
+    this.state = "running";
   }
-  createChannelSplitter() { return new FakeChannelSplitter(); }
-  createChannelMerger() { return new FakeChannelSplitter(); }
-  createAnalyser() { return new FakeAnalyser(); }
-  createConvolver() {
-    const convolver = new FakeConvolver();
-    this.convolvers.push(convolver);
-    return convolver;
-  }
-  createBiquadFilter() {
-    const filter = new FakeBiquadFilter();
-    this.eqFilters.push(filter);
-    return filter;
-  }
-  createDynamicsCompressor() {
-    const compressor = new FakeDynamicsCompressor();
-    this.compressors.push(compressor);
-    return compressor;
-  }
-  createWaveShaper() {
-    const shaper = new FakeWaveShaper();
-    this.waveShapers.push(shaper);
-    return shaper;
-  }
-  createBufferSource() {
-    const source = new FakeBufferSource();
-    this.bufferSources.push(source);
-    return source;
-  }
-  createBuffer(numberOfChannels: number, length: number) {
-    const buffer = new FakeAudioBuffer();
-    buffer.numberOfChannels = numberOfChannels;
-    buffer.length = length;
-    return buffer;
-  }
-  decodeAudioData() { return Promise.resolve(new FakeAudioBuffer()); }
-}
-
-class FakeAudioContext extends FakeAudioGraphContext {
-  static instances: FakeAudioContext[] = [];
-  static workletShouldFail = false;
-  currentTime = 0;
-  closed = false;
-  sampleRate = 48000;
-  destination = new FakeNode();
-  audioWorklet = {
-    addModule: vi.fn(async () => {
-      if (FakeAudioContext.workletShouldFail) throw new Error("worklet module failed to load");
-    }),
-  };
-
-  constructor() {
-    super();
-    FakeAudioContext.instances.push(this);
-  }
-  resume = vi.fn(async () => {
-    if (this.closed) throw new Error("Cannot resume a closed AudioContext.");
-  });
-  close = vi.fn(async () => { this.closed = true; });
-}
-
-// Fake for `precomputeCorrection()`'s offline whole-program measurement pass
-// (audioEngine.ts). `startRendering` doesn't actually simulate signal flow
-// through the connections recorded above (none of these fakes do — see
-// FakeAnalyser's canned reads) — it returns `FakeOfflineAudioContext.render`,
-// a canned constant-amplitude 2ch buffer, letting tests assert the measured
-// gain actually changed without needing a real DSP-capable fake.
-class FakeOfflineAudioContext extends FakeAudioGraphContext {
-  static instances: FakeOfflineAudioContext[] = [];
-  static render = { left: 0, right: 0 };
-  currentTime = 0;
-  destination = new FakeNode();
-  constructor(
-    public numberOfChannels: number,
-    public length: number,
-    public sampleRate: number,
-  ) {
-    super();
-    FakeOfflineAudioContext.instances.push(this);
-  }
-  async startRendering() {
-    const { left, right } = FakeOfflineAudioContext.render;
+  async close() {}
+  async decodeAudioData() {
     return {
+      duration: 2,
       numberOfChannels: 2,
-      length: this.length,
-      getChannelData: (channel: number) => new Float32Array(256).fill(channel === 0 ? left : right),
+      getChannelData: () => new Float32Array(96000),
     };
   }
 }
 
-const stems: ProjectStem[] = [
-  { id: "vocals", stem_key: "Vocals", sample_rate: 48000, channels: 2, size_bytes: 1, audio_url: "/vocals.wav", preview_url: null },
-  { id: "bass", stem_key: "Bass", sample_rate: 48000, channels: 2, size_bytes: 1, audio_url: "/bass.wav", preview_url: null },
+const STEMS: ProjectStem[] = [
+  { id: "a", stem_key: "Vocals", preview_url: "/stems/a.wav" } as ProjectStem,
+  { id: "b", stem_key: "Bass", preview_url: "/stems/b.wav" } as ProjectStem,
 ];
 
-let preview: ReturnType<typeof useStemPreview>;
-function lastContext(): FakeAudioContext {
-  const instance = FakeAudioContext.instances.at(-1);
-  if (!instance) throw new Error("AudioContext was not constructed");
-  return instance;
-}
-
-type MixArg = Parameters<typeof useStemPreview>[2];
-type MasterArg = Parameters<typeof useStemPreview>[4];
-
-function Harness({
-  mix,
-  mastering,
-  layoutChannels,
-  outputMode,
-  spatialProfile,
-}: {
-  mix?: MixArg;
-  mastering?: MasterArg;
-  layoutChannels?: string[];
-  outputMode?: OutputMode;
-  spatialProfile?: SpatialProfile;
-}) {
-  preview = useStemPreview(stems, {}, mix, null, mastering, layoutChannels, outputMode, spatialProfile, undefined, TEST_ENGINE_CONSTANTS);
+function Harness(props: Record<string, unknown>) {
+  const preview = useStemPreview(
+    (props.stems as ProjectStem[]) ?? STEMS,
+    { stems: {} },
+    props.mix as never,
+    null,
+    props.mastering as never,
+    ["FL", "FR", "C", "LFE", "SL", "SR"],
+    (props.outputMode as never) ?? "binaural",
+    "studio",
+    "stereo",
+    TEST_ENGINE_CONSTANTS,
+  );
+  (globalThis as Record<string, unknown>).preview = preview;
   return null;
 }
 
-function hrirUrls(): string[] {
-  const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-  return fetchMock.mock.calls
-    .map((args: unknown[]) => args[0] as string)
-    .filter((url) => url.startsWith("/hrir/"));
+async function renderPreview(props: Record<string, unknown> = {}) {
+  const result = render(<Harness {...props} />);
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  return result;
 }
 
-function installAudio() {
-  vi.stubGlobal("AudioContext", FakeAudioContext);
-  vi.stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
-  vi.stubGlobal("fetch", vi.fn(async () => ({
-    ok: true,
-    arrayBuffer: async () => new ArrayBuffer(8),
-  })));
-  vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
-  vi.stubGlobal("cancelAnimationFrame", vi.fn());
-}
+beforeEach(() => {
+  sentParams.length = 0;
+  transportCalls.length = 0;
+  seekCalls.length = 0;
+  addedStems.length = 0;
+  (window as unknown as { AudioContext: unknown }).AudioContext = FakeAudioContext;
+  vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })));
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-  FakeAudioContext.instances = [];
-  FakeAudioContext.workletShouldFail = false;
-  FakeAudioWorkletNode.instances = [];
-  FakeOfflineAudioContext.instances = [];
-  FakeOfflineAudioContext.render = { left: 0, right: 0 };
+  delete (globalThis as Record<string, unknown>).preview;
 });
 
-describe("useStemPreview mastering chain", () => {
-  it("uses a tanh soft-limit WaveShaper instead of a default-parameter compressor", async () => {
-    installAudio();
-    render(<Harness />);
-    await act(async () => { await preview.playPause(); });
-
-    expect(lastContext().waveShapers.length).toBeGreaterThan(0);
-    expect(lastContext().waveShapers[0].curve).not.toBeNull();
-    expect(lastContext().waveShapers[0].oversample).toBe("4x");
-    // No compressor is created when the manifest sets no compressor profile.
-    expect(lastContext().compressors).toHaveLength(0);
+describe("useStemPreview parameter binding", () => {
+  it("sends one speaker entry per layout channel, LFE included", async () => {
+    await renderPreview();
+    const params = sentParams.at(-1) as { speakers: { name: string }[]; lfe_index: number };
+    expect(params.speakers.map((s) => s.name)).toEqual(["FL", "FR", "C", "LFE", "SL", "SR"]);
+    expect(params.lfe_index).toBe(3);
   });
 
-  it("builds no EQ/compressor/bass nodes when the manifest sets no profiles", async () => {
-    installAudio();
-    render(<Harness mastering={{}} />);
-    await act(async () => { await preview.playPause(); });
-
-    expect(lastContext().compressors).toHaveLength(0);
-    // Per-stem LFE lowpass pairs and the surround/height send shaping
-    // filters (highpass/lowpass/highpass, see masteringProfiles.ts) are
-    // always present regardless of manifest settings, as is the (always
-    // built, fixed-topology) binaural voicing chain — inert at the default
-    // "studio" profile's neutral params (gain 0). No manifest-driven,
-    // *active* EQ/bass filters (peaking/lowshelf with nonzero gain) should
-    // exist alongside them.
-    const shapedFilters = lastContext().eqFilters.filter(
-      (f) => (f.type === "peaking" || f.type === "lowshelf") && f.gain.value !== 0,
-    );
-    const lfeLowpasses = lastContext().eqFilters.filter((f) => f.type === "lowpass" && f.frequency.value === 120);
-    expect(shapedFilters).toHaveLength(0);
-    expect(lfeLowpasses.length).toBeGreaterThan(0);
-  });
-
-  it("monitorMastering bypass strips EQ/compressor/bass but keeps loudness's master gain live", async () => {
-    installAudio();
-    vi.stubGlobal("OfflineAudioContext", FakeOfflineAudioContext);
-    // Loud canned render, same technique as the precompute test below: proves
-    // the master gain is still driven by the offline measurement even though
-    // every other mastering stage was stripped by the bypass.
-    FakeOfflineAudioContext.render = { left: 0.9, right: 0.9 };
-    const fullMastering = {
-      eq: { profile: "spatial-warm", strength: 0.7 },
-      compressor: { profile: "glue" },
-      bass: { profile: "boost" },
-      loudness: { normalize: true, target: -16, max_tp: -1 },
+  it("carries each stem's routing and rebalance through to the core", async () => {
+    await renderPreview({
+      mix: {
+        stem_routing: { Vocals: { FL: 0.8, FR: 0.8 }, Bass: { C: 1 } },
+        stem_rebalance: { Vocals: -3 },
+      },
+    });
+    const params = sentParams.at(-1) as {
+      stems: { routing: [string, number][]; rebalance_db: number }[];
     };
-    render(<Harness mastering={monitorMastering(fullMastering, true)} outputMode="stereo" />);
-    await act(async () => { await preview.playPause(); });
-
-    expect(lastContext().compressors).toHaveLength(0);
-    const shapedFilters = lastContext().eqFilters.filter(
-      (f) => (f.type === "peaking" || f.type === "lowshelf") && f.gain.value !== 0,
-    );
-    expect(shapedFilters).toHaveLength(0);
-
-    const master = lastContext().gains.find((gain) => gain.connections[0] instanceof FakeWaveShaper);
-    expect(master).toBeDefined();
-    expect(master!.gain.value).toBeLessThan(0.5);
+    expect(params.stems[0].routing).toEqual([["FL", 0.8], ["FR", 0.8]]);
+    expect(params.stems[0].rebalance_db).toBeCloseTo(-3, 6);
+    expect(params.stems[1].routing).toEqual([["C", 1]]);
   });
 
-  it("builds the compressor from the resolved profile with manifest overrides applied", async () => {
-    installAudio();
-    render(<Harness mastering={{ compressor: { profile: "glue", ratio: 4 } }} />);
-    await act(async () => { await preview.playPause(); });
-
-    expect(lastContext().compressors).toHaveLength(1);
-    const comp = lastContext().compressors[0];
-    expect(comp.threshold.value).toBe(-18);
-    expect(comp.ratio.value).toBe(4);
-    expect(comp.attack.value).toBeCloseTo(0.02);
-    expect(comp.release.value).toBeCloseTo(0.2);
+  it("disables the stems solo excludes rather than zeroing their routing", async () => {
+    await renderPreview({ mix: { stem_solo: ["Bass"] } });
+    const params = sentParams.at(-1) as { stems: { enabled: boolean }[] };
+    expect(params.stems[0].enabled).toBe(false);
+    expect(params.stems[1].enabled).toBe(true);
   });
 
-  it("scales the sidechain sum by 1/sqrt(channelCount) before the detector, matching the backend's RMS-across-channels average", async () => {
-    installAudio();
-    render(<Harness mastering={{ compressor: { profile: "glue" } }} />);
-    await act(async () => { await preview.playPause(); });
-
-    // Default test harness layout is every positional channel (11, no LFE) —
-    // upmixer/mastering/compressor.py detects on sqrt(sum(ch^2)/n_ch), an
-    // RMS average, not a raw sum; without this compensating gain the
-    // fanned-in `sum` node would be up to ~sqrt(11)x (~+20dB) hotter than
-    // the backend's detector for the same content.
-    const expected = 1 / Math.sqrt(11);
-    const detectorScale = lastContext().gains.find((g) => Math.abs(g.gain.value - expected) < 1e-6);
-    expect(detectorScale).toBeDefined();
-  });
-
-  it("convolves the mastering-bus EQ against the real backend FIR asset, wet/dry blended by strength", async () => {
-    installAudio();
-    render(<Harness mastering={{ eq: { profile: "spatial-warm", strength: 0.7 } }} />);
-    await act(async () => { await preview.playPause(); });
-
-    // Fix 4's real fix: no more biquad approximation — the preview fetches
-    // and convolves against the actual backend-computed FIR
-    // (scripts/build_eq_filters.py, see masteringProfiles.ts's
-    // buildFirEqNode) instead of a peaking/shelf cascade.
-    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-    const urls = fetchMock.mock.calls.map((args: unknown[]) => args[0] as string);
-    expect(urls).toContain("/eq_fir/master_spatial-warm.wav");
-
-    // _apply_fir's wet/dry blend: (1-strength)*dry + strength*filtered.
-    const dry = lastContext().gains.find((g) => Math.abs(g.gain.value - 0.3) < 1e-6);
-    const wet = lastContext().gains.find((g) => Math.abs(g.gain.value - 0.7) < 1e-6);
-    expect(dry).toBeDefined();
-    expect(wet).toBeDefined();
-
-    // Buffer starts unset (non-blocking) and gets assigned once the fetch
-    // + decode resolves.
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(lastContext().convolvers.some((c) => c.buffer !== null)).toBe(true);
-  });
-
-  it("builds bass sub/mid additive band-gain stages from the resolved bass profile", async () => {
-    // previewGraph.ts's bass sub/mid stage mirrors
-    // upmixer/mastering/bass.py::BassController._apply_band_gain's additive
-    // identity (`(ch - band) + band*gain_lin`) via a lowpass (sub) / lowpass
-    // -> highpass bandpass (mid) feeding a GainNode set to `gain_lin - 1`,
-    // not a native "lowshelf"/"peaking" BiquadFilterNode — see Ledger D9.
-    installAudio();
-    render(<Harness mastering={{ bass: { profile: "boost" } }} />);
-    await act(async () => { await preview.playPause(); });
-
-    const subLowpass = lastContext().eqFilters.find((f) => f.type === "lowpass" && f.frequency.value === 80);
-    const midLowpass = lastContext().eqFilters.find((f) => f.type === "lowpass" && f.frequency.value === 200);
-    const midHighpass = lastContext().eqFilters.find((f) => f.type === "highpass" && f.frequency.value === 80);
-    expect(subLowpass).toBeDefined();
-    expect(midLowpass).toBeDefined();
-    expect(midHighpass).toBeDefined();
-
-    const subBandGain = lastContext().gains.find((g) => Math.abs(g.gain.value - (10 ** (2.0 / 20) - 1)) < 1e-6);
-    const midBandGain = lastContext().gains.find((g) => Math.abs(g.gain.value - (10 ** (1.0 / 20) - 1)) < 1e-6);
-    expect(subBandGain).toBeDefined();
-    expect(midBandGain).toBeDefined();
-  });
-});
-
-describe("per-stem EQ (mix.stem_eq)", () => {
-  // upmixer/separation/stem_eq.py applies a per-stem tonal EQ (before
-  // spatial routing) on the backend export; this used to have no preview
-  // mirror at all, so a stem addressed with e.g. "vocal-presence" played
-  // unequalized in-browser but boosted (nasal-reading) on export.
-  it("builds no per-stem EQ convolver when a stem has no stem_eq entry", async () => {
-    installAudio();
-    render(<Harness mix={{}} />);
-    await act(async () => { await preview.playPause(); });
-
-    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-    const urls = fetchMock.mock.calls.map((args: unknown[]) => args[0] as string);
-    expect(urls.some((url) => url.startsWith("/eq_fir/stem_"))).toBe(false);
-  });
-
-  it("convolves the addressed stem against the real backend FIR asset, fully wet (no strength knob on stem_eq)", async () => {
-    installAudio();
-    render(<Harness mix={{ stem_eq: { Vocals: "vocal-presence" } }} />);
-    await act(async () => { await preview.playPause(); });
-
-    // Fix 4's real fix: no more biquad approximation of
-    // upmixer/separation/stem_eq.py STEM_EQ_PROFILES["vocal-presence"] —
-    // the preview convolves against the actual backend-computed FIR asset.
-    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
-    const urls = fetchMock.mock.calls.map((args: unknown[]) => args[0] as string);
-    expect(urls).toContain("/eq_fir/stem_vocal-presence.wav");
-
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(lastContext().convolvers.some((c) => c.buffer !== null)).toBe(true);
-  });
-});
-
-describe("output-path hearing safety", () => {
-  it("gives the native discrete path its own look-ahead limiter worklet, not just the volume gain", async () => {
-    installAudio();
-    render(<Harness />);
-    await act(async () => { await preview.playPause(); });
-
-    // One tanh soft-limiter for binaural/stereo (pre-existing, unchanged)
-    // plus one "limiter-processor" AudioWorkletNode for native
-    // (nativeSoftLimitNode in useStemPreview.ts) — built unconditionally in
-    // `initialize()` regardless of which mode is actually selected, so
-    // native can never reach `ctx.destination` through the bare volume gain
-    // unlimited. See the next test for the fallback-path equivalent.
-    expect(lastContext().waveShapers.length).toBe(1);
-    expect(FakeAudioWorkletNode.instances.length).toBe(1);
-    expect(FakeAudioWorkletNode.instances[0].name).toBe("limiter-processor");
-    // The true-peak kernel is passed as data (masteringProfiles.ts is the
-    // single source); the worklet builds no kernel of its own.
-    const limiterOptions = FakeAudioWorkletNode.instances[0].options as {
-      processorOptions: { truePeakKernel: number[]; safetyMarginDb: number };
+  it("resolves the mastering profiles the manifest names", async () => {
+    await renderPreview({
+      mastering: { compressor: { profile: "glue" }, bass: { profile: "enhance" } },
+    });
+    const params = sentParams.at(-1) as {
+      master: { compressor: { ratio: number } | null; bass: { excite: boolean } | null };
     };
-    expect(limiterOptions.processorOptions.truePeakKernel.length).toBe(32);
-    expect(limiterOptions.processorOptions.safetyMarginDb).toBe(0.1);
+    expect(params.master.compressor?.ratio).toBe(TEST_ENGINE_CONSTANTS.compProfiles.glue.ratio);
+    expect(params.master.bass?.excite).toBe(true);
   });
 
-  it("falls back to a tanh soft-limit WaveShaper on the native path if the limiter worklet module fails to load", async () => {
-    installAudio();
-    FakeAudioContext.workletShouldFail = true;
-    render(<Harness />);
-    await act(async () => { await preview.playPause(); });
-
-    expect(FakeAudioWorkletNode.instances.length).toBe(0);
-    // Binaural/stereo's tanh soft-limiter plus the native fallback tanh
-    // soft-limiter — see initialize()'s `nativeLimiterWorkletReady` branch.
-    expect(lastContext().waveShapers.length).toBe(2);
+  it("leaves the mastering stages unset when the manifest names no profiles", async () => {
+    await renderPreview();
+    const params = sentParams.at(-1) as {
+      master: { compressor: unknown; bass: unknown };
+    };
+    expect(params.master.compressor).toBeNull();
+    expect(params.master.bass).toBeNull();
   });
 
-  it("routes native output mode to ctx.destination through the native limiter worklet and its monitor gain", async () => {
-    installAudio();
-    render(<Harness layoutChannels={["FL", "FR"]} outputMode="native" />);
-    await act(async () => { await preview.playPause(); });
-
-    const ctx = lastContext();
-    const nativeLimiter = FakeAudioWorkletNode.instances[0];
-    expect(nativeLimiter).toBeDefined();
-    // The limiter feeds `nativeMonitorGain` (the Transport volume/mute
-    // stage, strictly downstream of the safety limiter — see
-    // useStemPreview.ts's PROGRAM/MONITOR split), which is what actually
-    // reaches destination, not the limiter directly.
-    const nativeMonitorGainNode = nativeLimiter.connections.find((node) => node instanceof FakeGain);
-    expect(nativeMonitorGainNode).toBeDefined();
-    expect(nativeMonitorGainNode?.connections).toContain(ctx.destination);
-  });
-
-  it("ramps volume/mute changes instead of snapping the gain, so a change never reaches headphones as a step", async () => {
-    installAudio();
-    const spy = vi.spyOn(FakeAudioParam.prototype, "setTargetAtTime");
-    render(<Harness />);
-    await act(async () => { await preview.playPause(); });
-    spy.mockClear();
-
-    act(() => { preview.setVolume(0.3); });
-    expect(spy).toHaveBeenCalled();
-  });
-
-  it("drives the compressor-reduction correction from a setInterval, not the rAF loop, so it keeps running in a backgrounded tab", async () => {
-    // Regression: this used to run only from tick() (requestAnimationFrame),
-    // which browsers fully suspend in a hidden/backgrounded tab — freezing
-    // the linked bus-compressor's gain reduction while audio keeps audibly
-    // playing. (Loudness/true-peak correction used to live on this same
-    // interval too, but is now measured once, offline, before playback
-    // starts — see `precomputeCorrection` — so it no longer needs a live
-    // timer at all.) installAudio() stubs requestAnimationFrame as a no-op
-    // that never invokes its callback (see its own definition), simulating
-    // exactly that "rAF never fires" case; the correction loop must still be
-    // reachable via a real timer.
-    installAudio();
-    const setIntervalSpy = vi.spyOn(window, "setInterval");
-    const clearIntervalSpy = vi.spyOn(window, "clearInterval");
-    render(<Harness />);
-    await act(async () => { await preview.playPause(); });
-
-    expect(setIntervalSpy).toHaveBeenCalled();
-    const intervalId = setIntervalSpy.mock.results[0].value;
-
-    act(() => { preview.stop(); });
-    expect(clearIntervalSpy).toHaveBeenCalledWith(intervalId);
+  it("arms the look-ahead limiter only on the native path", async () => {
+    await renderPreview({ outputMode: "native" });
+    const native = sentParams.at(-1) as { master: { limiter: unknown }; soft_limit_threshold: number };
+    expect(native.master.limiter).not.toBeNull();
+    // Native output has the limiter as its safety net, so it does not also
+    // soft-limit; the collapse paths do the reverse.
+    expect(native.soft_limit_threshold).toBe(0);
   });
 });
 
-describe("whole-program loudness/true-peak precompute (precomputeCorrection)", () => {
-  it("measures the whole program offline before the first audible sample and applies a static gain, replacing the old live warm-up + ratchet", async () => {
-    installAudio();
-    vi.stubGlobal("OfflineAudioContext", FakeOfflineAudioContext);
-    // A loud canned "render" well above the -18 LKFS default target, so the
-    // measured correction should land well under unity gain — proof `apply()`
-    // is actually driven by this offline measurement, not the -70dB/unity
-    // fallback most other tests here implicitly rely on.
-    FakeOfflineAudioContext.render = { left: 0.9, right: 0.9 };
-    render(<Harness outputMode="stereo" />);
-    await act(async () => { await preview.playPause(); });
-
-    expect(FakeOfflineAudioContext.instances.length).toBe(1);
-    const [offlineCtx] = FakeOfflineAudioContext.instances;
-    expect(offlineCtx.numberOfChannels).toBe(2);
-    // Whole-program render (stem duration plus release tail), not a short
-    // live analyser window.
-    expect(offlineCtx.length).toBeGreaterThan(0);
-
-    // `master` is the one gain node feeding the tanh soft-limiter on the
-    // binaural/stereo path (see initialize()'s `output.connect(softLimitNode)`
-    // — identified structurally rather than by its resulting value, since
-    // several other gain nodes in this graph also land under 1.0).
-    const master = lastContext().gains.find((gain) => gain.connections[0] instanceof FakeWaveShaper);
-    expect(master).toBeDefined();
-    expect(master!.gain.value).toBeLessThan(0.5);
+describe("useStemPreview transport", () => {
+  it("hands the stems to the core and reports the programme length", async () => {
+    await renderPreview();
+    expect(addedStems).toHaveLength(2);
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as { duration: number };
+    expect(preview.duration).toBe(2);
   });
 
-  it("does not run any offline precompute for native output — apply() already keeps its gain at unity", async () => {
-    installAudio();
-    vi.stubGlobal("OfflineAudioContext", FakeOfflineAudioContext);
-    render(<Harness outputMode="native" layoutChannels={["FL", "FR"]} />);
-    await act(async () => { await preview.playPause(); });
-
-    expect(FakeOfflineAudioContext.instances.length).toBe(0);
+  it("starts and stops through the core rather than rebuilding a graph", async () => {
+    await renderPreview();
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      playPause: () => Promise<void>;
+    };
+    await act(async () => {
+      await preview.playPause();
+    });
+    expect(transportCalls.at(-1)).toMatchObject({ playing: true });
   });
 
-  it("does not re-run the offline render on a second play in the same output mode, so replays never re-measure", async () => {
-    installAudio();
-    vi.stubGlobal("OfflineAudioContext", FakeOfflineAudioContext);
-    render(<Harness outputMode="stereo" />);
-    await act(async () => { await preview.playPause(); });
-    expect(FakeOfflineAudioContext.instances.length).toBe(1);
-
-    act(() => { preview.stop(); });
-    await act(async () => { await preview.playPause(); });
-    expect(FakeOfflineAudioContext.instances.length).toBe(1);
+  it("seeks in frames at the pinned 48 kHz context rate", async () => {
+    await renderPreview();
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      seek: (t: number) => Promise<void>;
+    };
+    await act(async () => {
+      await preview.seek(1);
+    });
+    expect(seekCalls.at(-1)).toBe(48000);
   });
 });
 
-describe("virtual-loudspeaker ambisonic rendering", () => {
-  it("creates one fixed-position ambisonic encoder per positional speaker, not per stem", async () => {
-    const { default: monoEncoder } = await import("ambisonics/dist/ambi-monoEncoder");
-    (monoEncoder as unknown as { instanceCount: number }).instanceCount = 0;
-    installAudio();
-    render(<Harness />);
-    await act(async () => { await preview.playPause(); });
+describe("useStemPreview metering", () => {
+  it("splits the core's level block into stems, channels, and the output pair", async () => {
+    await renderPreview();
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      stemLevels: { current: Map<string, { rms: number }[]> };
+      channelLevels: { current: Map<string, { rms: number }> };
+      headphoneLevels: { current: { left: { rms: number }; right: { rms: number } } };
+    };
 
-    // 11 positional speakers (FL/FR/C/SL/SR/BL/BR/TFL/TFR/TBL/TBR) — fixed
-    // regardless of how many stems are playing, since the renderer encodes
-    // the channel bed, not the stems (see useStemPreview.ts's top comment).
-    expect((monoEncoder as unknown as { instanceCount: number }).instanceCount).toBe(11);
-  });
+    // Two stems, six channels, one output pair — two floats each.
+    const meters = [
+      0.1, 0.2, 0.3, 0.4,
+      1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
+      0.7, 0.8, 0.9, 1.0,
+    ];
+    act(() => {
+      capturedCallbacks.onFrame?.({ position: 48000, meters } as never);
+    });
 
-  it("mutes a speaker independently of any stem via toggleSpeaker", async () => {
-    installAudio();
-    render(<Harness />);
-    await act(async () => { await preview.playPause(); });
-
-    expect(preview.speakerEnabled.TFL).not.toBe(false);
-    act(() => { preview.toggleSpeaker("TFL"); });
-    expect(preview.speakerEnabled.TFL).toBe(false);
-  });
-});
-
-describe("useStemPreview mixing alignment", () => {
-  it("routes each stem's source through its own mute/solo/rebalance gain node, not straight to the splitter", async () => {
-    // Regression: the source used to connect straight to the splitter,
-    // bypassing the stem gain node entirely, so mute/solo/rebalance had no
-    // audible effect even though `apply()` set the (unconnected) gain value.
-    installAudio();
-    render(<Harness mix={{ stem_enabled: { Vocals: false } }} />);
-    await act(async () => { await preview.playPause(); });
-
-    const ctx = lastContext();
-    // Loudness/true-peak correction is measured offline before playback
-    // starts (see `precomputeCorrection`), on a separate `OfflineAudioContext`
-    // — not stubbed in this test, so it silently no-ops, same as it would on
-    // a transient measurement failure in production. Either way, the live
-    // `ctx.bufferSources` created here are exactly the two real, audible ones.
-    expect(ctx.bufferSources.length).toBe(2);
-    const [vocalsSource, bassSource] = ctx.bufferSources;
-    // First connection out of each source must be a gain node (the stem
-    // gain) whose value reflects that stem's mute state.
-    expect(vocalsSource.connections[0]).toBeInstanceOf(FakeGain);
-    expect((vocalsSource.connections[0] as FakeGain).gain.value).toBe(0);
-    expect(bassSource.connections[0]).toBeInstanceOf(FakeGain);
-    expect((bassSource.connections[0] as FakeGain).gain.value).toBe(1);
-  });
-
-  it("scales stem gain by the front-routed fraction under the source anchor, not the full stem", async () => {
-    installAudio();
-    // Vocals routes entirely to front (FL/FR); Bass routes entirely to a
-    // surround channel. Anchor strength 1.0 should silence Vocals' direct
-    // send but leave Bass untouched, mirroring the backend's front-only blend.
-    render(<Harness mix={{
-      stem_source_anchor_strength: 1,
-      stem_routing: { Vocals: { FL: 0.5, FR: 0.5 }, Bass: { SL: 0.6, SR: 0.6 } },
-    }} />);
-    await act(async () => { await preview.playPause(); });
-
-    // Reach into the hook's internal node map indirectly via play behavior:
-    // both sources should still be created and started regardless of gain.
-    expect(preview.playing).toBe(true);
-  });
-});
-
-describe("decode filter set loading (HRIR)", () => {
-  // Regression: an ordinary parameter edit (volume, mute, stem routing,
-  // mastering) used to re-fire 4 `/hrir/*.wav` fetches because the profile
-  // effect depended on `apply`'s identity, which changes on every one of
-  // those edits — see useStemPreview.ts's decode-filter-set effect.
-  it("does not refetch the decode filter set when volume/mix/mastering change, only on a profile switch", async () => {
-    installAudio();
-    const { rerender } = render(<Harness mix={{}} mastering={{}} />);
-    await act(async () => { await preview.playPause(); });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-
-    // initialize() loads the default ("studio") profile's 4-part set, plus
-    // the crosstalk graph's own always-"flat" 4-part set (see
-    // `loadCrosstalkDecodeFilterSet` — the transaural render always decodes
-    // its internal binaural stage anechoic, regardless of `spatialProfile`,
-    // so this fetch happens unconditionally alongside the headphone
-    // preview's profile-selected one, not just when `outputMode` is
-    // "transaural").
-    expect(hrirUrls()).toHaveLength(8);
-    expect(hrirUrls().slice(0, 4).every((url) => url.startsWith("/hrir/studio_o3_decode_"))).toBe(true);
-    expect(hrirUrls().slice(4, 8).every((url) => url.startsWith("/hrir/flat_o3_decode_"))).toBe(true);
-
-    // Volume/mute changes and new mix/mastering object identities (as a
-    // manifest edit produces) must not re-trigger a fetch.
-    act(() => { preview.setVolume(0.4); });
-    act(() => { preview.toggleMute(); });
-    rerender(<Harness mix={{ stem_rebalance: { Vocals: 3 } }} mastering={{ loudness: { target: -16 } }} />);
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-
-    expect(hrirUrls()).toHaveLength(8);
-
-    // A genuine profile switch fetches the new profile's 4 parts...
-    rerender(<Harness mix={{}} mastering={{}} spatialProfile="listening" />);
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(hrirUrls()).toHaveLength(12);
-    expect(hrirUrls().slice(8).every((url) => url.startsWith("/hrir/listening_o3_decode_"))).toBe(true);
-
-    // ...and switching back to an already-loaded profile is a cache hit,
-    // not a new fetch.
-    rerender(<Harness mix={{}} mastering={{}} spatialProfile="studio" />);
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-    expect(hrirUrls()).toHaveLength(12);
+    expect(preview.stemLevels.current.get("a")?.[0].rms).toBeCloseTo(0.1, 6);
+    expect(preview.stemLevels.current.get("b")?.[0].rms).toBeCloseTo(0.3, 6);
+    expect(preview.channelLevels.current.get("FL")?.rms).toBe(1);
+    expect(preview.channelLevels.current.get("SR")?.rms).toBe(6);
+    expect(preview.headphoneLevels.current.left.rms).toBeCloseTo(0.7, 6);
+    expect(preview.headphoneLevels.current.right.rms).toBeCloseTo(0.9, 6);
   });
 });
 
 describe("applyTruePeakCeiling", () => {
-  // The preview-side mirror of normalize_loudness's max_tp_dbtp gain
-  // reduction (upmixer/loudness.py) — see docs/contracts/
-  // preview_export_parity.md Ledger D12's "True-peak ceiling" row.
-
-  it("is a no-op when the loudness-corrected signal is already under the ceiling", () => {
-    // -20 dBTP pre-gain + 6 dB loudness gain = -14 dBTP post-gain, well
-    // under a -1 dBTP ceiling.
-    const gain = applyTruePeakCeiling(-20, 10 ** (6 / 20), -1);
-    expect(gain).toBeCloseTo(10 ** (6 / 20), 6);
+  it("leaves a gain alone when the measured peak clears the ceiling", () => {
+    expect(applyTruePeakCeiling(-6, 1.5, -1)).toBe(1.5);
   });
 
-  it("reduces gain exactly enough to land the post-gain peak on the ceiling", () => {
-    // -5 dBTP pre-gain + 10 dB loudness gain = 5 dBTP post-gain, 6 dB over
-    // a -1 dBTP ceiling -> expect the returned gain to be 6 dB less than
-    // the uncorrected loudness gain.
-    const loudnessGain = 10 ** (10 / 20);
-    const gain = applyTruePeakCeiling(-5, loudnessGain, -1);
-    expect(gain).toBeCloseTo(loudnessGain * 10 ** (-6 / 20), 6);
-    // Verify the invariant directly: applying `gain` lands exactly at -1 dBTP.
-    const postGainTpDbtp = -5 + 20 * Math.log10(gain);
-    expect(postGainTpDbtp).toBeCloseTo(-1, 6);
-  });
-
-  it("never increases gain, even when the pre-gain signal is already quiet", () => {
-    const loudnessGain = 10 ** (30 / 20);
-    const gain = applyTruePeakCeiling(-70, loudnessGain, -1);
-    expect(gain).toBeCloseTo(loudnessGain, 6);
+  it("pulls the gain down by exactly the overshoot", () => {
+    const gain = applyTruePeakCeiling(0, 1, -1);
+    expect(20 * Math.log10(gain)).toBeCloseTo(-1, 6);
   });
 });

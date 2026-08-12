@@ -121,6 +121,8 @@ export type BuildEngineParamsInput = {
   decodeTaps?: Float64Array | number[];
   /** Flattened `[speaker][ear][tap]` crosstalk matrix. */
   xtcTaps?: Float64Array | number[];
+  /** Per-speaker mute; a muted speaker contributes nothing to any render. */
+  speakerEnabled?: Record<string, boolean>;
   /** Transport A/B: render the bed without any mastering stage. */
   bypassMastering?: boolean;
 };
@@ -154,11 +156,14 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
   return {
     speakers: speakers.map((name) => {
       const direction = c.speakerDirections[name] ?? { azimuth_rad: 0, elevation_rad: 0 };
+      // Muting a speaker zeroes its group gain, which silences everything
+      // routed to it without disturbing any other channel.
+      const muted = input.speakerEnabled?.[name] === false;
       return {
         name,
         azimuth_rad: direction.azimuth_rad,
         elevation_rad: direction.elevation_rad,
-        group_gain: groupGain(name, c),
+        group_gain: muted ? 0 : groupGain(name, c),
         downmix: downmixGains(name, c) ?? null,
       };
     }),

@@ -47,142 +47,6 @@ export type BassProfile = {
   lfe_gain_db: number;
 };
 
-// scipy.signal.butter's default Q for a 2nd-order Butterworth section — Web
-// Audio's default Q=1 has a small resonant peak a true Butterworth lacks.
-// Set explicitly on any biquad standing in for a butter(2, ..., "sos")
-// backend filter. Found via golden-diff — see Ledger D9.
-export const BUTTERWORTH_Q = 1 / Math.sqrt(2);
-
-// upmixer/mastering/bass.py STEREO_PAIRS — bass mono-maker operates on these
-// L/R channel pairs (see `useStemPreview.ts`'s `buildMasteringTopology`).
-export const MONO_MAKER_STEREO_PAIRS: ReadonlyArray<readonly [string, string]> = [
-  ["FL", "FR"],
-  ["SL", "SR"],
-  ["BL", "BR"],
-  ["TFL", "TFR"],
-  ["TBL", "TBR"],
-];
-
-/** WaveShaper curve for the backend's tanh soft-limit: identity below
- * `threshold`, tanh saturation above it. Mirrors upmixer/utils.py soft_limit. */
-export function buildSoftLimitCurve(threshold: number, samples = 4096): Float32Array {
-  const curve = new Float32Array(samples);
-  const margin = 1.0 - threshold;
-  for (let i = 0; i < samples; i++) {
-    const x = (i / (samples - 1)) * 2 - 1;
-    const ax = Math.abs(x);
-    curve[i] = ax <= threshold
-      ? x
-      : Math.sign(x) * (threshold + margin * Math.tanh((ax - threshold) / margin));
-  }
-  return curve;
-}
-
-/** WaveShaper curve for the bass exciter: tanh(x * drive). Mirrors the
- * harmonic-exciter stage in upmixer/mastering/bass.py. */
-export function buildExciteCurve(drive: number, samples = 4096): Float32Array {
-  const curve = new Float32Array(samples);
-  for (let i = 0; i < samples; i++) {
-    const x = (i / (samples - 1)) * 2 - 1;
-    curve[i] = Math.tanh(x * drive);
-  }
-  return curve;
-}
-
-// 4x-oversampled true-peak estimate: a windowed-sinc upsample, not upmixer/
-// loudness.py's exact 48-tap kernel — Tier-3, bounded by §5's 1.0 dBTP tolerance.
-const _TRUE_PEAK_UPSAMPLE_TAPS = 32;
-
-// Exported so limiterWorklet.test.ts can pin this against limiter.worklet.js's
-// hand-duplicated copy (worklet modules can't import this file).
-export function buildTruePeakKernel(): Float64Array {
-  const taps = _TRUE_PEAK_UPSAMPLE_TAPS;
-  const kernel = new Float64Array(taps);
-  const center = (taps - 1) / 2;
-  for (let i = 0; i < taps; i++) {
-    const t = i - center;
-    const sinc = t === 0 ? 1 : Math.sin((Math.PI * t) / 4) / ((Math.PI * t) / 4);
-    const window = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (taps - 1)); // Hann
-    kernel[i] = sinc * window;
-  }
-  return kernel;
-}
-
-function _upsampleTruePeak4x(x: Float32Array | Float64Array): Float64Array {
-  const taps = _TRUE_PEAK_UPSAMPLE_TAPS;
-  const kernel = buildTruePeakKernel();
-  const upsampled = new Float64Array(x.length * 4);
-  for (let i = 0; i < x.length; i++) upsampled[i * 4] = x[i];
-  const out = new Float64Array(upsampled.length);
-  const half = Math.floor(taps / 2);
-  for (let i = 0; i < upsampled.length; i++) {
-    let sum = 0;
-    for (let k = 0; k < taps; k++) {
-      const idx = i - half + k;
-      if (idx >= 0 && idx < upsampled.length) sum += upsampled[idx] * kernel[k];
-    }
-    out[i] = sum;
-  }
-  return out;
-}
-
-/** True-peak estimate (dBTP) for one channel's samples — see the
- * `_upsampleTruePeak4x` comment above for provenance/tolerance. */
-export function measureBufferTruePeakDbtp(x: Float32Array | Float64Array): number {
-  const up = _upsampleTruePeak4x(x);
-  let maxPeak = 1e-12;
-  for (let i = 0; i < up.length; i++) {
-    const a = Math.abs(up[i]);
-    if (a > maxPeak) maxPeak = a;
-  }
-  return 20 * Math.log10(maxPeak);
-}
-
-/** Fetches and decodes an EQ FIR asset (see EngineConstants.eqFirAssets/stemEqFirAssets)
- * from `/eq_fir/<assetName>.wav`. Callers should cache the returned promise
- * per `assetName` (see `useStemPreview.ts`'s buffer cache) — the same
- * profile is commonly reused across many stems or across a rebuild. */
-export async function fetchEqFirBuffer(ctx: BaseAudioContext, assetName: string): Promise<AudioBuffer> {
-  const response = await fetch(`/eq_fir/${assetName}.wav`);
-  if (!response.ok) throw new Error(`EQ FIR asset missing: ${assetName}.wav`);
-  const data = await response.arrayBuffer();
-  return ctx.decodeAudioData(data);
-}
-
-export type FirEqNode = {
-  input: AudioNode;
-  output: AudioNode;
-  convolver: ConvolverNode;
-  dryGain: GainNode;
-  wetGain: GainNode;
-  nodes: AudioNode[];
-};
-
-/** Builds a wet/dry FIR EQ insert: `input` splits into a dry passthrough and
- * a `ConvolverNode` (bank-summed the same way the backend's `_apply_fir`
- * blends `(1-strength)*dry + strength*filtered`), recombining at `output`.
- * The convolver's `buffer` starts unset (silent wet path, per the Web Audio
- * spec) — non-blocking, matching the binaural decode bank's loading
- * pattern: callers wire this synchronously into the graph, then assign
- * `convolver.buffer` once `fetchEqFirBuffer` resolves, so playback can start
- * immediately while the FIR asset is still fetching/decoding. Callers that
- * rebuild their whole topology on any mastering-config change (as
- * `buildMasteringTopology`/`buildStemEqChains` do) just build a fresh node
- * at the new `strength` rather than retuning an existing one. */
-export function buildFirEqNode(ctx: BaseAudioContext, strength: number): FirEqNode {
-  const input = ctx.createGain();
-  const convolver = ctx.createConvolver();
-  convolver.normalize = false;
-  const dryGain = ctx.createGain();
-  const wetGain = ctx.createGain();
-  const output = ctx.createGain();
-  input.connect(dryGain).connect(output);
-  input.connect(convolver).connect(wetGain).connect(output);
-  dryGain.gain.value = 1 - strength;
-  wetGain.gain.value = strength;
-  return { input, output, convolver, dryGain, wetGain, nodes: [input, convolver, dryGain, wetGain, output] };
-}
-
 /** Connect `start -> nodes[0] -> nodes[1] -> ... -> nodes[n-1]` in series and
  * return the last node in the chain (or `start` when `nodes` is empty). */
 export function connectSeries(start: AudioNode, nodes: AudioNode[]): AudioNode {
@@ -201,15 +65,6 @@ export function connectSeries(start: AudioNode, nodes: AudioNode[]): AudioNode {
  * `back_gain`/`height_gain`. Fetched, not hardcoded (see EngineConstants). */
 export type ChannelGroupGains = { center: number; surround: number; back: number; height: number };
 
-/** Resolve a channel to its group gain. FL/FR always 1.0 (no group). */
-export function channelGroupGain(channel: string, gains: ChannelGroupGains): number {
-  if (channel === "C") return gains.center;
-  if (channel === "BL" || channel === "BR") return gains.back;
-  if (channel === "SL" || channel === "SR") return gains.surround;
-  if (channel === "TFL" || channel === "TFR" || channel === "TBL" || channel === "TBR") return gains.height;
-  return 1.0;
-}
-
 /** upmixer/separation/stem_router.py height-send shaping (`_height_send`, same
  * formula as `upmixer/utils.py` `elevation_eq`): attenuate below `lowRolloffHz`
  * to `lowRolloffGain`, then boost above `crossoverHz` by `highShelfGain`. */
@@ -219,78 +74,6 @@ export type HeightShaping = {
   crossoverHz: number;
   highShelfGain: number;
 };
-
-/** Web Audio version of `upmixer/utils.py` `diffuse_send`: blends a signal
- * with a delayed copy of itself for early-reflection decorrelation. */
-export function buildDiffuseSend(
-  ctx: BaseAudioContext,
-  input: AudioNode,
-  delayMs: number,
-  blend: number,
-): { output: AudioNode; nodes: AudioNode[] } {
-  const delay = ctx.createDelay(1);
-  delay.delayTime.value = delayMs / 1000;
-  const dry = ctx.createGain();
-  dry.gain.value = 1 - blend;
-  const wet = ctx.createGain();
-  wet.gain.value = blend;
-  const output = ctx.createGain();
-  input.connect(dry).connect(output);
-  input.connect(delay).connect(wet).connect(output);
-  return { output, nodes: [delay, dry, wet, output] };
-}
-
-/** Web Audio version of `stem_router.py` `_height_send` /
- * `upmixer/utils.py` `elevation_eq`: sub-bass rolloff (kept at
- * `shaping.lowRolloffGain`, not fully removed) plus a top-end shelf boost
- * above the crossover. Implemented as the additive identity the Python
- * `sosfilt` version reduces to: `shaped = x - low·(1-g); out = shaped +
- * high(shaped)·(shelfGain-1)`. */
-export function buildHeightSend(
-  ctx: BaseAudioContext,
-  input: AudioNode,
-  shaping: HeightShaping,
-): { output: AudioNode; nodes: AudioNode[] } {
-  const lowpass = ctx.createBiquadFilter();
-  lowpass.type = "lowpass";
-  lowpass.frequency.value = shaping.lowRolloffHz;
-  const lowComp = ctx.createGain();
-  lowComp.gain.value = -(1 - shaping.lowRolloffGain);
-  const shaped = ctx.createGain();
-  input.connect(shaped);
-  input.connect(lowpass).connect(lowComp).connect(shaped);
-
-  const highpass = ctx.createBiquadFilter();
-  highpass.type = "highpass";
-  highpass.frequency.value = shaping.crossoverHz;
-  highpass.Q.value = BUTTERWORTH_Q;
-  const highGain = ctx.createGain();
-  highGain.gain.value = shaping.highShelfGain - 1;
-  const output = ctx.createGain();
-  shaped.connect(output);
-  shaped.connect(highpass).connect(highGain).connect(output);
-
-  return { output, nodes: [lowpass, lowComp, shaped, highpass, highGain, output] };
-}
-
-/** Web Audio version of `stem_router.py`'s surround send: a highpass at
- * `bassCutoffHz` (keeps rhythmic low end out of the diffuse surround/back
- * layer) followed by the Haas diffuse send. */
-export function buildSurroundSend(
-  ctx: BaseAudioContext,
-  input: AudioNode,
-  delayMs: number,
-  bassCutoffHz: number,
-  diffuseBlend: number,
-): { output: AudioNode; nodes: AudioNode[] } {
-  const highpass = ctx.createBiquadFilter();
-  highpass.type = "highpass";
-  highpass.frequency.value = bassCutoffHz;
-  highpass.Q.value = BUTTERWORTH_Q;
-  input.connect(highpass);
-  const diffuse = buildDiffuseSend(ctx, highpass, delayMs, diffuseBlend);
-  return { output: diffuse.output, nodes: [highpass, ...diffuse.nodes] };
-}
 
 // --- Spatial Audio Engine voicing chain (ported from upmixer/binaural/) --
 //
@@ -323,17 +106,6 @@ export type VoicingParams = {
 // preview (useStemPreview.ts) and the golden-diff harness's extracted
 // buildBinauralGraph below — see docs/standards/spatial_audio_engine.md.
 // Higher order = tighter localization, more encoder channels ((order+1)^2).
-export const AMBISONIC_ORDER = 3;
-export const N_ACN_CHANNELS = (AMBISONIC_ORDER + 1) * (AMBISONIC_ORDER + 1);
-
-// upmixer/binaural/ambisonics.py::encode_gains's ACN 12 (Y3^0, the order-3
-// vertical harmonic) omits the standard N3D sqrt(7) normalization factor. The
-// decode filter bank (docs/standards/spatial_audio_engine.md §4) was fit as
-// the pseudo-inverse of that unscaled encoder, so this preview's
-// standard-N3D real-SH encoder output for ACN 12 must be scaled down to
-// match what the filters were designed against. See that doc's §3.
-export const ACN12_INDEX = 12;
-export const ACN12_N3D_CORRECTION = 1 / Math.sqrt(7);
 
 // Decode filter set contract (docs/standards/spatial_audio_engine.md §4):
 // 16 ACN channels x {L, R} FIR filters, shipped as four 8-channel WAVs so
@@ -379,125 +151,23 @@ export type VoicingChain = {
   sideR: GainNode;
 };
 
-/** Web Audio voicing chain: crossfeed -> bass/air shelves -> presence peak
- * -> M/S widen. Mirrors upmixer/binaural/voicing.py::apply_voicing exactly
- * (same order, same parameters). Builds a fixed topology regardless of
- * profile — a zero-gain shelf/peak or zero-amount crossfeed/widen stage is
- * already numerically an identity, so switching profiles only needs
- * `applyVoicingParams` to retune existing AudioParams, never a graph
- * rebuild. Returns the two output nodes to connect onward (left, right),
- * every node created (for teardown), and the tunable nodes themselves. */
-export function buildVoicingChain(ctx: BaseAudioContext, left: AudioNode, right: AudioNode): VoicingChain {
-  const lowL = ctx.createBiquadFilter();
-  lowL.type = "lowpass";
-  const lowR = ctx.createBiquadFilter();
-  lowR.type = "lowpass";
-  left.connect(lowL);
-  right.connect(lowR);
-
-  const dryL = ctx.createGain();
-  const dryR = ctx.createGain();
-  const bleedToL = ctx.createGain();
-  const bleedToR = ctx.createGain();
-  const crossfedL = ctx.createGain();
-  const crossfedR = ctx.createGain();
-  left.connect(dryL).connect(crossfedL);
-  lowR.connect(bleedToL).connect(crossfedL);
-  right.connect(dryR).connect(crossfedR);
-  lowL.connect(bleedToR).connect(crossfedR);
-
-  const bassL = ctx.createBiquadFilter();
-  bassL.type = "lowshelf";
-  const bassR = ctx.createBiquadFilter();
-  bassR.type = "lowshelf";
-  const airL = ctx.createBiquadFilter();
-  airL.type = "highshelf";
-  const airR = ctx.createBiquadFilter();
-  airR.type = "highshelf";
-  const presenceL = ctx.createBiquadFilter();
-  presenceL.type = "peaking";
-  const presenceR = ctx.createBiquadFilter();
-  presenceR.type = "peaking";
-  crossfedL.connect(bassL).connect(airL).connect(presenceL);
-  crossfedR.connect(bassR).connect(airR).connect(presenceR);
-
-  // M/S widen: mid = (L+R)/2, side = (L-R) * (1+w)/2; out = mid +- side.
-  // `side` carries the true L-R difference (presenceR negated via
-  // `sideDiff`) so both sideL and sideR scale the *same* difference signal —
-  // tapping presenceL/presenceR directly here would make sideL/sideR each
-  // pass a single raw channel instead of a true side signal, so even
-  // `stereoWiden = 0` would fail to reduce to identity.
-  const mid = ctx.createGain();
-  mid.gain.value = 0.5;
-  const side = ctx.createGain();
-  const sideDiff = ctx.createGain();
-  sideDiff.gain.value = -1;
-  const sideL = ctx.createGain();
-  const sideR = ctx.createGain();
-  presenceL.connect(mid);
-  presenceR.connect(mid);
-  presenceL.connect(side);
-  presenceR.connect(sideDiff).connect(side);
-  side.connect(sideL);
-  side.connect(sideR);
-
-  const outL = ctx.createGain();
-  const outR = ctx.createGain();
-  mid.connect(outL);
-  sideL.connect(outL);
-  mid.connect(outR);
-  sideR.connect(outR);
-
-  return {
-    left: outL,
-    right: outR,
-    nodes: [
-      lowL, lowR, dryL, dryR, bleedToL, bleedToR, crossfedL, crossfedR,
-      bassL, bassR, airL, airR, presenceL, presenceR,
-      mid, side, sideDiff, sideL, sideR, outL, outR,
-    ],
-    lowL, lowR, dryL, dryR, bleedToL, bleedToR,
-    bassL, bassR, airL, airR, presenceL, presenceR, sideL, sideR,
-  };
-}
-
-/** Retunes an existing `VoicingChain`'s AudioParams for a new profile — no
- * node creation, so it's safe to call on every profile switch or animate. */
-export function applyVoicingParams(chain: VoicingChain, params: VoicingParams): void {
-  chain.lowL.frequency.value = params.crossfeedCutoffHz;
-  chain.lowR.frequency.value = params.crossfeedCutoffHz;
-  chain.dryL.gain.value = 1 - params.crossfeedAmount;
-  chain.dryR.gain.value = 1 - params.crossfeedAmount;
-  chain.bleedToL.gain.value = params.crossfeedAmount;
-  chain.bleedToR.gain.value = params.crossfeedAmount;
-  chain.bassL.frequency.value = params.bassShelfHz;
-  chain.bassR.frequency.value = params.bassShelfHz;
-  chain.bassL.gain.value = params.bassShelfGainDb;
-  chain.bassR.gain.value = params.bassShelfGainDb;
-  chain.airL.frequency.value = params.airShelfHz;
-  chain.airR.frequency.value = params.airShelfHz;
-  chain.airL.gain.value = params.airShelfGainDb;
-  chain.airR.gain.value = params.airShelfGainDb;
-  chain.presenceL.frequency.value = params.presenceHz;
-  chain.presenceR.frequency.value = params.presenceHz;
-  chain.presenceL.Q.value = params.presenceQ;
-  chain.presenceR.Q.value = params.presenceQ;
-  chain.presenceL.gain.value = params.presenceGainDb;
-  chain.presenceR.gain.value = params.presenceGainDb;
-  chain.sideL.gain.value = 0.5 * (1 + params.stereoWiden);
-  chain.sideR.gain.value = -0.5 * (1 + params.stereoWiden);
-}
-
 /** Approximates `stem_router.py`'s per-stem constant-power `route_scale`
  * (`sqrt(input_energy/routed_energy)`) from the route table alone, treating
  * every contributing send as comparable energy — good enough to keep a
  * widely-routed stem from reading louder than a narrowly-routed one, not an
  * exact energy match (the real value needs the decoded buffers' energy). */
 export function estimateRouteScale(route: Record<string, number>, gains: ChannelGroupGains): number {
+  const groupGain = (channel: string): number => {
+    if (channel === "C") return gains.center;
+    if (channel === "BL" || channel === "BR") return gains.back;
+    if (channel === "SL" || channel === "SR") return gains.surround;
+    if (channel.startsWith("T")) return gains.height;
+    return 1;
+  };
   let sumSquares = 0;
   for (const [channel, weight] of Object.entries(route)) {
     if (channel === "LFE" || weight <= 0) continue;
-    const scaled = weight * channelGroupGain(channel, gains);
+    const scaled = weight * groupGain(channel);
     sumSquares += scaled * scaled;
   }
   return sumSquares > 1e-10 ? 1 / Math.sqrt(sumSquares) : 1;
