@@ -614,6 +614,22 @@ impl PreviewEngine {
         self.mono_done = target;
         self.pre.base = target;
         self.post.base = target;
+        // A cold jump has rendered nothing at the new position yet, so the
+        // last render's levels are stale — reset them rather than reporting
+        // whatever was playing before the jump. `seek`'s own preroll render
+        // (when there is one) overwrites this with real levels right after;
+        // when there isn't one (e.g. landing exactly on frame 0), this is
+        // what `stem_spectrum`'s own live-position read already agrees on.
+        for pair in &mut self.meters.stems {
+            *pair = [Level::default(); 2];
+        }
+        for level in &mut self.meters.channels {
+            *level = Level::default();
+        }
+        self.meters.output = [Level::default(); 2];
+        for tail in &mut self.output_meter_tail {
+            tail.clear();
+        }
     }
 
     /// Jump to `frame`, warming the filter states up from shortly before it.

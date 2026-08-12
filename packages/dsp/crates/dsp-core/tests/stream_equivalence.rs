@@ -319,6 +319,26 @@ fn seeking_resumes_the_same_audio_the_first_pass_produced() {
 }
 
 #[test]
+fn seeking_to_the_top_silences_the_stale_meters_a_straight_seek_would_leave() {
+    // Regression: stopping (pause, then seek to 0) used to leave the meters
+    // reporting whatever was last playing — `jump_to` didn't reset them, and
+    // a seek to frame 0 has no preroll render to overwrite them for real.
+    let params: EngineParams = serde_json::from_str(&params_json(true)).expect("engine params");
+    let n_channels = params.speakers.len();
+    let mut engine = PreviewEngine::new(SR, params, stems());
+    let mut scratch = vec![0.0; n_channels * 4096];
+    engine.render(&mut scratch, 4096);
+    assert!(engine.meters().output[0].peak > 0.0, "should be playing something first");
+
+    engine.seek(0);
+
+    let meters = engine.meters();
+    assert!(meters.stems.iter().all(|pair| pair[0].peak == 0.0 && pair[1].peak == 0.0));
+    assert!(meters.channels.iter().all(|level| level.peak == 0.0));
+    assert!(meters.output.iter().all(|level| level.peak == 0.0 && level.rms == 0.0));
+}
+
+#[test]
 fn stem_spectrum_registers_a_playing_stem_and_silences_a_disabled_one() {
     let params: EngineParams = serde_json::from_str(&params_json(false)).expect("engine params");
     let n_channels = params.speakers.len();
