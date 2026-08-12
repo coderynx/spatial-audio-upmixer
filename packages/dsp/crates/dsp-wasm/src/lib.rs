@@ -224,6 +224,30 @@ pub unsafe extern "C" fn dsp_engine_total_frames(engine: *const PreviewEngine) -
     engine.as_ref().map(|e| e.total_frames()).unwrap_or(0)
 }
 
+/// Measure the collapsed programme, writing `[lkfs, dbtp]` into `out`.
+///
+/// # Safety
+/// `weights` must address `n_channels` readable f64 values and `out` two
+/// writable ones; `engine` must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_measure(
+    engine: *mut PreviewEngine,
+    weights: *const f64,
+    n_channels: usize,
+    out: *mut f64,
+) {
+    let Some(engine) = engine.as_mut() else { return };
+    let w = if weights.is_null() {
+        Vec::new()
+    } else {
+        std::slice::from_raw_parts(weights, n_channels).to_vec()
+    };
+    let (lkfs, dbtp) = engine.measure(&w);
+    let dst = std::slice::from_raw_parts_mut(out, 2);
+    dst[0] = lkfs;
+    dst[1] = dbtp;
+}
+
 /// Reset the transport and every filter state to the top of the programme.
 ///
 /// # Safety

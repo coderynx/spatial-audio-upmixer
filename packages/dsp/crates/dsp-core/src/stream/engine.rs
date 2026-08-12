@@ -325,6 +325,44 @@ impl PreviewEngine {
         emit
     }
 
+    /// Measure the whole collapsed programme: integrated loudness in LKFS and
+    /// true peak in dBTP.
+    ///
+    /// This replaces the browser's old excerpt-sampled estimate (ledger D4)
+    /// with the real BS.1770 measurement over the actual render, so the
+    /// correction gain the preview applies is the one a bounce would need.
+    /// It renders the programme once into memory — two channels for every
+    /// collapse mode — and rewinds afterwards, so the transport is untouched.
+    pub fn measure(&mut self, weights: &[f64]) -> (f64, f64) {
+        let out_channels = self.output_channels();
+        self.rewind();
+
+        let block = 8192;
+        let mut collected = vec![Vec::new(); out_channels];
+        let mut scratch = vec![0.0; out_channels.max(self.params.speakers.len()) * block];
+        loop {
+            let written = self.render(&mut scratch, block);
+            if written == 0 {
+                break;
+            }
+            for (channel, sink) in collected.iter_mut().enumerate() {
+                sink.extend_from_slice(&scratch[channel * block..channel * block + written]);
+            }
+        }
+        self.rewind();
+
+        let refs: Vec<&[f64]> = collected.iter().map(|c| c.as_slice()).collect();
+        let weighted: Vec<(f64, &[f64])> = refs
+            .iter()
+            .enumerate()
+            .map(|(i, samples)| (weights.get(i).copied().unwrap_or(1.0), *samples))
+            .collect();
+        (
+            crate::loudness::measure_integrated_loudness(&weighted, self.sample_rate),
+            crate::loudness::measure_true_peak(&refs),
+        )
+    }
+
     /// Reset transport and every filter state to the top of the programme.
     pub fn rewind(&mut self) {
         for route in &mut self.routes {

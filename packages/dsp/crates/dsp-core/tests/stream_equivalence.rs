@@ -269,3 +269,19 @@ fn binaural_collapse_is_two_channels_and_block_size_independent() {
     assert!(reference[0].iter().any(|v| v.abs() > 1e-6), "binaural should carry signal");
     assert_same(&render(128), &reference, 1e-8, "binaural collapse");
 }
+
+#[test]
+fn measuring_leaves_the_transport_where_it_found_it() {
+    let params: EngineParams =
+        serde_json::from_str(&params_with_mode("stereo")).expect("engine params");
+    let mut engine = PreviewEngine::new(SR, params, stems());
+
+    let (lkfs, dbtp) = engine.measure(&[1.0, 1.0]);
+    assert!(lkfs > -70.0, "the fixture should be measurable, got {lkfs} LKFS");
+    assert!(dbtp > -120.0 && dbtp < 6.0, "implausible true peak {dbtp} dBTP");
+    assert_eq!(engine.position(), 0, "measuring must rewind");
+
+    // Measuring twice must agree; a carried filter state would show up here.
+    let (again, _) = engine.measure(&[1.0, 1.0]);
+    assert!((again - lkfs).abs() < 1e-12, "{again} vs {lkfs}");
+}
