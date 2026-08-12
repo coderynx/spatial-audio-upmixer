@@ -8,6 +8,7 @@
 //! offline algorithm rather than a causal approximation of one.
 
 use super::master::{linked_rms, CausalChain, MonoMaker, StreamingLimiter, MONO_HORIZON_MS};
+use super::output::OutputStage;
 use super::params::EngineParams;
 use super::routing::{shape_index, LfeBus, StemRouteState};
 use super::state::StreamingCompressor;
@@ -64,6 +65,8 @@ pub struct PreviewEngine {
     compressor: Option<StreamingCompressor>,
     mono: Option<MonoMaker>,
     limiter: Option<StreamingLimiter>,
+    output: OutputStage,
+    collapsed: Vec<Vec<f64>>,
     pre: Queue,
     post: Queue,
     mono_done: usize,
@@ -98,9 +101,12 @@ impl PreviewEngine {
             .map(|l| StreamingLimiter::new(l, sample_rate, n_channels));
         let total_frames = stems.iter().map(|s| s.len()).max().unwrap_or(0);
 
+        let output = OutputStage::new(sample_rate, &params);
         Self {
             sample_rate,
             lfe_bus: LfeBus::new(sample_rate, &params.sends),
+            collapsed: vec![Vec::new(); n_channels.max(2)],
+            output,
             params,
             stems,
             routes,
@@ -129,6 +135,11 @@ impl PreviewEngine {
 
     pub fn total_frames(&self) -> usize {
         self.total_frames
+    }
+
+    /// Channels the collapse writes, which is two for every mode but native.
+    pub fn output_channels(&self) -> usize {
+        self.output.output_channels()
     }
 
     pub fn position(&self) -> usize {
@@ -273,10 +284,11 @@ impl PreviewEngine {
     /// Returns the number of frames actually written; a short count means the
     /// programme ended.
     pub fn render(&mut self, out: &mut [f64], n_frames: usize) -> usize {
-        let n_channels = self.params.speakers.len();
         let available = self.total_frames.saturating_sub(self.emitted);
         let emit = n_frames.min(available);
-        out[..n_channels * n_frames].fill(0.0);
+        let out_channels = self.output.output_channels();
+        let span = (out_channels * n_frames).min(out.len());
+        out[..span].fill(0.0);
         if emit == 0 {
             return 0;
         }
@@ -290,13 +302,21 @@ impl PreviewEngine {
             limiter.process(&mut self.post.channels, start, end);
         }
 
-        let output_gain = self.params.master.output_gain;
-        for channel in 0..n_channels {
-            let src = &self.post.channels[channel][start..end];
-            let dst = &mut out[channel * n_frames..channel * n_frames + emit];
-            for (d, s) in dst.iter_mut().zip(src.iter()) {
-                *d = s * output_gain;
+        let window: Vec<Vec<f64>> = self
+            .post
+            .channels
+            .iter()
+            .map(|c| c[start..end].to_vec())
+            .collect();
+        self.output
+            .process(&window, emit, self.params.master.output_gain, &mut self.collapsed);
+        for (channel, rendered) in self.collapsed.iter().enumerate().take(out_channels) {
+            let base = channel * n_frames;
+            let count = emit.min(rendered.len());
+            if base + count > out.len() {
+                break;
             }
+            out[base..base + count].copy_from_slice(&rendered[..count]);
         }
 
         self.emitted += emit;
@@ -323,6 +343,7 @@ impl PreviewEngine {
         if let Some(l) = self.params.master.limiter {
             self.limiter = Some(StreamingLimiter::new(l, self.sample_rate, n_channels));
         }
+        self.output = OutputStage::new(self.sample_rate, &self.params);
         self.pre = Queue::new(n_channels);
         self.post = Queue::new(n_channels);
         self.mono_done = 0;

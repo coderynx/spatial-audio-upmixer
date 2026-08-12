@@ -16,6 +16,8 @@ use upmixer_dsp_core::stream::params::EngineParams;
 
 const SR: u32 = 48_000;
 const N: usize = 24_000;
+const N_ACN: usize = 16;
+const DECODE_TAPS: usize = 64;
 
 fn params_json(with_master: bool) -> String {
     let master = if with_master {
@@ -36,9 +38,12 @@ fn params_json(with_master: bool) -> String {
     format!(
         r#"{{
         "speakers": [
-            {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
-            {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
-            {{"name": "SL", "azimuth_rad": 1.9199, "elevation_rad": 0.0, "group_gain": 0.6}},
+            {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
+              "downmix": [1.0, 0.0]}},
+            {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
+              "downmix": [0.0, 1.0]}},
+            {{"name": "SL", "azimuth_rad": 1.9199, "elevation_rad": 0.0, "group_gain": 0.6,
+              "downmix": [0.7071067811865476, 0.0]}},
             {{"name": "LFE", "azimuth_rad": 0.0, "elevation_rad": 0.0, "group_gain": 1.0}}
         ],
         "lfe_index": 3,
@@ -191,4 +196,76 @@ fn streaming_mastering_matches_the_offline_chain() {
     );
 
     assert_same(&render_in_blocks(128, true), &offline, 1e-6, "streaming vs offline mastering");
+}
+
+/// Swap the collapse stage in without changing anything else.
+fn params_with_mode(mode: &str) -> String {
+    params_json(true).replace(r#""output_mode": "native""#, &format!(r#""output_mode": "{mode}""#))
+}
+
+fn render_mode(mode: &str, block: usize) -> Vec<Vec<f64>> {
+    let params: EngineParams = serde_json::from_str(&params_with_mode(mode)).expect("engine params");
+    let bed_channels = params.speakers.len();
+    let mut engine = PreviewEngine::new(SR, params, stems());
+    let out_channels = engine.output_channels();
+
+    let mut out = vec![Vec::with_capacity(N); out_channels];
+    let mut scratch = vec![0.0; bed_channels.max(2) * block];
+    loop {
+        let written = engine.render(&mut scratch, block);
+        if written == 0 {
+            break;
+        }
+        for channel in 0..out_channels {
+            out[channel].extend_from_slice(&scratch[channel * block..channel * block + written]);
+        }
+    }
+    out
+}
+
+#[test]
+fn stereo_collapse_is_two_channels_and_block_size_independent() {
+    let reference = render_mode("stereo", N);
+    assert_eq!(reference.len(), 2);
+    assert!(reference[0].iter().any(|v| v.abs() > 1e-6), "downmix should carry signal");
+    assert_same(&render_mode("stereo", 128), &reference, 1e-8, "stereo downmix");
+}
+
+#[test]
+fn binaural_collapse_is_two_channels_and_block_size_independent() {
+    // A synthetic decode bank stands in for the shipped HRIR set; the point
+    // here is the streaming convolution and the LFE-before-voicing order,
+    // not the filters themselves.
+    let taps: Vec<String> = (0..N_ACN * 2 * DECODE_TAPS)
+        .map(|i| format!("{:.6}", ((i % 17) as f64 - 8.0) / 400.0))
+        .collect();
+    let with_decode = |mode: &str| {
+        params_with_mode(mode).replace(
+            r#""output_mode""#,
+            &format!(r#""decode_taps": [{}], "output_mode""#, taps.join(",")),
+        )
+    };
+
+    let render = |block: usize| -> Vec<Vec<f64>> {
+        let params: EngineParams =
+            serde_json::from_str(&with_decode("binaural")).expect("engine params");
+        let bed_channels = params.speakers.len();
+        let mut engine = PreviewEngine::new(SR, params, stems());
+        let mut out = vec![Vec::with_capacity(N); 2];
+        let mut scratch = vec![0.0; bed_channels.max(2) * block];
+        loop {
+            let written = engine.render(&mut scratch, block);
+            if written == 0 {
+                break;
+            }
+            for channel in 0..2 {
+                out[channel].extend_from_slice(&scratch[channel * block..channel * block + written]);
+            }
+        }
+        out
+    };
+
+    let reference = render(N);
+    assert!(reference[0].iter().any(|v| v.abs() > 1e-6), "binaural should carry signal");
+    assert_same(&render(128), &reference, 1e-8, "binaural collapse");
 }
