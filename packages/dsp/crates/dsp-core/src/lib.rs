@@ -5,6 +5,7 @@
 pub mod kernels;
 pub mod loudness;
 pub mod mastering;
+pub mod match_reference;
 pub mod routing;
 pub mod spatial;
 

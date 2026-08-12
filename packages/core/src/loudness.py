@@ -11,7 +11,6 @@ Channel weights follow BS.1770-4 §2.2 Table 1:
 """
 from __future__ import annotations
 
-import math
 from functools import lru_cache
 
 import numpy as np

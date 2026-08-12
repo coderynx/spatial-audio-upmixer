@@ -1,0 +1,32 @@
+{
+  "name": "mr_spectrum",
+  "params": {
+    "channels": [
+      "FL",
+      "FR",
+      "C",
+      "LFE"
+    ],
+    "weights": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "n": 12000,
+    "sample_rate": 48000,
+    "n_fft": 8192,
+    "hot": false
+  },
+  "tolerance": 1e-11,
+  "arrays": {
+    "freqs": {
+      "file": "mr_spectrum.freqs.f64",
+      "len": 4096
+    },
+    "power": {
+      "file": "mr_spectrum.power.f64",
+      "len": 4096
+    }
+  }
+}

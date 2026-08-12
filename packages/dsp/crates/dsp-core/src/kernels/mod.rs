@@ -4,6 +4,7 @@ pub mod fft;
 pub mod filtfilt;
 pub mod fir_design;
 pub mod minfilter;
+pub mod stft;
 pub mod sum;
 pub mod upfirdn;
 

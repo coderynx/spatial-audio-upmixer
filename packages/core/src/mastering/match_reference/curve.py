@@ -28,6 +28,7 @@ is what gets persisted. :func:`build_curve_fir` applies both per request.
 from __future__ import annotations
 
 import numpy as np
+import upmixer_dsp
 
 from ..eq import _build_fir_from_breakpoints
 from .spectrum import weighted_power_spectrum, weighted_power_spectrum_reference
@@ -53,34 +54,28 @@ _BASS_CLAMP_DB: float = 2.0
 _CLAMP_KNEE_DB: float = 2.0
 
 
+def _as_f64(values: np.ndarray) -> np.ndarray:
+    return np.ascontiguousarray(values, dtype=np.float64)
+
+
 def _log_grid(high_hz: float) -> np.ndarray:
-    lo = np.log2(_MIN_FREQ_HZ)
-    hi = np.log2(max(high_hz, _MIN_FREQ_HZ * 2))
-    n = max(int(round((hi - lo) / _LOG_GRID_OCT_STEP)) + 1, 2)
-    return 2.0 ** np.linspace(lo, hi, n)
+    return upmixer_dsp.log_grid(high_hz, _MIN_FREQ_HZ, _LOG_GRID_OCT_STEP)
 
 
 def _smooth_log_grid(values: np.ndarray, sigma_oct: float, step_oct: float) -> np.ndarray:
     """Gaussian smoothing on a grid uniform in log-frequency, so ``sigma_oct``
     is the true smoothing width in octaves (unlike the linear-FFT-grid bug
     this replaces — see module docstring)."""
-    sigma_bins = sigma_oct / step_oct
-    half_w = int(3 * sigma_bins) + 1
-    kernel_idx = np.arange(-half_w, half_w + 1, dtype=float)
-    kernel = np.exp(-0.5 * (kernel_idx / sigma_bins) ** 2)
-    kernel /= kernel.sum()
-    padded = np.pad(values, half_w, mode="reflect")
-    return np.convolve(padded, kernel, mode="valid")
+    return upmixer_dsp.smooth_log_grid(_as_f64(values), sigma_oct, step_oct)
 
 
 def _confidence_taper(correction_db: np.ndarray, ref_power_db: np.ndarray, floor_db: float = _CONFIDENCE_FLOOR_DB) -> np.ndarray:
     """Fade correction to 0 dB where the reference sits more than ~floor_db
     below its own broadband peak — guards against extrapolating a curve from
     near-nothing (e.g. a 16 kHz-brickwalled, lossy-sourced reference)."""
-    peak = float(np.max(ref_power_db))
-    deficit = (peak - floor_db) - ref_power_db
-    confidence = np.clip(1.0 - deficit / floor_db, 0.0, 1.0)
-    return correction_db * confidence
+    return upmixer_dsp.confidence_taper(
+        _as_f64(correction_db), _as_f64(ref_power_db), floor_db
+    )
 
 
 def _band_edge_taper(
@@ -91,29 +86,16 @@ def _band_edge_taper(
 ) -> np.ndarray:
     """Hard-taper to 0 dB outside the band the analysis trusts, regardless of
     reference content."""
-    taper = np.ones_like(correction_db)
-    lo0, lo1 = low_hz
-    hi0, hi1 = high_hz
-    below = freqs < lo1
-    taper[below] = np.clip((freqs[below] - lo0) / (lo1 - lo0), 0.0, 1.0)
-    above = freqs > hi0
-    taper[above] = np.clip((hi1 - freqs[above]) / (hi1 - hi0), 0.0, 1.0)
-    return correction_db * taper
+    return upmixer_dsp.band_edge_taper(
+        _as_f64(correction_db), _as_f64(freqs), low_hz, high_hz
+    )
 
 
 def _soft_clamp(db: np.ndarray, limit_db: float, knee_db: float = _CLAMP_KNEE_DB) -> np.ndarray:
     """Clamp ``|db|`` to ``limit_db`` with a soft knee starting ``knee_db``
     below the limit, so the curve doesn't develop a hard corner at the
     ceiling."""
-    if limit_db <= 0:
-        return np.zeros_like(db)
-    knee_start = max(limit_db - knee_db, 0.0)
-    knee_width = max(limit_db - knee_start, 1e-6)
-    sign = np.sign(db)
-    mag = np.abs(db)
-    over = np.clip(mag - knee_start, 0.0, None)
-    compressed = knee_start + knee_width * np.tanh(over / knee_width)
-    return sign * np.where(mag > knee_start, compressed, mag)
+    return upmixer_dsp.soft_clamp(_as_f64(db), limit_db, knee_db)
 
 
 def compute_reference_curve(
@@ -133,31 +115,16 @@ def compute_reference_curve(
 
     Returns ``(freq_hz, gain_db)`` breakpoints, unclamped and unscaled.
     """
-    nyquist = sample_rate / 2.0
     freqs_t, power_t = weighted_power_spectrum(target_channels, sample_rate, n_fft, lfe_key)
     freqs_r, power_r = weighted_power_spectrum_reference(reference_data, sample_rate, n_fft)
 
-    grid = _log_grid(min(_MAX_FREQ_HZ, nyquist))
-    log_grid = np.log2(grid)
-
-    power_t_grid = np.interp(log_grid, np.log2(freqs_t), power_t)
-    power_r_grid = np.interp(log_grid, np.log2(freqs_r), power_r)
-
-    correction_db = 10.0 * np.log10((power_r_grid + _EPS) / (power_t_grid + _EPS))
-    correction_db = _smooth_log_grid(correction_db, _SMOOTH_SIGMA_OCT, _LOG_GRID_OCT_STEP)
-
-    norm_mask = (grid >= _NORM_LOW_HZ) & (grid <= _NORM_HIGH_HZ)
-    if norm_mask.any():
-        correction_db = correction_db - float(correction_db[norm_mask].mean())
-
-    ref_power_db = 10.0 * np.log10(power_r_grid + _EPS)
-    correction_db = _confidence_taper(correction_db, ref_power_db)
-    correction_db = _band_edge_taper(correction_db, grid)
-
-    bp_high = min(_MAX_FREQ_HZ, nyquist)
-    bp_freqs = np.logspace(np.log10(_MIN_FREQ_HZ), np.log10(bp_high), num=_N_BREAKPOINTS)
-    bp_gains = np.interp(np.log2(bp_freqs), log_grid, correction_db)
-    return [(float(f), float(g)) for f, g in zip(bp_freqs, bp_gains)]
+    return upmixer_dsp.correction_curve(
+        _as_f64(freqs_t), _as_f64(power_t), _as_f64(freqs_r), _as_f64(power_r),
+        sample_rate,
+        _MIN_FREQ_HZ, _MAX_FREQ_HZ, _LOG_GRID_OCT_STEP, _SMOOTH_SIGMA_OCT,
+        _NORM_LOW_HZ, _NORM_HIGH_HZ, _CONFIDENCE_FLOOR_DB,
+        _TAPER_LOW_HZ, _TAPER_HIGH_HZ, _N_BREAKPOINTS,
+    )
 
 
 def build_curve_fir(

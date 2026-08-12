@@ -106,12 +106,13 @@ def dump_lfilter() -> None:
 
 
 def dump_upfirdn() -> None:
-    from upmixer.loudness import _TRUE_PEAK_FIR_4X
+    import upmixer_dsp
 
+    fir = upmixer_dsp.true_peak_fir()
     x = deterministic_signal(1024)
     write_case("upfirdn_truepeak_4x", {"up": 4},
-               {"fir": _TRUE_PEAK_FIR_4X, "input": x,
-                "output": signal.upfirdn(_TRUE_PEAK_FIR_4X, x, up=4)}, 1e-12)
+               {"fir": fir, "input": x,
+                "output": signal.upfirdn(fir, x, up=4)}, 1e-12)
 
 
 def dump_minimum_filter1d() -> None:
@@ -284,6 +285,76 @@ def dump_mastering() -> None:
     )
 
 
+def dump_match_reference() -> None:
+    from upmixer.mastering.match_reference.curve import (
+        _BASS_CLAMP_DB, _BASS_CLAMP_HZ, _CLAMP_KNEE_DB, _CONFIDENCE_FLOOR_DB,
+        _LOG_GRID_OCT_STEP, _MAX_FREQ_HZ, _MIN_FREQ_HZ, _NORM_HIGH_HZ, _NORM_LOW_HZ,
+        _N_BREAKPOINTS, _SMOOTH_SIGMA_OCT, _TAPER_HIGH_HZ, _TAPER_LOW_HZ,
+        _band_edge_taper, _confidence_taper, _log_grid, _smooth_log_grid, _soft_clamp,
+        compute_reference_curve,
+    )
+    from upmixer.mastering.match_reference.spectrum import weighted_power_spectrum_arrays
+
+    curve_params = {
+        "min_freq_hz": _MIN_FREQ_HZ, "max_freq_hz": _MAX_FREQ_HZ,
+        "grid_step_oct": _LOG_GRID_OCT_STEP, "smooth_sigma_oct": _SMOOTH_SIGMA_OCT,
+        "norm_low_hz": _NORM_LOW_HZ, "norm_high_hz": _NORM_HIGH_HZ,
+        "confidence_floor_db": _CONFIDENCE_FLOOR_DB,
+        "taper_low": list(_TAPER_LOW_HZ), "taper_high": list(_TAPER_HIGH_HZ),
+        "n_breakpoints": _N_BREAKPOINTS, "clamp_knee_db": _CLAMP_KNEE_DB,
+        "bass_clamp_hz": _BASS_CLAMP_HZ, "bass_clamp_db": _BASS_CLAMP_DB,
+    }
+
+    grid = _log_grid(_MAX_FREQ_HZ)
+    write_case("mr_log_grid", {"high_hz": _MAX_FREQ_HZ, **curve_params}, {"grid": grid}, 1e-9)
+
+    ramp = np.sin(np.linspace(0.0, 9.0, len(grid))) * 4.0
+    write_case("mr_smooth", curve_params,
+               {"input": ramp,
+                "output": _smooth_log_grid(ramp, _SMOOTH_SIGMA_OCT, _LOG_GRID_OCT_STEP)}, 1e-11)
+
+    ref_db = np.linspace(0.0, -90.0, len(grid))
+    write_case("mr_confidence_taper", curve_params,
+               {"correction": ramp, "ref_power_db": ref_db,
+                "output": _confidence_taper(ramp, ref_db)}, 1e-12)
+
+    write_case("mr_band_edge_taper", curve_params,
+               {"correction": ramp, "freqs": grid,
+                "output": _band_edge_taper(ramp, grid)}, 1e-12)
+
+    wide = np.linspace(-15.0, 15.0, 257)
+    write_case("mr_soft_clamp", {"limit_db": 6.0, **curve_params},
+               {"input": wide, "output": _soft_clamp(wide, 6.0)}, 1e-12)
+
+    bed = _mastering_bed()
+    weights = [1.0, 1.0, 1.0, 0.0]
+    freqs, power = weighted_power_spectrum_arrays(
+        [bed[k] for k in MASTERING_CHANNELS], weights, MASTERING_SR, 8192
+    )
+    write_case("mr_spectrum",
+               {"channels": list(MASTERING_CHANNELS), "weights": weights,
+                "n": MASTERING_N, "sample_rate": MASTERING_SR, "n_fft": 8192, "hot": False},
+               {"freqs": freqs, "power": power}, 1e-11)
+
+    reference = np.stack([
+        deterministic_signal(MASTERING_N, MASTERING_SR, seed_phase=7.0) * 0.8,
+        deterministic_signal(MASTERING_N, MASTERING_SR, seed_phase=9.0) * 0.8,
+    ], axis=1)
+    curve = compute_reference_curve(dict(bed), reference, MASTERING_SR, 8192)
+    write_case("mr_curve",
+               {"channels": list(MASTERING_CHANNELS), "n": MASTERING_N,
+                "sample_rate": MASTERING_SR, "n_fft": 8192, "hot": False,
+                "ref_seed_phases": [7.0, 9.0], "ref_scale": 0.8,
+                "target_weights": [1.0, 1.0, 1.0, 0.0], "ref_weights": [1.0, 1.0],
+                **curve_params},
+               {"freqs": np.array([f for f, _ in curve]),
+                # 1e-8, not the 1e-9 the individual curve stages hold to: the
+                # bottom two octaves of the analysis sit ~7 decades below the
+                # spectrum's peak, where the FFT's absolute error floor is a
+                # ~1e-9 *relative* error, and 10*log10 carries that into dB.
+                "gains_db": np.array([g for _, g in curve])}, 1e-8)
+
+
 def main() -> int:
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
     for stale in GOLDEN_DIR.glob("*"):
@@ -301,6 +372,7 @@ def main() -> int:
     dump_loudness()
     dump_stft()
     dump_mastering()
+    dump_match_reference()
     print(f"wrote fixtures to {GOLDEN_DIR}")
     return 0
 

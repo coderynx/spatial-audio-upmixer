@@ -2,6 +2,9 @@
 //!
 //! Regenerate with `uv run python packages/dsp/tools/dump_golden_vectors.py`.
 
+// Each test binary includes the whole module but uses only part of it.
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 
 /// Mirror of `dump_golden_vectors.py::deterministic_signal`.

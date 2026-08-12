@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-from scipy.signal import stft
+import upmixer_dsp
 
 from upmixer.formats import ChannelLabel, OutputFormat
 from upmixer.loudness import CHANNEL_WEIGHT, measure_integrated_loudness
@@ -85,42 +85,6 @@ def _canonicalize_reference(ref_data: np.ndarray) -> tuple[np.ndarray, tuple[Cha
     return data, order
 
 
-def _frame_power(audio: np.ndarray, sample_rate: int, n_fft: int) -> tuple[np.ndarray, np.ndarray]:
-    """Hann-windowed STFT power per frame, 75% overlap.
-
-    Returns ``(freqs, power)`` where ``power`` has shape
-    ``(n_freqs, n_frames)``. ``nperseg`` is capped to the signal length (like
-    ``scipy.signal.welch``'s auto-reduction) so short test signals don't
-    raise.
-    """
-    nperseg = max(min(n_fft, len(audio)), 1)
-    noverlap = (3 * nperseg) // 4
-    freqs, _, stft_result = stft(
-        audio.astype(np.float64), fs=sample_rate, window="hann",
-        nperseg=nperseg, noverlap=noverlap, boundary=None, padded=False,
-    )
-    return freqs, np.abs(stft_result) ** 2
-
-
-def _gate_mask(frame_energy_db: np.ndarray) -> np.ndarray:
-    """Two-stage absolute/relative energy gate over frames.
-
-    Mirrors BS.1770-4 §2.3's absolute (-70) + relative (-10 LU below the
-    absolute-gated mean) gating shape, applied here to broadband STFT-frame
-    energy rather than K-weighted 400 ms loudness blocks — a different
-    measurement from :func:`upmixer.loudness.measure_integrated_loudness`,
-    tuned to exclude near-silent frames from the spectral average.
-    """
-    if frame_energy_db.size == 0:
-        return np.zeros(0, dtype=bool)
-    abs_mask = frame_energy_db >= _ABS_GATE_DB
-    if not np.any(abs_mask):
-        return np.ones_like(abs_mask)
-    rel_ref = float(np.mean(frame_energy_db[abs_mask]))
-    rel_mask = abs_mask & (frame_energy_db >= rel_ref + _REL_GATE_OFFSET_DB)
-    return rel_mask if np.any(rel_mask) else abs_mask
-
-
 def weighted_power_spectrum_arrays(
     arrays: list[np.ndarray],
     weights: list[float],
@@ -143,33 +107,17 @@ def weighted_power_spectrum_arrays(
 
     Returns ``(freqs, power)`` with the DC bin stripped.
     """
-    kept = [(a, w) for a, w in zip(arrays, weights) if w > 0.0]
-    if not kept:
+    if not any(w > 0.0 for w in weights):
         raise ValueError("weighted_power_spectrum_arrays: no channels with nonzero weight")
-
-    freqs = None
-    per_channel: list[tuple[np.ndarray, float]] = []
-    for audio, weight in kept:
-        freqs, power = _frame_power(audio, sample_rate, n_fft)
-        per_channel.append((power, weight))
-
-    n_frames = min(power.shape[1] for power, _ in per_channel)
-    weighted_energy = None
-    for power, weight in per_channel:
-        contrib = weight * power[:, :n_frames].sum(axis=0)
-        weighted_energy = contrib if weighted_energy is None else weighted_energy + contrib
-
-    gate_db = 10.0 * np.log10(np.maximum(weighted_energy, _EPS))
-    gate = _gate_mask(gate_db)
-
-    summed = None
-    for power, weight in per_channel:
-        windowed = power[:, :n_frames]
-        gated = windowed[:, gate] if np.any(gate) else windowed
-        contrib = weight * gated.mean(axis=1)
-        summed = contrib if summed is None else summed + contrib
-
-    return freqs[1:], summed[1:]
+    return upmixer_dsp.weighted_power_spectrum(
+        [np.ascontiguousarray(a, dtype=np.float64) for a in arrays],
+        list(weights),
+        sample_rate,
+        n_fft,
+        _ABS_GATE_DB,
+        _REL_GATE_OFFSET_DB,
+        _EPS,
+    )
 
 
 def weighted_power_spectrum(

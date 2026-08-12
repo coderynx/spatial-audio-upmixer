@@ -11,7 +11,7 @@ use rustfft::num_complex::Complex64;
 use super::fft::RealFft;
 
 /// `numpy.interp` — linear interpolation with endpoint clamping.
-fn interp(x: f64, xp: &[f64], fp: &[f64]) -> f64 {
+pub fn interp(x: f64, xp: &[f64], fp: &[f64]) -> f64 {
     if x <= xp[0] {
         return fp[0];
     }
