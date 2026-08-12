@@ -1,0 +1,53 @@
+{
+  "name": "eq_fir_atmos_streaming",
+  "params": {
+    "profile": "atmos-streaming",
+    "sample_rate": 48000,
+    "n_taps": 1023,
+    "breakpoints": [
+      [
+        20,
+        0.0
+      ],
+      [
+        60,
+        1.0
+      ],
+      [
+        100,
+        0.8
+      ],
+      [
+        500,
+        0.0
+      ],
+      [
+        2000,
+        0.5
+      ],
+      [
+        5000,
+        1.0
+      ],
+      [
+        12000,
+        1.5
+      ],
+      [
+        18000,
+        2.0
+      ],
+      [
+        20000,
+        2.0
+      ]
+    ]
+  },
+  "tolerance": 1e-10,
+  "arrays": {
+    "taps": {
+      "file": "eq_fir_atmos_streaming.taps.f64",
+      "len": 1023
+    }
+  }
+}

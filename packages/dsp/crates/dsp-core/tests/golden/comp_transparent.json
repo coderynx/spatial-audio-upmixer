@@ -1,0 +1,39 @@
+{
+  "name": "comp_transparent",
+  "params": {
+    "threshold_db": -22.0,
+    "ratio": 1.5,
+    "attack_ms": 30.0,
+    "release_ms": 300.0,
+    "knee_db": 9.0,
+    "makeup_db": 0.0,
+    "channels": [
+      "FL",
+      "FR",
+      "C",
+      "LFE"
+    ],
+    "n": 12000,
+    "sample_rate": 48000,
+    "hot": false
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "ch_FL": {
+      "file": "comp_transparent.ch_FL.f64",
+      "len": 12000
+    },
+    "ch_FR": {
+      "file": "comp_transparent.ch_FR.f64",
+      "len": 12000
+    },
+    "ch_C": {
+      "file": "comp_transparent.ch_C.f64",
+      "len": 12000
+    },
+    "ch_LFE": {
+      "file": "comp_transparent.ch_LFE.f64",
+      "len": 12000
+    }
+  }
+}

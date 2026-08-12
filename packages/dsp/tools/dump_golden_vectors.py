@@ -44,7 +44,11 @@ def write_case(name: str, params: dict, arrays: dict[str, np.ndarray], tol: floa
 
 
 def deterministic_signal(n: int, sr: int = 48000, seed_phase: float = 0.0) -> np.ndarray:
-    """Multi-tone test signal — deterministic across languages, unlike RNG noise."""
+    """Multi-tone test signal — deterministic across languages, unlike RNG noise.
+
+    Reproduced in ``tests/common/mod.rs`` so bed-sized fixtures can store only
+    their outputs; ``generator_parity`` pins the two implementations together.
+    """
     t = np.arange(n, dtype=np.float64) / sr
     sig = np.zeros(n, dtype=np.float64)
     for freq, amp in ((55.0, 0.30), (220.0, 0.22), (1000.0, 0.18),
@@ -157,23 +161,24 @@ def dump_loudness() -> None:
 
     fmt = FORMAT_MAP["5.1.4"]
     sr = 48000
-    channels = {}
-    for i, label in enumerate(fmt.channels):
-        channels[label.value] = deterministic_signal(sr * 3, sr, seed_phase=float(i)) * (
-            0.5 + 0.1 * i
-        )
-    arrays = {f"ch_{k}": v for k, v in channels.items()}
+    n = sr * 3
+    channels = {
+        label.value: deterministic_signal(n, sr, seed_phase=float(i)) * (0.5 + 0.1 * i)
+        for i, label in enumerate(fmt.channels)
+    }
+    # Inputs are regenerated Rust-side; only the measurements are pinned.
     write_case(
         "loudness_514",
         {
             "sample_rate": sr,
+            "n": n,
             "format": "5.1.4",
             "channels": [c.value for c in fmt.channels],
             "weights": [CHANNEL_WEIGHT.get(c, 0.0) for c in fmt.channels],
             "lkfs": measure_integrated_loudness(channels, sr, fmt),
             "true_peak_dbtp": measure_true_peak(channels, sr),
         },
-        arrays,
+        {},
         1e-10,
     )
 
@@ -187,8 +192,103 @@ def dump_stft() -> None:
                {"input": x, "psd": psd}, 1e-12)
 
 
+MASTERING_CHANNELS = ("FL", "FR", "C", "LFE")
+MASTERING_N = 12_000
+MASTERING_SR = 48_000
+
+
+def dump_generator_parity() -> None:
+    write_case("generator_parity", {"n": 4096, "sample_rate": 48000, "seed_phase": 1.5},
+               {"signal": deterministic_signal(4096, 48000, 1.5)}, 1e-14)
+
+
+def _mastering_bed() -> dict[str, np.ndarray]:
+    """A short 4-channel bed shared by every mastering-stage fixture."""
+    return {
+        name: deterministic_signal(MASTERING_N, MASTERING_SR, seed_phase=float(i))
+        * (0.55 + 0.12 * i)
+        for i, name in enumerate(MASTERING_CHANNELS)
+    }
+
+
+def _write_stage(name: str, out: dict[str, np.ndarray], params: dict, tol: float) -> None:
+    params = dict(params)
+    params["channels"] = list(MASTERING_CHANNELS)
+    params["n"] = MASTERING_N
+    params["sample_rate"] = MASTERING_SR
+    params["hot"] = False
+    write_case(name, params, {f"ch_{k}": out[k] for k in MASTERING_CHANNELS}, tol)
+
+
+def dump_mastering() -> None:
+    from upmixer.mastering.bass import (
+        BASS_PROFILES, EXCITE_BLEND, EXCITE_DRIVE, MID_CUTOFF_HZ, SUB_CUTOFF_HZ,
+        BassController,
+    )
+    from upmixer.mastering.compressor import COMP_PROFILES, BusCompressor
+    from upmixer.mastering.eq import EQ_PROFILES, SpectralShaper, _build_fir
+    from upmixer.mastering.limiter import _SAFETY_MARGIN_DB, LookAheadLimiter
+
+    bed = _mastering_bed()
+
+    for profile in EQ_PROFILES:
+        write_case(
+            f"eq_fir_{profile.replace('-', '_')}",
+            {"profile": profile, "sample_rate": MASTERING_SR, "n_taps": 1023,
+             "breakpoints": [list(bp) for bp in EQ_PROFILES[profile]]},
+            {"taps": _build_fir(profile, MASTERING_SR, 1023)},
+            1e-10,
+        )
+
+    for profile, strength in (("atmos-streaming", 1.0), ("spatial-warm", 0.6)):
+        shaped = SpectralShaper(profile, strength, MASTERING_SR).process(dict(bed))
+        _write_stage(
+            f"eq_apply_{profile.replace('-', '_')}_{str(strength).replace('.', 'p')}",
+            shaped, {"profile": profile, "strength": strength}, 1e-9,
+        )
+
+    for profile in COMP_PROFILES:
+        params = COMP_PROFILES[profile]
+        out = BusCompressor(sample_rate=MASTERING_SR, **params).process(dict(bed))
+        _write_stage(f"comp_{profile}", out, dict(params), 1e-12)
+
+    for profile in BASS_PROFILES:
+        params = BASS_PROFILES[profile]
+        out = BassController(sample_rate=MASTERING_SR, **params).process(dict(bed))
+        _write_stage(
+            f"bass_{profile}",
+            out,
+            {
+                **{k: (v if v is not None else -1.0) if k == "mono_cutoff_hz" else v
+                   for k, v in params.items()},
+                "sub_cutoff_hz": SUB_CUTOFF_HZ,
+                "mid_cutoff_hz": MID_CUTOFF_HZ,
+                "excite_blend": EXCITE_BLEND,
+                "excite_drive": EXCITE_DRIVE,
+                "stereo_pairs": [[0, 1]],
+            },
+            1e-11,
+        )
+
+    # A hot bed so the limiter actually engages.
+    hot = {k: np.clip(v * 3.2, -1.5, 1.5) for k, v in bed.items()}
+    limited = LookAheadLimiter(-1.0, 5.0, 50.0, MASTERING_SR).process(dict(hot))
+    write_case(
+        "limiter_apply",
+        {"channels": list(MASTERING_CHANNELS), "n": MASTERING_N,
+         "sample_rate": MASTERING_SR, "hot": True, "ceiling_dbtp": -1.0,
+         "lookahead_ms": 5.0, "release_ms": 50.0,
+         "safety_margin_db": _SAFETY_MARGIN_DB},
+        {f"ch_{k}": limited[k] for k in MASTERING_CHANNELS},
+        1e-11,
+    )
+
+
 def main() -> int:
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
+    for stale in GOLDEN_DIR.glob("*"):
+        stale.unlink()
+    dump_generator_parity()
     dump_butter()
     dump_sosfilt()
     dump_sosfiltfilt()
@@ -200,6 +300,7 @@ def main() -> int:
     dump_k_weighting()
     dump_loudness()
     dump_stft()
+    dump_mastering()
     print(f"wrote fixtures to {GOLDEN_DIR}")
     return 0
 

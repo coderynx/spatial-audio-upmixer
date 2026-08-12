@@ -1,0 +1,37 @@
+{
+  "name": "limiter_apply",
+  "params": {
+    "channels": [
+      "FL",
+      "FR",
+      "C",
+      "LFE"
+    ],
+    "n": 12000,
+    "sample_rate": 48000,
+    "hot": true,
+    "ceiling_dbtp": -1.0,
+    "lookahead_ms": 5.0,
+    "release_ms": 50.0,
+    "safety_margin_db": 0.1
+  },
+  "tolerance": 1e-11,
+  "arrays": {
+    "ch_FL": {
+      "file": "limiter_apply.ch_FL.f64",
+      "len": 12000
+    },
+    "ch_FR": {
+      "file": "limiter_apply.ch_FR.f64",
+      "len": 12000
+    },
+    "ch_C": {
+      "file": "limiter_apply.ch_C.f64",
+      "len": 12000
+    },
+    "ch_LFE": {
+      "file": "limiter_apply.ch_LFE.f64",
+      "len": 12000
+    }
+  }
+}

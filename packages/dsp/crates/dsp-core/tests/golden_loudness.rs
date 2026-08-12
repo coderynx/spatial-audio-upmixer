@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::Case;
+use common::{deterministic_signal, Case};
 use upmixer_dsp_core::loudness;
 
 fn flatten(sos: &[[f64; 6]]) -> Vec<f64> {
@@ -30,7 +30,15 @@ fn integrated_loudness_and_true_peak_match_python() {
         .collect();
     let weights = c.param_f64_list("weights");
 
-    let samples: Vec<Vec<f64>> = names.iter().map(|n| c.array(&format!("ch_{n}"))).collect();
+    let n = c.param_usize("n");
+    let samples: Vec<Vec<f64>> = (0..names.len())
+        .map(|i| {
+            deterministic_signal(n, sr, i as f64)
+                .iter()
+                .map(|v| v * (0.5 + 0.1 * i as f64))
+                .collect()
+        })
+        .collect();
     let weighted: Vec<(f64, &[f64])> = weights
         .iter()
         .zip(samples.iter())

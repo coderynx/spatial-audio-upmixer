@@ -4,6 +4,27 @@
 
 use std::path::PathBuf;
 
+/// Mirror of `dump_golden_vectors.py::deterministic_signal`.
+///
+/// Bed-sized fixtures store only their outputs and regenerate the input here;
+/// the `generator_parity` case pins this against the Python original.
+pub fn deterministic_signal(n: usize, sample_rate: u32, seed_phase: f64) -> Vec<f64> {
+    const TONES: [(f64, f64); 5] = [
+        (55.0, 0.30), (220.0, 0.22), (1000.0, 0.18), (3500.0, 0.12), (11000.0, 0.07),
+    ];
+    let two_pi = 2.0 * std::f64::consts::PI;
+    (0..n)
+        .map(|i| {
+            let t = i as f64 / sample_rate as f64;
+            let mut sig = 0.0;
+            for (freq, amp) in TONES {
+                sig += amp * (two_pi * freq * t + seed_phase * freq / 100.0).sin();
+            }
+            sig * (0.6 + 0.4 * (two_pi * 0.7 * t).sin())
+        })
+        .collect()
+}
+
 pub struct Case {
     pub name: String,
     pub meta: serde_json::Value,

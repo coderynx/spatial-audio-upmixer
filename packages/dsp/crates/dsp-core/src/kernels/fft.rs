@@ -121,6 +121,14 @@ pub fn fftconvolve(a: &[f64], b: &[f64]) -> Vec<f64> {
         }
         return out;
     }
+    // A whole-file transform of a multi-minute bed costs hundreds of
+    // megabytes; overlap-save computes the identical linear convolution in
+    // bounded memory.
+    let (long, short) = if a.len() >= b.len() { (a, b) } else { (b, a) };
+    if long.len() > 8 * short.len() && short.len() >= 64 {
+        return overlap_save(long, short, out_len);
+    }
+
     let n = next_fast_len(out_len);
     let fft = RealFft::new(n);
     let sa = fft.rfft(a);
@@ -128,6 +136,49 @@ pub fn fftconvolve(a: &[f64], b: &[f64]) -> Vec<f64> {
     let prod: Vec<Complex64> = sa.iter().zip(sb.iter()).map(|(x, y)| x * y).collect();
     let mut out = fft.irfft(&prod);
     out.truncate(out_len);
+    out
+}
+
+fn overlap_save(signal: &[f64], kernel: &[f64], out_len: usize) -> Vec<f64> {
+    let m = kernel.len();
+    let n = next_fast_len((8 * m).max(2048));
+    let hop = n - m + 1;
+    let fft = RealFft::new(n);
+    let spectrum_k = fft.rfft(kernel);
+
+    let mut out = vec![0.0; out_len];
+    // Each block carries the previous block's trailing m-1 samples so the
+    // circular wrap lands entirely in the discarded head.
+    let mut block = vec![0.0; n];
+    let mut pos = 0usize;
+    while pos < out_len {
+        block[..m - 1].fill(0.0);
+        if pos >= m - 1 {
+            let start = pos - (m - 1);
+            let avail = signal.len().saturating_sub(start).min(m - 1);
+            block[..avail].copy_from_slice(&signal[start..start + avail]);
+            block[avail..m - 1].fill(0.0);
+        } else {
+            let lead = m - 1 - pos;
+            let avail = signal.len().min(pos);
+            block[lead..lead + avail].copy_from_slice(&signal[..avail]);
+        }
+        let take = signal.len().saturating_sub(pos).min(hop);
+        block[m - 1..m - 1 + take].copy_from_slice(&signal[pos..pos + take]);
+        block[m - 1 + take..].fill(0.0);
+
+        let spectrum: Vec<Complex64> = fft
+            .rfft(&block)
+            .iter()
+            .zip(spectrum_k.iter())
+            .map(|(x, y)| x * y)
+            .collect();
+        let filtered = fft.irfft(&spectrum);
+
+        let copy = hop.min(out_len - pos);
+        out[pos..pos + copy].copy_from_slice(&filtered[m - 1..m - 1 + copy]);
+        pos += hop;
+    }
     out
 }
 
@@ -159,6 +210,27 @@ mod tests {
         assert_eq!(got.len(), want.len());
         for (i, (g, w)) in got.iter().zip(want.iter()).enumerate() {
             assert!((g - w).abs() < 1e-10, "tap {i}: {g} vs {w}");
+        }
+    }
+
+    #[test]
+    fn overlap_save_path_matches_the_single_transform_path() {
+        let signal: Vec<f64> = (0..20_000).map(|i| (i as f64 * 0.017).sin()).collect();
+        let kernel: Vec<f64> = (0..129).map(|i| (i as f64 * 0.09).cos() / (1.0 + i as f64)).collect();
+        let got = fftconvolve(&signal, &kernel);
+
+        let out_len = signal.len() + kernel.len() - 1;
+        let n = next_fast_len(out_len);
+        let fft = RealFft::new(n);
+        let sa = fft.rfft(&signal);
+        let sb = fft.rfft(&kernel);
+        let prod: Vec<_> = sa.iter().zip(sb.iter()).map(|(x, y)| x * y).collect();
+        let mut want = fft.irfft(&prod);
+        want.truncate(out_len);
+
+        assert_eq!(got.len(), want.len());
+        for (i, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+            assert!((g - w).abs() < 1e-10, "sample {i}: {g} vs {w}");
         }
     }
 
