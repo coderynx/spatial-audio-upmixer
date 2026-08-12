@@ -146,7 +146,12 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
         if (this.engine) {
           this.wasm.dsp_engine_seek(this.engine, message.frame >>> 0);
           this.ended = false;
-          this.report();
+          // The seek warms filter state with a real, audible preroll render
+          // so playback resumes cleanly (see `PreviewEngine::seek`), which
+          // leaves the engine's meters non-zero even while paused. Report
+          // only while playing — otherwise the meters/haze would flash with
+          // levels from audio that isn't actually being heard.
+          if (this.playing) this.report();
         }
         break;
       case "measure":
