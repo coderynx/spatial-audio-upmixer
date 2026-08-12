@@ -4,6 +4,7 @@
 
 pub mod kernels;
 pub mod loudness;
+pub mod loudness_stream;
 pub mod mastering;
 pub mod match_reference;
 pub mod routing;

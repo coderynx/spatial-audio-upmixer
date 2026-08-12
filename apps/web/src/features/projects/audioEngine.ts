@@ -124,6 +124,7 @@ export class PreviewAudioEngine {
   private measuredForMode: string | null = null;
   /** While set, render uncorrected so the measurement sees the raw program. */
   private measuringRaw = false;
+  private measureToken = 0;
   private stemOrder: string[] = [];
 
   readonly stemSpectrum: EngineRef<Map<string, { level: number; centroid: number }>> = engineRef(
@@ -414,27 +415,35 @@ export class PreviewAudioEngine {
   /**
    * Measure the programme once per output mode/profile combination, so a
    * mode switch re-measures rather than reusing a stale correction.
+   *
+   * The pass walks the whole programme in slices taken from the render
+   * callback, so this resolves minutes later on a long track. Until it does,
+   * the preview plays uncorrected — which is also what the measurement needs
+   * to see, since measuring through a previous correction would fold that
+   * gain into the next one.
    */
   private async measureIfNeeded() {
     if (!this.client || this.outputMode === "native") return;
     const key = `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}`;
     if (this.measuredForMode === key) return;
 
+    const token = ++this.measureToken;
     this.callbacks.onMeasuring(true);
-    try {
-      // Measure the uncorrected render: measuring through a previous
-      // correction would fold that gain into the next one.
-      this.measuringRaw = true;
-      this.apply();
-      const { lkfs, dbtp } = await this.client.measure([1, 1]);
-      this.measuredLkfs = lkfs;
-      this.measuredTpDbtp = dbtp;
+    this.measuringRaw = true;
+    this.apply();
+    const result = await this.client.measure([1, 1]);
+    // A mode switch mid-measurement supersedes this pass; the newer one owns
+    // the measuring state from here.
+    if (token !== this.measureToken) return;
+
+    if (result) {
+      this.measuredLkfs = result.lkfs;
+      this.measuredTpDbtp = result.dbtp;
       this.measuredForMode = key;
-    } finally {
-      this.measuringRaw = false;
-      this.callbacks.onMeasuring(false);
-      this.apply();
     }
+    this.measuringRaw = false;
+    this.callbacks.onMeasuring(false);
+    this.apply();
   }
 
   // ---- Lifecycle ----
@@ -559,6 +568,8 @@ export class PreviewAudioEngine {
     this.duration = 0;
     this.currentTimeRef.current = 0;
     this.measuredForMode = null;
+    this.measureToken += 1;
+    this.measuringRaw = false;
     this.stemEqTaps = new Map();
     this.client?.dispose();
     this.client = null;

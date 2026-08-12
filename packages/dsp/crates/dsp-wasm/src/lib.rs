@@ -11,6 +11,7 @@ use serde::Deserialize;
 use upmixer_dsp_core::loudness;
 use upmixer_dsp_core::mastering::{bass, compressor, eq, limiter};
 use upmixer_dsp_core::stream::engine::{PreviewEngine, StemSource};
+use upmixer_dsp_core::stream::measure::MeasurementPass;
 use upmixer_dsp_core::stream::params::EngineParams;
 
 /// Mastering parameters as the host sends them. Every value is owned by
@@ -456,28 +457,72 @@ pub unsafe extern "C" fn dsp_engine_meters(
     engine.meters().write(dst).min(capacity)
 }
 
-/// Measure the collapsed programme, writing `[lkfs, dbtp]` into `out`.
+/// Begin measuring the collapsed programme; returns a pass handle, or null.
+///
+/// The measurement renders the whole programme, which costs far more than one
+/// render quantum allows, so the host advances the pass in slices rather than
+/// blocking the audio thread — see `stream::measure`.
 ///
 /// # Safety
-/// `weights` must address `n_channels` readable f64 values and `out` two
-/// writable ones; `engine` must come from [`dsp_engine_new`].
+/// `weights` must address `n_channels` readable f64 values; `engine` must come
+/// from [`dsp_engine_new`].
 #[no_mangle]
-pub unsafe extern "C" fn dsp_engine_measure(
-    engine: *mut PreviewEngine,
+pub unsafe extern "C" fn dsp_measure_begin(
+    engine: *const PreviewEngine,
     weights: *const f64,
     n_channels: usize,
-    out: *mut f64,
-) {
-    let Some(engine) = engine.as_mut() else { return };
+) -> *mut MeasurementPass {
+    let Some(engine) = engine.as_ref() else { return std::ptr::null_mut() };
     let w = if weights.is_null() {
         Vec::new()
     } else {
         std::slice::from_raw_parts(weights, n_channels).to_vec()
     };
-    let (lkfs, dbtp) = engine.measure(&w);
-    let dst = std::slice::from_raw_parts_mut(out, 2);
-    dst[0] = lkfs;
-    dst[1] = dbtp;
+    Box::into_raw(Box::new(MeasurementPass::new(engine, &w)))
+}
+
+/// Measure up to `frames` more. Returns 1 and writes `[lkfs, dbtp]` into `out`
+/// once the programme is exhausted, 0 while there is more to do.
+///
+/// # Safety
+/// `pass` must come from [`dsp_measure_begin`] and `out` must address two
+/// writable f64 values.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_measure_advance(
+    pass: *mut MeasurementPass,
+    frames: usize,
+    out: *mut f64,
+) -> i32 {
+    let Some(pass) = pass.as_mut() else { return 0 };
+    match pass.advance(frames) {
+        None => 0,
+        Some((lkfs, dbtp)) => {
+            let dst = std::slice::from_raw_parts_mut(out, 2);
+            dst[0] = lkfs;
+            dst[1] = dbtp;
+            1
+        }
+    }
+}
+
+/// Fraction of the programme measured so far, for a progress indicator.
+///
+/// # Safety
+/// `pass` must come from [`dsp_measure_begin`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_measure_progress(pass: *const MeasurementPass) -> f64 {
+    pass.as_ref().map(|p| p.progress()).unwrap_or(0.0)
+}
+
+/// Release a measurement pass.
+///
+/// # Safety
+/// `pass` must come from [`dsp_measure_begin`] and must not be used after.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_measure_free(pass: *mut MeasurementPass) {
+    if !pass.is_null() {
+        drop(Box::from_raw(pass));
+    }
 }
 
 /// Reset the transport and every filter state to the top of the programme.

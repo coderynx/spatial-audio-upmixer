@@ -73,7 +73,7 @@ fn params_json(with_master: bool) -> String {
     )
 }
 
-fn stems() -> Vec<StemSource> {
+fn stems() -> Vec<std::sync::Arc<StemSource>> {
     (0..2)
         .map(|i| {
             let left: Vec<f32> = deterministic_signal(N, SR, i as f64)
@@ -84,7 +84,7 @@ fn stems() -> Vec<StemSource> {
                 .iter()
                 .map(|v| (v * 0.6) as f32)
                 .collect();
-            StemSource { left, right }
+            std::sync::Arc::new(StemSource { left, right })
         })
         .collect()
 }

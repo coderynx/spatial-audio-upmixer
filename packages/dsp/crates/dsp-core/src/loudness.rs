@@ -12,7 +12,7 @@ pub const BLOCK_S: f64 = 0.400;
 pub const HOP_S: f64 = 0.100;
 pub const ABS_GATE: f64 = -70.0;
 pub const REL_GATE_OFFSET: f64 = -10.0;
-const LKFS_OFFSET: f64 = -0.691;
+pub const LKFS_OFFSET: f64 = -0.691;
 
 /// BS.1770-4 Annex 1 Tables 1-2, exact at 48 kHz.
 const K_STAGE1_48K: [f64; 6] = [

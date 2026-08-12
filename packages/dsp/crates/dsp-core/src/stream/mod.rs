@@ -9,6 +9,7 @@
 pub mod conv;
 pub mod engine;
 pub mod master;
+pub mod measure;
 pub mod meters;
 pub mod output;
 pub mod params;

@@ -86,7 +86,7 @@ should be.
 |---|---|---|
 | P1 | **Live-parameter latency.** The worklet renders ahead of the playhead, so a control change lands after the render horizon rather than instantly. | ~100 ms |
 | P2 | **Seek warm-up.** A seek renders a discarded run-up so the filter states settle; without it the Haas-delayed sends would drop out and the compressor would re-attack. Inside the run-up the states are still converging. | 500 ms run-up; lands within 1e-6 of a straight play-through |
-| P3 | **Correction staleness.** The loudness/true-peak correction is measured per output mode and profile. While a re-measure is in flight the previous gain holds. | One measurement pass |
+| P3 | **Correction latency.** The loudness/true-peak correction is the real BS.1770 measurement of the whole programme, which costs ~0.12x realtime — far more than a render quantum allows. The pass is advanced in slices from the idle render callback, so the preview plays *uncorrected* until it completes. | ~2-3 min for an eight-minute track; only advances while paused (§4) |
 
 Two former Tier-3 gaps are **closed**: the preview's loudness is now the real
 BS.1770 measurement over the whole render rather than an excerpt-sampled
@@ -119,6 +119,13 @@ mastering chain — one engine per process, and fails the build over budget:
 
 The first render of a play or seek fills both look-ahead queues from cold
 (~30 ms); it is reported but not budgeted.
+
+A loudness measurement (P3) is the one other thing competing for the quantum.
+It advances **only while paused**, where it may use most of the budget because
+the render is not: playing already spends ~0.25x on average, and both the
+render and the measurement have periodic look-ahead strides that overrun the
+quantum when they land in the same callback. A pass is kept across playback, so
+it resumes rather than restarts.
 
 **Run this after any change to `packages/dsp`'s streaming path.** A change that
 is numerically perfect and 3× too slow is a change that ships silence.
@@ -171,4 +178,5 @@ or that the port itself resolved.
 | D23 | The preview's `AudioContext` ran at the device rate while every shipped FIR is designed at 48 kHz, so the taps were reinterpreted at whatever rate the OS gave. | Fixed: the context is pinned to 48 kHz. |
 | D25 | `StreamingConvolver` re-transformed its kernel on every block, so the order-3 decode alone ran at 1.4x realtime and the audio thread starved — correct samples, delivered too late, heard as silence. | Fixed: uniform-partitioned overlap-save, kernel transformed once. Guarded by the §4 budget. |
 | D26 | The mono-maker's zero-phase pass filtered ~9,700 samples of context to emit each 128-frame quantum, ~75x redundant. | Fixed: it advances in 512-frame strides, which is where the §4 mean and p99 both sit inside budget. |
+| D27 | The loudness correction was measured in a single blocking call inside the render callback — ~57 s of frozen audio thread for an eight-minute track, on load and on every output-mode switch. | Fixed: `stream::measure` advances a forked engine in slices, with streaming BS.1770 meters pinned bit-identical to the offline ones. The correction now arrives late (P3) instead of stopping the audio. |
 | D24 | `dsp_master_bed` skipped LFE entirely for reference matching; LFE should take the level gain and skip only the spectral curve (D21). | Fixed — caught by the golden render's reference-match stage. The streaming engine was already correct. |

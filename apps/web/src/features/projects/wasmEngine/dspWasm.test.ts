@@ -26,6 +26,18 @@ type DspExports = {
   dsp_engine_position: (engine: number) => number;
   dsp_engine_output_channels: (engine: number) => number;
   dsp_engine_meters: (engine: number, out: number, capacity: number) => number;
+  dsp_measure_begin: (engine: number, weights: number, channels: number) => number;
+  dsp_measure_advance: (pass: number, frames: number, out: number) => number;
+  dsp_measure_progress: (pass: number) => number;
+  dsp_measure_free: (pass: number) => void;
+  dsp_integrated_loudness: (
+    ptr: number,
+    weights: number,
+    channels: number,
+    frames: number,
+    sampleRate: number,
+  ) => number;
+  dsp_true_peak_dbtp: (ptr: number, channels: number, frames: number) => number;
 };
 
 function instantiate(): DspExports {
@@ -219,6 +231,85 @@ describe("shared DSP core (wasm)", () => {
     expect(wasm.dsp_engine_output_channels(native)).toBe(CHANNELS);
     const stereo = createEngine(wasm, { ...PARAMS, output_mode: "stereo" });
     expect(wasm.dsp_engine_output_channels(stereo)).toBe(2);
+  });
+
+  // The worklet cannot afford to measure the programme in one call, so it
+  // advances a pass from `process`. This drives that ABI the same way and
+  // checks the answer against measuring the rendered output directly.
+  it("measures the programme in slices, matching a direct measurement", () => {
+    const wasm = instantiate();
+    const stereo = { ...PARAMS, output_mode: "stereo" };
+    const engine = createEngine(wasm, stereo);
+    const left = writeStem(wasm, tone(FRAMES));
+    const right = writeStem(wasm, tone(FRAMES));
+    wasm.dsp_engine_add_stem(engine, left.ptr, right.ptr, FRAMES);
+
+    // Direct: render the whole collapse, then measure the result.
+    const outPtr = wasm.dsp_alloc(2 * FRAMES * 8);
+    const collapsed: number[][] = [[], []];
+    const block = wasm.dsp_alloc(2 * 512 * 4);
+    for (;;) {
+      const written = wasm.dsp_engine_render(engine, block, 2, 512);
+      if (written === 0) break;
+      const view = new Float32Array(wasm.memory.buffer, block, 2 * 512);
+      for (let ch = 0; ch < 2; ch += 1) {
+        for (let i = 0; i < written; i += 1) collapsed[ch].push(view[ch * 512 + i]);
+      }
+    }
+    const frames = collapsed[0].length;
+    const flat = new Float64Array(wasm.memory.buffer, outPtr, 2 * frames);
+    flat.set(collapsed[0], 0);
+    flat.set(collapsed[1], frames);
+    const weightPtr = wasm.dsp_alloc(16);
+    new Float64Array(wasm.memory.buffer, weightPtr, 2).set([1, 1]);
+    const wantLkfs = wasm.dsp_integrated_loudness(outPtr, weightPtr, 2, frames, SAMPLE_RATE);
+    const wantDbtp = wasm.dsp_true_peak_dbtp(outPtr, 2, frames);
+
+    // Sliced: begin a pass and advance it in render quanta.
+    wasm.dsp_engine_rewind(engine);
+    const pass = wasm.dsp_measure_begin(engine, weightPtr, 2);
+    expect(pass).not.toBe(0);
+    const resultPtr = wasm.dsp_alloc(16);
+    let slices = 0;
+    while (wasm.dsp_measure_advance(pass, 128, resultPtr) === 0) {
+      slices += 1;
+      expect(slices).toBeLessThan(10_000);
+    }
+    expect(slices).toBeGreaterThan(1);
+    expect(wasm.dsp_measure_progress(pass)).toBe(1);
+    const got = new Float64Array(wasm.memory.buffer, resultPtr, 2);
+
+    // Rendering to f32 for the direct pass costs a little precision; the
+    // sliced meters work in f64 throughout.
+    expect(got[0]).toBeCloseTo(wantLkfs, 4);
+    expect(got[1]).toBeCloseTo(wantDbtp, 4);
+
+    wasm.dsp_measure_free(pass);
+    wasm.dsp_engine_free(engine);
+  });
+
+  it("a measurement leaves the transport where it found it", () => {
+    const wasm = instantiate();
+    const engine = createEngine(wasm, { ...PARAMS, output_mode: "stereo" });
+    const left = writeStem(wasm, tone(FRAMES));
+    const right = writeStem(wasm, tone(FRAMES));
+    wasm.dsp_engine_add_stem(engine, left.ptr, right.ptr, FRAMES);
+
+    const outPtr = wasm.dsp_alloc(2 * 512 * 4);
+    wasm.dsp_engine_render(engine, outPtr, 2, 512);
+    const position = wasm.dsp_engine_position(engine);
+
+    const weightPtr = wasm.dsp_alloc(16);
+    new Float64Array(wasm.memory.buffer, weightPtr, 2).set([1, 1]);
+    const resultPtr = wasm.dsp_alloc(16);
+    const pass = wasm.dsp_measure_begin(engine, weightPtr, 2);
+    while (wasm.dsp_measure_advance(pass, 4096, resultPtr) === 0) {
+      /* advance to completion */
+    }
+    wasm.dsp_measure_free(pass);
+
+    expect(wasm.dsp_engine_position(engine)).toBe(position);
+    wasm.dsp_engine_free(engine);
   });
 
   it("seeking moves the playhead", () => {

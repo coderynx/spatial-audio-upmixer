@@ -18,6 +18,8 @@ export type DspEngineCallbacks = {
   /** ~30 Hz playhead and level report. */
   onFrame?: (frame: DspMeterFrame) => void;
   onEnded?: () => void;
+  /** Fraction of the programme measured, while a measurement is in flight. */
+  onMeasureProgress?: (progress: number) => void;
   onError?: (message: string) => void;
 };
 
@@ -54,7 +56,7 @@ export class DspEngineClient {
   /** Resolves once the processor has instantiated the wasm. */
   readonly ready: Promise<string>;
 
-  private pendingMeasure: ((result: { lkfs: number; dbtp: number }) => void) | null = null;
+  private pendingMeasure: ((result: { lkfs: number; dbtp: number } | null) => void) | null = null;
 
   private constructor(
     node: AudioWorkletNode,
@@ -110,6 +112,9 @@ export class DspEngineClient {
             meters: (message.meters as number[]) ?? [],
           });
           break;
+        case "measuring":
+          callbacks.onMeasureProgress?.(Number(message.progress));
+          break;
         case "measured":
           client?.resolveMeasure({
             lkfs: Number(message.lkfs),
@@ -157,8 +162,13 @@ export class DspEngineClient {
   /**
    * Measure the whole collapsed programme. Resolves with real BS.1770
    * integrated loudness and true peak; the transport is left where it was.
+   *
+   * The pass is advanced in slices from the render callback, so this takes as
+   * long as the programme does to walk — minutes for a long track, faster
+   * while paused. Resolves with `null` if another measurement supersedes it.
    */
-  measure(weights: number[] = []): Promise<{ lkfs: number; dbtp: number }> {
+  measure(weights: number[] = []): Promise<{ lkfs: number; dbtp: number } | null> {
+    this.pendingMeasure?.(null);
     return new Promise((resolve) => {
       this.pendingMeasure = resolve;
       this.node.port.postMessage({ type: "measure", weights });
@@ -186,12 +196,14 @@ export class DspEngineClient {
   }
 
   /** Called from the port handler; not part of the public surface. */
-  resolveMeasure(result: { lkfs: number; dbtp: number }): void {
+  resolveMeasure(result: { lkfs: number; dbtp: number } | null): void {
     this.pendingMeasure?.(result);
     this.pendingMeasure = null;
   }
 
   dispose(): void {
+    this.pendingMeasure?.(null);
+    this.pendingMeasure = null;
     this.node.port.postMessage({ type: "dispose" });
     this.node.port.onmessage = null;
     this.node.disconnect();

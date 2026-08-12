@@ -35,11 +35,27 @@ const STEMS = 9;
 // cold and is reported but not budgeted — it is paid once per play or seek.
 const BUDGET = { mean: 0.4, p99: 1.0, worst: 1.5 };
 
+// A paused measurement is *meant* to spend the quantum the render is not
+// using, so only the overrun limits apply to it.
+const IDLE_BUDGET = { mean: 0.9, p99: 1.0, worst: 1.5 };
+
+// Must match MEASURE_FRAMES_IDLE in public/dsp.worklet.js.
+const MEASURE_FRAMES_IDLE = 384;
+
 const CASES = {
   binaural: { mode: "binaural", decode: true, label: "binaural (order-3 decode)" },
   transaural: { mode: "transaural", decode: true, label: "transaural" },
   native: { mode: "native", decode: false, label: "native 7.1.4 + limiter" },
   stereo: { mode: "stereo", decode: false, label: "stereo downmix" },
+  // A measurement advances only while paused, so its slice has the quantum
+  // to itself rather than sharing one with a render.
+  measuring: {
+    mode: "binaural",
+    decode: true,
+    measure: true,
+    budget: IDLE_BUDGET,
+    label: "measuring while paused",
+  },
 };
 
 function instantiate() {
@@ -102,7 +118,7 @@ function decodeBank() {
   return bank;
 }
 
-function run(label, mode, decodeTaps) {
+function run(label, mode, decodeTaps, measure = false) {
   const wasm = instantiate();
   const encoded = new TextEncoder().encode(JSON.stringify(params(mode, decodeTaps)));
   const ptr = wasm.dsp_alloc(encoded.length);
@@ -124,15 +140,39 @@ function run(label, mode, decodeTaps) {
     wasm.dsp_free(right, frames * 4);
   }
 
+  let pass = 0;
+  let weightPtr = 0;
+  let resultPtr = 0;
+  if (measure) {
+    weightPtr = wasm.dsp_alloc(16);
+    new Float64Array(wasm.memory.buffer, weightPtr, 2).set([1, 1]);
+    resultPtr = wasm.dsp_alloc(16);
+    pass = wasm.dsp_measure_begin(engine, weightPtr, 2);
+    if (!pass) throw new Error(`${label}: measurement could not start`);
+  }
+
   const out = wasm.dsp_alloc(CHANNELS.length * QUANTUM * 4);
   const times = [];
-  for (;;) {
-    const started = performance.now();
-    const written = wasm.dsp_engine_render(engine, out, CHANNELS.length, QUANTUM);
-    const elapsed = performance.now() - started;
-    if (written === 0) break;
-    times.push(elapsed);
+  if (pass) {
+    // Paused: the quantum does nothing but advance the measurement.
+    for (;;) {
+      const started = performance.now();
+      const done = wasm.dsp_measure_advance(pass, MEASURE_FRAMES_IDLE, resultPtr);
+      times.push(performance.now() - started);
+      if (done) break;
+    }
+  } else {
+    for (;;) {
+      const started = performance.now();
+      const written = wasm.dsp_engine_render(engine, out, CHANNELS.length, QUANTUM);
+      const elapsed = performance.now() - started;
+      if (written === 0) break;
+      times.push(elapsed);
+    }
   }
+  if (pass) wasm.dsp_measure_free(pass);
+  if (weightPtr) wasm.dsp_free(weightPtr, 16);
+  if (resultPtr) wasm.dsp_free(resultPtr, 16);
   wasm.dsp_free(out, CHANNELS.length * QUANTUM * 4);
   wasm.dsp_engine_free(engine);
 
@@ -154,19 +194,22 @@ function run(label, mode, decodeTaps) {
 // garbage collection, not the DSP.
 const requested = process.argv[2];
 if (requested) {
-  const { mode, decode, label } = CASES[requested];
-  process.stdout.write(JSON.stringify(run(label, mode, decode ? decodeBank() : [])));
+  const { mode, decode, label, measure } = CASES[requested];
+  process.stdout.write(
+    JSON.stringify(run(label, mode, decode ? decodeBank() : [], Boolean(measure))),
+  );
 } else {
   const self = fileURLToPath(import.meta.url);
   console.log(`deadline ${DEADLINE_MS.toFixed(2)} ms per ${QUANTUM}-frame quantum at ${SR} Hz\n`);
   let failed = false;
   for (const name of Object.keys(CASES)) {
     const r = JSON.parse(execFileSync(process.execPath, [self, name], { encoding: "utf8" }));
+    const budget = CASES[name].budget ?? BUDGET;
     const fraction = (ms) => `${(ms / DEADLINE_MS).toFixed(2)}x`;
     const bad =
-      r.mean / DEADLINE_MS > BUDGET.mean ||
-      r.p99 / DEADLINE_MS > BUDGET.p99 ||
-      r.worst / DEADLINE_MS > BUDGET.worst;
+      r.mean / DEADLINE_MS > budget.mean ||
+      r.p99 / DEADLINE_MS > budget.p99 ||
+      r.worst / DEADLINE_MS > budget.worst;
     failed = failed || bad;
     console.log(
       `${bad ? "FAIL" : "ok  "} ${r.label.padEnd(26)} ` +
@@ -177,7 +220,8 @@ if (requested) {
     );
   }
   console.log(
-    `\nbudget: mean <= ${BUDGET.mean}x, p99 <= ${BUDGET.p99}x, worst <= ${BUDGET.worst}x of the deadline`,
+    `\nbudget: mean <= ${BUDGET.mean}x, p99 <= ${BUDGET.p99}x, worst <= ${BUDGET.worst}x of the` +
+      ` deadline (a paused measurement may use ${IDLE_BUDGET.mean}x of the mean)`,
   );
   if (failed) {
     console.error("\nOver budget. The audio thread starves at these numbers, which is silence, not a glitch.");

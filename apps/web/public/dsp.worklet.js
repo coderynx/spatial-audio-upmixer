@@ -12,6 +12,17 @@
 
 const RENDER_QUANTUM = 128;
 
+// Frames of the measurement pass to advance per quantum while the transport
+// is idle. Measuring the whole programme costs ~0.12x realtime, so it cannot
+// happen in one call without starving the callback; it is spread across quanta
+// instead, using the budget the render is not using.
+//
+// It advances only while paused. Playing already spends most of the quantum,
+// and both the render and the measurement have periodic look-ahead strides
+// that overrun it when they land together. A pass is kept, not dropped, when
+// playback starts, so it resumes where it left off on the next pause.
+const MEASURE_FRAMES_IDLE = 384;
+
 class UpmixerDspProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -26,6 +37,9 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.playing = false;
     this.loop = false;
     this.reportCountdown = 0;
+    this.measurePass = 0;
+    this.measureOut = 0;
+    this.measureReport = 0;
 
     try {
       this.instance = new WebAssembly.Instance(module);
@@ -105,6 +119,8 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
   }
 
   setParams(encoded) {
+    // A pass in flight measures a forked copy of the engine being replaced.
+    this.endMeasure();
     const { ptr, bytes } = this.copyBytes(encoded);
     const engine = this.wasm.dsp_engine_new(sampleRate, ptr, bytes);
     this.wasm.dsp_free(ptr, bytes);
@@ -147,6 +163,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
   }
 
   dispose() {
+    this.endMeasure();
     if (this.engine) {
       this.wasm.dsp_engine_free(this.engine);
       this.engine = 0;
@@ -161,23 +178,63 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     }
   }
 
-  // Renders the whole programme offline to get real BS.1770 loudness and
-  // true peak, then rewinds — the correction gain a bounce would need,
-  // rather than an estimate from a few seconds of it.
+  // Start measuring the whole programme for real BS.1770 loudness and true
+  // peak — the correction gain a bounce would need, rather than an estimate
+  // from a few seconds of it. The pass runs on its own engine over the same
+  // stems, advanced from `process` so the transport keeps its playhead and the
+  // callback keeps its deadline.
   measure(weights) {
     if (!this.engine) return;
-    const weightBytes = Math.max(weights.length, 1) * 8;
+    this.endMeasure();
+    const count = Math.max(weights.length, 1);
+    const weightBytes = count * 8;
     const weightPtr = this.wasm.dsp_alloc(weightBytes);
-    new Float64Array(this.wasm.memory.buffer, weightPtr, Math.max(weights.length, 1)).set(
+    new Float64Array(this.wasm.memory.buffer, weightPtr, count).set(
       weights.length ? weights : [1],
     );
-    const outPtr = this.wasm.dsp_alloc(16);
-    this.wasm.dsp_engine_measure(this.engine, weightPtr, weights.length, outPtr);
-    const result = new Float64Array(this.wasm.memory.buffer, outPtr, 2);
-    const [lkfs, dbtp] = [result[0], result[1]];
+    this.measurePass = this.wasm.dsp_measure_begin(this.engine, weightPtr, weights.length);
     this.wasm.dsp_free(weightPtr, weightBytes);
-    this.wasm.dsp_free(outPtr, 16);
+    if (!this.measurePass) {
+      this.port.postMessage({ type: "error", message: "measurement could not start" });
+      return;
+    }
+    this.measureOut = this.wasm.dsp_alloc(16);
+    this.port.postMessage({ type: "measuring", progress: 0 });
+  }
+
+  advanceMeasure() {
+    if (!this.measurePass || this.playing) return;
+    const done = this.wasm.dsp_measure_advance(
+      this.measurePass,
+      MEASURE_FRAMES_IDLE,
+      this.measureOut,
+    );
+    if (!done) {
+      this.measureReport = (this.measureReport || 0) - 1;
+      if (this.measureReport <= 0) {
+        this.measureReport = 64;
+        this.port.postMessage({
+          type: "measuring",
+          progress: this.wasm.dsp_measure_progress(this.measurePass),
+        });
+      }
+      return;
+    }
+    const result = new Float64Array(this.wasm.memory.buffer, this.measureOut, 2);
+    const [lkfs, dbtp] = [result[0], result[1]];
+    this.endMeasure();
     this.port.postMessage({ type: "measured", lkfs, dbtp });
+  }
+
+  endMeasure() {
+    if (this.measurePass) {
+      this.wasm.dsp_measure_free(this.measurePass);
+      this.measurePass = 0;
+    }
+    if (this.measureOut) {
+      this.wasm.dsp_free(this.measureOut, 16);
+      this.measureOut = 0;
+    }
   }
 
   report() {
@@ -211,6 +268,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     const frames = output[0].length || RENDER_QUANTUM;
     if (!this.playing) {
       for (const channel of output) channel.fill(0);
+      this.advanceMeasure();
       return true;
     }
     this.ensureOutput(frames);

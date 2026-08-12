@@ -7,6 +7,8 @@
 //! until its full look-ahead exists, which is what lets both stages be the
 //! offline algorithm rather than a causal approximation of one.
 
+use std::sync::Arc;
+
 use super::master::{linked_rms, CausalChain, MonoMaker, StreamingLimiter, MONO_HORIZON_MS};
 use super::meters::{Level, Meters};
 use super::output::OutputStage;
@@ -21,6 +23,7 @@ const SEEK_PREROLL_MS: f64 = 500.0;
 /// Frames the mono-maker advances per call. Larger amortizes its zero-phase
 /// context further but raises the worst-case cost of a single render.
 const MONO_STRIDE: usize = 512;
+
 
 /// Decoded stereo PCM for one stem, as the host transfers it.
 pub struct StemSource {
@@ -67,7 +70,7 @@ impl Queue {
 pub struct PreviewEngine {
     sample_rate: u32,
     params: EngineParams,
-    stems: Vec<StemSource>,
+    stems: Vec<Arc<StemSource>>,
     routes: Vec<StemRouteState>,
     lfe_bus: LfeBus,
     causal: Vec<CausalChain>,
@@ -86,7 +89,7 @@ pub struct PreviewEngine {
 }
 
 impl PreviewEngine {
-    pub fn new(sample_rate: u32, params: EngineParams, stems: Vec<StemSource>) -> Self {
+    pub fn new(sample_rate: u32, params: EngineParams, stems: Vec<Arc<StemSource>>) -> Self {
         let n_channels = params.speakers.len();
         let routes = params
             .stems
@@ -141,7 +144,14 @@ impl PreviewEngine {
     /// Add a decoded stem, in the order its entry appears in `params.stems`.
     pub fn push_stem(&mut self, stem: StemSource) {
         self.total_frames = self.total_frames.max(stem.len());
-        self.stems.push(stem);
+        self.stems.push(Arc::new(stem));
+    }
+
+    /// A second engine over the same stems and parameters, at the top of the
+    /// programme. Used to measure without disturbing the live transport; the
+    /// stems are shared, not copied, so this costs filter state only.
+    pub fn fork(&self) -> Self {
+        Self::new(self.sample_rate, self.params.clone(), self.stems.clone())
     }
 
     pub fn total_frames(&self) -> usize {
