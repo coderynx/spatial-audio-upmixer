@@ -1,0 +1,28 @@
+{
+  "name": "crosstalk_xtc",
+  "params": {
+    "n": 12000,
+    "sample_rate": 48000,
+    "seed_phases": [
+      1.0,
+      4.0
+    ],
+    "scale": 0.5,
+    "n_taps": 1024
+  },
+  "tolerance": 1e-09,
+  "arrays": {
+    "taps": {
+      "file": "crosstalk_xtc.taps.f64",
+      "len": 4096
+    },
+    "left": {
+      "file": "crosstalk_xtc.left.f64",
+      "len": 12000
+    },
+    "right": {
+      "file": "crosstalk_xtc.right.f64",
+      "len": 12000
+    }
+  }
+}

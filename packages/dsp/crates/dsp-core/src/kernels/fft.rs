@@ -146,26 +146,26 @@ fn overlap_save(signal: &[f64], kernel: &[f64], out_len: usize) -> Vec<f64> {
     let fft = RealFft::new(n);
     let spectrum_k = fft.rfft(kernel);
 
+    // The signal reads as if zero-padded in both directions: the output runs
+    // past its end by the kernel's length, and each block also reaches back
+    // for the previous block's tail so the circular wrap lands entirely in
+    // the discarded head.
+    let sample = |i: i64| -> f64 {
+        if i < 0 || i as usize >= signal.len() {
+            0.0
+        } else {
+            signal[i as usize]
+        }
+    };
+
     let mut out = vec![0.0; out_len];
-    // Each block carries the previous block's trailing m-1 samples so the
-    // circular wrap lands entirely in the discarded head.
     let mut block = vec![0.0; n];
     let mut pos = 0usize;
     while pos < out_len {
-        block[..m - 1].fill(0.0);
-        if pos >= m - 1 {
-            let start = pos - (m - 1);
-            let avail = signal.len().saturating_sub(start).min(m - 1);
-            block[..avail].copy_from_slice(&signal[start..start + avail]);
-            block[avail..m - 1].fill(0.0);
-        } else {
-            let lead = m - 1 - pos;
-            let avail = signal.len().min(pos);
-            block[lead..lead + avail].copy_from_slice(&signal[..avail]);
+        let base = pos as i64 - (m as i64 - 1);
+        for (j, slot) in block.iter_mut().enumerate() {
+            *slot = sample(base + j as i64);
         }
-        let take = signal.len().saturating_sub(pos).min(hop);
-        block[m - 1..m - 1 + take].copy_from_slice(&signal[pos..pos + take]);
-        block[m - 1 + take..].fill(0.0);
 
         let spectrum: Vec<Complex64> = fft
             .rfft(&block)
@@ -215,8 +215,10 @@ mod tests {
 
     #[test]
     fn overlap_save_path_matches_the_single_transform_path() {
+        // A kernel long enough that the output runs more than one block past
+        // the end of the signal — the case that first broke this path.
         let signal: Vec<f64> = (0..20_000).map(|i| (i as f64 * 0.017).sin()).collect();
-        let kernel: Vec<f64> = (0..129).map(|i| (i as f64 * 0.09).cos() / (1.0 + i as f64)).collect();
+        let kernel: Vec<f64> = (0..2049).map(|i| (i as f64 * 0.09).cos() / (1.0 + i as f64)).collect();
         let got = fftconvolve(&signal, &kernel);
 
         let out_len = signal.len() + kernel.len() - 1;

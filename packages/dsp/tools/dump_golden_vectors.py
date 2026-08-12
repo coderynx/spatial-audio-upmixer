@@ -72,6 +72,14 @@ def dump_butter() -> None:
         )
 
 
+def dump_butter_bandpass() -> None:
+    for order, low, high in ((2, 0.05, 0.2), (2, 0.1234, 0.1466), (1, 0.01, 0.5),
+                             (3, 0.2, 0.35)):
+        sos = signal.butter(order, [low, high], btype="bandpass", output="sos")
+        write_case(f"butter_bp_{order}_{str(low).replace('.', 'p')}_{str(high).replace('.', 'p')}",
+                   {"order": order, "low": low, "high": high}, {"sos": sos}, 1e-14)
+
+
 def dump_sosfilt() -> None:
     x = deterministic_signal(4096)
     for order, wn, btype in ((2, 0.05, "low"), (4, 0.005, "low"), (2, 0.125, "high")):
@@ -355,12 +363,95 @@ def dump_match_reference() -> None:
                 "gains_db": np.array([g for _, g in curve])}, 1e-8)
 
 
+def dump_spatial() -> None:
+    from upmixer.binaural.ambisonics import encode_gains
+    from upmixer.binaural.decoder import decode_to_binaural, load_decode_filter_set
+    from upmixer.binaural.profiles import DECODE_FILTER_SET, VOICING_PARAMS
+    from upmixer.binaural.voicing import apply_voicing
+    from upmixer.crosstalk.filters import apply_xtc, load_xtc_filter_set
+    from upmixer.crosstalk.profiles import (
+        VOICING_PARAMS as CROSSTALK_VOICING, XTC_FILTER_SET,
+    )
+
+    directions = [(0.0, 0.0), (0.5236, 0.0), (-2.3562, 0.0), (0.7854, 0.5236),
+                  (0.0, 1.5708), (3.1416, -0.3)]
+    write_case("ambi_encode", {"directions": [list(d) for d in directions]},
+               {"gains": np.concatenate([encode_gains(a, e) for a, e in directions])}, 1e-14)
+
+    sr = MASTERING_SR
+    n = MASTERING_N
+    left = deterministic_signal(n, sr, seed_phase=1.0) * 0.5
+    right = deterministic_signal(n, sr, seed_phase=4.0) * 0.5
+
+    for profile, params in VOICING_PARAMS.items():
+        name = getattr(profile, "value", profile)
+        out_l, out_r = apply_voicing(left.copy(), right.copy(), sr, params)
+        write_case(
+            f"voicing_{name}",
+            {"n": n, "sample_rate": sr, "seed_phases": [1.0, 4.0], "scale": 0.5,
+             "crossfeed_amount": params.crossfeed_amount,
+             "crossfeed_cutoff_hz": params.crossfeed_cutoff_hz,
+             "bass_shelf_hz": params.bass_shelf_hz,
+             "bass_shelf_gain_db": params.bass_shelf_gain_db,
+             "air_shelf_hz": params.air_shelf_hz,
+             "air_shelf_gain_db": params.air_shelf_gain_db,
+             "presence_hz": params.presence_hz,
+             "presence_gain_db": params.presence_gain_db,
+             "presence_q": params.presence_q,
+             "stereo_widen": params.stereo_widen},
+            {"left": out_l, "right": out_r},
+            1e-11,
+        )
+
+    # Decode and XTC filters ship as WAV assets; the taps travel with the
+    # fixture so the Rust side tests the convolution, not the file loader.
+    studio = next(k for k in DECODE_FILTER_SET if getattr(k, "value", k) == "studio")
+    decode = load_decode_filter_set(DECODE_FILTER_SET[studio], sr)
+    hoa = np.stack([
+        deterministic_signal(n, sr, seed_phase=float(i)) * (0.1 + 0.02 * i)
+        for i in range(decode.taps.shape[0])
+    ])
+    dec_l, dec_r = decode_to_binaural(hoa, decode)
+    write_case("binaural_decode",
+               {"n": n, "sample_rate": sr, "n_acn": int(decode.taps.shape[0]),
+                "n_taps": int(decode.taps.shape[-1])},
+               {"taps": decode.taps, "left": dec_l, "right": dec_r}, 1e-9)
+
+    stereo_xtc = next(k for k in XTC_FILTER_SET if getattr(k, "value", k) == "stereo")
+    xtc = load_xtc_filter_set(XTC_FILTER_SET[stereo_xtc], sr)
+    xtc_l, xtc_r = apply_xtc(left.copy(), right.copy(), xtc)
+    write_case("crosstalk_xtc",
+               {"n": n, "sample_rate": sr, "seed_phases": [1.0, 4.0], "scale": 0.5,
+                "n_taps": int(xtc.taps.shape[-1])},
+               {"taps": xtc.taps, "left": xtc_l, "right": xtc_r}, 1e-9)
+
+    transaural = next(v for k, v in CROSSTALK_VOICING.items() if k.value == "stereo")
+    tv_l, tv_r = apply_voicing(left.copy(), right.copy(), sr, transaural)
+    write_case(
+        "voicing_transaural_stereo",
+        {"n": n, "sample_rate": sr, "seed_phases": [1.0, 4.0], "scale": 0.5,
+         "crossfeed_amount": transaural.crossfeed_amount,
+         "crossfeed_cutoff_hz": transaural.crossfeed_cutoff_hz,
+         "bass_shelf_hz": transaural.bass_shelf_hz,
+         "bass_shelf_gain_db": transaural.bass_shelf_gain_db,
+         "air_shelf_hz": transaural.air_shelf_hz,
+         "air_shelf_gain_db": transaural.air_shelf_gain_db,
+         "presence_hz": transaural.presence_hz,
+         "presence_gain_db": transaural.presence_gain_db,
+         "presence_q": transaural.presence_q,
+         "stereo_widen": transaural.stereo_widen},
+        {"left": tv_l, "right": tv_r},
+        1e-11,
+    )
+
+
 def main() -> int:
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
     for stale in GOLDEN_DIR.glob("*"):
         stale.unlink()
     dump_generator_parity()
     dump_butter()
+    dump_butter_bandpass()
     dump_sosfilt()
     dump_sosfiltfilt()
     dump_lfilter()
@@ -373,6 +464,7 @@ def main() -> int:
     dump_stft()
     dump_mastering()
     dump_match_reference()
+    dump_spatial()
     print(f"wrote fixtures to {GOLDEN_DIR}")
     return 0
 

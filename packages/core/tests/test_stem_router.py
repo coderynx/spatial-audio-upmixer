@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import sosfilt
+import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
@@ -135,7 +135,12 @@ def test_default_lfe_gain_is_applied_once():
 
     channels = router.route(stems, len(stems["Bass"]))
     stem_mono = stems["Bass"][:, 0]
-    expected = config.lfe_gain * sosfilt(router._lfe_sos, stem_mono)
+    expected = config.lfe_gain * upmixer_dsp.lowpass(
+        np.ascontiguousarray(stem_mono, dtype=np.float64),
+        48000,
+        config.lfe_cutoff_hz,
+        config.lfe_filter_order,
+    )
 
     np.testing.assert_allclose(channels["LFE"], expected)
 

@@ -1,0 +1,15 @@
+{
+  "name": "butter_bp_3_0p2_0p35",
+  "params": {
+    "order": 3,
+    "low": 0.2,
+    "high": 0.35
+  },
+  "tolerance": 1e-14,
+  "arrays": {
+    "sos": {
+      "file": "butter_bp_3_0p2_0p35.sos.f64",
+      "len": 18
+    }
+  }
+}

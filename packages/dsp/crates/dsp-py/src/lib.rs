@@ -7,6 +7,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
+mod binaural;
 mod loudness;
 mod mastering;
 mod reference;
@@ -30,6 +31,7 @@ fn dsp_core_version() -> &'static str {
 #[pymodule]
 fn upmixer_dsp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(dsp_core_version, m)?)?;
+    binaural::register(m)?;
     loudness::register(m)?;
     mastering::register(m)?;
     reference::register(m)?;

@@ -14,7 +14,8 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from scipy.signal import fftconvolve, resample_poly
+import upmixer_dsp
+from scipy.signal import resample_poly
 
 XTC_DIR = Path(__file__).parent / "xtc"
 
@@ -60,7 +61,9 @@ def apply_xtc(left: np.ndarray, right: np.ndarray, filter_set: XtcFilterSet) -> 
     what must be fed to the physical left/right speakers so that, after
     acoustic crosstalk, the intended ear signals arrive.
     """
-    n_samples = left.shape[0]
-    speaker_l = fftconvolve(left, filter_set.taps[0, 0]) + fftconvolve(right, filter_set.taps[0, 1])
-    speaker_r = fftconvolve(left, filter_set.taps[1, 0]) + fftconvolve(right, filter_set.taps[1, 1])
-    return speaker_l[:n_samples], speaker_r[:n_samples]
+    return upmixer_dsp.apply_xtc(
+        np.ascontiguousarray(left, dtype=np.float64),
+        np.ascontiguousarray(right, dtype=np.float64),
+        np.ascontiguousarray(filter_set.taps.reshape(-1), dtype=np.float64),
+        filter_set.taps.shape[-1],
+    )

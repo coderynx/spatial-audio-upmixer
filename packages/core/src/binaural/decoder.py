@@ -16,7 +16,8 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from scipy.signal import fftconvolve, resample_poly
+import upmixer_dsp
+from scipy.signal import resample_poly
 
 from upmixer.binaural.ambisonics import N_ACN_CHANNELS
 
@@ -77,14 +78,8 @@ def decode_to_binaural(hoa: np.ndarray, filter_set: DecodeFilterSet) -> tuple[np
     """Convolve a 16-channel HOA bus (16, n_samples) to stereo (L, R)."""
     if hoa.shape[0] != N_ACN_CHANNELS:
         raise ValueError(f"Expected {N_ACN_CHANNELS} HOA channels, got {hoa.shape[0]}")
-    n_samples = hoa.shape[1]
-    n_out = n_samples + filter_set.taps.shape[-1] - 1
-    left = np.zeros(n_out, dtype=np.float64)
-    right = np.zeros(n_out, dtype=np.float64)
-    for acn in range(N_ACN_CHANNELS):
-        channel = hoa[acn]
-        if not np.any(channel):
-            continue
-        left += fftconvolve(channel, filter_set.taps[acn, 0])
-        right += fftconvolve(channel, filter_set.taps[acn, 1])
-    return left[:n_samples], right[:n_samples]
+    return upmixer_dsp.decode_hoa_to_binaural(
+        [np.ascontiguousarray(hoa[acn], dtype=np.float64) for acn in range(N_ACN_CHANNELS)],
+        np.ascontiguousarray(filter_set.taps.reshape(-1), dtype=np.float64),
+        filter_set.taps.shape[-1],
+    )

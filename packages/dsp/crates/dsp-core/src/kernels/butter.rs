@@ -15,6 +15,38 @@ pub enum BandType {
     High,
 }
 
+/// `scipy.signal.butter(order, [low, high], btype="bandpass", output="sos")`.
+///
+/// The band-pass map doubles the pole count and leaves `order` zeros at the
+/// origin, which the bilinear transform sends to +1 while filling the
+/// remaining degree with zeros at −1.
+pub fn butter_bandpass_sos(order: usize, low_wn: f64, high_wn: f64) -> Vec<[f64; 6]> {
+    assert!(order >= 1, "filter order must be >= 1");
+    assert!(
+        0.0 < low_wn && low_wn < high_wn && high_wn < 1.0,
+        "band edges must satisfy 0 < low < high < Nyquist"
+    );
+
+    let warp = |wn: f64| 4.0 * (std::f64::consts::PI * wn / 2.0).tan();
+    let (w_lo, w_hi) = (warp(low_wn), warp(high_wn));
+    let bw = w_hi - w_lo;
+    let wo = (w_lo * w_hi).sqrt();
+
+    let proto = buttap(order);
+    let mut poles_a: Vec<Complex64> = Vec::with_capacity(2 * order);
+    for p in &proto {
+        let p_lp = p * (bw / 2.0);
+        let root = (p_lp * p_lp - Complex64::new(wo * wo, 0.0)).sqrt();
+        poles_a.push(p_lp + root);
+        poles_a.push(p_lp - root);
+    }
+    // `lp2bp_zpk` appends `degree` zeros at the origin, degree = len(p) - len(z).
+    let zeros_a: Vec<Complex64> = vec![Complex64::new(0.0, 0.0); order];
+    let gain_a = bw.powi(order as i32);
+
+    bilinear_to_sos(&poles_a, &zeros_a, gain_a)
+}
+
 /// Analog Butterworth prototype poles, `scipy.signal.buttap`.
 fn buttap(order: usize) -> Vec<Complex64> {
     let n = order as i64;
@@ -51,25 +83,28 @@ pub fn butter_sos(order: usize, wn: f64, band: BandType) -> Vec<[f64; 6]> {
         }
     };
 
-    // Bilinear transform at fs = 2 (so fs2 = 4). Low-pass has no analog
-    // zeros, high-pass has `order` zeros at the origin.
-    let fs2 = 4.0;
+    // Low-pass has no analog zeros; high-pass has `order` zeros at the origin.
     let zeros_a: Vec<Complex64> = match band {
         BandType::Low => Vec::new(),
         BandType::High => vec![Complex64::new(0.0, 0.0); order],
     };
-    let poles_z: Vec<Complex64> = poles_a
-        .iter()
-        .map(|p| (Complex64::new(fs2, 0.0) + p) / (Complex64::new(fs2, 0.0) - p))
-        .collect();
-    let mut zeros_z: Vec<Complex64> = zeros_a
-        .iter()
-        .map(|z| (Complex64::new(fs2, 0.0) + z) / (Complex64::new(fs2, 0.0) - z))
-        .collect();
-    let num_z: Complex64 = zeros_a.iter().map(|z| Complex64::new(fs2, 0.0) - z).product();
-    let den_z: Complex64 = poles_a.iter().map(|p| Complex64::new(fs2, 0.0) - p).product();
+    bilinear_to_sos(&poles_a, &zeros_a, gain_a)
+}
+
+/// `bilinear_zpk` at `fs = 2` followed by `zpk2sos`. The transform sends the
+/// remaining degree to zeros at −1, so every zero stays real.
+fn bilinear_to_sos(
+    poles_a: &[Complex64],
+    zeros_a: &[Complex64],
+    gain_a: f64,
+) -> Vec<[f64; 6]> {
+    let fs2 = Complex64::new(4.0, 0.0);
+    let poles_z: Vec<Complex64> = poles_a.iter().map(|p| (fs2 + p) / (fs2 - p)).collect();
+    let mut zeros_z: Vec<Complex64> = zeros_a.iter().map(|z| (fs2 + z) / (fs2 - z)).collect();
+    let num_z: Complex64 = zeros_a.iter().map(|z| fs2 - z).product();
+    let den_z: Complex64 = poles_a.iter().map(|p| fs2 - p).product();
     let gain_z = gain_a * (num_z / den_z).re;
-    zeros_z.resize(order, Complex64::new(-1.0, 0.0));
+    zeros_z.resize(poles_a.len(), Complex64::new(-1.0, 0.0));
 
     zpk2sos_real_zeros(&poles_z, &zeros_z, gain_z)
 }

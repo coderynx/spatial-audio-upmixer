@@ -10,10 +10,9 @@ Signal graph (matches the web preview 1:1 — see
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import butter, sosfilt
+import upmixer_dsp
 
-from upmixer.binaural.ambisonics import N_ACN_CHANNELS, encode_gains
-from upmixer.binaural.decoder import decode_to_binaural, load_decode_filter_set
+from upmixer.binaural.decoder import load_decode_filter_set
 from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION, positional_labels
 from upmixer.binaural.profiles import DECODE_FILTER_SET, VOICING_PARAMS, resolve_profile
 from upmixer.binaural.voicing import apply_voicing
@@ -24,8 +23,9 @@ from upmixer.utils import soft_limit
 
 
 def _lfe_lowpass(signal: np.ndarray, sample_rate: int, cutoff_hz: float, order: int) -> np.ndarray:
-    sos = butter(order, cutoff_hz / (sample_rate / 2.0), btype="low", output="sos")
-    return sosfilt(sos, signal)
+    return upmixer_dsp.lowpass(
+        np.ascontiguousarray(signal, dtype=np.float64), sample_rate, cutoff_hz, order
+    )
 
 
 def render_binaural(
@@ -59,17 +59,23 @@ def render_binaural(
     labels = positional_labels(list(bed_fmt.channels))
     n_samples = next((len(channels[label.value]) for label in labels if label.value in channels), 0)
 
-    hoa = np.zeros((N_ACN_CHANNELS, n_samples), dtype=np.float64)
+    feeds: list[np.ndarray] = []
+    directions: list[tuple[float, float]] = []
     for label in labels:
         signal = channels.get(label.value)
-        if signal is None or not np.any(signal):
+        if signal is None:
             continue
         position = SPEAKER_AZIMUTH_ELEVATION[label]
-        gains = encode_gains(position.azimuth_rad, position.elevation_rad)
-        hoa += np.outer(gains, signal[:n_samples])
+        feeds.append(np.ascontiguousarray(signal[:n_samples], dtype=np.float64))
+        directions.append((position.azimuth_rad, position.elevation_rad))
 
     filter_set = load_decode_filter_set(DECODE_FILTER_SET[resolved], sample_rate)
-    left, right = decode_to_binaural(hoa, filter_set)
+    left, right = upmixer_dsp.render_hoa_to_binaural(
+        feeds,
+        directions,
+        np.ascontiguousarray(filter_set.taps.reshape(-1), dtype=np.float64),
+        filter_set.taps.shape[-1],
+    )
 
     if ChannelLabel.LFE.value in channels:
         lfe = _lfe_lowpass(

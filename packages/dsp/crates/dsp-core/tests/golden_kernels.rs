@@ -41,6 +41,24 @@ fn butter_coefficients_match_scipy() {
 }
 
 #[test]
+fn butter_bandpass_coefficients_match_scipy() {
+    for name in [
+        "butter_bp_2_0p05_0p2",
+        "butter_bp_2_0p1234_0p1466",
+        "butter_bp_1_0p01_0p5",
+        "butter_bp_3_0p2_0p35",
+    ] {
+        let c = Case::load(name);
+        let got = upmixer_dsp_core::kernels::butter::butter_bandpass_sos(
+            c.param_usize("order"),
+            c.param_f64("low"),
+            c.param_f64("high"),
+        );
+        c.assert_close(&flatten(&got), &c.array("sos"), "bandpass sos");
+    }
+}
+
+#[test]
 fn sosfilt_matches_scipy() {
     for name in ["sosfilt_2_low_0p05", "sosfilt_4_low_0p005", "sosfilt_2_high_0p125"] {
         let c = Case::load(name);

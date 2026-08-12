@@ -36,7 +36,7 @@ Channel assignment within each zone:
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import butter, sosfilt
+import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, OutputFormat
@@ -425,31 +425,7 @@ class StemRouter:
         self._stem_enabled = config.stem_enabled or {}
         self._stem_solo = set(config.stem_solo or [])
         self._sr = sample_rate
-        self._lfe_sos = butter(
-            config.lfe_filter_order,
-            config.lfe_cutoff_hz / (sample_rate / 2.0),
-            btype="low",
-            output="sos",
-        )
         self._lfe_gain = config.lfe_gain
-        self._surround_sos = butter(
-            2,
-            config.surround_bass_cutoff_hz / (sample_rate / 2.0),
-            btype="high",
-            output="sos",
-        )
-        self._height_low_sos = butter(
-            1,
-            config.height_low_rolloff_hz / (sample_rate / 2.0),
-            btype="low",
-            output="sos",
-        )
-        self._height_high_sos = butter(
-            2,
-            config.height_crossover_hz / (sample_rate / 2.0),
-            btype="high",
-            output="sos",
-        )
 
     def _routing_for(self, stem_key: str) -> dict[str, float] | None:
         if "@" in stem_key:
@@ -499,10 +475,22 @@ class StemRouter:
         return 1.0
 
     def _height_send(self, signal: np.ndarray) -> np.ndarray:
-        low = sosfilt(self._height_low_sos, signal)
-        shaped = signal - low * (1.0 - self._config.height_low_rolloff_gain)
-        high = sosfilt(self._height_high_sos, shaped)
-        return shaped + high * (self._config.height_high_shelf_gain - 1.0)
+        return upmixer_dsp.elevation_eq(
+            np.ascontiguousarray(signal, dtype=np.float64),
+            self._sr,
+            self._config.height_low_rolloff_hz,
+            self._config.height_low_rolloff_gain,
+            self._config.height_crossover_hz,
+            self._config.height_high_shelf_gain,
+        )
+
+    def _surround_send(self, signal: np.ndarray) -> np.ndarray:
+        return upmixer_dsp.highpass(
+            np.ascontiguousarray(signal, dtype=np.float64),
+            self._sr,
+            self._config.surround_bass_cutoff_hz,
+            2,
+        )
 
     def route(
         self,
@@ -548,11 +536,11 @@ class StemRouter:
                 for label in self._fmt.channels
             )
             surround_L = (
-                diffuse_send(sosfilt(self._surround_sos, stem_L), self._sr, delay_ms=SURROUND_HAAS_DELAY_MS_L)
+                diffuse_send(self._surround_send(stem_L), self._sr, delay_ms=SURROUND_HAAS_DELAY_MS_L)
                 if needs_surround else stem_L
             )
             surround_R = (
-                diffuse_send(sosfilt(self._surround_sos, stem_R), self._sr, delay_ms=SURROUND_HAAS_DELAY_MS_R)
+                diffuse_send(self._surround_send(stem_R), self._sr, delay_ms=SURROUND_HAAS_DELAY_MS_R)
                 if needs_surround else stem_R
             )
             height_L = (
@@ -603,7 +591,12 @@ class StemRouter:
                 channels[label.value][:n] += route_scale * gain * signal
 
         if "LFE" in channels:
-            channels["LFE"] += self._lfe_gain * sosfilt(self._lfe_sos, lfe_bus)
+            channels["LFE"] += self._lfe_gain * upmixer_dsp.lowpass(
+                np.ascontiguousarray(lfe_bus, dtype=np.float64),
+                self._sr,
+                self._config.lfe_cutoff_hz,
+                self._config.lfe_filter_order,
+            )
 
         return channels
 
