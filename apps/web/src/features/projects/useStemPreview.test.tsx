@@ -17,6 +17,9 @@ const transportCalls: { playing?: boolean; loop?: boolean }[] = [];
 const seekCalls: number[] = [];
 const addedStems: number[] = [];
 const measureCalls: number[] = [];
+// Order matters, not just counts: a measurement forks the engine as it stands,
+// so the profile's filter set has to be in it first.
+const callOrder: string[] = [];
 let capturedCallbacks: Record<string, ((...args: never[]) => void) | undefined> = {};
 // Lets a test hold `measure()` open to assert playback stays gated while
 // calibration is still in flight; null (the default) resolves immediately.
@@ -36,9 +39,12 @@ vi.mock("./wasmEngine/engineClient", () => ({
         seek: (frame: number) => seekCalls.push(frame),
         measure: async () => {
           measureCalls.push(measureCalls.length);
+          callOrder.push("measure");
           if (measureGate) await measureGate;
           return measureResult;
         },
+        setDecodeTaps: () => callOrder.push("decodeTaps"),
+        setXtcTaps: () => callOrder.push("xtcTaps"),
         addStem: (left: Float32Array) => addedStems.push(left.length),
         dispose: () => {},
       };
@@ -118,6 +124,7 @@ beforeEach(() => {
   seekCalls.length = 0;
   addedStems.length = 0;
   measureCalls.length = 0;
+  callOrder.length = 0;
   measureGate = null;
   measureResult = { lkfs: -18, dbtp: -2 };
   (window as unknown as { AudioContext: unknown }).AudioContext = FakeAudioContext;
@@ -308,6 +315,36 @@ describe("useStemPreview loudness calibration", () => {
     expect(measureCalls).toHaveLength(2);
   });
 
+  it("loads the new profile's decode filter set before it re-measures", async () => {
+    const result = await renderPreview({ spatialProfile: "studio" });
+    callOrder.length = 0;
+
+    await act(async () => {
+      result.rerender(<Harness spatialProfile="listening" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Measuring first would calibrate "listening" against the decode bank
+    // "studio" left in the engine.
+    expect(callOrder.indexOf("decodeTaps")).toBeGreaterThanOrEqual(0);
+    expect(callOrder.indexOf("decodeTaps")).toBeLessThan(callOrder.indexOf("measure"));
+  });
+
+  it("loads the new XTC filter set before it re-measures", async () => {
+    const result = await renderPreview({ outputMode: "transaural", transauralProfile: "stereo" });
+    callOrder.length = 0;
+
+    await act(async () => {
+      result.rerender(<Harness outputMode="transaural" transauralProfile="car" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(callOrder.indexOf("xtcTaps")).toBeGreaterThanOrEqual(0);
+    expect(callOrder.indexOf("xtcTaps")).toBeLessThan(callOrder.indexOf("measure"));
+  });
+
   it("re-measures when the transaural profile changes", async () => {
     const result = await renderPreview({ outputMode: "transaural", transauralProfile: "stereo" });
     expect(measureCalls).toHaveLength(1);
@@ -339,6 +376,48 @@ describe("useStemPreview loudness calibration", () => {
 
     expect(binauralGain).toBeCloseTo(nativeGain, 6);
     expect(20 * Math.log10(nativeGain)).toBeCloseTo(22, 6);
+  });
+
+  it("recalibrates when the profile switches back while a measurement is in flight", async () => {
+    const result = await renderPreview({ spatialProfile: "studio" });
+    expect(measureCalls).toHaveLength(1);
+
+    let resolveGate: () => void = () => {};
+    measureGate = new Promise((resolve) => {
+      resolveGate = resolve;
+    });
+
+    const rerender = async (profile: string) => {
+      await act(async () => {
+        result.rerender(<Harness spatialProfile={profile} />);
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+
+    await rerender("listening");
+    expect(measureCalls).toHaveLength(2);
+
+    // "studio" is what `measuredForMode` still names, but the pass in flight
+    // is about to replace that measurement with "listening"'s — so going back
+    // has to measure again rather than claim it is already calibrated.
+    await rerender("studio");
+    expect(measureCalls).toHaveLength(3);
+
+    await act(async () => {
+      resolveGate();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      playPause: () => Promise<void>;
+    };
+    await act(async () => {
+      await preview.playPause();
+    });
+    expect(transportCalls.at(-1)).toMatchObject({ playing: true });
   });
 
   it("blocks playback until the in-flight measurement resolves, then allows it", async () => {

@@ -28,6 +28,7 @@ type DspExports = {
   dsp_engine_position: (engine: number) => number;
   dsp_engine_output_channels: (engine: number) => number;
   dsp_engine_meters: (engine: number, out: number, capacity: number) => number;
+  dsp_engine_stem_spectrum: (engine: number, out: number, capacity: number) => number;
   dsp_measure_begin: (engine: number, weights: number, channels: number) => number;
   dsp_measure_begin_excerpts: (
     engine: number,

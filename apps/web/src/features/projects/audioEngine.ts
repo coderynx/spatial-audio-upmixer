@@ -307,23 +307,37 @@ export class PreviewAudioEngine {
     void this.measureIfNeeded();
   }
 
-  retuneVoicing(profile: SpatialProfile) {
+  /**
+   * The filter set has to reach the engine *before* the measurement starts:
+   * a pass forks the engine as it is when the message lands, so measuring
+   * across a still-pending tap fetch calibrates the new profile's gain
+   * against the previous profile's decode bank — and how much it is off by
+   * depends on which profile was loaded before, and on whether the fetch won
+   * the race.
+   */
+  async retuneVoicing(profile: SpatialProfile) {
     this.spatialProfile = profile;
     this.apply();
-    void this.measureIfNeeded();
+    await this.loadDecodeFilterSet(profile);
+    await this.measureIfNeeded();
   }
 
-  retuneCrosstalkVoicing(profile: TransauralProfile) {
+  async retuneCrosstalkVoicing(profile: TransauralProfile) {
     this.transauralProfile = profile;
     this.apply();
-    void this.measureIfNeeded();
+    await this.loadXtcFilterSet(profile);
+    await this.measureIfNeeded();
   }
 
   async loadDecodeFilterSet(profile: SpatialProfile): Promise<boolean> {
     if (!this.context || !this.constants) return false;
     if (this.loadedDecodeProfile === profile && this.decodeTaps) return true;
     try {
-      this.decodeTaps = await loadDecodeTaps(this.context, this.constants.decodeFilterSet[profile]);
+      const taps = await loadDecodeTaps(this.context, this.constants.decodeFilterSet[profile]);
+      // Two switches in quick succession race here: the slower fetch must not
+      // be the one that lands in the engine.
+      if (profile !== this.spatialProfile) return false;
+      this.decodeTaps = taps;
       this.loadedDecodeProfile = profile;
       // A slice, not the cached field itself: `setDecodeTaps` transfers its
       // argument's buffer, which would detach `this.decodeTaps` and break
@@ -339,7 +353,9 @@ export class PreviewAudioEngine {
     if (!this.context || !this.constants) return false;
     if (this.loadedXtcProfile === profile && this.xtcTaps) return true;
     try {
-      this.xtcTaps = await loadXtcTaps(this.context, this.constants.xtcFilterSet[profile]);
+      const taps = await loadXtcTaps(this.context, this.constants.xtcFilterSet[profile]);
+      if (profile !== this.transauralProfile) return false;
+      this.xtcTaps = taps;
       this.loadedXtcProfile = profile;
       this.client?.setXtcTaps(this.xtcTaps.slice());
       return true;
@@ -525,7 +541,12 @@ export class PreviewAudioEngine {
   private async measureIfNeeded() {
     if (!this.client) return;
     const key = this.measureKey();
-    if (this.measuredForMode === key) return;
+    // While a pass is in flight (`measuringRaw`), `measuredForMode` still
+    // names the mode being replaced — switching back to it is not "already
+    // calibrated", because the pass in flight is about to overwrite the one
+    // measurement both modes share.
+    const covered = this.measuringRaw ? this.exactMeasureKey : this.measuredForMode;
+    if (covered === key) return;
 
     if (this.playing) this.pause();
     const token = ++this.measureToken;
@@ -581,7 +602,10 @@ export class PreviewAudioEngine {
         onEnded: () => this.onEnded(),
         onMeasureProgress: (progress) => this.callbacks.onMeasureProgress(progress),
         onMeasured: (result) => {
-          if (!this.exactMeasureKey) return;
+          // `measuringRaw` means a newer fast pass is in flight, so this
+          // refinement was posted for the mode/profile that pass replaced —
+          // the worklet dropped it, but its result was already on the wire.
+          if (!this.exactMeasureKey || this.measuringRaw) return;
           this.measuredLkfs = result.lkfs;
           this.measuredTpDbtp = result.dbtp;
           this.measuredForMode = this.exactMeasureKey;

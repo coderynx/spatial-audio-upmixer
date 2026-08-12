@@ -202,34 +202,24 @@ export function useStemPreview(
     await engine.setOutputSink(deviceId);
   }, [engine]);
 
-  const loadDecodeFilterSet = React.useCallback((profile: SpatialProfile) => engine.loadDecodeFilterSet(profile), [engine]);
-  const loadXtcFilterSet = React.useCallback((profile: TransauralProfile) => engine.loadXtcFilterSet(profile), [engine]);
-
   React.useEffect(() => {
     if (!constants) return;
     engine.apply();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
   }, [mix, scene.stems, mastering, constants]);
 
-  // Profile switch: retune the already-built voicing chain immediately
-  // (cheap, no graph rebuild), and swap in the new profile's decode filter
-  // set in the background.
+  // Profile switch: retune the already-built voicing chain (cheap, no graph
+  // rebuild), swap in the new profile's decode filter set, then recalibrate.
   React.useEffect(() => {
     if (!constants) return;
-    engine.retuneVoicing(spatialProfile);
-    engine.apply();
-    void engine.loadDecodeFilterSet(spatialProfile);
+    void engine.retuneVoicing(spatialProfile);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
   }, [spatialProfile, ready, constants]);
 
-  // Transaural profile switch: same pattern as the binaural effect above —
-  // retune the already-built crosstalk voicing chain immediately, swap in
-  // the new profile's XTC filter set in the background.
+  // Transaural profile switch: same pattern as the binaural effect above.
   React.useEffect(() => {
     if (!constants) return;
-    engine.retuneCrosstalkVoicing(transauralProfile);
-    engine.apply();
-    void engine.loadXtcFilterSet(transauralProfile);
+    void engine.retuneCrosstalkVoicing(transauralProfile);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
   }, [transauralProfile, ready, constants]);
 
@@ -290,8 +280,6 @@ export function useStemPreview(
     currentTimeRef: engine.currentTimeRef,
     speakerEnabled,
     toggleSpeaker,
-    loadDecodeFilterSet,
-    loadXtcFilterSet,
     maxChannels,
     nativeSupported: layoutChannels.length > 0 && layoutChannels.length <= maxChannels,
     outputDevices,

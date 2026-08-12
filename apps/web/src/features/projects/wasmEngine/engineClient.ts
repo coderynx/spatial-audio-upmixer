@@ -156,6 +156,8 @@ export class DspEngineClient {
 
   /** Create the engine. Stems must be added afterwards. */
   setParams(params: DspEngineParams): void {
+    // Supersedes any coalesced update: this block builds a fresh engine.
+    this.pendingUpdate = null;
     const bytes = encodeParams(params);
     this.node.port.postMessage({ type: "params", bytes }, [bytes.buffer]);
   }
@@ -176,16 +178,32 @@ export class DspEngineClient {
     this.updateScheduled = true;
     requestAnimationFrame(() => {
       this.updateScheduled = false;
-      const latest = this.pendingUpdate;
-      this.pendingUpdate = null;
-      if (!latest || this.disposed) return;
-      const bytes = encodeParams(latest);
-      this.node.port.postMessage({ type: "update", bytes }, [bytes.buffer]);
+      this.flushParams();
     });
   }
 
+  private flushParams(): void {
+    const latest = this.pendingUpdate;
+    this.pendingUpdate = null;
+    if (!latest || this.disposed) return;
+    const bytes = encodeParams(latest);
+    this.node.port.postMessage({ type: "update", bytes }, [bytes.buffer]);
+  }
+
+  /**
+   * Post anything that is not a coalesced parameter update, sending the
+   * pending block first. The worklet acts on whatever parameters are in the
+   * engine the moment a message lands — a measurement forks it right there,
+   * and the transport starts rendering with it — so a message that overtook
+   * the frame's update would act on the previous mix.
+   */
+  private post(message: Record<string, unknown>, transfer: Transferable[] = []): void {
+    this.flushParams();
+    this.node.port.postMessage(message, transfer);
+  }
+
   setTransport(state: { playing?: boolean; loop?: boolean }): void {
-    this.node.port.postMessage({ type: "transport", ...state });
+    this.post({ type: "transport", ...state });
   }
 
   /**
@@ -202,12 +220,12 @@ export class DspEngineClient {
     this.pendingMeasure?.(null);
     return new Promise((resolve) => {
       this.pendingMeasure = resolve;
-      this.node.port.postMessage({ type: "measure", weights });
+      this.post({ type: "measure", weights });
     });
   }
 
   seek(frame: number): void {
-    this.node.port.postMessage({ type: "seek", frame: Math.max(0, Math.round(frame)) });
+    this.post({ type: "seek", frame: Math.max(0, Math.round(frame)) });
   }
 
   /**
@@ -216,7 +234,7 @@ export class DspEngineClient {
    * memory a multi-stem project needs.
    */
   addStem(left: Float32Array, right: Float32Array): void {
-    this.node.port.postMessage({ type: "stem", left, right }, [
+    this.post({ type: "stem", left, right }, [
       left.buffer as ArrayBuffer,
       right.buffer as ArrayBuffer,
     ]);
@@ -235,16 +253,16 @@ export class DspEngineClient {
    * pass a copy here, not the cached array itself.
    */
   setDecodeTaps(taps: Float64Array): void {
-    this.node.port.postMessage({ type: "decodeTaps", taps }, [taps.buffer as ArrayBuffer]);
+    this.post({ type: "decodeTaps", taps }, [taps.buffer as ArrayBuffer]);
   }
 
   /** Replace the crosstalk-cancellation matrix. See `setDecodeTaps`. */
   setXtcTaps(taps: Float64Array): void {
-    this.node.port.postMessage({ type: "xtcTaps", taps }, [taps.buffer as ArrayBuffer]);
+    this.post({ type: "xtcTaps", taps }, [taps.buffer as ArrayBuffer]);
   }
 
   rewind(): void {
-    this.node.port.postMessage({ type: "rewind" });
+    this.post({ type: "rewind" });
   }
 
   /** Called from the port handler; not part of the public surface. */
