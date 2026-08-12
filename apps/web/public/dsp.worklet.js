@@ -59,11 +59,18 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     return { ptr, bytes };
   }
 
+  copyBytes(values) {
+    const bytes = values.length;
+    const ptr = this.wasm.dsp_alloc(bytes);
+    new Uint8Array(this.wasm.memory.buffer, ptr, bytes).set(values);
+    return { ptr, bytes };
+  }
+
   handle(message) {
     if (!this.wasm) return;
     switch (message.type) {
       case "params":
-        this.setParams(message.json);
+        this.setParams(message.bytes);
         break;
       case "stem":
         this.addStem(message.left, message.right);
@@ -73,7 +80,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
         this.ended = false;
         break;
       case "update":
-        this.updateParams(message.json);
+        this.updateParams(message.bytes);
         break;
       case "transport":
         if (message.playing !== undefined) this.playing = Boolean(message.playing);
@@ -97,12 +104,10 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     }
   }
 
-  setParams(json) {
-    const encoded = new TextEncoder().encode(json);
-    const ptr = this.wasm.dsp_alloc(encoded.length);
-    new Uint8Array(this.wasm.memory.buffer, ptr, encoded.length).set(encoded);
-    const engine = this.wasm.dsp_engine_new(sampleRate, ptr, encoded.length);
-    this.wasm.dsp_free(ptr, encoded.length);
+  setParams(encoded) {
+    const { ptr, bytes } = this.copyBytes(encoded);
+    const engine = this.wasm.dsp_engine_new(sampleRate, ptr, bytes);
+    this.wasm.dsp_free(ptr, bytes);
 
     if (!engine) {
       this.port.postMessage({ type: "error", message: "engine parameters rejected" });
@@ -116,13 +121,11 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
   // Replacing the parameter block keeps the loaded stems and the playhead,
   // so mute, solo, rebalance, routing, mastering and output-mode changes all
   // take effect without a reload.
-  updateParams(json) {
+  updateParams(encoded) {
     if (!this.engine) return;
-    const encoded = new TextEncoder().encode(json);
-    const ptr = this.wasm.dsp_alloc(encoded.length);
-    new Uint8Array(this.wasm.memory.buffer, ptr, encoded.length).set(encoded);
-    const ok = this.wasm.dsp_engine_set_params(this.engine, ptr, encoded.length);
-    this.wasm.dsp_free(ptr, encoded.length);
+    const { ptr, bytes } = this.copyBytes(encoded);
+    const ok = this.wasm.dsp_engine_set_params(this.engine, ptr, bytes);
+    this.wasm.dsp_free(ptr, bytes);
     if (!ok) {
       this.port.postMessage({ type: "error", message: "engine parameters rejected" });
       return;

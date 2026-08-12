@@ -27,6 +27,14 @@ const PROCESSOR_NAME = "upmixer-dsp-processor";
 
 let modulePromise: Promise<WebAssembly.Module> | null = null;
 
+// An AudioWorkletGlobalScope has no TextEncoder, so the parameter block is
+// encoded here and the bytes are transferred.
+const PARAM_ENCODER = new TextEncoder();
+
+function encodeParams(params: DspEngineParams): Uint8Array {
+  return PARAM_ENCODER.encode(JSON.stringify(params));
+}
+
 /** Compile once per page; the Module is structured-cloneable and reusable. */
 export function loadDspModule(): Promise<WebAssembly.Module> {
   if (!modulePromise) {
@@ -128,7 +136,8 @@ export class DspEngineClient {
 
   /** Create the engine. Stems must be added afterwards. */
   setParams(params: DspEngineParams): void {
-    this.node.port.postMessage({ type: "params", json: JSON.stringify(params) });
+    const bytes = encodeParams(params);
+    this.node.port.postMessage({ type: "params", bytes }, [bytes.buffer]);
   }
 
   /**
@@ -137,7 +146,8 @@ export class DspEngineClient {
    * solo, rebalance, routing, mastering, or the output mode.
    */
   updateParams(params: DspEngineParams): void {
-    this.node.port.postMessage({ type: "update", json: JSON.stringify(params) });
+    const bytes = encodeParams(params);
+    this.node.port.postMessage({ type: "update", bytes }, [bytes.buffer]);
   }
 
   setTransport(state: { playing?: boolean; loop?: boolean }): void {
