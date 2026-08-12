@@ -7,4 +7,8 @@
 //! bounded approximation of it.
 
 pub mod conv;
+pub mod engine;
+pub mod master;
+pub mod params;
+pub mod routing;
 pub mod state;

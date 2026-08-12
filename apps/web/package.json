@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:wasm": "cargo build --release --target wasm32-unknown-unknown --manifest-path ../../packages/dsp/crates/dsp-wasm/Cargo.toml && mkdir -p public/wasm && cp ../../packages/dsp/target/wasm32-unknown-unknown/release/upmixer_dsp_wasm.wasm public/wasm/upmixer_dsp.wasm",
     "lint": "eslint .",
     "test": "vitest run",
     "format": "prettier --write src vite.config.ts eslint.config.js package.json",

@@ -10,6 +10,8 @@ use std::alloc::{alloc, dealloc, Layout};
 use serde::Deserialize;
 use upmixer_dsp_core::loudness;
 use upmixer_dsp_core::mastering::{bass, compressor, limiter};
+use upmixer_dsp_core::stream::engine::{PreviewEngine, StemSource};
+use upmixer_dsp_core::stream::params::EngineParams;
 
 /// Mastering parameters as the host sends them. Every value is owned by
 /// `packages/core/src/config.py` and the profile tables and is served to the
@@ -148,6 +150,100 @@ pub unsafe extern "C" fn dsp_true_peak_dbtp(
         .map(|i| &flat[i * n_frames..(i + 1) * n_frames])
         .collect();
     loudness::measure_true_peak(&refs)
+}
+
+/// Create a preview engine from a JSON parameter block.
+///
+/// Returns null if the JSON does not parse. Stems are added separately, in
+/// the order their entries appear in `params.stems`.
+///
+/// # Safety
+/// `params_ptr`/`params_len` must address a UTF-8 JSON object.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_new(
+    sample_rate: u32,
+    params_ptr: *const u8,
+    params_len: usize,
+) -> *mut PreviewEngine {
+    let json = std::slice::from_raw_parts(params_ptr, params_len);
+    let Ok(params) = serde_json::from_slice::<EngineParams>(json) else {
+        return std::ptr::null_mut();
+    };
+    Box::into_raw(Box::new(PreviewEngine::new(sample_rate, params, Vec::new())))
+}
+
+/// Copy one stem's decoded PCM into the engine's heap.
+///
+/// # Safety
+/// `left` and `right` must each address `n_frames` readable f32 samples, and
+/// `engine` must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_add_stem(
+    engine: *mut PreviewEngine,
+    left: *const f32,
+    right: *const f32,
+    n_frames: usize,
+) {
+    let Some(engine) = engine.as_mut() else { return };
+    engine.push_stem(StemSource {
+        left: std::slice::from_raw_parts(left, n_frames).to_vec(),
+        right: std::slice::from_raw_parts(right, n_frames).to_vec(),
+    });
+}
+
+/// Render `n_frames` into `out`, channel-major, as f32 for Web Audio.
+///
+/// Returns the number of frames written; a short count means the programme
+/// ended.
+///
+/// # Safety
+/// `out` must address `n_channels * n_frames` writable f32 samples.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_render(
+    engine: *mut PreviewEngine,
+    out: *mut f32,
+    n_channels: usize,
+    n_frames: usize,
+) -> usize {
+    let Some(engine) = engine.as_mut() else { return 0 };
+    let mut scratch = vec![0.0_f64; n_channels * n_frames];
+    let written = engine.render(&mut scratch, n_frames);
+    let dst = std::slice::from_raw_parts_mut(out, n_channels * n_frames);
+    for (d, s) in dst.iter_mut().zip(scratch.iter()) {
+        *d = *s as f32;
+    }
+    written
+}
+
+/// Total frames the loaded stems span.
+///
+/// # Safety
+/// `engine` must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_total_frames(engine: *const PreviewEngine) -> usize {
+    engine.as_ref().map(|e| e.total_frames()).unwrap_or(0)
+}
+
+/// Reset the transport and every filter state to the top of the programme.
+///
+/// # Safety
+/// `engine` must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_rewind(engine: *mut PreviewEngine) {
+    if let Some(engine) = engine.as_mut() {
+        engine.rewind();
+    }
+}
+
+/// Destroy an engine created by [`dsp_engine_new`].
+///
+/// # Safety
+/// `engine` must come from [`dsp_engine_new`] and not be used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_free(engine: *mut PreviewEngine) {
+    if !engine.is_null() {
+        drop(Box::from_raw(engine));
+    }
 }
 
 /// Core revision, encoded so the host can assert wheel/wasm provenance.
