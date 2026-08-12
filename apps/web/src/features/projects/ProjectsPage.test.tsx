@@ -17,6 +17,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     progress_log: [],
     manifest: { mixing: { channel_layout: "7.1.4" } },
     scene: {},
+    view_state: {},
     requested_stems: ["Vocals"],
     prepared_stems: ["Vocals"],
     stem_generation: 1,

@@ -114,6 +114,75 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
         assert expanded.json()["requested_stems"] == ["Vocals", "Kick", "Bass"]
 
 
+def test_project_view_state_persists_independently_of_settings(tmp_path, monkeypatch):
+    """Timeline/monitoring preferences (stem order, listening profile, master
+    volume, A/B bypass, haze/elevation intensity) round-trip through their own
+    endpoint without disturbing the manifest-owned `revision`/`prepared_stems`
+    state that `/settings` guards — see `update_project_view_state`."""
+    settings = Settings(
+        data_dir=tmp_path,
+        database_url=f"sqlite:///{tmp_path / 'view_state.db'}",
+        worker_count=1,
+    )
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    with TestClient(create_app(settings)) as client:
+        created = client.post("/api/v1/projects", json={
+            "name": "View state project",
+            "manifest": {"version": "1.0.0", "engine": {"mode": "realtime", "stems": []}},
+        })
+        assert created.status_code == 201
+        project = created.json()
+        assert project["view_state"] == {}
+        revision_before = project["revision"]
+
+        view_state = {
+            "stem_order": ["Drums", "Bass", "Vocals"],
+            "output_mode": "transaural",
+            "spatial_profile": "listening",
+            "transaural_profile": "car",
+            "master_volume": 0.75,
+            "mastering_bypassed": True,
+            "haze_intensity": 0.9,
+            "elevation_intensity": 0.1,
+        }
+        saved = client.put(f"/api/v1/projects/{project['id']}/view-state", json=view_state)
+        assert saved.status_code == 204
+
+        fetched = client.get(f"/api/v1/projects/{project['id']}").json()
+        assert fetched["view_state"] == view_state
+        assert fetched["revision"] == revision_before
+        assert fetched["prepared_stems"] == project["prepared_stems"]
+
+        settings_saved = client.put(f"/api/v1/projects/{project['id']}/settings", json={
+            "manifest": project["manifest"],
+        })
+        assert settings_saved.status_code == 200
+        assert settings_saved.json()["view_state"] == view_state
+
+
+def test_project_view_state_rejects_out_of_range_values(tmp_path, monkeypatch):
+    settings = Settings(
+        data_dir=tmp_path,
+        database_url=f"sqlite:///{tmp_path / 'view_state_invalid.db'}",
+        worker_count=1,
+    )
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    with TestClient(create_app(settings)) as client:
+        created = client.post("/api/v1/projects", json={
+            "name": "Invalid view state project",
+            "manifest": {"version": "1.0.0", "engine": {"mode": "realtime", "stems": []}},
+        })
+        project_id = created.json()["id"]
+
+        response = client.put(f"/api/v1/projects/{project_id}/view-state", json={"master_volume": 1.5})
+        assert response.status_code == 422
+
+        response = client.put(f"/api/v1/projects/{project_id}/view-state", json={"haze_intensity": -0.1})
+        assert response.status_code == 422
+
+
 def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(tmp_path, monkeypatch):
     """`/stems/reprepare` must force a full re-separation for an already-ready
     project — e.g. a separation-engine/model-registry change (see

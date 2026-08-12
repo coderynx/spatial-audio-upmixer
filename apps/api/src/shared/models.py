@@ -155,6 +155,7 @@ class Project(Base):
     progress_log: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     manifest: Mapped[dict[str, Any]] = mapped_column(JSON)
     scene: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    view_state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     requested_stems: Mapped[list[str]] = mapped_column(JSON, default=list)
     prepared_stems: Mapped[list[str]] = mapped_column(JSON, default=list)
     stem_generation: Mapped[int] = mapped_column(Integer, default=0)

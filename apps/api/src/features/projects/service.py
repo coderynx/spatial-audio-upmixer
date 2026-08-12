@@ -327,6 +327,14 @@ def update_project_settings(
     return get_project(session, project.id)  # type: ignore[return-value]
 
 
+def update_project_view_state(session: Session, project: Project, view_state: dict[str, Any]) -> None:
+    """Timeline/monitoring preferences only — no manifest normalization, no
+    separation rebuild, no revision bump. A master-fader drag must not pay
+    for `update_project_settings`'s manifest diffing."""
+    project.view_state = view_state
+    session.commit()
+
+
 def update_track_settings(
     session: Session,
     project: Project,

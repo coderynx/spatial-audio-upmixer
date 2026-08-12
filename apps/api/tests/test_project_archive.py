@@ -49,6 +49,7 @@ def test_export_then_import_reconstructs_an_identical_workspace(tmp_path):
         project = Project(
             import_batch=batch, name="Archived project", notes="Some notes",
             manifest=manifest, scene={"stems": {"Vocals": {"azimuth_deg": 10}}},
+            view_state={"stem_order": ["Vocals"], "master_volume": 0.6},
             status="ready", prepared_stems=["Vocals"], requested_stems=["Vocals"],
         )
         track = ProjectTrack(
@@ -80,6 +81,7 @@ def test_export_then_import_reconstructs_an_identical_workspace(tmp_path):
         assert imported.notes == "Some notes"
         assert imported.manifest["mixing"]["channel_layout"] == "5.1"
         assert imported.scene == {"stems": {"Vocals": {"azimuth_deg": 10}}}
+        assert imported.view_state == {"stem_order": ["Vocals"], "master_volume": 0.6}
         assert imported.requested_stems == ["Vocals"]
         assert imported.prepared_stems == ["Vocals"]
         assert len(imported.tracks) == 1

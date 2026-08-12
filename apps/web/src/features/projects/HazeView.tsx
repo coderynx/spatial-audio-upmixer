@@ -44,22 +44,9 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-// Display taste, not project data — lives in localStorage, shared across
-// projects like the theme toggle. Defaults to 0.5.
-const INTENSITY_STORAGE_KEY = "upmixer.hazeIntensity";
 /** Alpha multiplier at intensity 0 — low enough to read as "mostly off,"
  * high enough that a stem's position and level are still legible. */
 const MIN_ALPHA_SCALE = 0.22;
-
-function readStoredIntensity(): number {
-  try {
-    const stored = Number(window.localStorage.getItem(INTENSITY_STORAGE_KEY));
-    if (Number.isFinite(stored) && stored >= 0 && stored <= 1) return stored;
-  } catch {
-    // Private-mode or blocked storage: fall through to the default.
-  }
-  return 0.5;
-}
 
 // Consecutive idle frames (no audible voice) required before the draw loop
 // stops scheduling itself while inactive — long enough for the trailing
@@ -85,6 +72,10 @@ export type HazeViewProps = {
   // until every voice has faded out and the trailing background fade has
   // settled, then stops — see `SETTLE_FRAMES`.
   active: boolean;
+  // Plain opacity control (0..1), persisted per project in
+  // `viewState.hazeIntensity` — see `ProjectDetailPage`'s `useProjectViewState`.
+  intensity: number;
+  onIntensity: (next: number) => void;
   className?: string;
 };
 
@@ -99,6 +90,8 @@ function HazeViewImpl({
   speakerEnabled,
   onToggleSpeaker,
   active,
+  intensity,
+  onIntensity,
   className,
 }: HazeViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -109,15 +102,6 @@ function HazeViewImpl({
   const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
-  const [intensity, setIntensity] = React.useState(readStoredIntensity);
-  const changeIntensity = (next: number) => {
-    setIntensity(next);
-    try {
-      window.localStorage.setItem(INTENSITY_STORAGE_KEY, String(next));
-    } catch {
-      // Storage being unavailable only costs the preference, not the view.
-    }
-  };
   // Latest props, read fresh by the draw loop without restarting it.
   const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity });
   propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity };
@@ -447,7 +431,7 @@ function HazeViewImpl({
     </div>
     <IntensitySlider
       value={intensity}
-      onChange={changeIntensity}
+      onChange={onIntensity}
       label="Haze intensity"
       className="absolute left-2 top-2 z-10"
     />

@@ -142,6 +142,12 @@ export type Project = {
   progress_log: { ts: string; message: string; fraction: number }[]
   manifest: Record<string, unknown>
   scene: { stems?: StemScene }
+  // Timeline/monitoring preferences (stem order, listening profile, master
+  // volume, A/B bypass, haze/elevation intensity) — display and monitor
+  // taste, not mix data, saved separately via `saveProjectViewState` so a
+  // fader drag doesn't pay for the manifest-normalizing `/settings` route.
+  // See ProjectViewState in `apps/api/src/features/projects/schemas.py`.
+  view_state: Record<string, unknown>
   requested_stems: string[]
   prepared_stems: string[]
   stem_generation: number
@@ -259,6 +265,8 @@ export const api = {
     request<Project>(`/api/v1/projects/${id}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   saveProjectTrack: (projectId: string, trackId: string, payload: { manifest_overrides: Record<string, unknown>; scene_overrides: Record<string, unknown> }) =>
     request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+  saveProjectViewState: (id: string, payload: Record<string, unknown>) =>
+    request<void>(`/api/v1/projects/${id}/view-state`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   expandProjectStems: (id: string, stems: string[]) =>
     request<Project>(`/api/v1/projects/${id}/stems`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stems }) }),
   retryProject: (id: string) => request<Project>(`/api/v1/projects/${id}/retry`, { method: "POST" }),

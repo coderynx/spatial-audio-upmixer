@@ -44,6 +44,7 @@ import { OutputModeSelect } from "./OutputModeSelect";
 import { monitorMastering } from "./masterPreview";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
+import { useProjectViewState } from "./projectViewState";
 import { TimelineView } from "./TimelineView";
 import { Transport } from "./Transport";
 import { TrackRail } from "./TrackRail";
@@ -86,7 +87,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const [manifest, setManifest] = React.useState<Manifest | null>(null);
   const [selectedTrack, setSelectedTrack] = React.useState<string | null>(null);
   const [selectedStem, setSelectedStem] = React.useState<string | null>(null);
-  const [stemOrder, setStemOrder] = React.useState<string[]>([]);
   const [draggedStem, setDraggedStem] = React.useState<string | null>(null);
   const [editScope, setEditScope] = React.useState<"project" | "track">("project");
   const [activeTab, setActiveTab] = React.useState<Stage>("mixing");
@@ -304,13 +304,19 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     () => configuration?.choices.layout_channels?.[routingLayout] ?? [],
     [configuration, routingLayout],
   );
-  // Session-only monitoring choices — not part of the manifest, so a reload
-  // always starts back on binaural/studio.
-  const [outputMode, setOutputMode] = React.useState<OutputMode>("binaural");
-  const [spatialProfile, setSpatialProfile] = React.useState<SpatialProfile>("studio");
-  const [transauralProfile, setTransauralProfile] = React.useState<TransauralProfile>("stereo");
+  // Timeline order, listening profile, master volume, A/B bypass, and haze/
+  // elevation intensity persist server-side per project — see
+  // `useProjectViewState` and `ProjectViewState` in
+  // `apps/api/src/features/projects/schemas.py`.
+  const { viewState, ready: viewStateReady, patchViewState } = useProjectViewState(projectId, project);
+  const outputMode = viewState.outputMode;
+  const spatialProfile = viewState.spatialProfile;
+  const transauralProfile = viewState.transauralProfile;
+  const setOutputMode = React.useCallback((next: OutputMode) => patchViewState({ outputMode: next }), [patchViewState]);
+  const setSpatialProfile = React.useCallback((next: SpatialProfile) => patchViewState({ spatialProfile: next }), [patchViewState]);
+  const setTransauralProfile = React.useCallback((next: TransauralProfile) => patchViewState({ transauralProfile: next }), [patchViewState]);
   // A/B monitor bypass for the master chain — see monitorMastering.
-  const [masteringBypassed, setMasteringBypassed] = React.useState(false);
+  const masteringBypassed = viewState.masteringBypassed;
   const {
     paneView, paneHeight, previewColumn, changePane, resizePaneTo,
     beginPaneResize, movePaneResize, endPaneResize, paneResizeKeys,
@@ -364,29 +370,45 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     [previewMastering, masteringBypassed],
   );
   const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants);
+  // The engine, not React, owns `preview.volume` — restore it from the saved
+  // view state exactly once per project (guarded by `volumeRestored`, reset
+  // on project change) so the engine's unity default can't race the real
+  // saved value, then mirror every later change back into `viewState`.
+  const volumeRestored = React.useRef(false);
+  React.useEffect(() => { volumeRestored.current = false; }, [projectId]);
+  React.useEffect(() => {
+    if (volumeRestored.current || !viewStateReady || !preview.ready) return;
+    volumeRestored.current = true;
+    preview.setVolume(viewState.masterVolume);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot restore, guarded by volumeRestored.current; preview.setVolume is stable (see useStemPreview)
+  }, [viewStateReady, preview.ready, viewState.masterVolume]);
+  React.useEffect(() => {
+    if (!volumeRestored.current) return;
+    patchViewState({ masterVolume: preview.volume });
+  }, [preview.volume, patchViewState]);
   // One cached fetch per track, independent of stem decode — the envelope and
   // the track's duration arrive together, so the timeline can draw its ruler
   // and lanes while playback is still loading.
   const { peaks, loading: peaksLoading } = useTrackPeaks(selected);
   const ready = Boolean(project?.prepared_stems.length);
   const stemNames = project?.prepared_stems || [];
-  // Reorder is a display-only preference (no backend field for it): kept in
-  // client state and merged against the current stem list every render, so
-  // stems appear/disappear correctly without needing a sync effect.
+  // Reorder is a display-only preference, persisted per project via
+  // `viewState.stemOrder` — merged against the current stem list every
+  // render, so stems appear/disappear correctly without needing a sync effect.
   const orderedStems = React.useMemo(() => {
     const known = new Set(stemNames);
-    const kept = stemOrder.filter((stem) => known.has(stem));
+    const kept = viewState.stemOrder.filter((stem) => known.has(stem));
     const missing = stemNames.filter((stem) => !kept.includes(stem));
     return [...kept, ...missing];
-  }, [stemNames, stemOrder]);
+  }, [stemNames, viewState.stemOrder]);
   const reorderStems = React.useCallback((source: string, target: string) => {
     if (source === target) return;
     const next = orderedStems.filter((stem) => stem !== source);
     const targetIndex = next.indexOf(target);
     if (targetIndex === -1) return;
     next.splice(targetIndex, 0, source);
-    setStemOrder(next);
-  }, [orderedStems]);
+    patchViewState({ stemOrder: next });
+  }, [orderedStems, patchViewState]);
   // Stable callbacks for the memoized `TimelineView` lane list — recreated
   // only when their few real dependencies change, not on every render (e.g.
   // every playback frame), so `React.memo` on `TimelineView` actually holds.
@@ -397,6 +419,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       return null;
     });
   }, [reorderStems]);
+  // Stable identity for the same reason as `clearDraggedStem`/`handleDropOn`
+  // above — HazeView/ElevationView are memoized against every prop.
+  const setHazeIntensity = React.useCallback((next: number) => patchViewState({ hazeIntensity: next }), [patchViewState]);
+  const setElevationIntensity = React.useCallback((next: number) => patchViewState({ elevationIntensity: next }), [patchViewState]);
   const routing: StemRouting = React.useMemo(() => effectiveManifest?.mixing.stem_routing || {}, [effectiveManifest]);
   const updateRoute = (stem: string, patch: Record<string, number>) => {
     if (!effectiveManifest) return;
@@ -456,7 +482,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     onManifestChange: updateManifest,
     paneView,
     onChangePane: changePane,
-    onToggleMasterBypass: () => setMasteringBypassed((bypassed) => !bypassed),
+    onToggleMasterBypass: () => patchViewState({ masteringBypassed: !masteringBypassed }),
   });
   const exportProject = async () => {
     if (!projectId) return;
@@ -577,7 +603,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       >
         <MasterBypassButton
           bypassed={masteringBypassed}
-          onToggle={() => setMasteringBypassed((bypassed) => !bypassed)}
+          onToggle={() => patchViewState({ masteringBypassed: !masteringBypassed })}
         />
         <OutputModeSelect
           value={outputMode}
@@ -694,7 +720,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
               double-click-reset contract the mixer rack's own column resize
               already uses. */}
           <div className="relative min-h-0 shrink-0" style={{ width: hazeWidth }}>
-            <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="h-full w-full" />
+            <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={setHazeIntensity} className="h-full w-full" />
             <StripResizeHandle
               label="Resize Haze view"
               value={hazeExtra}
@@ -705,7 +731,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             />
           </div>
           <div className="relative min-h-0 min-w-0 flex-1">
-            <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} className="h-full w-full" />
+            <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.elevationIntensity} onIntensity={setElevationIntensity} className="h-full w-full" />
             {/* Dragging this border moves `elevationExtra`, the same delta
                 as before — it still reads as "resize Elevation" to the
                 user, it just now expresses itself by shrinking/growing

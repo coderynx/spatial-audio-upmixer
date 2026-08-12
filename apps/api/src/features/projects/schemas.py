@@ -59,6 +59,24 @@ class ReferenceMatchAssetView(BaseModel):
     sample_rate: int
 
 
+class ProjectViewState(BaseModel):
+    """Per-project timeline/monitoring preferences — display and monitor
+    taste, not mix data (which lives in ``manifest``). Persisted verbatim so
+    a project reopens the same way on another device. Profile fields stay
+    plain bounded strings rather than ``Literal``: their option sets live in
+    core/web and change independently of this schema; the client validates
+    against its own unions on read and falls back to the default."""
+
+    stem_order: list[str] = Field(default_factory=list, max_length=64)
+    output_mode: str = Field(default="binaural", max_length=32)
+    spatial_profile: str = Field(default="studio", max_length=32)
+    transaural_profile: str = Field(default="stereo", max_length=32)
+    master_volume: float = Field(default=1.0, ge=0.0, le=1.0)
+    mastering_bypassed: bool = False
+    haze_intensity: float = Field(default=0.5, ge=0.0, le=1.0)
+    elevation_intensity: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
 class ProjectView(ApiModel):
     id: str
     import_id: str | None
@@ -70,6 +88,7 @@ class ProjectView(ApiModel):
     progress_log: list[dict[str, Any]] = Field(default_factory=list)
     manifest: dict[str, Any]
     scene: dict[str, Any]
+    view_state: dict[str, Any] = Field(default_factory=dict)
     requested_stems: list[str]
     prepared_stems: list[str]
     stem_generation: int

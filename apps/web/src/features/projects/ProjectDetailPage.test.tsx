@@ -14,7 +14,7 @@ const asset: Asset = {
 
 const project: Project = {
   id: "project-1", import_id: "import-1", name: "Editable master", notes: null, status: "ready", progress: 1,
-  status_message: "Project stems ready", progress_log: [], manifest: {}, scene: {}, requested_stems: ["Vocals"],
+  status_message: "Project stems ready", progress_log: [], manifest: {}, scene: {}, view_state: {}, requested_stems: ["Vocals"],
   prepared_stems: ["Vocals"], stem_generation: 1, preview_quality: "high", revision: 1, error: null,
   created_at: "2026-01-01T12:00:00Z", updated_at: "2026-01-01T12:01:00Z",
   tracks: [{
@@ -38,6 +38,7 @@ vi.mock("@/api", async (importOriginal) => {
       saveProjectTrack: vi.fn(async () => project),
       retryProject: vi.fn(async () => project),
       resolveStemRouting: vi.fn(async () => ({})),
+      saveProjectViewState: vi.fn(async () => undefined),
     },
   };
 });

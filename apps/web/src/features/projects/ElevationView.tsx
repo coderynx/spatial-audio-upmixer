@@ -32,23 +32,8 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-// Same "plain opacity on the whole effect" preference as HazeView, kept in
-// its own localStorage key (a user may want this view calmer than Haze, or
-// vice versa) rather than sharing HazeView's — see IntensitySlider.tsx and
-// HazeView.tsx's matching constants for the full rationale.
-const INTENSITY_STORAGE_KEY = "upmixer.elevationIntensity";
 /** Alpha multiplier at intensity 0 — same floor as HazeView. */
 const MIN_ALPHA_SCALE = 0.22;
-
-function readStoredIntensity(): number {
-  try {
-    const stored = Number(window.localStorage.getItem(INTENSITY_STORAGE_KEY));
-    if (Number.isFinite(stored) && stored >= 0 && stored <= 1) return stored;
-  } catch {
-    // Private-mode or blocked storage: fall through to the default.
-  }
-  return 0.5;
-}
 
 export type ElevationViewProps = {
   channels: string[];
@@ -65,6 +50,11 @@ export type ElevationViewProps = {
   // `preview.playing`) — see HazeView's `active` prop for the idle-gating
   // rationale, identical here.
   active: boolean;
+  // Plain opacity control (0..1), persisted per project in
+  // `viewState.elevationIntensity` — kept independent of Haze's own
+  // intensity (a user may want this view calmer than Haze, or vice versa).
+  intensity: number;
+  onIntensity: (next: number) => void;
   className?: string;
 };
 
@@ -78,6 +68,8 @@ function ElevationViewImpl({
   speakerEnabled,
   onToggleSpeaker,
   active,
+  intensity,
+  onIntensity,
   className,
 }: ElevationViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -87,15 +79,6 @@ function ElevationViewImpl({
   const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
-  const [intensity, setIntensity] = React.useState(readStoredIntensity);
-  const changeIntensity = (next: number) => {
-    setIntensity(next);
-    try {
-      window.localStorage.setItem(INTENSITY_STORAGE_KEY, String(next));
-    } catch {
-      // Storage being unavailable only costs the preference, not the view.
-    }
-  };
   const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity });
   propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity };
   const activeRef = React.useRef(active);
@@ -385,7 +368,7 @@ function ElevationViewImpl({
     </div>
     <IntensitySlider
       value={intensity}
-      onChange={changeIntensity}
+      onChange={onIntensity}
       label="Elevation intensity"
       className="absolute left-2 top-2 z-10"
     />

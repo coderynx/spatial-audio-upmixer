@@ -22,6 +22,7 @@ from upmixer_web.features.projects.schemas import (
     CreateProjectRequest,
     ExpandProjectStemsRequest,
     ProjectView,
+    ProjectViewState,
     UpdateProjectSettingsRequest,
     UpdateProjectTrackSettingsRequest,
 )
@@ -38,6 +39,7 @@ from upmixer_web.features.projects.service import (
     reprepare_project_stems,
     retry_project,
     update_project_settings,
+    update_project_view_state,
     update_track_settings,
 )
 from upmixer_web.features.projects.views import project_view
@@ -151,6 +153,13 @@ def register_project_routes(
         if project.status == "queued":
             manager.notify()
         return project_view(project, settings.root_path, app.state.project_stems, manager)
+
+    @app.put("/api/v1/projects/{project_id}/view-state", status_code=status.HTTP_204_NO_CONTENT, tags=["projects"])
+    def save_project_view_state(project_id: str, request: ProjectViewState, session: Session = Depends(database_session)) -> None:
+        project = get_project(session, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        update_project_view_state(session, project, request.model_dump())
 
     @app.put("/api/v1/projects/{project_id}/tracks/{track_id}/settings", response_model=ProjectView, tags=["projects"])
     def save_project_track_settings(project_id: str, track_id: str, request: UpdateProjectTrackSettingsRequest, session: Session = Depends(database_session)) -> ProjectView:
