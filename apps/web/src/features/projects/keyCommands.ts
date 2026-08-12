@@ -4,12 +4,13 @@
  * dispatch and `KeyCommandsDialog`'s reference card, so a new binding needs
  * one entry here, not a matching edit in two places.
  *
- * Every binding uses a key physically present on macOS, Windows, and
- * Linux keyboards (Option === Alt, no Command/Meta binding ships), so
- * dispatch needs no per-platform remap — only the dialog's rendered caps
- * differ, via `keyCommandCaps`. */
+ * Every binding uses a key physically present on macOS, Windows, and Linux
+ * keyboards (Option === Alt), so dispatch needs no per-platform remap —
+ * except `mod` (Undo/Redo), which means Cmd on mac and Ctrl elsewhere and is
+ * matched platform-agnostically in `matchKeyCommand`. Only the dialog's
+ * rendered caps differ per platform, via `keyCommandCaps`. */
 
-export type KeyCommandGroup = "Transport" | "Mixer" | "Help";
+export type KeyCommandGroup = "Transport" | "Mixer" | "Edit" | "Help";
 
 export type KeyCommandId =
   | "playOrStop"
@@ -31,6 +32,8 @@ export type KeyCommandId =
   | "clearSolo"
   | "unmuteAll"
   | "toggleMixer"
+  | "undo"
+  | "redo"
   | "toggleQuickHelp"
   | "openKeyCommands";
 
@@ -53,6 +56,9 @@ export interface KeyCommand {
   alt?: Modifier;
   shift?: Modifier;
   ctrl?: Modifier;
+  /** Cmd on mac, Ctrl elsewhere — matched platform-agnostically, see
+   * `matchKeyCommand`. Mutually exclusive with `ctrl`. */
+  mod?: true;
   /** Key cap shown in the dialog; modifier chips are derived from above. */
   cap: string;
   /** Cap lives on the numeric keypad — the dialog says so in words. */
@@ -68,6 +74,7 @@ export interface KeyChord {
   altKey?: boolean;
   shiftKey?: boolean;
   ctrlKey?: boolean;
+  metaKey?: boolean;
 }
 
 // Numpad entries are listed first: matching is first-in-table-wins, and
@@ -95,6 +102,9 @@ export const KEY_COMMANDS: readonly KeyCommand[] = [
   { id: "unmuteAll", group: "Mixer", label: "Mute Off for All", keys: ["m"], ctrl: true, shift: true, cap: "M" },
   { id: "toggleMixer", group: "Mixer", label: "Show/Hide Mixer", keys: ["x"], cap: "X" },
 
+  { id: "undo", group: "Edit", label: "Undo", keys: ["z"], mod: true, cap: "Z" },
+  { id: "redo", group: "Edit", label: "Redo", keys: ["z"], mod: true, shift: true, cap: "Z" },
+
   { id: "toggleQuickHelp", group: "Help", label: "Show/Hide Quick Help", keys: ["?"], shift: "ignore", cap: "?" },
   { id: "openKeyCommands", group: "Help", label: "Open Key Command Assignments", code: "KeyK", alt: true, cap: "K" },
 ];
@@ -113,10 +123,20 @@ export function matchKeyCommand(chord: KeyChord): KeyCommand | undefined {
     } else {
       return false;
     }
+    // `mod` means "exactly one of Cmd/Ctrl held" — Cmd on mac, Ctrl
+    // elsewhere — so it needs no `mac` param here, only in the dialog's
+    // rendered caps. Every other command requires Cmd to be up, so a
+    // Cmd-chord never falls through to a bare binding (e.g. Cmd+C must not
+    // resolve to Toggle Cycle).
+    if (command.mod) {
+      if (Boolean(chord.metaKey) === Boolean(chord.ctrlKey)) return false;
+    } else {
+      if (chord.metaKey) return false;
+      if (!modifierMatches(command.ctrl, Boolean(chord.ctrlKey))) return false;
+    }
     return (
       modifierMatches(command.alt, Boolean(chord.altKey))
       && modifierMatches(command.shift, Boolean(chord.shiftKey))
-      && modifierMatches(command.ctrl, Boolean(chord.ctrlKey))
     );
   });
 }
@@ -149,6 +169,7 @@ export function keyCommandCaps(command: KeyCommand, mac: boolean = IS_MAC): KeyC
   if (command.ctrl === true) caps.push(mac ? { glyph: "⌃", word: "Control" } : { glyph: "Ctrl", word: "Ctrl" });
   if (command.alt === true) caps.push(mac ? { glyph: "⌥", word: "Option" } : { glyph: "Alt", word: "Alt" });
   if (command.shift === true) caps.push(mac ? { glyph: "⇧", word: "Shift" } : { glyph: "Shift", word: "Shift" });
+  if (command.mod) caps.push(mac ? { glyph: "⌘", word: "Command" } : { glyph: "Ctrl", word: "Ctrl" });
   if (command.code === "NumpadEnter") {
     caps.push(NUMPAD_ENTER_CAP[mac ? "mac" : "other"]);
   } else if (command.code === "Enter") {

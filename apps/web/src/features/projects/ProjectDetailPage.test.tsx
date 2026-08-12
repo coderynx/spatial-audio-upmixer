@@ -365,6 +365,33 @@ describe("ProjectDetailPage keyboard shortcuts", () => {
     expect(saved.mixing.stem_enabled.Vocals).toBe(false);
   });
 
+  it("undoes and redoes the last mix edit with Ctrl+Z / Ctrl+Shift+Z", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Mixer" }));
+    await user.click(screen.getByRole("button", { name: "Vocals" }));
+
+    fireEvent.keyDown(document.body, { key: "m" });
+    await waitFor(() => expect(api.saveProject).toHaveBeenCalledTimes(1));
+
+    // jsdom reports an empty navigator.platform, so IS_MAC is false under
+    // vitest even when the suite runs on a real Mac — undo/redo must be
+    // reachable via ctrlKey here, not metaKey.
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+    await waitFor(() => expect(api.saveProject).toHaveBeenCalledTimes(2));
+    const undonePayload = vi.mocked(api.saveProject).mock.calls.at(-1)![1];
+    const undone = undonePayload.manifest as unknown as { mixing: { stem_enabled: Record<string, boolean> } };
+    expect(undone.mixing.stem_enabled.Vocals).not.toBe(false);
+
+    fireEvent.keyDown(document.body, { key: "z", ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(api.saveProject).toHaveBeenCalledTimes(3));
+    const redonePayload = vi.mocked(api.saveProject).mock.calls.at(-1)![1];
+    const redone = redonePayload.manifest as unknown as { mixing: { stem_enabled: Record<string, boolean> } };
+    expect(redone.mixing.stem_enabled.Vocals).toBe(false);
+  });
+
   it("toggles the master bypass button by click and by the B key", async () => {
     const user = userEvent.setup();
     renderPage();

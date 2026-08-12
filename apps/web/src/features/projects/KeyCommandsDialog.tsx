@@ -11,7 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { IS_MAC, KEY_COMMANDS, keyCommandCaps, type KeyCommandGroup } from "./keyCommands";
 
-const GROUP_ORDER: KeyCommandGroup[] = ["Transport", "Mixer", "Help"];
+const GROUP_ORDER: KeyCommandGroup[] = ["Transport", "Mixer", "Edit", "Help"];
 
 function KeyCap({ cap }: { cap: { glyph: string; word: string } }) {
   return (

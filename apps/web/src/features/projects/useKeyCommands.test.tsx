@@ -40,6 +40,8 @@ function makeOptions(overrides: Partial<KeyCommandsOptions> = {}): KeyCommandsOp
     paneView: "timeline",
     onChangePane: vi.fn(),
     onToggleMasterBypass: vi.fn(),
+    onUndo: vi.fn(),
+    onRedo: vi.fn(),
     ...overrides,
   };
 }
@@ -218,6 +220,18 @@ describe("useKeyCommands dispatch", () => {
     renderHook(() => useKeyCommands(toOff));
     press({ key: "x" });
     expect(toOff.onChangePane).toHaveBeenCalledWith(null);
+  });
+
+  it("Cmd/Ctrl-Z calls onUndo; Shift-Cmd/Ctrl-Z calls onRedo", () => {
+    const options = makeOptions();
+    renderHook(() => useKeyCommands(options));
+    press({ key: "z", ctrlKey: true });
+    expect(options.onUndo).toHaveBeenCalledTimes(1);
+    expect(options.onRedo).not.toHaveBeenCalled();
+
+    press({ key: "z", ctrlKey: true, shiftKey: true });
+    expect(options.onRedo).toHaveBeenCalledTimes(1);
+    expect(options.onUndo).toHaveBeenCalledTimes(1);
   });
 
   it("? toggles the shortcuts dialog; Alt-K only opens it", () => {

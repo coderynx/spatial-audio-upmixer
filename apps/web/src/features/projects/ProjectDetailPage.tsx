@@ -18,7 +18,7 @@ import {
   Waves,
 } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, type Configuration, type Project, type StemRouting } from "@/api";
+import { api, type Configuration, type Project, type ProjectTrack, type StemRouting } from "@/api";
 import { useHeaderTitle } from "@/app/HeaderSlot";
 import { EmptyState } from "@/app/EmptyState";
 import { InspectorGroup } from "@/app/InspectorRow";
@@ -58,6 +58,7 @@ import {
   trackRailStorageKey,
 } from "./projectDetailLayout";
 import { useColumnLayout } from "./useColumnLayout";
+import { useEditHistory } from "./useEditHistory";
 import { useKeyCommands } from "./useKeyCommands";
 import { usePaneLayout } from "./usePaneLayout";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
@@ -180,6 +181,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         .catch((reason) => setError((reason as Error).message));
     }, 350);
   }, [project, projectId, shouldApplyProject]);
+  const history = useEditHistory(projectId);
   const selected = project?.tracks.find((track) => track.id === selectedTrack) || null;
   const effectiveManifest = React.useMemo(() => {
     if (!manifest || !selected || editScope === "project") return manifest;
@@ -195,29 +197,45 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       format: { ...manifest.format, ...overrides.format },
     });
   }, [editScope, manifest, selected]);
-  const updateManifest = React.useCallback((next: Manifest) => {
-    if (editScope === "project") {
-      setManifest(next);
-      queueSave(next);
-      return;
-    }
-    if (!projectId || !selected) return;
+  const saveProjectScope = React.useCallback((next: Manifest) => {
+    setManifest(next);
+    queueSave(next);
+  }, [queueSave]);
+  // Bound to the track it was called for, not read from `selected` at call
+  // time — a history entry closes over this with the track captured at
+  // record time, so undoing a track-scope edit after switching tracks still
+  // targets the track the edit was actually made on.
+  const saveTrack = React.useCallback((track: ProjectTrack, next: Manifest) => {
+    if (!projectId) return;
     const seq = ++projectRequestSeq.current;
-    void api.saveProjectTrack(projectId, selected.id, {
+    void api.saveProjectTrack(projectId, track.id, {
       manifest_overrides: {
         engine: { stems: next.engine.stems }, mixing: next.mixing, routing: next.routing,
         mastering: next.mastering, processing: next.processing, format: next.format,
       },
-      scene_overrides: selected.scene_overrides,
+      scene_overrides: track.scene_overrides,
     }).then((updated) => { if (shouldApplyProject(seq)) setProject(updated); })
       .catch((reason) => setError((reason as Error).message));
-  }, [editScope, projectId, selected, queueSave, shouldApplyProject]);
+  }, [projectId, shouldApplyProject]);
+  // `merge` collapses consecutive calls carrying the same manifest field
+  // into one undo step (a fader drag) — see `useEditHistory`. Only the
+  // continuous controls (routing, gain, anchor strength) pass it.
+  const updateManifest = React.useCallback((next: Manifest, merge?: boolean) => {
+    if (!effectiveManifest) return;
+    if (editScope === "project") {
+      history.record(effectiveManifest, next, saveProjectScope, merge);
+      return;
+    }
+    if (!selected) return;
+    const track = selected;
+    history.record(effectiveManifest, next, (value) => saveTrack(track, value), merge);
+  }, [editScope, selected, effectiveManifest, saveProjectScope, saveTrack, history]);
   // Project-wide settings (name, default speaker layout, preview quality) —
   // ProjectSettingsSection only. This is the inherited default a new track
   // starts from, distinct from `updateTrackManifest` below.
   const updateProjectManifest = (next: Manifest) => {
-    setManifest(next);
-    queueSave(next);
+    if (!manifest) return;
+    history.record(manifest, next, saveProjectScope);
   };
   // Mastering and Delivery are always per-track — each track carries its own
   // master and delivery format independent of the Mixing tab's project/track
@@ -240,17 +258,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     });
   }, [manifest, selected]);
   const updateTrackManifest = React.useCallback((next: Manifest) => {
-    if (!projectId || !selected) return;
-    const seq = ++projectRequestSeq.current;
-    void api.saveProjectTrack(projectId, selected.id, {
-      manifest_overrides: {
-        engine: { stems: next.engine.stems }, mixing: next.mixing, routing: next.routing,
-        mastering: next.mastering, processing: next.processing, format: next.format,
-      },
-      scene_overrides: selected.scene_overrides,
-    }).then((updated) => { if (shouldApplyProject(seq)) setProject(updated); })
-      .catch((reason) => setError((reason as Error).message));
-  }, [projectId, selected, shouldApplyProject]);
+    if (!selected || !trackManifest) return;
+    const track = selected;
+    history.record(trackManifest, next, (value) => saveTrack(track, value), true);
+  }, [selected, trackManifest, saveTrack, history]);
   const saveReference = async (mastering_reference_id: string | null) => {
     if (!projectId || !project || !manifest) return;
     const seq = ++projectRequestSeq.current;
@@ -426,7 +437,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const routing: StemRouting = React.useMemo(() => effectiveManifest?.mixing.stem_routing || {}, [effectiveManifest]);
   const updateRoute = (stem: string, patch: Record<string, number>) => {
     if (!effectiveManifest) return;
-    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_routing: { ...routing, [stem]: { ...routing[stem], ...patch } } } });
+    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_routing: { ...routing, [stem]: { ...routing[stem], ...patch } } } }, true);
   };
   const applyPreset = async () => {
     if (!effectiveManifest || !stemNames.length) return;
@@ -452,11 +463,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const commitScrub = React.useCallback((value: number) => { void previewCommitScrub(value); }, [previewCommitScrub]);
   const setStemGain = React.useCallback((stem: string, gain: number) => {
     if (!effectiveManifest) return;
-    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [stem]: gain } } });
+    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [stem]: gain } } }, true);
   }, [effectiveManifest, updateManifest]);
   const setAnchorStrength = React.useCallback((stem_source_anchor_strength: number) => {
     if (!effectiveManifest) return;
-    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } });
+    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } }, true);
   }, [effectiveManifest, updateManifest]);
   // Stems that produce no sound right now — muted outright, or silenced
   // because something else is soloed. The timeline dims their lanes and the
@@ -483,6 +494,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     paneView,
     onChangePane: changePane,
     onToggleMasterBypass: () => patchViewState({ masteringBypassed: !masteringBypassed }),
+    onUndo: history.undo,
+    onRedo: history.redo,
   });
   const exportProject = async () => {
     if (!projectId) return;

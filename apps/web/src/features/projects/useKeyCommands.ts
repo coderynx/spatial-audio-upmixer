@@ -13,7 +13,7 @@ const ACTIVATABLE_SELECTOR = [
 ].join(", ");
 
 function shouldIgnore(event: KeyboardEvent) {
-  if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.metaKey) return true;
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return true;
   const target = event.target as HTMLElement | null;
   if (target?.closest) {
     if (target.isContentEditable || target.closest(EDITABLE_SELECTOR)) return true;
@@ -54,6 +54,8 @@ export interface KeyCommandsOptions {
   paneView: PaneView;
   onChangePane: (next: PaneView) => void;
   onToggleMasterBypass: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
 }
 
 /** Logic Pro-style global key commands for the project view (see
@@ -140,6 +142,12 @@ export function useKeyCommands(options: KeyCommandsOptions) {
         }
         case "toggleMixer":
           opts.onChangePane(opts.paneView === "mixer" ? null : "mixer");
+          break;
+        case "undo":
+          opts.onUndo();
+          break;
+        case "redo":
+          opts.onRedo();
           break;
         case "toggleQuickHelp":
           setShortcutsOpen((open) => !open);

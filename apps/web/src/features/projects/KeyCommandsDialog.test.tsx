@@ -10,10 +10,10 @@ describe("KeyCommandsDialog", () => {
     expect(screen.getAllByRole("definition")).toHaveLength(KEY_COMMANDS.length);
   });
 
-  it("renders the three groups in Transport, Mixer, Help order", () => {
+  it("renders the four groups in Transport, Mixer, Edit, Help order", () => {
     render(<KeyCommandsDialog open onOpenChange={vi.fn()} />);
     const headings = screen.getAllByRole("heading", { level: 3 }).map((node) => node.textContent);
-    expect(headings).toEqual(["Transport", "Mixer", "Help"]);
+    expect(headings).toEqual(["Transport", "Mixer", "Edit", "Help"]);
   });
 
   it("renders macOS glyphs with a spoken word, and plain words when mac is false", () => {

@@ -60,10 +60,25 @@ describe("matchKeyCommand", () => {
     const signatures = new Set<string>();
     for (const command of KEY_COMMANDS) {
       const keySignature = command.code ?? command.keys?.join("|");
-      const signature = `${keySignature}:${command.alt}:${command.shift}:${command.ctrl}`;
+      const signature = `${keySignature}:${command.alt}:${command.shift}:${command.ctrl}:${command.mod}`;
       expect(signatures.has(signature)).toBe(false);
       signatures.add(signature);
     }
+  });
+
+  it("matches Cmd/Ctrl-Z for Undo and Shift-Cmd/Ctrl-Z for Redo, on either modifier", () => {
+    expect(matchKeyCommand({ key: "z", metaKey: true })?.id).toBe("undo");
+    expect(matchKeyCommand({ key: "z", ctrlKey: true })?.id).toBe("undo");
+    expect(matchKeyCommand({ key: "z", metaKey: true, shiftKey: true })?.id).toBe("redo");
+    expect(matchKeyCommand({ key: "z", metaKey: true, ctrlKey: true })).toBeUndefined();
+    expect(matchKeyCommand({ key: "z" })).toBeUndefined();
+  });
+
+  it("does not let a Cmd chord fall through to a bare-key binding", () => {
+    // Regression guard: matchKeyCommand used to ignore metaKey entirely, so
+    // Cmd+C would resolve to Toggle Cycle and swallow the browser's Copy.
+    expect(matchKeyCommand({ key: "c", metaKey: true })).toBeUndefined();
+    expect(matchKeyCommand({ key: "c" })?.id).toBe("toggleCycle");
   });
 });
 
