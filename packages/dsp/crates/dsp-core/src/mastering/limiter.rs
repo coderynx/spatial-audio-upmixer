@@ -17,7 +17,7 @@ pub const FIR_DELAY: usize = (TRUE_PEAK_FIR_4X.len() - 1) / 2;
 /// untouched neighbour cannot recombine into a fresh inter-sample peak.
 pub const FIR_MARGIN_SAMPLES: usize = FIR_DELAY.div_ceil(TRUE_PEAK_OVERSAMPLE);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
 pub struct LimiterParams {
     pub ceiling_dbtp: f64,
     pub lookahead_ms: f64,

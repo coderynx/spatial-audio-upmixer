@@ -8,6 +8,7 @@ pub mod mastering;
 pub mod match_reference;
 pub mod routing;
 pub mod spatial;
+pub mod stream;
 
 /// Revision marker both bindings surface so a wheel/wasm mismatch is loud.
 pub fn version() -> &'static str {

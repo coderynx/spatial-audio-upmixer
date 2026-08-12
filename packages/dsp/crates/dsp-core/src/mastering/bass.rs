@@ -12,7 +12,7 @@ use super::non_lfe;
 /// pass, matching `BassController.process`.
 const MONO_FILTFILT_MIN_LEN: usize = 15;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
 pub struct BassParams {
     pub sub_gain_db: f64,
     pub mid_gain_db: f64,

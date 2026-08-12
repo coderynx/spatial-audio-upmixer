@@ -9,7 +9,7 @@ use crate::kernels::sum::pairwise_sum;
 
 use super::non_lfe;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
 pub struct CompParams {
     pub threshold_db: f64,
     pub ratio: f64,
@@ -26,7 +26,10 @@ pub struct CompInfo {
 }
 
 /// Soft-knee gain computer: returns gain reduction in dB (≤ 0 before makeup).
-fn gain_computer(env_db: f64, p: &CompParams) -> f64 {
+///
+/// Shared with the streaming compressor, which differs only in how it
+/// follows the envelope.
+pub fn gain_reduction_db(env_db: f64, p: &CompParams) -> f64 {
     let (t, r, w) = (p.threshold_db, p.ratio, p.knee_db.max(0.0));
     let output_db = if w > 0.0 {
         let knee_lo = t - w / 2.0;
@@ -86,7 +89,7 @@ pub fn bus_compress(
     let mut reductions = Vec::with_capacity(n);
     for (f, s) in fast.iter().zip(slow.iter()) {
         let env_db = 20.0 * f.max(*s).max(1e-20).log10();
-        let gr_db = gain_computer(env_db, p);
+        let gr_db = gain_reduction_db(env_db, p);
         reductions.push(gr_db.abs());
         gain_linear.push(10.0_f64.powf((gr_db + p.makeup_db) / 20.0));
     }
@@ -123,9 +126,9 @@ mod tests {
         let p = params();
         let lo = p.threshold_db - p.knee_db / 2.0;
         let hi = p.threshold_db + p.knee_db / 2.0;
-        assert!(gain_computer(lo, &p).abs() < 1e-12);
-        let inside = gain_computer(hi - 1e-9, &p);
-        let outside = gain_computer(hi + 1e-9, &p);
+        assert!(gain_reduction_db(lo, &p).abs() < 1e-12);
+        let inside = gain_reduction_db(hi - 1e-9, &p);
+        let outside = gain_reduction_db(hi + 1e-9, &p);
         assert!((inside - outside).abs() < 1e-6, "{inside} vs {outside}");
     }
 
