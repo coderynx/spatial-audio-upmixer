@@ -149,6 +149,8 @@ export class PreviewAudioEngine {
   /** While set, render uncorrected so the measurement sees the raw program. */
   private measuringRaw = false;
   private measureToken = 0;
+  /** Transport was playing when a profile switch forced the pause below — resume once the winning pass lands. */
+  private resumeAfterMeasure = false;
   private resumeOnGesture: (() => void) | null = null;
   private stemOrder: string[] = [];
   /** Parallel to `stemOrder` — how many bars each stem's meter shows. */
@@ -548,7 +550,10 @@ export class PreviewAudioEngine {
     const covered = this.measuringRaw ? this.exactMeasureKey : this.measuredForMode;
     if (covered === key) return;
 
-    if (this.playing) this.pause();
+    if (this.playing) {
+      this.pause();
+      this.resumeAfterMeasure = true;
+    }
     const token = ++this.measureToken;
     this.exactMeasureKey = key;
     this.callbacks.onMeasuring(true);
@@ -568,6 +573,10 @@ export class PreviewAudioEngine {
     this.measuringRaw = false;
     this.callbacks.onMeasuring(false);
     this.apply();
+    if (this.resumeAfterMeasure) {
+      this.resumeAfterMeasure = false;
+      void this.playFrom(this.currentTimeRef.current);
+    }
   }
 
   // ---- Lifecycle ----

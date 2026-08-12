@@ -447,7 +447,7 @@ describe("useStemPreview loudness calibration", () => {
     expect(transportCalls.at(-1)).toMatchObject({ playing: true });
   });
 
-  it("pauses playback when a profile switch invalidates the current calibration", async () => {
+  it("pauses playback when a profile switch invalidates the current calibration, then resumes once it completes", async () => {
     const result = await renderPreview({ spatialProfile: "studio" });
     const getPreview = () =>
       (globalThis as unknown as Record<string, unknown>).preview as {
@@ -460,6 +460,11 @@ describe("useStemPreview loudness calibration", () => {
     });
     expect(transportCalls.at(-1)).toMatchObject({ playing: true });
 
+    let resolveGate: () => void = () => {};
+    measureGate = new Promise((resolve) => {
+      resolveGate = resolve;
+    });
+
     await act(async () => {
       result.rerender(<Harness spatialProfile="listening" />);
       await Promise.resolve();
@@ -468,6 +473,15 @@ describe("useStemPreview loudness calibration", () => {
 
     expect(transportCalls.at(-1)).toMatchObject({ playing: false });
     expect(getPreview().playing).toBe(false);
+
+    await act(async () => {
+      resolveGate();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(transportCalls.at(-1)).toMatchObject({ playing: true });
+    expect(getPreview().playing).toBe(true);
   });
 });
 
