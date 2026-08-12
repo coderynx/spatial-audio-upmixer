@@ -4,14 +4,17 @@ This directory defines the **signed contracts** that keep the web preview
 (`apps/web/`, `apps/api/`) and the core export pipeline (`packages/core/`)
 producing equivalent audio. It exists because of a specific architectural
 fact: **the frontend does not send audio to the backend to preview an
-upmix.** It re-implements the mixing, spatial routing, mastering, and
-binaural rendering stages as a Web Audio graph in the browser
-(`apps/web/src/features/projects/useStemPreview.ts`,
-`apps/web/src/features/projects/masteringProfiles.ts`, `apps/web/src/lib/spatial.ts`)
-and plays that back live. Export renders the same project through
-`upmixer.pipeline.UpmixPipeline` / `upmixer.separation.stem_pipeline
-.StemUpmixPipeline`. Two independent implementations of the same DSP only
-stay in agreement if something enforces it — that is what this directory is.
+upmix.** It renders the mix locally and plays it back live.
+
+Until the Rust port, it did that by re-implementing the DSP as a Web Audio
+graph, and this directory existed to keep two implementations in agreement.
+It no longer does: preview and export both run
+[`packages/dsp`](../../packages/dsp/AGENTS.md) — through WebAssembly in the
+browser worklet, through PyO3 in the pipeline. What these documents now
+govern is the much smaller surface that can still diverge: build provenance
+of the committed wasm artifact, the constants the browser is served, and the
+handful of behaviours that differ by nature (live-parameter latency, seek
+warm-up, correction staleness).
 
 ## Preview-as-reference principle
 
@@ -21,9 +24,9 @@ spatial placement, loudness, tone — by listening to the preview. That
 judgment is only trustworthy if the preview is provably close to what
 export will actually deliver. Treat preview/export divergence as a **bug in
 the preview or the export**, not as an acceptable cost of the preview being
-"just a preview." Where an exact match is currently infeasible (browser
-`BiquadFilterNode` vs. SciPy `sosfilt`, for instance), the allowed gap is
-bounded and stated explicitly in the contract, not left implicit.
+"just a preview." Where a difference is unavoidable — the preview must respond to a control
+while the export renders offline — the allowed gap is bounded and stated
+explicitly in the contract, not left implicit.
 
 ## The two contracts
 
@@ -48,14 +51,13 @@ Where a contracted constant exists because a standard requires it (e.g. LFE
 
 ## Change protocol — binding on human and AI contributors
 
-The tunable DSP constants in `preview_export_parity.md`'s catalog are
-**single-sourced from core** and served to the web (see the mechanism section
-below and that document's §4) — the web has no second copy to keep in sync.
-Changing a served constant means:
+The tunable DSP constants are **single-sourced from core** and served to the
+web (`preview_export_parity.md` §2) — the web has no second copy to keep in
+sync. Changing a served constant means:
 
 1. Update the Python source (`packages/core/src/...`) — the only place the value lives.
-2. Update the constants catalog / tier / threshold in
-   `preview_export_parity.md` to describe the new value.
+2. Update `preview_export_parity.md` if the change affects what that
+   document describes.
 3. Update the web test fixture
    `apps/web/src/features/projects/engineConstants.fixture.ts` to match (it
    feeds the golden harness), then re-run the golden render diff
@@ -63,11 +65,12 @@ Changing a served constant means:
    default — refresh its fixtures with `npm run golden:render` first) until
    green.
 
-For a DSP change that alters the *realization* on only one side (Tier 2/3, or
-a web-local structural constant), the golden render diff is what holds the
-result within tolerance. Do not silence, skip, or loosen a tolerance to make
-a failing test pass; fix the divergent side, or if the contract itself should
-change, follow the steps above.
+Any change under `packages/dsp` also needs the browser artifact rebuilt
+(`npm run build:wasm` from `apps/web/`) — it is committed, not built on
+install, so a stale one ships a different algorithm to the browser. The
+golden render is what catches that. Do not silence, skip, or loosen a
+tolerance to make a failing test pass; fix the cause, or if the contract
+itself should change, follow the steps above.
 
 If you are an AI agent asked to change DSP behavior anywhere in
 `packages/core/src/` or in the preview graph, **read `preview_export_parity.md`
@@ -77,11 +80,8 @@ change and how tightly re-verification must hold.
 
 ## Single-source constants mechanism
 
-The full mechanism (`engine_constants()`, what is served vs. kept web-local,
-and why there is no value cross-check to run) is specified once, in
-[`preview_export_parity.md` §4](preview_export_parity.md#4-single-source-of-truth-for-the-constants-3).
-Signal-level equivalence — the thing that actually matters once constants
-can no longer drift — is the job of the golden render diff
-(`packages/core/tests/test_preview_export_golden.py`), which runs by
-default and is described in that document's tolerance-thresholds section
-(§5).
+The mechanism (`engine_constants()`, what is served, what stays in Rust) is
+specified once, in [`preview_export_parity.md` §2](preview_export_parity.md).
+Signal-level equivalence is the job of the golden render
+(`packages/core/tests/test_preview_export_golden.py`), which runs by default
+and is described in that document's §4.

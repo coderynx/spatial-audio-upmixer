@@ -11,7 +11,7 @@ this engine's own parametric head model (§4.1), not a measured HRTF.
 **Scope:** Rendering a discrete multichannel bed to speaker-ready,
 crosstalk-cancelled stereo for real stereo loudspeakers. This document is
 the signed contract between the core engine (`packages/core/src/crosstalk/`) and the
-web preview (`apps/web/src/features/projects/previewGraph.ts`'s
+web preview (the shared core's `stream::output`, formerly
 `buildCrosstalkGraph`, `audioEngine.ts`) — both must implement it identically
 at the parameter level (see §6 for what "identically" means). It assumes
 familiarity with [Spatial Audio Engine — Binaural Rendering
@@ -87,7 +87,7 @@ signals is identical and literally reused (`render_binaural`), not
 reimplemented.
 
 Core entry point: `packages/core/src/crosstalk/renderer.py::render_crosstalk`. Web
-mirror: `buildCrosstalkGraph` (`previewGraph.ts`), which internally calls
+mirror: the core's `stream::output` transaural path, which internally calls
 `buildBinauralGraph(ctx, "flat")` for the ear-signal stage and exposes the
 same `preVoicing` LFE-injection contract the binaural graph does (Ledger
 D11 in `docs/contracts/preview_export_parity.md`).

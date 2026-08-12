@@ -286,7 +286,7 @@ The **DSP realization** of the voicing chain is *not* required to be
 sample-identical: the core uses SciPy `sosfilt` IIR sections, the web uses
 Web Audio `BiquadFilterNode`s. These differ in numerical precision and
 exact phase response, the same accepted gap that already exists between
-`packages/core/src/mastering/*.py` and the web's `buildMasteringTopology` mirror.
+`packages/core/src/mastering/*.py`, which both sides now run via `packages/dsp`.
 Parity at the **parameter table** level (§5) is structural: the voicing and
 gain constants are single-sourced from core and served to the web at runtime
 (see `docs/contracts/preview_export_parity.md` §4), so there is no second copy
@@ -334,7 +334,7 @@ in audible saturation no later stage can undo, which is what produced
 distorted output on all three profiles (including `flat`) before this
 ordering was fixed. The web mirror applies the same ceiling and ordering
 (`BINAURAL_LOUDNESS_MAX_GAIN_DB` in `masteringProfiles.ts`, graph order in
-`useStemPreview.ts`'s `buildMasteringTopology`).
+the shared core's `stream::master`).
 
 ---
 

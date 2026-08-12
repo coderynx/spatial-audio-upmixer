@@ -18,8 +18,16 @@ displays) and `apps/web/src/lib/stems.ts` (per-stem identity hues).
 
 ## Core boundary
 
-`apps/web` is a delivery layer, not a place to reimplement or alter DSP
-behavior. See `docs/web_architecture.md` and `docs/contracts/` for how the
-browser preview mirrors the core export pipeline — any change to a DSP
-constant or stage the preview re-implements is bound by
-`docs/contracts/preview_export_parity.md`, not just this file.
+`apps/web` is a delivery layer. It contains **no DSP**: the preview runs the
+shared Rust core (`packages/dsp`) as WebAssembly in
+`public/dsp.worklet.js`, the same code the export pipeline runs. Do not add
+filter design, convolution, level math, or acoustic constants here — put
+them in the core, where both sides get them.
+
+`src/features/projects/wasmEngine/` is the glue: it compiles the wasm, hands
+stems over, and maps the project's mix onto the core's parameter block.
+
+After any change under `packages/dsp`, rebuild the committed artifact with
+`npm run build:wasm` — it is not built on install, and a stale one ships a
+different algorithm to the browser. See `docs/web_architecture.md` and
+`docs/contracts/preview_export_parity.md`.

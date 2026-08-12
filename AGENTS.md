@@ -66,7 +66,7 @@ class/dataclass/constant table with no separable concern.
 
 Named long-but-cohesive files (checked when this rule was written; don't
 re-split without a new reason): `apps/web/src/features/projects/
-previewGraph.ts`, `apps/web/src/features/projects/masteringProfiles.ts`,
+masteringProfiles.ts`,
 `packages/core/src/pipeline.py`, `packages/core/src/separation/separator.py`,
 `packages/core/src/separation/stem_router.py`,
 `packages/core/src/mastering/match_reference.py`.

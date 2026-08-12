@@ -46,172 +46,52 @@ Interactive docs are served at `/api/docs`; the OpenAPI document is `/api/v1/ope
 - `GET /api/v1/projects/{id}/tracks/{track_id}/peaks` returns one binary waveform-envelope block per track for the editor timeline.
 - `POST /api/v1/projects/{id}/exports` creates a linked standard job from an immutable project snapshot.
 
-## Preview audio graph (`audioEngine.ts`)
+## Preview audio engine
 
-`audioEngine.ts` has no React import — it is the framework-free DAW audio
-layer (graph construction, transport, DSP parameter application, metering)
-that `useStemPreview.ts` binds to React state/effects via `EngineRef<T>`, a
-plain `{ current: T }` box matching the shape `useRef` returns so the same
-field can be handed straight through to consumers that already read
-`.current` off the hook's returned refs.
+The preview does not send audio to the backend, and it no longer
+re-implements the DSP either. `apps/web/public/dsp.worklet.js` hosts the
+shared Rust core (`packages/dsp`) compiled to WebAssembly and renders the
+whole mastered speaker bed itself — routing, mastering, and the
+binaural/transaural/stereo collapse. Web Audio is left with decoding, one
+node, a monitor gain, and the destination.
 
-**Speaker buses.** One `SpeakerBus` per positional channel: an ambisonic
-mono encoder pointed at that speaker's fixed direction feeds the shared HOA
-bus, gated by a `muteGain` so a speaker can be silenced independently of any
-stem (the same "render the channel bed, not the objects" model Apple's
-Spatial Audio renderer uses). `masterIn`/`masterOut` are stable per-channel
-mastering insert points; `buildMasteringTopology` wires a fresh EQ →
-compressor-gain → bass chain (or a passthrough when mastering is inactive)
-between them on every rebuild, before the binaural/spatial render — see
-`docs/contracts/preview_export_parity.md` §1. The same passthrough is what
-the transport's A/B bypass button produces: `monitorMastering`
-(`previewGraph.ts`) strips every stage but `loudness` before the config
-reaches this rebuild, a session-only monitoring choice, not a manifest field. `stereoSend` is present only
-for channels the BS.775 downmix uses (see `STEREO_DOWNMIX_GAINS`, excludes
-height channels and LFE); `nativeIndex` is the channel's input index on the
-native discrete `ChannelMergerNode`, or -1 if the current layout omits it.
+The worklet is the *source*, not an insert: the decoded stems live in the
+wasm heap, so the engine always knows its input ahead of the playhead. That
+is what lets it run the offline algorithms rather than causal approximations
+of them — the mono-maker's zero-phase pass and the limiter's forward-window
+minimum both get a queue in front of them, and nothing is emitted until its
+full look-ahead exists. See `packages/dsp/crates/dsp-core/src/stream/`.
 
-**Stem sources.** One `AudioNodeSet` per playable source (an ordinary stem,
-or the dry stereo source anchor). `stemGain` (mute/solo/rebalance/anchor-duck)
-sits upstream of the splitter; the anchor has none, since its two sends are
-driven directly by anchor strength instead. `postEqGain` is the fixed
-post-EQ insert point `createStemSends` reads from — `buildStemEqChains`
-rebuilds the `stemGain -> [EQ filters] -> postEqGain` chain whenever
-`mix.stem_eq` changes (mirrors `packages/core/src/separation/stem_eq.py`; the anchor
-has none, since the backend's dry-source blend bypasses stem EQ entirely).
-`sends` holds one gain node per positional channel the source can reach,
-each feeding straight into that channel's `SpeakerBus.muteGain`, so route
-weights and speaker mute compose for free. `lfeGain`/`lfeFilters` are absent
-for the anchor (the backend never routes its dry blend through LFE), as is
-`analyser` (the passive level tap for the 3D scene's audio-reactive halos)
-and `meterSplitter`/`meterAnalysers` (one passive analyser per source
-channel, feeding the mixer strip's meters, so a stereo stem shows two
-independent bars instead of being summed away).
+`audioEngine.ts` has no React import — it is the framework-free layer that
+owns the `AudioContext`, the transport, and the translation from a project's
+mix into the core's parameter block; `useStemPreview.ts` binds it to React
+state. Every "the mix changed" path — mute, solo, rebalance, routing, stem
+EQ, mastering, speaker mute, output mode, spatial and transaural profile —
+resolves to one parameter block and one message. There is no per-control
+rewiring, because there is no graph to rewire.
 
-**Channel-bed router history.** The preview used to binauralize each stem as
-a point object via a Web Audio HRTF `PannerNode` — that convolves every
-source with one generic, non-personalized HRIR with a diffuse-field
-high-frequency rolloff (duller than the dry final master, worse than a
-single EQ shelf could fix), and the API exposes no way to load a different
-HRTF. An earlier fix layered a fixed compensation EQ on the HRTF bus and
-hard-switched some sources to a dry stereo pan to dodge comb filtering
-against the panner's unqueryable ITD — both hacks are gone now. The preview
-now mirrors the backend exactly: stems route into the same 11-speaker
-channel bed `packages/core/src/separation/stem_router.py::StemRouter.route` builds,
-and that channel bed — not the individual stems — is what gets encoded to
-ambisonics and binauralized (the "virtual loudspeaker" model, see below).
+**Sample rate.** The context is pinned to 48 kHz. Every shipped FIR (HRIR,
+XTC, EQ) is designed at that rate, and the previous graph reinterpreted those
+taps at whatever rate the device happened to run.
 
-**Routing.** `createStemSends` builds the shaped-signal set a stem needs
-(raw L/R, mono downmix, surround send, height send) and one gain node per
-positional channel wiring the right shaped signal in, mirroring
-`packages/core/src/separation/stem_router.py::route()` — done once per stem rather
-than per output channel since channels like SL/BL share a shaped signal.
-`CHANNEL_SIGNAL` maps each positional channel to which shaped signal feeds
-it. `STEREO_DOWNMIX_GAINS` mirrors `packages/core/src/utils.py::itu_downmix_stereo`
-(ITU-R BS.775-4 Annex 4 Table 2): back channels fold into the matching side
-channel attenuated by the centre coefficient; height channels and LFE are
-excluded per the standard (LFE gets its own discrete native send instead).
+**Gain domains.** The core's output carries the PROGRAM domain — what a
+bounce of the same parameters would contain, including the loudness and
+true-peak correction. `monitorGain` is the MONITOR domain: the transport's
+volume and mute, strictly after the render, so raising the slider can never
+change what the limiter does. Meters are measured inside the core at the emit
+position, so they never lead the audio.
 
-**Offline pre-playback analysis.** Loudness/true-peak correction is measured
-once, offline, before playback starts (`precomputeCorrection`), not sampled
-during playback; `CORRECTION_STEP_MS` only paces the live bus-compressor's
-gain-reduction poll. That offline render is capped at `ANALYSIS_MAX_SECONDS`
-total: the full mastering + per-stem routing + ambisonic encode/decode graph
-it mirrors is hundreds of nodes (order-3 ambisonic encoding alone is ~18
-nodes per positional speaker), and rendering a full multi-minute program at
-full resolution measured upwards of a minute on a real track — indistinguishable
-from a hang to a waiting user. Programs over the cap are sampled as
-`ANALYSIS_EXCERPT_COUNT` equal-length windows spread evenly across the
-timeline (`buildAnalysisExcerpts`) instead of rendered whole, so both quiet
-intros and loud choruses are represented; the resulting splice-point
-discontinuities can only ever nudge the measured true peak up, making the
-safety-net gain more conservative, never less.
+**Loudness correction.** Measured once per output mode and profile by
+rendering the whole programme offline through the same engine and taking the
+real BS.1770 integrated loudness and true peak. The measurement runs against
+an uncorrected render, so a previous correction cannot fold into the next one.
 
-**Clip detection.** `CLIP_TOLERANCE` is not 0dBFS: a sample clearing unity by
-only a hairline still needs to count as clipped, but the live
-`WaveShaperNode`'s `oversample: "4x"` reconstruction filter measurably rings
-past `buildSoftLimitCurve`'s own designed asymptote at its knee — observed
-peaks of ~1.005–1.006 (~+0.04–0.05dB) on ordinary loud passages, a known
-WaveShaperNode oversampling artifact, not audible content. The tolerance
-gives ~8x headroom over that ripple while still catching a genuine over.
-
-**Offline correction measurement (`precomputeCorrection`).** Whole-program
-loudness/true-peak measurement replaced an earlier realtime approach that
-sampled a live post-mastering tap frame-by-frame during playback (a one-shot
-loudness snapshot, then an ever-tightening true-peak ratchet re-sampled every
-~100ms). That ratchet caused a real artifact: an early snapshot commonly
-landed on a quiet intro, so the first loud chorus/drop later would set a new
-true-peak record and yank gain down mid-playback — a moving target
-masquerading as a limiter. A DAW bounce doesn't do this, since it knows the
-whole file's level before a single sample reaches the output, so
-`precomputeCorrection` renders the program once through a throwaway
-`OfflineAudioContext` mirror of the same mastering + collapse graph
-`initialize()`/`buildMasteringTopology()` build live (reusing the same
-framework-free builders the golden-diff harness calls, and the same decoded
-stem buffers/cached FIR assets — no new DSP, just a static measurement of the
-same signal `apply()` drives live via `computeMixGains()`), and measures both
-quantities in one pass. It does not render the entire file — see
-`buildAnalysisExcerpts` above and `ANALYSIS_MAX_SECONDS` for why. Native
-output needs no correction of its own (the look-ahead limiter worklet is its
-own safety net, so `apply()` keeps `nativeOutputGain` at unity); this only
-runs for binaural/stereo/transaural, tracked against
-`precomputedForMode`/`precomputedForProfile` so a mode/profile switch
-mid-session re-measures instead of reusing a stale value.
-
-This offline pass deliberately does not reproduce the compressor's dynamic
-gain reduction (unlike `render-preview-golden.mjs`'s suspend()/resume()
-polling trick, which only ever renders a fixed 5-second synthetic signal
-where that's cheap — scaled to a multi-minute track it becomes tens of
-thousands of serialized round-trips that never finish in practice).
-`compGains` stay at the static makeup gain for this measurement pass; live
-playback still applies the real per-tick reduction via
-`applyCompressorReduction`/`correctionInterval`, unaffected. This measurement
-was already a coarse approximation (mono-downmix mean-square, no BS.1770
-gating) whose job is steering one global static gain, not reproducing
-bit-exact dynamics.
-
-**Engine gain domains and buses (`PreviewAudioEngine` fields).** `master`
-carries only `tpSafeGain` (the true-peak-safe loudness correction, PROGRAM
-domain — what a bounce of the graph would contain), never the user's monitor
-volume. `monitorGain` is the MONITOR domain: Transport volume/mute, applied
-strictly after `softLimit` so raising the slider can never drive the limiter
-harder or change its engagement, matching a DAW program-fader/monitor-knob
-split; the channel/headphone meters tap `softLimit`'s output, upstream of
-`monitorGain`, so they never move with the volume slider.
-
-`hoaBus` is the ambisonic rendering core: every positional speaker's encoder
-feeds it (a plain summing gain, explicit/discrete at 16 channels), which
-renders the whole channel bed to stereo via the loaded HRIR set — the
-"virtual loudspeaker" model matching what `StemUpmixPipeline` delivers.
-`preMasterBus`/`lfeBus`/`mergePoint` sum the binaural render with the LFE
-bypass ahead of the soft-limiter; `preMasterBus` is a plain passthrough since
-mastering (EQ/comp/bass) runs earlier on the discrete bed
-(`SpeakerBus.masterIn`/`masterOut`), matching `packages/core/src/pipeline.py`'s order
-(`MasteringChain` before `render_binaural_delivery`). `decodeConvolvers` is
-one `ConvolverNode` pair per ACN channel per `spatial_audio_engine.md` §4.
-`voicingMerger` is `buildBinauralGraph`'s post-voicing stereo output; LFE
-sums directly into its two inputs (a `ChannelMergerNode` sums same-index
-sources). `binauralGraphNodes` collects every other node `buildBinauralGraph`
-creates for one-array teardown in `reset()`.
-
-`crosstalkHoaBus`/`crosstalkDecodeConvolvers`/`xtcConvolvers`/
-`crosstalkVoicingChain`/`crosstalkGraphNodes`/`crosstalkGate` are a parallel
-bus built by `buildCrosstalkGraph`, gated the same way as binaural; its
-internal anechoic "flat" sub-decode owns its own HOA bus/convolvers,
-independent of the primary `hoaBus` (which decodes whatever `spatialProfile`
-the headphone preview selected).
-
-`sidechainSum`/`sidechainSink`/`sidechainCompressor`/`compGains`/
-`compMakeupGain` emulate the backend's linked-sidechain bus compressor
-(`packages/core/src/mastering/compressor.py`) without an AudioWorklet: every channel's
-post-EQ signal sums into `sidechainSum`, feeding one shared
-`DynamicsCompressorNode` used purely as a sidechain (its native channelCount
-can't exceed 2, so it can't process the discrete bed directly); its live
-`.reduction`, polled in `tick()`, is applied as a shared gain to every
-channel's own `compGain` node. `sidechainSink` is a permanent zero-gain tap
-into `mergePoint` keeping the detector node part of the actively rendered
-graph, since a compressor with no path to the destination may not reliably
-keep updating `.reduction`.
+**Filter assets.** The decode banks, XTC matrices, and EQ FIRs still ship as
+WAVs under `apps/web/public/` and are handed to the core as taps; only the
+asset *names* are served (`GET /api/v1/configuration`). The wasm artifact
+itself lives at `apps/web/public/wasm/upmixer_dsp.wasm` and is committed, so
+a frontend checkout needs no Rust toolchain — rebuild it with `npm run
+build:wasm` after any change under `packages/dsp`.
 
 ## Extension boundaries
 

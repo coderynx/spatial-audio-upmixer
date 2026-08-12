@@ -805,7 +805,7 @@ column `card`, separators `border`.
   why the header column can be sticky and no virtualization is needed. Adding
   zoom means revisiting both.
 
-Render loops, DSP, memoization, and `previewGraph.ts` are out of scope for
+Render loops, DSP, and memoization are out of scope for
 visual work. `HazeView`, `ElevationView`, `ChannelMeters`, `TimelineView`,
 `MixerView`, and `Transport` are `React.memo`'d to keep 60fps playback from
 re-rendering the page: do not pass them inline object or callback props.

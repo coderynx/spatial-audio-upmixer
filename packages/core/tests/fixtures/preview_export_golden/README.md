@@ -32,13 +32,14 @@ needing `scripts/build_eq_filters.py` run once first.
 
 Regenerate the `web_*_metrics.json` files after any change to the bed, the
 mastering config in `test_preview_export_golden.py::_mastering_config`/
-`_reference_match_config`/`_binaural_config`, or
-`apps/web/src/features/projects/previewGraph.ts`:
+`_reference_match_config`/`_binaural_config`, or anything under
+`packages/dsp` — the last case also needs the wasm artifact rebuilt, since
+that is what the harness loads:
 
 ```bash
-cd web && npm run golden:render
+cd apps/web && npm run build:wasm && npm run golden:render
 ```
 
-Then re-run `python3 -m pytest tests/test_preview_export_golden.py -m perf`
-to confirm the cross-engine tolerances in the contract doc still hold. Do
-not hand-edit any of these files.
+Then re-run `uv run pytest packages/core/tests/test_preview_export_golden.py`
+to confirm the tolerances in the contract doc still hold. Do not hand-edit
+any of these files.
