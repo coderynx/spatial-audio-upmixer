@@ -413,6 +413,88 @@ def test_project_view_builds_stem_urls_from_catalogued_stems(tmp_path, monkeypat
     )
 
 
+def test_download_track_stems_archive_streams_a_zip_of_every_stem(tmp_path, monkeypatch):
+    import io
+    import zipfile
+
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectStem, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'stems-archive.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+    stem_bytes = {"Vocals": _wav_bytes(440.0), "Bass": _wav_bytes(220.0)}
+    with factory() as session:
+        batch = ImportBatch(kind="track", title="Song")
+        asset = MediaAsset(
+            import_batch=batch, filename="song.wav", relative_path="song.wav",
+            storage_key="objects/song.wav", sha256="0" * 64, size_bytes=1, title="Song",
+        )
+        project = Project(import_batch=batch, name="Archive project", manifest={})
+        track = ProjectTrack(project=project, asset=asset, position=0)
+        session.add_all([batch, asset, project, track])
+        session.flush()
+        stems_dir = tmp_path / "project-stems" / project.id / track.id / "stems"
+        stems_dir.mkdir(parents=True)
+        for stem_key, data in stem_bytes.items():
+            (stems_dir / f"{stem_key}.wav").write_bytes(data)
+            session.add(ProjectStem(
+                project=project, track=track, stem_key=stem_key,
+                relative_path=f"{project.id}/{track.id}/stems/{stem_key}.wav",
+                sample_rate=48_000, channels=2, size_bytes=len(data), generation=1,
+            ))
+        session.commit()
+        project_id, track_id = project.id, track.id
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as client:
+        response = client.get(f"/api/v1/projects/{project_id}/tracks/{track_id}/stems/archive")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/zip"
+        assert 'filename="Song-stems.zip"' in response.headers["content-disposition"]
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            assert sorted(archive.namelist()) == ["Bass.wav", "Vocals.wav"]
+            for stem_key, data in stem_bytes.items():
+                assert archive.read(f"{stem_key}.wav") == data
+
+        assert client.get(f"/api/v1/projects/{project_id}/tracks/nope/stems/archive").status_code == 404
+
+
+def test_download_track_stems_archive_returns_409_when_track_has_no_stems(tmp_path, monkeypatch):
+    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectTrack
+
+    database_url = f"sqlite:///{tmp_path / 'stems-archive-empty.db'}"
+    settings = Settings(data_dir=tmp_path, database_url=database_url, worker_count=1)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+
+    upgrade_database(database_url)
+    engine = create_database_engine(database_url)
+    factory = create_session_factory(engine)
+    with factory() as session:
+        batch = ImportBatch(kind="track", title="Song")
+        asset = MediaAsset(
+            import_batch=batch, filename="song.wav", relative_path="song.wav",
+            storage_key="objects/song.wav", sha256="0" * 64, size_bytes=1,
+        )
+        project = Project(import_batch=batch, name="Empty project", manifest={})
+        track = ProjectTrack(project=project, asset=asset, position=0)
+        session.add_all([batch, asset, project, track])
+        session.commit()
+        project_id, track_id = project.id, track.id
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as client:
+        response = client.get(f"/api/v1/projects/{project_id}/tracks/{track_id}/stems/archive")
+        assert response.status_code == 409
+
+
 def test_project_view_exposes_versioned_peaks_url_and_serves_the_envelope(tmp_path, monkeypatch):
     import json
 

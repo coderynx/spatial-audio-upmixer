@@ -276,6 +276,8 @@ export const api = {
   // DAW-style Save/Open: a portable .upmix.zip, distinct from exportProject
   // above (which renders a deliverable mix, not a re-editable workspace).
   projectArchiveUrl: (id: string) => `${rootPath}/api/v1/projects/${id}/archive`,
+  trackStemsArchiveUrl: (projectId: string, trackId: string) =>
+    `${rootPath}/api/v1/projects/${projectId}/tracks/${trackId}/stems/archive`,
   importProjectArchive: async (file: File) => {
     const data = new FormData()
     data.append("file", file, file.name)

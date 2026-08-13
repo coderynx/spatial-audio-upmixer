@@ -9,6 +9,7 @@ import json
 import shutil
 import uuid
 import zipfile
+from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -24,8 +25,9 @@ ARCHIVE_FORMAT_VERSION = 1
 MANIFEST_FILENAME = "project.json"
 
 
-def _safe_component(name: str) -> str:
-    """Sanitize a stem key into one path-safe zip entry filename."""
+def safe_component(name: str) -> str:
+    """Sanitize a stem key or track/project name into one path-safe zip
+    entry filename."""
     cleaned = "".join(ch if ch.isalnum() or ch in "-_.@ " else "_" for ch in name)
     return cleaned or "stem"
 
@@ -54,7 +56,7 @@ def export_project_archive(
 
             stems_meta: list[dict[str, Any]] = []
             for stem in track.stems:
-                stem_name = _safe_component(stem.stem_key)
+                stem_name = safe_component(stem.stem_key)
                 stem_entry = f"{track_dir}/stems/{stem_name}.wav"
                 archive.write(project_stems.resolve(stem.relative_path), stem_entry)
                 preview_entry = None
@@ -140,6 +142,48 @@ def export_project_archive(
             "tracks": manifest_tracks,
         }
         archive.writestr(MANIFEST_FILENAME, json.dumps(manifest))
+
+
+class _ChunkSink:
+    """zipfile writes here; the generator below drains it between reads. No
+    tell()/seek(), so ZipFile falls back to streaming mode with per-entry
+    data descriptors — lets a track's stems zip stream to the client without
+    buffering the whole archive on disk or in memory."""
+
+    def __init__(self) -> None:
+        self._chunks: list[bytes] = []
+
+    def write(self, data: bytes) -> int:
+        self._chunks.append(bytes(data))
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def drain(self) -> bytes:
+        data = b"".join(self._chunks)
+        self._chunks.clear()
+        return data
+
+
+def iter_track_stems_zip(entries: list[tuple[Path, str]]) -> Iterator[bytes]:
+    """Stream a zip of *entries* (source path, entry name) as it is written.
+    Caller must have already resolved and stat-checked every path — a
+    missing file here would surface mid-body, after the 200 is committed."""
+    sink = _ChunkSink()
+    with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as bundle:
+        for path, name in entries:
+            info = zipfile.ZipInfo(name)
+            info.file_size = path.stat().st_size
+            with bundle.open(info, "w") as target, path.open("rb") as source:
+                while chunk := source.read(1 << 20):
+                    target.write(chunk)
+                    if data := sink.drain():
+                        yield data
+            if data := sink.drain():
+                yield data
+    if data := sink.drain():
+        yield data
 
 
 def _extract(archive: zipfile.ZipFile, entry: str, destination: Path) -> Path:

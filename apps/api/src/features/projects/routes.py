@@ -16,7 +16,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from upmixer_web.features.imports.service import resolve_project_mastering_reference
 from upmixer_web.features.jobs.schemas import JobView
 from upmixer_web.features.jobs.views import job_view
-from upmixer_web.features.projects.archive import export_project_archive, import_project_archive
+from upmixer_web.features.projects.archive import (
+    export_project_archive,
+    import_project_archive,
+    iter_track_stems_zip,
+    safe_component,
+)
 from upmixer_web.features.projects.schemas import (
     AddProjectAssetsRequest,
     CreateProjectRequest,
@@ -244,7 +249,7 @@ def register_project_routes(
         # regardless of whether the returned Response references it — no
         # need to also pass background=background_tasks to FileResponse.
         background_tasks.add_task(destination.unlink, missing_ok=True)
-        safe_name = "".join(ch if ch.isalnum() or ch in "-_ " else "_" for ch in project.name) or "project"
+        safe_name = safe_component(project.name)
         return FileResponse(destination, media_type="application/zip", filename=f"{safe_name}.upmix.zip")
 
     @app.post("/api/v1/projects/import", response_model=ProjectView, status_code=status.HTTP_201_CREATED, tags=["projects"])
@@ -295,6 +300,31 @@ def register_project_routes(
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Project stem file not found") from exc
         return FileResponse(path, media_type=media_type)
+
+    @app.get("/api/v1/projects/{project_id}/tracks/{track_id}/stems/archive", tags=["projects"])
+    def read_project_track_stems_archive(
+        project_id: str,
+        track_id: str,
+        session: Session = Depends(database_session),
+    ) -> StreamingResponse:
+        track = session.get(ProjectTrack, track_id)
+        if not track or track.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Project track not found")
+        if not track.stems:
+            raise HTTPException(status_code=409, detail="Track has no stems to download")
+        try:
+            entries = [
+                (app.state.project_stems.resolve(stem.relative_path), f"{safe_component(stem.stem_key)}.wav")
+                for stem in track.stems
+            ]
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Project stem file not found") from exc
+        safe_name = safe_component(track.asset.title or track.asset.filename)
+        return StreamingResponse(
+            iter_track_stems_zip(entries),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{safe_name}-stems.zip"'},
+        )
 
     @app.get("/api/v1/projects/{project_id}/tracks/{track_id}/peaks", tags=["projects"])
     def read_project_track_peaks(

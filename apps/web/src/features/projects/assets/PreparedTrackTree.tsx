@@ -1,10 +1,12 @@
 import * as React from "react";
-import { ChevronDown, ChevronRight, RotateCcw } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import type { Configuration, Project, ProjectTrack } from "@/api";
+import { api } from "@/api";
+import type { Configuration, Project, ProjectStem, ProjectTrack } from "@/api";
 import { formatBytes, formatDuration } from "@/lib/format";
+import { downloadWithProgress } from "@/lib/download";
 import { getStemColor, getStemIcon } from "@/lib/stems";
 
 function statusVariant(status: string) {
@@ -53,6 +55,7 @@ export function PreparedTrackTree({
         {project.tracks.map((track) => (
           <TrackRow
             key={track.id}
+            projectId={project.id}
             track={track}
             configuration={configuration}
             open={!collapsed[track.id]}
@@ -66,12 +69,14 @@ export function PreparedTrackTree({
 }
 
 function TrackRow({
+  projectId,
   track,
   configuration,
   open,
   onToggle,
   onOpenTrack,
 }: {
+  projectId: string;
   track: ProjectTrack;
   configuration: Configuration | null;
   open: boolean;
@@ -82,6 +87,22 @@ function TrackRow({
   const layout = overrides?.mixing?.channel_layout;
   const channelNames = layout ? configuration?.choices.layout_channels?.[layout] : undefined;
   const busy = track.status !== "ready" && track.status !== "failed";
+  const [downloadProgress, setDownloadProgress] = React.useState<number | null>(null);
+  const [downloadError, setDownloadError] = React.useState<string | null>(null);
+
+  async function downloadAllStems() {
+    setDownloadError(null);
+    setDownloadProgress(0);
+    const totalBytes = track.stems.reduce((sum, stem) => sum + stem.size_bytes, 0);
+    try {
+      await downloadWithProgress(api.trackStemsArchiveUrl(projectId, track.id), totalBytes, setDownloadProgress);
+    } catch (reason) {
+      setDownloadError((reason as Error).message);
+    } finally {
+      setDownloadProgress(null);
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center gap-2 px-3 py-2">
@@ -110,25 +131,40 @@ function TrackRow({
             <Progress value={track.progress * 100} />
             <span className="w-8 shrink-0 text-right text-[11px] tabular-nums">{Math.round(track.progress * 100)}%</span>
           </div>
+        ) : downloadProgress !== null ? (
+          <div className="flex w-24 shrink-0 items-center gap-1.5">
+            <Progress value={downloadProgress * 100} />
+            <span className="w-8 shrink-0 text-right text-[11px] tabular-nums">{Math.round(downloadProgress * 100)}%</span>
+          </div>
         ) : (
-          <Button size="sm" variant="outline" disabled={track.status !== "ready"} onClick={onOpenTrack}>
-            Open in mixer
-          </Button>
+          <>
+            {track.stems.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={downloadAllStems}
+                aria-label={`Download all stems for ${track.asset.title || track.asset.filename}`}
+              >
+                <Download />
+                Download stems
+              </Button>
+            )}
+            <Button size="sm" variant="outline" disabled={track.status !== "ready"} onClick={onOpenTrack}>
+              Open in mixer
+            </Button>
+          </>
         )}
       </div>
       {track.error && (
         <p className="border-t bg-destructive/10 px-3 py-1.5 text-[11px] text-destructive">{track.error}</p>
       )}
+      {downloadError && (
+        <p className="border-t bg-destructive/10 px-3 py-1.5 text-[11px] text-destructive">{downloadError}</p>
+      )}
       {open && track.stems.length > 0 && (
         <div className="space-y-1 border-t bg-muted/10 py-1.5 pl-11 pr-3">
           {track.stems.map((stem) => (
-            <StemRow
-              key={stem.id}
-              stemKey={stem.stem_key}
-              channels={stem.channels}
-              sampleRate={stem.sample_rate}
-              channelNames={channelNames}
-            />
+            <StemRow key={stem.id} stem={stem} channelNames={channelNames} />
           ))}
         </div>
       )}
@@ -139,17 +175,8 @@ function TrackRow({
   );
 }
 
-function StemRow({
-  stemKey,
-  channels,
-  sampleRate,
-  channelNames,
-}: {
-  stemKey: string;
-  channels: number;
-  sampleRate: number;
-  channelNames?: string[];
-}) {
+function StemRow({ stem, channelNames }: { stem: ProjectStem; channelNames?: string[] }) {
+  const { stem_key: stemKey, channels, sample_rate: sampleRate } = stem;
   const baseName = stemKey.split("@", 1)[0];
   const StemIcon = getStemIcon(baseName);
   const color = getStemColor(baseName);
@@ -168,6 +195,18 @@ function StemRow({
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
           {channels} ch · {sampleRate / 1000} kHz
         </span>
+        {stem.audio_url && (
+          <Button variant="ghost" size="icon" className="h-5 w-5 shrink-0" asChild>
+            <a
+              href={stem.audio_url}
+              download={`${stemKey.replace(/[\\/]/g, "_")}.wav`}
+              aria-label={`Download ${stemKey}`}
+              title={`Download ${stemKey}`}
+            >
+              <Download className="h-3 w-3" />
+            </a>
+          </Button>
+        )}
       </div>
       {zones.length > 0 && (
         <div className="ml-5 flex flex-wrap gap-1 pb-1">
