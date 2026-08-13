@@ -116,12 +116,20 @@ class ReferenceMatchMixin:
         (see `_reference_match_signature`'s exclusions). It is not a
         correctness gate: `prepare_reference_match` re-validates everything
         itself once it actually runs.
+
+        A revisited signature (e.g. switching speaker layout back to one
+        already computed this session) is promoted from the per-signature
+        cache right here, synchronously, so the settings-save response
+        already carries the restored asset and no pending window opens at
+        all.
         """
         if not self._refmatch_executor:
             return
         with self.sessions() as session:
             project = get_project(session, project_id)
             if not _reference_match_needs_work(project, self.project_stems):
+                return
+            if self._try_promote_reference_match(project, project_id):
                 return
         with self._lock:
             self._refmatch_pending.add(project_id)
@@ -147,6 +155,20 @@ class ReferenceMatchMixin:
                     "Reference-match precompute failed for project %s", project_id
                 )
 
+    def _try_promote_reference_match(self, project: Project | None, project_id: str) -> bool:
+        """Restore a cached asset for *project*'s current target signature as
+        the active one, if one was computed earlier (see
+        `ProjectStemStorage.promote_cached_reference_match`). Shared by the
+        scheduling fast-path and the authoritative compute path so both agree
+        on when a cache hit makes work unnecessary.
+        """
+        if not project:
+            return False
+        target_signature = _reference_match_signature(project)
+        if target_signature is None:
+            return False
+        return self.project_stems.promote_cached_reference_match(project_id, target_signature)
+
     def reference_match_pending(self, project_id: str) -> bool:
         """Whether a reference-match recompute is queued or running for
         *project_id* — surfaced to the API so the frontend keeps polling
@@ -165,8 +187,9 @@ class ReferenceMatchMixin:
         rather than falling through to a full uncached separation pass with
         none of JobSubprocess's crash isolation or progress reporting. Safe to
         call after every project stem preparation and every settings save;
-        only a signature mismatch with stems already prepared triggers the
-        mix + PSD-match pass.
+        only a signature mismatch with stems already prepared, and no cached
+        asset for that signature (see `promote_cached_reference_match`),
+        triggers the mix + PSD-match pass.
         """
         with self.sessions() as session:
             project = get_project(session, project_id)
@@ -180,6 +203,8 @@ class ReferenceMatchMixin:
                 return
             existing = self.project_stems.read_reference_match_meta(project_id)
             if existing and existing.get("signature") == target_signature:
+                return
+            if self.project_stems.promote_cached_reference_match(project_id, target_signature):
                 return
             reference = project.mastering_reference
             if reference is None:

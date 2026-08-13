@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
-import { isStereoLayout } from "@/lib/layouts";
+import { isStereoLayout, outputModeForLayoutSwitch } from "@/lib/layouts";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
 import { panWeights, stemPan } from "@/lib/spatial";
 import { getStemColor, getStemIcon, stemColors } from "@/lib/stems";
@@ -390,6 +390,24 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     [previewMastering, masteringBypassed],
   );
   const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants);
+  // A non-stereo layout switch decides output mode itself: native only if
+  // the current output device actually has that many channels
+  // (`preview.nativeSupported`), otherwise binaural at the flat profile —
+  // rather than leaving a now-unsupported "native" selected (e.g. switching
+  // a stereo project, played on a 2-channel output, to 5.1). Stereo layouts
+  // are handled by the effect above instead, since native is their only
+  // valid choice. Reset on project switch (this component instance is
+  // reused across projects, see `volumeRestored` below) so a different
+  // project's first layout isn't mistaken for a user-initiated switch.
+  const previousRoutingLayoutRef = React.useRef(routingLayout);
+  React.useEffect(() => { previousRoutingLayoutRef.current = routingLayout; }, [projectId]);
+  React.useEffect(() => {
+    if (stereoLayout || previousRoutingLayoutRef.current === routingLayout) return;
+    previousRoutingLayoutRef.current = routingLayout;
+    const next = outputModeForLayoutSwitch(preview.nativeSupported);
+    setOutputMode(next.outputMode);
+    if (next.outputMode === "binaural") setSpatialProfile(next.spatialProfile);
+  }, [routingLayout, stereoLayout, preview.nativeSupported, setOutputMode, setSpatialProfile]);
   // The engine, not React, owns `preview.volume` — restore it from the saved
   // view state exactly once per project (guarded by `volumeRestored`, reset
   // on project change) so the engine's unity default can't race the real

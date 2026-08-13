@@ -21,3 +21,15 @@ export function isStereoLayout(layout: string | undefined): boolean {
 export function deliveryTypeForLayout(layout: string, type: string): string {
   return isStereoLayout(layout) && type !== "wav" ? "wav" : type;
 }
+
+/** Preview output mode a speaker-layout switch should land on: native only
+ * if the current output device actually has that many channels
+ * (`nativeSupported`, from `AudioContext.destination.maxChannelCount` vs.
+ * the layout's channel count — see `useStemPreview`'s `nativeSupported`),
+ * otherwise binaural at the flat (reference-neutral) profile rather than
+ * whatever profile was left over from a previous session. */
+export function outputModeForLayoutSwitch(
+  nativeSupported: boolean,
+): { outputMode: "native" } | { outputMode: "binaural"; spatialProfile: "flat" } {
+  return nativeSupported ? { outputMode: "native" } : { outputMode: "binaural", spatialProfile: "flat" };
+}

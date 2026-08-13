@@ -68,6 +68,14 @@ function channelCount() {
   return screen.getByText("Channels").parentElement?.textContent?.replace("Channels", "").trim();
 }
 
+// SelectField (unlike OutputModeSelect's device picker) renders a bare
+// <label>/<select> pair with no htmlFor/aria-label association, so
+// getByLabelText can't resolve it — locate the <select> by its label text's
+// sibling instead.
+function selectFieldByLabel(label: string) {
+  return screen.getByText(label).parentElement?.querySelector("select") as HTMLSelectElement;
+}
+
 // Saves are debounced, so calls recorded by one test would otherwise still be
 // the newest entry when the next test inspects `saveProject.mock.calls`.
 beforeEach(() => { vi.clearAllMocks(); });
@@ -326,6 +334,35 @@ describe("ProjectDetailPage tabs", () => {
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
     expect(channelCount()).toBe("12");
   });
+});
+
+describe("ProjectDetailPage output mode on layout switch", () => {
+  it("falls back to binaural at the flat profile when switching to a layout the output device can't carry natively", async () => {
+    // No window.AudioContext is stubbed in this suite, so the preview
+    // engine is unsupported and maxChannels stays at its 2-channel default
+    // (see useStemPreview's `maxChannels` state) — exactly the reported bug:
+    // a 2-channel output device, a project switched from stereo to a
+    // multichannel layout, and "native" left selected from the stereo state.
+    const config = {
+      choices: { layout_channels: { "5.1": ["FL", "FR", "C", "LFE", "SL", "SR"] } },
+    } as unknown as Configuration;
+    vi.mocked(api.getProject).mockResolvedValueOnce({
+      ...project,
+      manifest: { mixing: { channel_layout: "stereo" } },
+    });
+    const user = userEvent.setup();
+    renderPage(config);
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.selectOptions(selectFieldByLabel("Speaker layout"), "5.1");
+
+    await waitFor(() => {
+      const [, payload] = vi.mocked(api.saveProjectViewState).mock.calls.at(-1)!;
+      expect(payload).toMatchObject({ output_mode: "binaural", spatial_profile: "flat" });
+    });
+  });
+
 });
 
 describe("ProjectDetailPage keyboard shortcuts", () => {

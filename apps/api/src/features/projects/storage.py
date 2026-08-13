@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from upmixer_web.shared.models import Project, ProjectStem, ProjectTrack
 
 REFERENCE_MATCH_META_FILENAME = "reference_match.json"
+REFERENCE_MATCH_CACHE_LIMIT = 12
 
 PEAKS_FILENAME = "peaks.bin"
 PEAKS_META_FILENAME = "peaks.json"
@@ -284,6 +285,11 @@ class ProjectStemStorage:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def _reference_match_cache_dir(self, project_id: str) -> Path:
+        path = self.reference_match_dir(project_id) / "cache"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def write_reference_match(
         self,
         project_id: str,
@@ -305,6 +311,11 @@ class ProjectStemStorage:
         `strength`/`max_db` are live browser knobs with no recompute. Empty
         `curve`/`channels` when spectral matching is disabled; `rms_gain_db`
         still applies.
+
+        Also mirrors the result into a per-signature cache
+        (`promote_cached_reference_match`) so switching back to a
+        previously-visited speaker layout is a file copy instead of a
+        recompute.
         """
         directory = self.reference_match_dir(project_id)
         meta = {
@@ -315,9 +326,28 @@ class ProjectStemStorage:
             "channels": channels,
             "rms_gain_db": rms_gain_db,
         }
-        (directory / REFERENCE_MATCH_META_FILENAME).write_text(
-            json.dumps(meta), encoding="utf-8"
-        )
+        raw = json.dumps(meta)
+        (directory / REFERENCE_MATCH_META_FILENAME).write_text(raw, encoding="utf-8")
+        cache_dir = self._reference_match_cache_dir(project_id)
+        (cache_dir / f"{signature}.json").write_text(raw, encoding="utf-8")
+        cached = sorted(cache_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for stale in cached[REFERENCE_MATCH_CACHE_LIMIT:]:
+            stale.unlink(missing_ok=True)
+
+    def promote_cached_reference_match(self, project_id: str, signature: str) -> bool:
+        """Restore a previously-computed reference-match asset for
+        *signature* as the active one, if a cached copy exists.
+
+        Lets a layout switch that revisits a signature seen before (e.g.
+        toggling speaker layout A -> B -> A) skip the full mix + PSD-match
+        pass entirely.
+        """
+        cached = self._reference_match_cache_dir(project_id) / f"{signature}.json"
+        if not cached.is_file():
+            return False
+        directory = self.reference_match_dir(project_id)
+        shutil.copyfile(cached, directory / REFERENCE_MATCH_META_FILENAME)
+        return True
 
     def read_reference_match_meta(self, project_id: str) -> dict | None:
         path = self.root / project_id / "reference_match" / REFERENCE_MATCH_META_FILENAME
