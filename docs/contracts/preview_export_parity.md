@@ -14,12 +14,28 @@ matching stage order — is no longer possible to get wrong.
 What remains is this file's subject: the things that *can* still differ — in
 behaviour and in timing — and the checks that catch them.
 
-Read [`README.md`](README.md) first for the change protocol. The binaural
-geometry/ambisonic/decode-filter/voicing specification lives in
+**The preview is first-class, not a rough approximation to be second-guessed
+against the export.** A user judges whether an upmix is good — balance,
+spatial placement, loudness, tone — by listening to the preview. That
+judgment is only trustworthy if the preview is provably close to what export
+will actually deliver. Treat preview/export divergence as a **bug**, not as
+an acceptable cost of the preview being "just a preview." Where a difference
+is unavoidable — the preview must respond to a control while the export
+renders offline — the allowed gap is bounded and stated explicitly below
+(§3), not left implicit.
+
+The binaural geometry/ambisonic/decode-filter/voicing specification lives in
 [`../standards/spatial_audio_engine.md`](../standards/spatial_audio_engine.md);
 the transaural one in
 [`../standards/transaural_speakers.md`](../standards/transaural_speakers.md).
-Both are cross-referenced, not repeated, below.
+Both are cross-referenced, not repeated, below. Both derive numeric
+requirements from the industry standards in `docs/standards/`:
+`loudness_dsp_bs1770.md` (BS.1770-5 loudness/true-peak),
+`spatial_layouts_bs775_bs2051.md` (BS.775/BS.2051 layouts, LFE, downmix),
+`adm_metadata_bs2076.md` and `dolby_atmos_profile.md` (ADM-BWF delivery).
+Where a contracted constant exists because a standard requires it (e.g. LFE
+−10 dB per BS.775-4 Annex 7, K-weighting coefficients per BS.1770-4 Annex 1),
+this document cites that standard, not just the code.
 
 ---
 
@@ -51,8 +67,9 @@ after loudness rather than before is deliberate; see
 The one thing that can break identity is **build provenance**: the browser
 loads a committed `apps/web/public/wasm/upmixer_dsp.wasm`, not a wasm built on
 install, so it can fall behind the installed `upmixer_dsp` wheel. Both bindings
-export `dsp_core_version`, and the golden render (§5) fails if the two builds
-disagree numerically. **Rebuild the artifact (`npm run build:wasm`) after any
+export `dsp_core_version`, and the worklet reads it at startup
+(`apps/web/public/dsp.worklet.js`) — that string is what to check when a
+build is suspect. **Rebuild the artifact (`npm run build:wasm`) after any
 change under `packages/dsp`.**
 
 ## 2. Constants
@@ -73,9 +90,11 @@ Constants that live in Rust are the ones that were already duplicated and are
 structural rather than tunable: the BS.1770 true-peak FIR, the ACN/N3D
 normalization, and the filter-design internals.
 
-**Changing a served constant** means editing it in its core module, then
-updating `apps/web/src/features/projects/engineConstants.fixture.ts` (the
-test-only copy that feeds the web suite) and re-running the golden render.
+**Changing a served constant** means editing it in its core module — the web
+has no second copy to keep in sync, only a test-only mock
+(`apps/web/src/features/projects/engineConstants.fixture.ts`) that stands in
+for the real `GET /api/v1/configuration` response in web tests and needs no
+ceremony beyond staying shaped like that response.
 
 ## 3. What can still differ
 
@@ -150,38 +169,7 @@ so it resumes rather than restarts.
 **Run this after any change to `packages/dsp`'s streaming path.** A change that
 is numerically perfect and 3× too slow is a change that ships silence.
 
-## 5. Golden render
-
-`packages/core/tests/test_preview_export_golden.py` renders a fixed
-deterministic bed through both builds and compares. It runs in the default
-suite. Six tests: three Python pins (reproducibility) and three cross-build
-diffs (bed, reference match, binaural collapse).
-
-The browser side is `apps/web/scripts/render-preview-golden.mjs`, which loads
-the shipped wasm directly — no Web Audio, no separate measurement code. Its
-constants and filter assets come from `scripts/golden-inputs.py`, which reads
-them from the modules that own them, so the two sides cannot render with
-different inputs.
-
-| Metric | Threshold |
-|---|---|
-| Per-channel RMS | ≤ 3 dB |
-| Integrated LKFS | ≤ 1.0 LU |
-| True peak | ≤ 1.0 dBTP |
-
-These thresholds are inherited from when the two sides were different
-implementations. They are now far looser than what actually holds — the two
-builds agree to floating-point noise — and exist as a backstop against a stale
-wasm rather than as a description of the expected difference. **A failure here
-means the artifact is out of date, or a genuine bug landed in the core.**
-
-Regenerate with `npm run golden:render` from `apps/web/`, then run the Python
-test. The reference-match stage needs its gitignored fixture pair, produced by
-`REGENERATE_GOLDEN=1 uv run pytest
-packages/core/tests/test_preview_export_golden.py`; without it that stage is
-skipped rather than silently compared against stale numbers.
-
-## 6. Discrepancy ledger
+## 5. Discrepancy ledger
 
 Rows are kept after they are fixed so the history of what was found stays
 visible. D1–D22 predate the Rust port and are preserved in git history at
@@ -199,6 +187,6 @@ or that the port itself resolved.
 | D25 | `StreamingConvolver` re-transformed its kernel on every block, so the order-3 decode alone ran at 1.4x realtime and the audio thread starved — correct samples, delivered too late, heard as silence. | Fixed: uniform-partitioned overlap-save, kernel transformed once. Guarded by the §4 budget. |
 | D26 | The mono-maker's zero-phase pass filtered ~9,700 samples of context to emit each 128-frame quantum, ~75x redundant. | Fixed: it advances in 512-frame strides, which is where the §4 mean and p99 both sit inside budget. |
 | D27 | The loudness correction was measured in a single blocking call inside the render callback — ~57 s of frozen audio thread for an eight-minute track, on load and on every output-mode switch. | Fixed: `stream::measure` advances a forked engine in slices, with streaming BS.1770 meters pinned bit-identical to the offline ones. The correction now arrives late (P3) instead of stopping the audio. |
-| D24 | `dsp_master_bed` skipped LFE entirely for reference matching; LFE should take the level gain and skip only the spectral curve (D21). | Fixed — caught by the golden render's reference-match stage. The streaming engine was already correct. |
+| D24 | `dsp_master_bed` skipped LFE entirely for reference matching; LFE should take the level gain and skip only the spectral curve (D21). | Fixed. The streaming engine was already correct. |
 | D29 | A calibration measured whatever was in the worklet's engine when the `measure` message landed, which was not what the caller had just set: `updateParams` coalesces to one post per animation frame while every other message posts immediately, and a profile switch fired its filter-set fetch *after* asking for the measurement. So the monitoring level a profile settled on depended on which profile preceded it and on whether a fetch won the race — different on every switch and every reload. | Fixed: `DspEngineClient` flushes the pending parameter block ahead of any other message, `retuneVoicing`/`retuneCrosstalkVoicing` load the profile's filter set before recalibrating, and a switch back to a mode whose measurement an in-flight pass is about to overwrite re-measures instead of claiming it is calibrated. |
 | D28 | The whole-programme measurement D27 introduced (§ P3) advanced only while paused and only from a `resume()`d `AudioContext`; a fresh context starts suspended and the worklet never registered its own progress callback, so the "calibrating loudness" UI could hang indefinitely with no feedback, and at best took minutes on an eight-minute track. | Fixed: the context resumes on init (with a pointer-gesture fallback for autoplay policy), the worklet's progress reaches the UI, and measurement runs in two stages — a fast excerpt pass clears the UI in seconds, then the exact whole-programme pass keeps refining the gain in the background (§ P3). |

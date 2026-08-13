@@ -37,8 +37,7 @@ const METER_WINDOW_FRAMES: usize = 2048;
 
 /// Time constant for smoothing a stem's mute/solo/rebalance gain and the
 /// master output gain across a live [`PreviewEngine::update_params`] edit,
-/// so the step lands as a fast ramp rather than a click. Matches the deleted
-/// `previewGraph.ts`'s `GAIN_RAMP_TIME_CONSTANT` from the pre-Rust preview.
+/// so the step lands as a fast ramp rather than a click.
 const GAIN_RAMP_MS: f64 = 8.0;
 
 

@@ -2,7 +2,7 @@
 //!
 //! Channel weights and the format's channel order stay with the caller —
 //! they are configuration, owned by `packages/core/src/loudness.py` and
-//! served to the web (see `docs/contracts/preview_export_parity.md` §4).
+//! served to the web (see `docs/contracts/preview_export_parity.md` §2).
 
 use crate::kernels::biquad::sosfilt;
 use crate::kernels::sum::pairwise_sum;

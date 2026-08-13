@@ -2,7 +2,7 @@ import { Power } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-// A/B toggle for the mastering chain — see monitorMastering (previewGraph.ts).
+// A/B toggle for the mastering chain — see monitorMastering (masterPreview.ts).
 // Same icon-button idiom as Transport's loop button: warning variant when
 // engaged, ghost otherwise.
 export function MasterBypassButton({ bypassed, onToggle }: { bypassed: boolean; onToggle: () => void }) {

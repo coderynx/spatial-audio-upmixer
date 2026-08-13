@@ -17,9 +17,8 @@ export default tseslint.config(
     },
   },
   {
-    // Node-side tooling (e.g. the golden-diff harness in
-    // docs/contracts/preview_export_parity.md §5) — not part of the
-    // browser bundle, runs under plain Node via `npm run golden:render`.
+    // Node-side tooling (e.g. bench-preview-engine.mjs) — not part of the
+    // browser bundle, runs under plain Node via `npm run bench:engine`.
     files: ["scripts/**/*.mjs"],
     languageOptions: { globals: globals.node },
   },

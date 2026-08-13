@@ -11,10 +11,10 @@ cancellation stage on top.
 Audio and the Dolby Atmos binaural renderer (see References). No measured
 proprietary HRTF/BRIR data is used — all filters are synthesized (§4).
 **Scope:** Rendering a discrete multichannel bed to headphone-ready binaural
-stereo. This document is the signed contract between the core engine
-(`packages/core/src/binaural/`) and the web preview (`apps/web/src/features/projects/
-useStemPreview.ts`, `masteringProfiles.ts`) — both must implement it
-identically at the parameter level (see §6 for what "identically" means).
+stereo. This document is the signed contract for the core engine's binaural
+rendering pass (`packages/core/src/binaural/`, shared with the browser
+preview through `packages/dsp`) — geometry, ambisonic convention, decode
+filters, and voicing chain.
 
 ---
 
@@ -59,7 +59,7 @@ stereo (L, R)
 profile voicing chain (crossfeed → bass/air shelves → presence → M/S widen)  [§5]
   │
   ▼
-delivery: BS.1770 loudness correction (small, bed-preserving — see §7) → soft-limit (safety net, last) → 2ch WAV
+delivery: BS.1770 loudness correction (small, bed-preserving — see §6) → soft-limit (safety net, last) → 2ch WAV
 ```
 
 LFE is excluded from the ambisonic encode (no spatial position) and summed
@@ -148,18 +148,7 @@ vertical/zonal harmonic) deliberately omits the standard N3D `√7` factor
 (`gains[12] = 0.5 · sinδ · (5sin²δ − 3)`, not `0.5·√7·sinδ·(5sin²δ − 3)`). The
 decode filter bank (§4) was fit as the pseudo-inverse of this exact encoder,
 so the omission is load-bearing, not a bug to "correct" — doing so would
-retune every decode filter. The web preview's SH library
-(`spherical-harmonic-transform::computeRealSH`) applies the standard `√7`
-factor, so `useStemPreview.ts` scales its ACN 12 tap by `1/√7` before the
-decode convolvers to match this encoder's convention. All other 15 ACN
-channels already agree between the two encoders to within floating-point
-tolerance.
-
-**Parity note:** this is the standard published AmbiX ACN/N3D real-SH basis.
-The web implementation may use a third-party ambisonic library's encoder as
-long as it also implements ACN/N3D order 3 — bit-exact agreement with any
-specific library's internal code path is not required, only agreement on
-this table (see §6).
+retune every decode filter.
 
 ---
 
@@ -266,46 +255,15 @@ without boomy ringing.
 Crossfeed: each ear mixed with a low-passed copy of the opposite ear
 (`out_L = L·(1−a) + lowpass(R)·a`), softening hard-panned harshness the way
 headphone crossfeed does in general. Shelf/peak filters use the same
-subtract/add biquad trick as `packages/core/src/utils.py::elevation_eq` so the Web
-Audio `BiquadFilterNode` chain can match parameter-for-parameter.
+subtract/add biquad trick as `packages/core/src/utils.py::elevation_eq`.
 
-Core implementation: `packages/core/src/binaural/voicing.py` +
-`packages/core/src/binaural/profiles.py::VOICING_PARAMS`. Web mirror:
-`apps/web/src/features/projects/masteringProfiles.ts` (listening voicing
-constants) applied in `useStemPreview.ts`.
+Implementation: `packages/core/src/binaural/voicing.py` +
+`packages/core/src/binaural/profiles.py::VOICING_PARAMS`, run through
+`packages/dsp` for both the export pipeline and the browser preview.
 
 ---
 
-## 6. Parity policy
-
-The **spatial model** — geometry (§2), SH convention (§3), decode filter
-files (§4), and voicing **parameters** (§5) — is specified exactly and must
-match bit-for-bit between core and web (same numbers, same files).
-
-The **DSP realization** of the voicing chain is *not* required to be
-sample-identical: the core uses SciPy `sosfilt` IIR sections, the web uses
-Web Audio `BiquadFilterNode`s. These differ in numerical precision and
-exact phase response, the same accepted gap that already exists between
-`packages/core/src/mastering/*.py`, which both sides now run via `packages/dsp`.
-Parity at the **parameter table** level (§5) is structural: the voicing and
-gain constants are single-sourced from core and served to the web at runtime
-(see `docs/contracts/preview_export_parity.md` §4), so there is no second copy
-to drift. The actual cross-engine render is held within a bounded
-audible-difference tolerance by `packages/core/tests/test_preview_export_golden.py`.
-(Constant-level parity has long been pinned independently on each side by
-`packages/core/tests/test_binaural.py` and `masteringProfiles.test.ts`; the served single
-source above is what ties the two
-together and what the cross-engine render diff actually verifies, closing a
-gap this document previously described as already covered when it was not.)
-
-The **decode convolution** itself (§4) is a plain linear FIR bank applied to
-the same files on both sides, so it *is* expected to match closely (within
-floating-point/resampling tolerance) — any drift there indicates a real bug,
-not an acceptable implementation difference.
-
----
-
-## 7. Delivery format
+## 6. Delivery format
 
 Exposed as `UpmixConfig.output_type == "binaural"` (`upmixer.formats.BINAURAL`,
 2 channels: `FL`, `FR`) — a delivery format alongside `"wav"` and `"adm-bwf"`,
@@ -332,9 +290,8 @@ safety net (`soft_limit`, tanh above `peak_limit_threshold`) runs **last**,
 after this gain correction — limiting the raw pre-gain HRTF sum instead bakes
 in audible saturation no later stage can undo, which is what produced
 distorted output on all three profiles (including `flat`) before this
-ordering was fixed. The web mirror applies the same ceiling and ordering
-(`BINAURAL_LOUDNESS_MAX_GAIN_DB` in `masteringProfiles.ts`, graph order in
-the shared core's `stream::master`).
+ordering was fixed. The same ceiling and ordering runs in the preview through
+the shared core's `stream::master`.
 
 ---
 

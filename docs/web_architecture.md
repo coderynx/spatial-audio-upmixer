@@ -20,7 +20,7 @@ Source files live under `imports/{import_id}` and outputs under `jobs/{job_id}`.
 
 Waveform envelopes for the editor timeline are precomputed server-side while stems are catalogued, from the samples the preview proxy encode already holds in memory, and stored as one `peaks.bin` plus a `peaks.json` sidecar per track. Projects catalogued before peaks existed are backfilled from their preview proxies on a dedicated single-thread executor that coalesces repeat requests, the same scheduling shape `prepare_reference_match` uses; `ProjectView.peaks_pending` reports that state so the browser polls only until the asset lands.
 
-The project editor uses the Web Audio API HRTF panner for an immediate stereo headphone preview and a live 3D source view. This is an approximate binaural audition, not a Dolby renderer or a substitute for the final pipeline export. Browser preview code is delivery-layer behavior; separation and exports continue through `StemUpmixPipeline`.
+The project editor renders an immediate stereo headphone preview alongside a live 3D source view (see "Preview audio engine" below for how). Browser preview code is delivery-layer behavior; separation and exports continue through `StemUpmixPipeline`.
 
 Deleting a job removes its outputs and database records. Shared source imports and stem cache entries remain because other jobs may reference them. Future storage management can add reference-counted import and cache eviction without changing job deletion semantics.
 

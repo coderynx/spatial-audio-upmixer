@@ -22,7 +22,7 @@ orchestration, and manifest handling stay in `packages/core`.
 
 Tunable acoustic constants are owned by `packages/core/src/config.py` and the
 profile tables, served to the web by `engine_constants()`
-(`docs/contracts/preview_export_parity.md` §4). Every function here takes
+(`docs/contracts/preview_export_parity.md` §2). Every function here takes
 them as parameters. Only structural math constants that would otherwise be
 duplicated (the BS.1770 true-peak FIR, ambisonic normalization, filter-design
 internals) live in Rust.

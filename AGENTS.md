@@ -2,7 +2,7 @@
 
 ## Workspace
 
-This is a uv workspace monorepo with four packages. Each has its own nested
+This is a uv workspace monorepo with five packages. Each has its own nested
 `AGENTS.md` for package-specific conventions — read the one for the package
 you're changing; it takes precedence over this file for that package's own
 detail, per the [agents.md](https://agents.md/) "closest file wins"
@@ -11,6 +11,10 @@ convention.
 - `packages/core` (`upmixer/`) — the Python library: DSP pipelines, mastering,
   stem separation, binaural/transaural rendering, manifests. No CLI or
   web-specific code lives here. See `packages/core/AGENTS.md`.
+- `packages/dsp` — the Rust DSP core (filter design, mastering chain,
+  binaural/transaural rendering, streaming engine), reached through PyO3 from
+  `packages/core` and through WebAssembly from `apps/web`. See
+  `packages/dsp/AGENTS.md`.
 - `apps/cli` (`upmixer_cli/`) — the `upmixer` command-line interface,
   consuming only core's public API. See `apps/cli/AGENTS.md`.
 - `apps/api` (`upmixer_web/`) — the `upmixer-web` FastAPI server, consuming
@@ -40,9 +44,9 @@ Forbidden: comments that restate what the code already says, bare
 section-label banners, architecture/design/rationale prose, TODO/FIXME, and
 commented-out code.
 
-Architecture, design rationale, and cross-system parity notes do not belong
-in comments. Move them to `docs/` (repo-specific architecture and contracts,
-e.g. `docs/web_architecture.md`, `docs/contracts/`) or to
+Architecture and design rationale do not belong in comments. Move them to
+`docs/` (repo-specific architecture and contracts, e.g.
+`docs/web_architecture.md`, `docs/contracts/`) or to
 `~/Projects/upmixer-knowledge/` when the content is separation-model,
 technique, or mastering/restoration domain intelligence (see Knowledge Base
 below). When trimming such a comment, first make sure its substance exists in
@@ -95,8 +99,8 @@ boundaries (user input, external APIs, and file I/O) and trust internal
 invariants. New modules must be imported by production code or have a
 documented public-API purpose. Remove unused functions, classes, constants,
 parameters, branches, and modules; before deleting uncertain code, search
-across all four packages' source and tests (`packages/core`, `apps/cli`,
-`apps/api`, `apps/web`).
+across all five packages' source and tests (`packages/core`, `packages/dsp`,
+`apps/cli`, `apps/api`, `apps/web`).
 
 ## Commands
 
@@ -163,8 +167,8 @@ by an audio delivery standard:
 - [Spatial layouts and ITU-R BS.775/BS.2051](docs/standards/spatial_layouts_bs775_bs2051.md)
   for speaker layouts, labels, LFE, and downmixes.
 - [Spatial Audio Engine (binaural rendering)](docs/standards/spatial_audio_engine.md)
-  for the `binaural` rendering pass, Studio/Listening/Flat profiles, and the
-  core/web parity contract.
+  for the `binaural` rendering pass, its geometry/ambisonic/decode-filter
+  contract, and the Studio/Listening/Flat profiles.
 - [Transaural Speaker Rendering (crosstalk cancellation)](docs/standards/transaural_speakers.md)
   for the `transaural` rendering pass, its five speaker-geometry profiles,
   and the XTC filter-design contract.

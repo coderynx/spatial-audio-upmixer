@@ -109,7 +109,7 @@ EQ_FIR_ASSETS: dict[str, str] = {
 }
 """Profile -> precomputed FIR asset basename. Single source for the WAV names
 ``scripts/build_eq_filters.py`` writes and the web preview convolves against
-(see docs/contracts/preview_export_parity.md §4)."""
+(see docs/contracts/preview_export_parity.md §2)."""
 
 _FIR_CACHE: dict[tuple[str, int, int], np.ndarray] = {}
 

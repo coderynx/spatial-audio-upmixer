@@ -7,9 +7,9 @@ stem_eq.py``) computes these same minimum-phase FIRs dynamically at runtime
 via ``_build_fir`` — this script calls those exact functions and writes the
 result as mono WAV assets to ``apps/web/public/eq_fir/`` so the browser
 preview convolves against the *actual* backend-computed impulse response
-(via a ``ConvolverNode``) instead of approximating the curve with a cascade
-of biquad filters. The backend itself does not read these files; it keeps
-computing the FIR live, which is the source of truth this script calls into.
+instead of approximating the curve. The backend itself does not read these
+files; it keeps computing the FIR live, which is the source of truth this
+script calls into.
 
 Usage:
     uv run python scripts/build_eq_filters.py

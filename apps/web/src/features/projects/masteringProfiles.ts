@@ -47,17 +47,6 @@ export type BassProfile = {
   lfe_gain_db: number;
 };
 
-/** Connect `start -> nodes[0] -> nodes[1] -> ... -> nodes[n-1]` in series and
- * return the last node in the chain (or `start` when `nodes` is empty). */
-export function connectSeries(start: AudioNode, nodes: AudioNode[]): AudioNode {
-  let previous = start;
-  for (const node of nodes) {
-    previous.connect(node);
-    previous = node;
-  }
-  return previous;
-}
-
 // --- Channel-bed router (ported from upmixer/separation/stem_router.py) —
 // see docs/web_architecture.md "Preview audio graph" for why (not HRTF panning). --
 
@@ -102,22 +91,16 @@ export type VoicingParams = {
   loudnessTargetLkfs: number | null;
 };
 
-// Ambisonic order for the virtual-loudspeaker renderer shared by the live
-// preview (useStemPreview.ts) and the golden-diff harness's extracted
-// buildBinauralGraph below — see docs/standards/spatial_audio_engine.md.
-// Higher order = tighter localization, more encoder channels ((order+1)^2).
-
 // Decode filter set contract (docs/standards/spatial_audio_engine.md §4):
 // 16 ACN channels x {L, R} FIR filters, shipped as four 8-channel WAVs so
 // the browser's per-file multichannel decode stays under its 8ch cap.
-export const DECODE_FILTER_SPLITS = ["01-08ch", "09-16ch", "17-24ch", "25-32ch"] as const;
 
 // Stereo / Smart-speaker / Car / Laptop / Phone crosstalk-cancellation (transaural) profiles.
 // Filter geometry/regularization contract lives in
 // docs/standards/transaural_speakers.md; this section carries the XTC asset
 // name only. The voicing *values* are fetched
 // (EngineConstants.transauralVoicingParams), reusing the same VoicingParams
-// shape and Web Audio chain the binaural profiles use.
+// shape as the binaural profiles.
 
 export type TransauralProfile = "stereo" | "smart_speaker" | "car" | "laptop" | "phone";
 
@@ -129,27 +112,6 @@ export type TransauralProfile = "stereo" | "smart_speaker" | "car" | "laptop" | 
 // filters (H_LL, H_LR, H_RL, H_RR) in one 4-channel WAV — unlike the 32ch
 // binaural decode bank, 4 channels fits well inside the browser's 8ch cap,
 // so no multi-file split is needed.
-export const XTC_FILTER_CHANNELS = 4;
-
-export type VoicingChain = {
-  left: AudioNode;
-  right: AudioNode;
-  nodes: AudioNode[];
-  lowL: BiquadFilterNode;
-  lowR: BiquadFilterNode;
-  dryL: GainNode;
-  dryR: GainNode;
-  bleedToL: GainNode;
-  bleedToR: GainNode;
-  bassL: BiquadFilterNode;
-  bassR: BiquadFilterNode;
-  airL: BiquadFilterNode;
-  airR: BiquadFilterNode;
-  presenceL: BiquadFilterNode;
-  presenceR: BiquadFilterNode;
-  sideL: GainNode;
-  sideR: GainNode;
-};
 
 /** Approximates `stem_router.py`'s per-stem constant-power `route_scale`
  * (`sqrt(input_energy/routed_energy)`) from the route table alone, treating

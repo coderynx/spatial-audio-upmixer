@@ -1,4 +1,3 @@
-// Browser fetch loader; kept decoupled from the golden-diff harness's disk-read loader.
 export async function fetchDecodeFilterPart(ctx: BaseAudioContext, partName: string): Promise<AudioBuffer> {
   const response = await fetch(`/hrir/${partName}.wav`);
   if (!response.ok) throw new Error(`Decode filter part missing: ${partName}.wav`);
