@@ -6,6 +6,7 @@ import soundfile as sf
 
 from upmixer.config import UpmixConfig
 from upmixer.pipeline import StreamingProcessor, UpmixPipeline, _AllPassDecorrelator
+from upmixer.utils import itu_downmix_stereo
 
 
 def _create_test_wav(path: str, left: np.ndarray, right: np.ndarray, sr: int):
@@ -219,3 +220,64 @@ def test_streaming_processor_flushes_delayed_tail(sample_rate):
     assert len(output) == expected
     assert np.max(np.abs(output[processor.latency_samples:processor.latency_samples + len(signal)])) > 0.01
     assert len(processor.flush()["FL"]) == 0
+
+
+def test_stereo_output_passes_a_stereo_source_through(stereo_mix, sample_rate):
+    left, right = stereo_mix
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = str(Path(tmpdir) / "input.wav")
+        output_path = str(Path(tmpdir) / "output.wav")
+        _create_test_wav(input_path, left, right, sample_rate)
+
+        config = UpmixConfig(output_format="stereo", loudness_normalize=False)
+        UpmixPipeline(config).process_file(input_path, output_path)
+
+        output, sr = sf.read(output_path)
+        assert sr == sample_rate
+        assert output.shape == (len(left), 2)
+        assert np.corrcoef(output[:, 0], left)[0, 1] > 0.999
+        assert np.corrcoef(output[:, 1], right)[0, 1] > 0.999
+
+
+def test_stereo_output_duplicates_a_mono_source(sample_rate):
+    mono = 0.2 * np.sin(2.0 * np.pi * 440.0 * np.arange(sample_rate) / sample_rate)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = str(Path(tmpdir) / "input.wav")
+        output_path = str(Path(tmpdir) / "output.wav")
+        sf.write(input_path, mono, sample_rate, subtype="PCM_24")
+
+        config = UpmixConfig(output_format="stereo", loudness_normalize=False)
+        UpmixPipeline(config).process_file(input_path, output_path)
+
+        output, _ = sf.read(output_path)
+        assert output.shape == (len(mono), 2)
+        assert np.allclose(output[:, 0], output[:, 1])
+
+
+def test_stereo_output_folds_a_multichannel_source(sample_rate):
+    n = sample_rate
+    t = np.arange(n) / sample_rate
+    bed = {
+        "FL": 0.2 * np.sin(2.0 * np.pi * 220.0 * t),
+        "FR": 0.2 * np.sin(2.0 * np.pi * 330.0 * t),
+        "C": 0.2 * np.sin(2.0 * np.pi * 440.0 * t),
+        "LFE": 0.2 * np.sin(2.0 * np.pi * 50.0 * t),
+        "SL": 0.1 * np.sin(2.0 * np.pi * 660.0 * t),
+        "SR": 0.1 * np.sin(2.0 * np.pi * 770.0 * t),
+    }
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        input_path = str(Path(tmpdir) / "input.wav")
+        output_path = str(Path(tmpdir) / "output.wav")
+        sf.write(input_path, np.column_stack(list(bed.values())), sample_rate, subtype="PCM_24")
+
+        config = UpmixConfig(output_format="stereo", loudness_normalize=False)
+        UpmixPipeline(config).process_file(input_path, output_path)
+
+        output, _ = sf.read(output_path)
+        expected_l, expected_r = itu_downmix_stereo(bed, surround_coeff=config.surround_downmix_coeff)
+        assert output.shape == (n, 2)
+        assert np.corrcoef(output[:, 0], expected_l)[0, 1] > 0.999
+        assert np.corrcoef(output[:, 1], expected_r)[0, 1] > 0.999

@@ -1,5 +1,7 @@
-"""CLI coverage for --stem-lfe flag parsing and merge-not-clobber behavior."""
+"""CLI coverage for --stem-lfe/--stem-pan parsing and merge-not-clobber behavior."""
 from __future__ import annotations
+
+import math
 
 import pytest
 
@@ -46,3 +48,41 @@ def test_stem_lfe_rejects_a_negative_amount():
 
     with pytest.raises(SystemExit):
         _apply_cli_flags(config, args, sample_rate_set=False)
+
+
+def test_stem_pan_writes_constant_power_weights_onto_a_new_routing():
+    config = UpmixConfig()
+    args = _parsed(["--stem-pan", "Vocals=0.5,Guitar=0"])
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    assert config.stem_routing["Vocals"]["FL"] == pytest.approx(config.stem_routing["Vocals"]["FR"])
+    assert config.stem_routing["Guitar"]["FR"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_stem_pan_preserves_the_pair_magnitude_of_existing_routing():
+    config = UpmixConfig(stem_routing={"Bass": {"FL": 0.65, "FR": 0.65, "LFE": 0.75}})
+    args = _parsed(["--stem-pan", "Bass=1"])
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    route = config.stem_routing["Bass"]
+    assert route["LFE"] == 0.75
+    assert math.hypot(route["FL"], route["FR"]) == pytest.approx(math.hypot(0.65, 0.65))
+
+
+def test_stem_pan_rejects_a_value_outside_the_unit_range():
+    config = UpmixConfig()
+    args = _parsed(["--stem-pan", "Vocals=1.5"])
+
+    with pytest.raises(SystemExit):
+        _apply_cli_flags(config, args, sample_rate_set=False)
+
+
+def test_format_accepts_the_stereo_layout():
+    config = UpmixConfig()
+    args = _parsed(["--format", "stereo"])
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    assert config.output_format == "stereo"

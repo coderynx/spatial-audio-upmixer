@@ -4,7 +4,8 @@ from __future__ import annotations
 import math
 import re
 
-from upmixer.formats import ChannelLabel
+from upmixer.config import UpmixConfig
+from upmixer.formats import FORMAT_MAP, ChannelLabel, validate_delivery
 from upmixer.manifest.schema import _BLOCK_REGISTRY, BlockMapping, ManifestError, _leaf_type
 from upmixer.separation.bleed_reduction import DEBLEED_MODELS, PHASE_FIX_REFERENCE_MODELS
 from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
@@ -86,6 +87,7 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             raise ManifestError(f"{path} must be at most {maximums[path]}.")
     choices = {
         "engine.mode": {"realtime", "stem"},
+        "mixing.channel_layout": set(FORMAT_MAP),
         "format.type": {"wav", "adm-bwf", "binaural", "transaural"},
         "format.subtype": {"PCM_16", "PCM_24", "PCM_32", "FLOAT"},
         "format.downmix.surround_coeff": {0.7071, 0.5, 0.0},
@@ -173,6 +175,20 @@ def validate_manifest(data: dict) -> None:
                 if not isinstance(block, dict):
                     raise ManifestError(f"assets[{i}].{block_name} must be a mapping.")
                 _validate_block_fields(block, mapping, f"assets[{i}].{block_name}")
+
+    root_mixing = data.get("mixing") or {}
+    root_format = data.get("format") or {}
+    defaults = UpmixConfig()
+    for scope in (data, *assets):
+        mixing = {**root_mixing, **(scope.get("mixing") or {})}
+        fmt = {**root_format, **(scope.get("format") or {})}
+        try:
+            validate_delivery(
+                str(mixing.get("channel_layout", defaults.output_format)),
+                str(fmt.get("type", defaults.output_type)),
+            )
+        except ValueError as exc:
+            raise ManifestError(str(exc)) from exc
 
     if isinstance(data.get("engine"), dict) and "stem_model" in data["engine"]:
         import warnings

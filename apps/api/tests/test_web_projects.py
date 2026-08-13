@@ -859,3 +859,45 @@ def test_add_project_assets_stores_per_file_overrides_and_unions_stems(tmp_path,
         assert "Vocals" in stem_routing
         assert "Bass" in stem_routing
         assert any(gain > 0 for gain in stem_routing["Bass"].values())
+
+
+@pytest.mark.parametrize(
+    ("output_type", "narrowed_layout"),
+    [("binaural", "stereo"), ("transaural", "stereo"), ("adm-bwf", "stereo"), ("binaural", "5.1")],
+)
+def test_narrowing_the_layout_retargets_a_delivery_it_cannot_carry(
+    tmp_path, monkeypatch, output_type, narrowed_layout
+):
+    settings = Settings(
+        data_dir=tmp_path,
+        database_url=f"sqlite:///{tmp_path / f'retarget_{output_type}_{narrowed_layout}.db'}",
+        worker_count=1,
+    )
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    with TestClient(create_app(settings)) as client:
+        created = client.post("/api/v1/projects", json={
+            "name": "Bed delivery",
+            "manifest": {
+                "version": "1.0.0",
+                "engine": {"mode": "realtime", "stems": ["Vocals"]},
+                "mixing": {"channel_layout": "7.1.4"},
+                "format": {"type": output_type, "subtype": "PCM_24", "sample_rate": 48000},
+            },
+        })
+        assert created.status_code == 201
+        assert created.json()["manifest"]["format"]["type"] == output_type
+
+        # Only the layout changes; `format.type` is untouched by the user.
+        response = client.put(f"/api/v1/projects/{created.json()['id']}/settings", json={
+            "manifest": {
+                "version": "1.0.0",
+                "engine": {"mode": "stem", "stems": ["Vocals"]},
+                "mixing": {"channel_layout": narrowed_layout},
+                "format": {"type": output_type, "subtype": "PCM_24", "sample_rate": 48000},
+            },
+        })
+        assert response.status_code == 200
+        manifest = response.json()["manifest"]
+        assert manifest["mixing"]["channel_layout"] == narrowed_layout
+        assert manifest["format"]["type"] == "wav"

@@ -1,6 +1,6 @@
 import * as React from "react";
 import type { StemRouting } from "@/api";
-import { canvasTheme } from "@/lib/canvasTheme";
+import { MIN_ALPHA_SCALE, SETTLE_FRAMES, canvasTheme, hexToRgb, lerp } from "@/lib/canvasTheme";
 import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
 import { heightFraction, speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo, vecAngle } from "@/lib/spatial";
@@ -27,32 +27,9 @@ function lerpAngle(from: number, to: number, t: number) {
   return from + delta * t;
 }
 
-function hexToRgb(hex: string): [number, number, number] {
-  const clean = hex.replace("#", "");
-  const value = clean.length === 3
-    ? clean.split("").map((c) => c + c).join("")
-    : clean;
-  const num = parseInt(value, 16);
-  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
-}
-
 function polar(center: { x: number; y: number }, radius: number, angle: number) {
   return { x: center.x + Math.sin(angle) * radius, y: center.y - Math.cos(angle) * radius };
 }
-
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
-}
-
-/** Alpha multiplier at intensity 0 — low enough to read as "mostly off,"
- * high enough that a stem's position and level are still legible. */
-const MIN_ALPHA_SCALE = 0.22;
-
-// Consecutive idle frames (no audible voice) required before the draw loop
-// stops scheduling itself while inactive — long enough for the trailing
-// alpha-fade background clear and any in-flight blob/tendril fade to become
-// visually indistinguishable from a clean frame before the loop stops.
-const SETTLE_FRAMES = 40;
 
 export type HazeViewProps = {
   channels: string[];

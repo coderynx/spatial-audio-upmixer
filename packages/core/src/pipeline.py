@@ -15,13 +15,13 @@ from upmixer.crosstalk.renderer import render_crosstalk_delivery
 from upmixer.decomposition.direct_ambient import SoftMatrixDecomposer
 from upmixer.formats import (
     BINAURAL,
-    BINAURAL_BED_FORMATS,
     FORMAT_MAP,
     INPUT_FORMAT_MAP,
     TRANSAURAL,
-    TRANSAURAL_BED_FORMATS,
+    InputFormat,
     can_upmix,
     detect_input_format,
+    validate_delivery,
 )
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
@@ -32,6 +32,30 @@ from upmixer.routing.channel_router import ChannelRouter
 from upmixer.utils import preview_slice, itu_downmix_stereo
 
 _log = logging.getLogger("upmixer")
+
+
+def _stereo_delivery_channels(
+    audio: np.ndarray, input_fmt: InputFormat, cfg: UpmixConfig
+) -> dict[str, np.ndarray]:
+    """FL/FR bed for a 2-channel output: pass through, or fold per BS.775-4.
+
+    Deliberately bypasses decomposition and ``ChannelRouter``, which always
+    emit C/LFE/SL/SR — channels a stereo layout has no writer slot for, so
+    their energy would be dropped rather than folded.
+    """
+    if input_fmt.n_channels == 1:
+        mono = np.ascontiguousarray(audio[:, 0], dtype=np.float64)
+        return {"FL": mono, "FR": mono.copy()}
+    if input_fmt.n_channels == 2:
+        return {
+            "FL": np.ascontiguousarray(audio[:, 0], dtype=np.float64),
+            "FR": np.ascontiguousarray(audio[:, 1], dtype=np.float64),
+        }
+    left, right = itu_downmix_stereo(
+        {label.value: audio[:, i] for i, label in enumerate(input_fmt.channels)},
+        surround_coeff=cfg.surround_downmix_coeff,
+    )
+    return {"FL": left, "FR": right}
 
 
 class _LinkedEnergyController:
@@ -263,18 +287,9 @@ class UpmixPipeline:
             :class:`~upmixer.result.UpmixResult` with processing metadata.
         """
         t0 = time.monotonic()
+        validate_delivery(self.config.output_format, self.config.output_type)
         is_binaural = self.config.output_type == "binaural"
-        if is_binaural and self.config.output_format not in BINAURAL_BED_FORMATS:
-            raise ValueError(
-                f"binaural output requires output_format one of {BINAURAL_BED_FORMATS}, "
-                f"got '{self.config.output_format}'"
-            )
         is_transaural = self.config.output_type == "transaural"
-        if is_transaural and self.config.output_format not in TRANSAURAL_BED_FORMATS:
-            raise ValueError(
-                f"transaural output requires output_format one of {TRANSAURAL_BED_FORMATS}, "
-                f"got '{self.config.output_format}'"
-            )
         cfg = self.config
 
         def _progress(msg: str, frac: float) -> None:
@@ -304,6 +319,7 @@ class UpmixPipeline:
             input_fmt = detect_input_format(reader.n_channels)
 
         output_fmt = FORMAT_MAP[cfg.output_format]
+        is_stereo_out = output_fmt.n_channels == 2
 
         if not can_upmix(input_fmt, output_fmt):
             raise ValueError(
@@ -329,7 +345,11 @@ class UpmixPipeline:
 
         _progress(f"  Format: {input_fmt.name} → {output_fmt.name}", 0.1)
 
-        if input_fmt.n_channels <= 2:
+        if is_stereo_out:
+            _progress("  Folding to stereo delivery...", 0.2)
+            self._spatial_plan = None
+            channels = _stereo_delivery_channels(audio, input_fmt, cfg)
+        elif input_fmt.n_channels <= 2:
             if input_fmt.n_channels == 1:
                 left = right = audio[:, 0]
             else:
@@ -408,7 +428,7 @@ class UpmixPipeline:
 
         _progress(f"Output: {output_path}", 1.0)
 
-        if cfg.downmix_output_path and not is_binaural and not is_transaural:
+        if cfg.downmix_output_path and not is_binaural and not is_transaural and not is_stereo_out:
             self._write_downmix(channels, out_sr, cfg)
 
         return UpmixResult(

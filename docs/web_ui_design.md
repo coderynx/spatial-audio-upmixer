@@ -182,6 +182,16 @@ implementation.
   `ElevationView` below the row or stretches `HazeView` wide. What changes
   with the pane is only the row's total height (above) and, within it, each
   display's width (below).
+
+  The one exception is the **`stereo` layout**, which has no depth or height
+  axis for either spatial display to plot: `StereoPanoramaView` replaces the
+  pair, taking Elevation's magnetic `flex-1` slot while the Haze column and its
+  handle are not rendered at all. Composition, not sizing — the row is still
+  `<spatial> | ChannelMeters`, `useColumnLayout` is untouched (`hazeExtra`
+  simply goes unused), and Elevation's handle keeps driving Meters' width. The
+  panorama plots pan on X and spectral centroid on Y, in the same field, grid,
+  melted-blob and speaker-mute language as the two views it stands in for, and
+  reuses `hazeIntensity` rather than adding a view-state field.
 - **Haze and Meters are user-resizable; Elevation is magnetic.** Haze and
   Meters each sit in their own `relative shrink-0` wrapper with an explicit
   pixel `style={{ width }}`, computed as a live natural size plus a
@@ -680,7 +690,8 @@ not swap them.
 
 ## 7. Canvas displays
 
-`HazeView`, `ElevationView`, and `ChannelMeters` render to `<canvas>` and read
+`HazeView`, `ElevationView`, `StereoPanoramaView`, and `ChannelMeters` render to
+`<canvas>` and read
 `apps/web/src/lib/canvasTheme.ts`. These surfaces stay dark in **both** app themes,
 the way Logic keeps its instrument displays dark regardless of appearance.
 They are the one place literal hex values are correct (alongside `stems.ts`,
@@ -729,7 +740,8 @@ not a style.
 ### 7.1 Canvas in chrome
 
 Not every canvas is an instrument display. **A canvas belongs on the dark
-field only when it is an analysis readout** — Haze, Elevation, ChannelMeters,
+field only when it is an analysis readout** — Haze, Elevation, the stereo
+panorama, ChannelMeters,
 the transport LCD. A canvas that is really a working surface — the timeline's
 lanes, a mixer strip's meter — is an ordinary panel that happens to draw with
 a canvas, and it must follow the app theme in both light and dark like the
@@ -806,7 +818,8 @@ column `card`, separators `border`.
   zoom means revisiting both.
 
 Render loops, DSP, and memoization are out of scope for
-visual work. `HazeView`, `ElevationView`, `ChannelMeters`, `TimelineView`,
+visual work. `HazeView`, `ElevationView`, `StereoPanoramaView`,
+`ChannelMeters`, `TimelineView`,
 `MixerView`, and `Transport` are `React.memo`'d to keep 60fps playback from
 re-rendering the page: do not pass them inline object or callback props.
 

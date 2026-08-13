@@ -61,3 +61,24 @@ export const canvasTheme = {
   /** Fallback for a stem with no assigned colour. */
   stemFallback: "#0A84FF",
 } as const;
+
+export function hexToRgb(hex: string): [number, number, number] {
+  const clean = hex.replace("#", "");
+  const value = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const num = parseInt(value, 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+export function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
+/** Alpha multiplier at intensity 0 — low enough to read as "mostly off,"
+ * high enough that a stem's position and level are still legible. */
+export const MIN_ALPHA_SCALE = 0.22;
+
+/** Consecutive idle frames (no audible voice) required before a draw loop
+ * stops scheduling itself while inactive — long enough for the trailing
+ * alpha-fade background clear and any in-flight blob fade to become visually
+ * indistinguishable from a clean frame before the loop stops. */
+export const SETTLE_FRAMES = 40;

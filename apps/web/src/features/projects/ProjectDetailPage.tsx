@@ -28,13 +28,16 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
+import { isStereoLayout } from "@/lib/layouts";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
+import { panWeights, stemPan } from "@/lib/spatial";
 import { getStemColor, getStemIcon, stemColors } from "@/lib/stems";
 import { cn } from "@/lib/utils";
 import { AssetsTab } from "./assets/AssetsTab";
 import HazeView from "./HazeView";
 import ChannelMeters from "./ChannelMeters";
 import ElevationView from "./ElevationView";
+import StereoPanoramaView from "./StereoPanoramaView";
 import { KeyCommandsDialog } from "./KeyCommandsDialog";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import { StemChannelStrip, StripResizeHandle } from "./ChannelStrip";
@@ -311,6 +314,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // straight into HazeView/ElevationView/ChannelMeters, which are memoized
   // specifically so they don't re-render on every playback frame.
   const routingLayout = effectiveManifest?.mixing.channel_layout || "7.1.4";
+  const stereoLayout = isStereoLayout(routingLayout);
   const channels = React.useMemo(
     () => configuration?.choices.layout_channels?.[routingLayout] ?? [],
     [configuration, routingLayout],
@@ -326,6 +330,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const setOutputMode = React.useCallback((next: OutputMode) => patchViewState({ outputMode: next }), [patchViewState]);
   const setSpatialProfile = React.useCallback((next: SpatialProfile) => patchViewState({ spatialProfile: next }), [patchViewState]);
   const setTransauralProfile = React.useCallback((next: TransauralProfile) => patchViewState({ transauralProfile: next }), [patchViewState]);
+  // A stereo layout has no bed to collapse, and the persisted mode predates
+  // the layout switch.
+  React.useEffect(() => {
+    if (stereoLayout && outputMode !== "native") setOutputMode("native");
+  }, [stereoLayout, outputMode, setOutputMode]);
   // A/B monitor bypass for the master chain — see monitorMastering.
   const masteringBypassed = viewState.masteringBypassed;
   const {
@@ -622,6 +631,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           value={outputMode}
           onChange={setOutputMode}
           nativeSupported={preview.nativeSupported}
+          nativeOnly={stereoLayout}
           devices={preview.outputDevices}
           deviceId={preview.outputDeviceId}
           onDeviceChange={(deviceId) => void preview.setOutputDeviceId(deviceId)}
@@ -732,7 +742,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
               each border's *left* side, reusing the exact same drag/keys/
               double-click-reset contract the mixer rack's own column resize
               already uses. */}
-          <div className="relative min-h-0 shrink-0" style={{ width: hazeWidth }}>
+          {!stereoLayout && <div className="relative min-h-0 shrink-0" style={{ width: hazeWidth }}>
             <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={setHazeIntensity} className="h-full w-full" />
             <StripResizeHandle
               label="Resize Haze view"
@@ -742,9 +752,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
               min={HAZE_MIN_WIDTH - rowSize.height}
               max={hazeMaxWidth - rowSize.height}
             />
-          </div>
+          </div>}
           <div className="relative min-h-0 min-w-0 flex-1">
-            <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.elevationIntensity} onIntensity={setElevationIntensity} className="h-full w-full" />
+            {stereoLayout
+              ? <StereoPanoramaView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={setSelectedStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={setHazeIntensity} className="h-full w-full" />
+              : <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.elevationIntensity} onIntensity={setElevationIntensity} className="h-full w-full" />}
             {/* Dragging this border moves `elevationExtra`, the same delta
                 as before — it still reads as "resize Elevation" to the
                 user, it just now expresses itself by shrinking/growing
@@ -1011,12 +1023,17 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
 const StemControls = React.memo(function StemControls({ route, channels, eq, onRoute, onEq, stemEqProfiles }: { route: Record<string, number>; channels: string[]; eq: string; onRoute: (patch: Record<string, number>) => void; onEq: (eq: string) => void; stemEqProfiles?: string[] }) {
   const position = routePosition(route, channels);
   const setPosition = (patch: Partial<typeof position>) => onRoute(routeForPosition(channels, { ...position, ...patch }, route.LFE || 0));
+  // A two-channel layout has no depth, height or LFE axis left to place a
+  // stem on — only the pan between its two speakers.
+  const stereo = channels.length === 2;
   const hasHeight = channels.includes("TFL") || channels.includes("TFR") || channels.includes("TBL") || channels.includes("TBR");
   const hasLfe = channels.includes("LFE");
+  const stemEqSelect = <label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><AudioWaveform className="h-3 w-3" />EQ</span><select className="mt-1.5 flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px] text-foreground" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option>{(stemEqProfiles ?? []).filter((name) => name !== "flat").map((name) => <option key={name} value={name}>{name}</option>)}</select></label>;
   // Gain has its own control now — the always-accessible fader above (see
   // ProjectDetailPage's "Stem" InspectorGroup) — so this section only covers
   // what the fader doesn't: spatial placement, LFE send, and EQ.
-  return <div className="space-y-3"><label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowLeftRight className="h-3 w-3" />Front <span className="ml-auto">Back</span></span><Slider aria-label="Front to back" className="mt-1.5" min={0} max={1} step={0.01} value={[position.depth]} onValueChange={([depth]) => setPosition({ depth })} /></label>{hasHeight && <label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowUpDown className="h-3 w-3" />Floor <span className="ml-auto">Height</span></span><Slider aria-label="Floor to height" className="mt-1.5" min={0} max={1} step={0.01} value={[position.height]} onValueChange={([height]) => setPosition({ height })} /></label>}{hasLfe && <label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><Waves className="h-3 w-3" />LFE send</span><Slider aria-label="LFE send" className="mt-1.5" min={0} max={1} step={0.01} value={[route.LFE ?? 0]} onValueChange={([lfe]) => onRoute({ LFE: lfe })} /></label>}<label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><AudioWaveform className="h-3 w-3" />EQ</span><select className="mt-1.5 flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px] text-foreground" value={eq} onChange={(event) => onEq(event.target.value)}><option value="">None</option>{(stemEqProfiles ?? []).filter((name) => name !== "flat").map((name) => <option key={name} value={name}>{name}</option>)}</select></label></div>;
+  if (stereo) return <div className="space-y-3"><label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowLeftRight className="h-3 w-3" />Left <span className="ml-auto">Right</span></span><Slider aria-label="Left to right" className="mt-1.5" min={0} max={1} step={0.01} value={[stemPan(route)]} onValueChange={([pan]) => onRoute(panWeights(route, pan))} /></label>{stemEqSelect}</div>;
+  return <div className="space-y-3"><label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowLeftRight className="h-3 w-3" />Front <span className="ml-auto">Back</span></span><Slider aria-label="Front to back" className="mt-1.5" min={0} max={1} step={0.01} value={[position.depth]} onValueChange={([depth]) => setPosition({ depth })} /></label>{hasHeight &&<label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><ArrowUpDown className="h-3 w-3" />Floor <span className="ml-auto">Height</span></span><Slider aria-label="Floor to height" className="mt-1.5" min={0} max={1} step={0.01} value={[position.height]} onValueChange={([height]) => setPosition({ height })} /></label>}{hasLfe && <label className="block text-[11px] text-muted-foreground"><span className="flex items-center gap-1"><Waves className="h-3 w-3" />LFE send</span><Slider aria-label="LFE send" className="mt-1.5" min={0} max={1} step={0.01} value={[route.LFE ?? 0]} onValueChange={([lfe]) => onRoute({ LFE: lfe })} /></label>}{stemEqSelect}</div>;
 });
 
 function routePosition(route: Record<string, number>, channels: string[]) {

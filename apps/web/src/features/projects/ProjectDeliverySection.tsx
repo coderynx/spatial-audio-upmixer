@@ -5,6 +5,7 @@ import { FIELD_GRID, SelectField, SwitchRow } from "@/components/forms/fields";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import type { Configuration } from "@/api";
+import { OUTPUT_TYPES, isStereoLayout } from "@/lib/layouts";
 import type { Manifest } from "@/lib/manifest";
 
 // Delivery/encoding controls for a project. Deliberately not a reuse of the
@@ -22,7 +23,8 @@ const FORMATS: Record<string, { label: string; note: string; icon: LucideIcon }>
   transaural: { label: "Transaural", note: "Crosstalk-cancelled speaker stereo", icon: Speaker },
 };
 
-function formatMeta(value: string) {
+function formatMeta(value: string, stereo = false) {
+  if (value === "wav" && stereo) return { label: "Stereo WAV", note: "FL/FR", icon: AudioLines };
   return FORMATS[value] || { label: value, note: "", icon: AudioLines };
 }
 
@@ -37,8 +39,8 @@ function FormatBadge({ icon: Icon }: { icon: LucideIcon }) {
   );
 }
 
-function FormatOption({ value, note }: { value: string; note?: string }) {
-  const meta = formatMeta(value);
+function FormatOption({ value, note, stereo }: { value: string; note?: string; stereo?: boolean }) {
+  const meta = formatMeta(value, stereo);
   return (
     <>
       <FormatBadge icon={meta.icon} />
@@ -62,12 +64,13 @@ export function ProjectDeliverySection({
   const bedSupported = binauralBeds.includes(manifest.mixing.channel_layout);
   const transauralBeds = choices?.transaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
   const transauralBedSupported = transauralBeds.includes(manifest.mixing.channel_layout);
+  const stereo = isStereoLayout(manifest.mixing.channel_layout);
   const type = manifest.format.type;
   const isBinaural = type === "binaural";
   const isTransaural = type === "transaural";
-  // Both collapse a speaker bed straight to two channels, so neither has any
-  // use for a separate BS.775 stereo companion file.
-  const isTwoChannelSpatial = isBinaural || isTransaural;
+  // Anything already delivering two channels — a collapsed bed or a stereo
+  // layout — has no use for a separate BS.775 stereo companion file.
+  const isTwoChannelDelivery = isBinaural || isTransaural || stereo;
   const downmixEnabled = manifest.format.downmix?.enabled ?? false;
 
   // A disabled option has to say why it is disabled, but that belongs on the
@@ -88,18 +91,20 @@ export function ProjectDeliverySection({
         >
           <SelectTrigger aria-label="Format" className="h-11 px-2">
             <span className="flex min-w-0 flex-1 items-center gap-2">
-              <FormatOption value={type} />
+              <FormatOption value={type} stereo={stereo} />
             </span>
           </SelectTrigger>
           <SelectContent>
-            {(choices?.output_types || ["wav", "adm-bwf", "binaural", "transaural"]).map((value) => (
+            {(choices?.output_types || OUTPUT_TYPES)
+              .filter((value) => !stereo || value === "wav")
+              .map((value) => (
               <SelectItem
                 key={value}
                 value={value}
                 disabled={(value === "binaural" && !bedSupported) || (value === "transaural" && !transauralBedSupported)}
                 className="h-11"
               >
-                <FormatOption value={value} note={noteFor(value)} />
+                <FormatOption value={value} note={noteFor(value)} stereo={stereo} />
               </SelectItem>
             ))}
           </SelectContent>
@@ -107,7 +112,7 @@ export function ProjectDeliverySection({
       </div>
 
       <Panel>
-        <PanelHeader title={`${formatMeta(type).label} options`} />
+        <PanelHeader title={`${formatMeta(type, stereo).label} options`} />
         <PanelBody className="space-y-2.5 overflow-visible">
           <div className={FIELD_GRID}>
             <SelectField
@@ -176,7 +181,7 @@ export function ProjectDeliverySection({
 
           {/* A binaural/transaural render is already two-channel, so a
               stereo companion file would just duplicate it. */}
-          {!isTwoChannelSpatial && (
+          {!isTwoChannelDelivery && (
             <SwitchRow
               label="Stereo downmix"
               hint="BS.775 companion file."
@@ -195,7 +200,7 @@ export function ProjectDeliverySection({
               }
             />
           )}
-          {!isTwoChannelSpatial && downmixEnabled && (
+          {!isTwoChannelDelivery && downmixEnabled && (
             <SelectField
               label="Surround coefficient"
               value={String(manifest.format.downmix?.surround_coeff ?? 0.7071)}

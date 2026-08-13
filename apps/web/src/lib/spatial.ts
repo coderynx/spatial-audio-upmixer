@@ -139,6 +139,23 @@ export function routingFromAzimuthElevation(azimuth: number, elevation: number):
   return mapping;
 }
 
+/** Port of `stem_router.py`'s `apply_stem_pan` inverse: the stem's position
+ * between hard left (0) and hard right (1), 0.5 when the pair is silent. */
+export function stemPan(route: Record<string, number>): number {
+  const left = route.FL || 0;
+  const right = route.FR || 0;
+  if (left <= 0 && right <= 0) return 0.5;
+  return Math.atan2(right, left) / (Math.PI / 2);
+}
+
+/** Port of `stem_router.py`'s `apply_stem_pan`: constant-power FL/FR patch
+ * preserving the pair's combined magnitude. */
+export function panWeights(route: Record<string, number>, pan: number): { FL: number; FR: number } {
+  const angle = Math.min(1, Math.max(0, pan)) * (Math.PI / 2);
+  const magnitude = Math.hypot(route.FL || 0, route.FR || 0) || 1;
+  return { FL: magnitude * Math.cos(angle), FR: magnitude * Math.sin(angle) };
+}
+
 /** Top-down compass angle in radians: 0 = front (screen-up), increasing
  * clockwise (PI/2 = right, PI = back, -PI/2 = left). Ignores `y` (height) —
  * the Haze view's radar is a floor-plan projection; height is shown as a

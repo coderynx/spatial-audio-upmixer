@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Building2, Car, ChevronDown, ChevronRight, Grid3x3, Headphones, Laptop, Radio, Smartphone, Sofa, Speaker, Waves } from "lucide-react";
+import { Building2, Car, ChevronDown, ChevronRight, Grid3x3, Headphones, Laptop, Radio, Smartphone, Sofa, Speaker, SquareSplitHorizontal, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
@@ -10,6 +10,12 @@ const MODE_OPTIONS: { value: OutputMode; label: string; icon: React.ComponentTyp
   { value: "transaural", label: "Transaural", icon: Speaker },
   { value: "native", label: "Native", icon: Grid3x3 },
   { value: "stereo", label: "Stereo mixdown", icon: Waves },
+];
+
+// On a two-channel layout the bed *is* the speaker pair, so "native" is
+// named for what the listener hears rather than for the render path.
+const STEREO_MODE_OPTIONS: typeof MODE_OPTIONS = [
+  { value: "native", label: "Stereo", icon: SquareSplitHorizontal },
 ];
 
 // Rows that carry a profile submenu, keyed by their MODE_OPTIONS value.
@@ -48,6 +54,7 @@ export function OutputModeSelect({
   value,
   onChange,
   nativeSupported,
+  nativeOnly,
   devices,
   deviceId,
   onDeviceChange,
@@ -59,6 +66,9 @@ export function OutputModeSelect({
   value: OutputMode;
   onChange: (mode: OutputMode) => void;
   nativeSupported: boolean;
+  /** Two-channel layouts have no bed to collapse, so every other mode is
+   * hidden rather than disabled. */
+  nativeOnly?: boolean;
   devices: MediaDeviceInfo[];
   deviceId: string;
   onDeviceChange: (deviceId: string) => void;
@@ -120,7 +130,12 @@ export function OutputModeSelect({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
 
-  const current = MODE_OPTIONS.find((option) => option.value === value) ?? MODE_OPTIONS[0];
+  // Chrome lists a synthetic `default` output aliasing whichever real device
+  // is current, so it is not a target of its own: with one real device left,
+  // the picker would offer "System default" and its own duplicate.
+  const selectableDevices = devices.filter((device) => device.deviceId !== "default");
+  const modeOptions = nativeOnly ? STEREO_MODE_OPTIONS : MODE_OPTIONS;
+  const current = modeOptions.find((option) => option.value === value) ?? modeOptions[0];
   const CurrentIcon = current.icon;
   const currentProfile = PROFILE_OPTIONS.find((option) => option.value === spatialProfile) ?? PROFILE_OPTIONS[0];
   const currentTransauralProfile = TRANSAURAL_PROFILE_OPTIONS.find((option) => option.value === transauralProfile) ?? TRANSAURAL_PROFILE_OPTIONS[0];
@@ -167,7 +182,7 @@ export function OutputModeSelect({
             menuFlip ? "right-0" : "left-0",
           )}
         >
-          {MODE_OPTIONS.map((option, index) => {
+          {modeOptions.map((option, index) => {
             const Icon = option.icon;
             const disabled = option.value === "native" && !nativeSupported;
             const hasSubmenu = SUBMENU_MODES.has(option.value);
@@ -176,7 +191,7 @@ export function OutputModeSelect({
             const rowCurrentProfile = option.value === "transaural" ? currentTransauralProfile : currentProfile;
             return (
               <React.Fragment key={option.value}>
-                {index === 0 && (
+                {!nativeOnly && index === 0 && (
                   <div className="px-2 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[.08em] text-muted-foreground">
                     Spatial audio
                   </div>
@@ -185,7 +200,7 @@ export function OutputModeSelect({
                     read as a line on this surface (no other popover in the
                     app carries an internal divider) — muted-foreground at
                     low opacity gives it actual contrast. */}
-                {index === GROUP_2_INDEX && (
+                {!nativeOnly && index === GROUP_2_INDEX && (
                   <>
                     <div className="my-1 border-t border-muted-foreground/25" aria-hidden="true" />
                     <div className="px-2 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[.08em] text-muted-foreground">
@@ -274,7 +289,7 @@ export function OutputModeSelect({
           })}
         </div>
       )}
-      {value === "native" && devices.length > 0 && (
+      {value === "native" && selectableDevices.length > 1 && (
         <select
           aria-label="Output device"
           value={deviceId}
@@ -282,7 +297,7 @@ export function OutputModeSelect({
           className="h-8 max-w-40 rounded-md border border-input bg-background px-2 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
         >
           <option value="">System default</option>
-          {devices.map((device) => (
+          {selectableDevices.map((device) => (
             <option key={device.deviceId} value={device.deviceId}>
               {device.label || `Output ${device.deviceId.slice(0, 6)}`}
             </option>

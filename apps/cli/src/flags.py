@@ -4,6 +4,7 @@ import argparse
 import math
 
 from upmixer.config import UpmixConfig
+from upmixer.separation import apply_stem_pan
 
 
 def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_set: bool) -> None:
@@ -145,6 +146,15 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
             config.stem_routing = {}
         for stem, amount in lfe_sends.items():
             config.stem_routing.setdefault(stem, {})["LFE"] = amount
+    if args.stem_pan is not None:
+        pans = _parse_key_value_pairs(args.stem_pan, float)
+        for stem, pan in pans.items():
+            if not math.isfinite(pan) or not 0.0 <= pan <= 1.0:
+                raise SystemExit(f"--stem-pan value for '{stem}' must be between 0.0 and 1.0, got {pan}.")
+        if config.stem_routing is None:
+            config.stem_routing = {}
+        for stem, pan in pans.items():
+            config.stem_routing[stem] = apply_stem_pan(config.stem_routing.get(stem, {}), pan)
     if args.stem_cache_dir is not None:
         config.stem_cache_dir = args.stem_cache_dir
     if args.stem_batch_size is not None:

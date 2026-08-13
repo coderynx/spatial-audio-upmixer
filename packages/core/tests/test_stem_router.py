@@ -1,7 +1,10 @@
 """Regression tests for static stem spatial routing."""
 from __future__ import annotations
 
+import math
+
 import numpy as np
+import pytest
 import upmixer_dsp
 
 from upmixer.config import UpmixConfig
@@ -11,9 +14,12 @@ from upmixer.separation.stem_router import (
     DEFAULT_ROUTING,
     ZONE_ROUTING,
     StemRouter,
+    apply_stem_pan,
     build_stem_routing,
     default_lfe_send,
+    fold_route_to_stereo,
 )
+from upmixer.utils import ITU_CENTER_COEFF
 
 
 def _audio(n: int = 48000, frequency: float = 440.0) -> np.ndarray:
@@ -190,3 +196,64 @@ def test_analyzer_treats_antiphase_and_hard_pan_as_wide():
 
     assert antiphase.stereo_width > 0.9
     assert hard_left.stereo_width > 0.9
+
+
+def test_fold_route_to_stereo_splits_center_and_drops_lfe():
+    folded = fold_route_to_stereo({"C": 1.0, "LFE": 0.8, "SL": 0.5, "BR": 0.25})
+    assert folded == {
+        "FL": pytest.approx(ITU_CENTER_COEFF + 0.5),
+        "FR": pytest.approx(ITU_CENTER_COEFF + 0.25),
+    }
+    assert fold_route_to_stereo(folded) == folded
+
+
+def test_build_stem_routing_reaches_stereo_for_front_less_stems():
+    routing = build_stem_routing(["Crowd", "Vocals"], FORMAT_MAP["stereo"])
+    for stem in ("Crowd", "Vocals"):
+        assert set(routing[stem]) == {"FL", "FR"}
+        assert routing[stem]["FL"] > 0.0
+
+
+def test_stereo_router_emits_two_channels_and_preserves_stem_energy():
+    config = UpmixConfig(output_format="stereo")
+    router = StemRouter(config, FORMAT_MAP["stereo"], 48000)
+    audio = _audio()
+    channels = router.route({"Vocals": audio}, len(audio))
+
+    assert set(channels) == {"FL", "FR"}
+    routed = float(np.dot(channels["FL"], channels["FL"]) + np.dot(channels["FR"], channels["FR"]))
+    source = float(np.dot(audio[:, 0], audio[:, 0]) + np.dot(audio[:, 1], audio[:, 1]))
+    assert routed == pytest.approx(source, rel=0.01)
+
+
+def test_stereo_router_folds_zone_routes_that_have_no_front_send():
+    config = UpmixConfig(output_format="stereo")
+    router = StemRouter(config, FORMAT_MAP["stereo"], 48000)
+    audio = _audio()
+    channels = router.route({"Guitar@surround": audio}, len(audio))
+
+    assert np.max(np.abs(channels["FL"])) > 0.0
+
+
+def test_apply_stem_pan_is_constant_power_and_keeps_magnitude():
+    route = {"FL": 0.6, "FR": 0.6, "LFE": 0.3}
+
+    left = apply_stem_pan(route, 0.0)
+    assert left["FL"] == pytest.approx(math.hypot(0.6, 0.6))
+    assert left["FR"] == pytest.approx(0.0, abs=1e-12)
+    assert left["LFE"] == 0.3
+
+    right = apply_stem_pan(route, 1.0)
+    assert right["FR"] == pytest.approx(math.hypot(0.6, 0.6))
+
+    centre = apply_stem_pan(route, 0.5)
+    assert centre["FL"] == pytest.approx(centre["FR"])
+    for panned in (left, right, centre):
+        assert math.hypot(panned["FL"], panned["FR"]) == pytest.approx(math.hypot(0.6, 0.6))
+
+
+def test_apply_stem_pan_round_trips_through_the_inverse():
+    for pan in (0.0, 0.25, 0.5, 0.75, 1.0):
+        panned = apply_stem_pan({"FL": 1.0, "FR": 1.0}, pan)
+        recovered = math.atan2(panned["FR"], panned["FL"]) / (math.pi / 2)
+        assert recovered == pytest.approx(pan, abs=1e-9)

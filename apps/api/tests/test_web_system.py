@@ -166,3 +166,11 @@ def test_capability_rejects_unsupported_torch_runtime(tmp_path, monkeypatch):
         "Stem separation is unavailable on Python 3.14 or newer. "
         "Use Python 3.11, 3.12, or 3.13."
     )
+
+
+def test_configuration_offers_stereo_as_a_selectable_layout(web_client):
+    choices = web_client.get("/api/v1/configuration").json()["choices"]
+    assert "stereo" in choices["channel_layouts"]
+    assert choices["layout_channels"]["stereo"] == ["FL", "FR"]
+    assert "stereo" not in choices["binaural_beds"]
+    assert "stereo" not in choices["transaural_beds"]

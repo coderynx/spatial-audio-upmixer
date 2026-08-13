@@ -35,15 +35,20 @@ Channel assignment within each zone:
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, OutputFormat
-from upmixer.utils import diffuse_send
+from upmixer.utils import ITU_CENTER_COEFF, diffuse_send
 
 _LEFT_CHANNELS  = {ChannelLabel.FL, ChannelLabel.SL, ChannelLabel.BL, ChannelLabel.TFL, ChannelLabel.TBL}
 _RIGHT_CHANNELS = {ChannelLabel.FR, ChannelLabel.SR, ChannelLabel.BR, ChannelLabel.TFR, ChannelLabel.TBR}
+
+_LEFT_NAMES  = {label.value for label in _LEFT_CHANNELS}
+_RIGHT_NAMES = {label.value for label in _RIGHT_CHANNELS}
 
 _FRONT_CHANNELS    = {ChannelLabel.FL, ChannelLabel.FR}
 _SURROUND_CHANNELS = {ChannelLabel.SL, ChannelLabel.SR, ChannelLabel.BL, ChannelLabel.BR}
@@ -359,7 +364,12 @@ def build_stem_routing(
         )
     amount = float(np.clip(intensity, 0.0, 1.0))
     scales = STEM_ROUTING_PRESETS[preset]
-    channel_labels = {label.value: label for label in output_format.channels}
+    to_stereo = output_format.n_channels == 2
+    channel_labels = (
+        {label.value: label for label in ChannelLabel}
+        if to_stereo
+        else {label.value: label for label in output_format.channels}
+    )
     output: dict[str, dict[str, float]] = {}
     for stem in stems:
         base = DEFAULT_ROUTING.get(stem)
@@ -381,8 +391,47 @@ def build_stem_routing(
             else:
                 scale = 1.0
             route[channel] = gain * (1.0 + amount * (scale - 1.0))
-        output[stem] = route
+        output[stem] = fold_route_to_stereo(route) if to_stereo else route
     return output
+
+
+def fold_route_to_stereo(route: dict[str, float]) -> dict[str, float]:
+    """Collapse a speaker map onto FL/FR for a 2-channel output format.
+
+    Only the resulting left/right *ratio* is meaningful: ``StemRouter.route``
+    renormalizes each stem to its own input energy afterwards, so the side
+    weights are a pan law, not the BS.775-4 level law. Idempotent.
+    """
+    left = right = 0.0
+    for channel, gain in route.items():
+        if gain <= 0.0 or channel == "LFE":
+            continue
+        if channel == ChannelLabel.C.value:
+            left += gain * ITU_CENTER_COEFF
+            right += gain * ITU_CENTER_COEFF
+        elif channel in _LEFT_NAMES:
+            left += gain
+        elif channel in _RIGHT_NAMES:
+            right += gain
+    return {ChannelLabel.FL.value: left, ChannelLabel.FR.value: right}
+
+
+def apply_stem_pan(route: dict[str, float], pan: float) -> dict[str, float]:
+    """Return *route* with its FL/FR pair repositioned by a constant-power pan.
+
+    ``pan`` is 0.0 (hard left) to 1.0 (hard right), 0.5 centred. The pair's
+    combined magnitude is preserved so the stem's balance against any other
+    channels in the route is unchanged.
+    """
+    angle = min(1.0, max(0.0, pan)) * (math.pi / 2.0)
+    magnitude = math.hypot(
+        route.get(ChannelLabel.FL.value, 0.0), route.get(ChannelLabel.FR.value, 0.0)
+    ) or 1.0
+    return {
+        **route,
+        ChannelLabel.FL.value: magnitude * math.cos(angle),
+        ChannelLabel.FR.value: magnitude * math.sin(angle),
+    }
 
 
 def default_lfe_send(stem_key: str) -> float:
@@ -439,6 +488,11 @@ class StemRouter:
         else:
             stem_name = stem_key
             base = DEFAULT_ROUTING.get(stem_name)
+
+        # Folded before the overrides merge, never after: folding the merged
+        # map would re-add the base's SL/BL weight on top of a user's pan.
+        if base is not None and self._fmt.n_channels == 2:
+            base = fold_route_to_stereo(base)
 
         result = dict(base) if base is not None else {}
         found_override = base is not None

@@ -55,3 +55,37 @@ def test_audio_writer_creates_parent_and_publishes_complete_file(tmp_path):
     assert info.channels == 6
     assert info.samplerate == 48_000
     assert not list(output.parent.glob(".*.wav"))
+
+
+def test_preflight_accepts_a_multichannel_source_bound_for_stereo(tmp_path):
+    source = tmp_path / "source.wav"
+    sf.write(source, np.zeros((480, 8)), 48_000)
+    report = preflight_job(
+        str(source), str(tmp_path / "out.wav"), UpmixConfig(output_format="stereo")
+    )
+    assert report["output_channels"] == 2
+
+
+def test_preflight_rejects_adm_delivery_of_a_stereo_layout(tmp_path):
+    source = tmp_path / "source.wav"
+    sf.write(source, np.zeros((480, 2)), 48_000)
+    cfg = UpmixConfig(output_format="stereo", output_type="adm-bwf", output_subtype="PCM_24")
+    with pytest.raises(PreflightError, match="surround bed"):
+        preflight_job(str(source), str(tmp_path / "out.wav"), cfg)
+
+
+@pytest.mark.parametrize("output_type", ["binaural", "transaural"])
+def test_preflight_rejects_bed_collapse_of_a_stereo_layout(tmp_path, output_type):
+    source = tmp_path / "source.wav"
+    sf.write(source, np.zeros((480, 2)), 48_000)
+    cfg = UpmixConfig(output_format="stereo", output_type=output_type)
+    with pytest.raises(PreflightError, match="requires output_format"):
+        preflight_job(str(source), str(tmp_path / "out.wav"), cfg)
+
+
+def test_preflight_rejects_transaural_on_a_bed_without_height(tmp_path):
+    source = tmp_path / "source.wav"
+    sf.write(source, np.zeros((480, 2)), 48_000)
+    cfg = UpmixConfig(output_format="5.1", output_type="transaural")
+    with pytest.raises(PreflightError, match="transaural output requires"):
+        preflight_job(str(source), str(tmp_path / "out.wav"), cfg)

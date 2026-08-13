@@ -2,10 +2,10 @@
 
 import argparse
 
-from upmixer.formats import INPUT_FORMAT_MAP
+from upmixer.formats import FORMAT_MAP, INPUT_FORMAT_MAP
 
 _INPUT_FORMAT_CHOICES = sorted(INPUT_FORMAT_MAP.keys())
-_OUTPUT_FORMAT_CHOICES = ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
+_OUTPUT_FORMAT_CHOICES = list(FORMAT_MAP)
 
 
 def _positive_int(value: str, option: str) -> int:
@@ -264,6 +264,7 @@ def build_parser() -> argparse.ArgumentParser:
             "'transaural' = Spatial Audio Engine crosstalk-cancelled speaker-stereo "
             "render of --format's bed (same bed requirement; see "
             "--transaural-profile). "
+            "'--format stereo' delivers WAV only. "
             "Default: 'wav' (or as set by manifest)."
         ),
     )
@@ -423,6 +424,17 @@ def build_parser() -> argparse.ArgumentParser:
             "Format: 'Bass=0.8,Vocals=0'. Overrides only the LFE weight of "
             "each stem's spatial routing, leaving the rest of its route "
             "untouched."
+        ),
+    )
+    parser.add_argument(
+        "--stem-pan",
+        default=None,
+        metavar="STEM=VALUE[,...]",
+        help=(
+            "Per-stem left/right pan, 0.0 = hard left, 0.5 = centre, "
+            "1.0 = hard right (stem mode only). Format: 'Vocals=0.5,Guitar=0.3'. "
+            "Overrides only the FL/FR pair of each stem's spatial routing, "
+            "preserving the pair's combined magnitude."
         ),
     )
 

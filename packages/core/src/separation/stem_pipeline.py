@@ -47,7 +47,8 @@ from scipy.signal import resample_poly
 
 from upmixer.binaural.renderer import render_binaural_delivery
 from upmixer.config import UpmixConfig
-from upmixer.formats import BINAURAL, BINAURAL_BED_FORMATS, FORMAT_MAP, INPUT_FORMAT_MAP, InputFormat, OutputFormat, detect_input_format
+from upmixer.crosstalk.renderer import render_crosstalk_delivery
+from upmixer.formats import BINAURAL, FORMAT_MAP, INPUT_FORMAT_MAP, TRANSAURAL, InputFormat, OutputFormat, detect_input_format, validate_delivery
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
 from upmixer.io.writer import AudioWriter
@@ -558,7 +559,7 @@ class StemUpmixPipeline:
         _log.info("  Stems:         %s", sorted(plan.requested_stems))
         _log.info("  Models:        %s", [t.model for t in plan.tasks])
 
-        _preview_stereo_forced_array: bool = False
+        _forced_stereo_array: bool = False
         if cfg.preview:
             audio_full, t0_preview, t1_preview = preview_slice(
                 audio_full, sr, cfg.preview_duration_s, cfg.preview_start_s
@@ -567,7 +568,17 @@ class StemUpmixPipeline:
                 "  Preview:       %.2fs–%.2fs (%.2fs window)",
                 t0_preview, t1_preview, audio_full.shape[0] / sr,
             )
-            _preview_stereo_forced_array = True
+            _forced_stereo_array = True
+
+        _stereo_folded_input = output_fmt.n_channels == 2 and input_fmt.n_channels > 2
+        if _stereo_folded_input:
+            left, right = itu_downmix_stereo(
+                {label.value: audio_full[:, i] for i, label in enumerate(input_fmt.channels)},
+                surround_coeff=cfg.surround_downmix_coeff,
+            )
+            audio_full = np.column_stack([left, right]).astype(np.float32, copy=False)
+            _forced_stereo_array = True
+            _log.info("  Folded %s input to stereo for stereo delivery", input_fmt.name)
 
         # Resolved early (before separation) so a 192kHz input bound for 48kHz
         # ADM-BWF output runs every post-separation step at 48kHz instead of
@@ -592,7 +603,12 @@ class StemUpmixPipeline:
         elif cfg.stem_cache_dir:
             from upmixer.separation.stem_cache import StemCache
             _stem_cache = StemCache(cfg.stem_cache_dir)
-            cache_identity = _stem_cache_identity(plan, cfg)
+            # A folded run separates one "front" zone where the same file
+            # unfolded yields "@zone"-keyed stems, so the two must not share
+            # a cache entry.
+            cache_identity = _stem_cache_identity(plan, cfg) + (
+                "|stereo" if _stereo_folded_input else ""
+            )
             custom_inference_tuning = any(
                 value not in (None, False) for value in (
                     cfg.stem_batch_size,
@@ -640,8 +656,8 @@ class StemUpmixPipeline:
                 _cache_hit_stems, _ = _cache_result
                 _cache_result = None
 
-        if input_fmt.n_channels <= 2:
-            if _preview_stereo_forced_array:
+        if (audio_full.shape[1] if audio_full.ndim > 1 else 1) <= 2:
+            if _forced_stereo_array:
                 n_ch = audio_full.shape[1] if audio_full.ndim > 1 else 1
                 front_arr = (
                     np.column_stack([audio_full[:, 0], audio_full[:, 0]])
@@ -840,12 +856,9 @@ class StemUpmixPipeline:
             :class:`~upmixer.result.UpmixResult` with processing metadata.
         """
         t0 = time.monotonic()
+        validate_delivery(self.config.output_format, self.config.output_type)
         is_binaural = self.config.output_type == "binaural"
-        if is_binaural and self.config.output_format not in BINAURAL_BED_FORMATS:
-            raise ValueError(
-                f"binaural output requires output_format one of {BINAURAL_BED_FORMATS}, "
-                f"got '{self.config.output_format}'"
-            )
+        is_transaural = self.config.output_type == "transaural"
         cfg = self.config
         if not 0.0 <= cfg.stem_source_anchor_strength <= 1.0:
             raise ValueError("stem_source_anchor_strength must be between 0.0 and 1.0")
@@ -969,6 +982,13 @@ class StemUpmixPipeline:
             output_fmt = BINAURAL
             writer = AudioWriter(output_path, out_sr, self.config, output_format=BINAURAL)
             writer.write(channels)
+        elif is_transaural:
+            channels, mastering_result = render_crosstalk_delivery(
+                channels, output_fmt, out_sr, self.config
+            )
+            output_fmt = TRANSAURAL
+            writer = AudioWriter(output_path, out_sr, self.config, output_format=TRANSAURAL)
+            writer.write(channels)
         elif cfg.output_type == "adm-bwf":
             writer = AdmBwfWriter(output_path, out_sr, cfg)
             writer.write(
@@ -980,7 +1000,7 @@ class StemUpmixPipeline:
             writer = AudioWriter(output_path, out_sr, cfg)
             writer.write(channels)
 
-        if cfg.downmix_output_path and not is_binaural:
+        if cfg.downmix_output_path and output_fmt.n_channels > 2:
             from upmixer.loudness import measure_true_peak
 
             L, R = itu_downmix_stereo(channels, surround_coeff=cfg.surround_downmix_coeff)

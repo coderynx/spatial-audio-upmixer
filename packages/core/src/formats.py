@@ -44,7 +44,10 @@ class OutputFormat:
     @property
     def bs2051_system(self) -> str:
         """ITU-R BS.2051-3 system code, or empty string if no direct mapping."""
-        return {"5.1": "B", "5.1.2": "C", "5.1.4": "D", "7.1": "I", "7.1.4": "J"}.get(self.name, "")
+        return {
+            "stereo": "A", "5.1": "B", "5.1.2": "C",
+            "5.1.4": "D", "7.1": "I", "7.1.4": "J",
+        }.get(self.name, "")
 
 
 SURROUND_51 = OutputFormat(
@@ -102,6 +105,15 @@ SURROUND_714 = OutputFormat(
     ),
 )
 
+STEREO_OUT = OutputFormat(
+    name="stereo",
+    channels=(ChannelLabel.FL, ChannelLabel.FR),
+)
+"""Two-channel delivery (ITU-R BS.2051 System A, 0+2+0). Unlike ``BINAURAL``
+and ``TRANSAURAL`` this *is* a selectable speaker layout and belongs in
+``FORMAT_MAP``: the stems are mixed straight onto FL/FR with no collapse
+pass. Named ``STEREO_OUT`` because ``STEREO`` is this module's input format."""
+
 BINAURAL = OutputFormat(
     name="binaural",
     channels=(ChannelLabel.FL, ChannelLabel.FR),
@@ -114,6 +126,7 @@ format. Deliberately absent from ``FORMAT_MAP``, which enumerates only
 selectable speaker layouts."""
 
 FORMAT_MAP = {
+    "stereo": STEREO_OUT,
     "5.1": SURROUND_51,
     "7.1": SURROUND_71,
     "5.1.2": SURROUND_512,
@@ -258,11 +271,34 @@ def detect_input_format(n_channels: int) -> InputFormat:
 
 
 def can_upmix(input_fmt: InputFormat, output_fmt: OutputFormat) -> bool:
-    """True if output_fmt is a valid upmix target for input_fmt.
+    """True if output_fmt is a valid target layout for input_fmt.
 
     Valid when all input channel labels exist in the output AND output
     has strictly more channels (no information loss, only addition).
+    Two-channel output is the exception: it accepts any input, folding
+    wider sources per BS.775-4 rather than upmixing them.
     """
+    if output_fmt.n_channels == 2:
+        return True
     input_labels = set(input_fmt.channels)
     output_labels = set(output_fmt.channels)
     return input_labels <= output_labels and output_fmt.n_channels > input_fmt.n_channels
+
+
+def validate_delivery(output_format: str, output_type: str) -> None:
+    """Raise ValueError when a delivery type cannot carry an output layout."""
+    if output_type == "binaural" and output_format not in BINAURAL_BED_FORMATS:
+        raise ValueError(
+            f"binaural output requires output_format one of {BINAURAL_BED_FORMATS}, "
+            f"got '{output_format}'"
+        )
+    if output_type == "transaural" and output_format not in TRANSAURAL_BED_FORMATS:
+        raise ValueError(
+            f"transaural output requires output_format one of {TRANSAURAL_BED_FORMATS}, "
+            f"got '{output_format}'"
+        )
+    if output_type == "adm-bwf" and output_format == STEREO_OUT.name:
+        raise ValueError(
+            "adm-bwf output requires a surround bed; "
+            f"output_format '{STEREO_OUT.name}' delivers WAV only"
+        )

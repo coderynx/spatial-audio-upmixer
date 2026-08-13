@@ -4,6 +4,7 @@ import { api, type Configuration, type Project } from "@/api";
 import { EmptyState } from "@/app/EmptyState";
 import { PanelBody, PanelHeader } from "@/app/Panel";
 import { Button } from "@/components/ui/button";
+import { CHANNEL_LAYOUTS } from "@/lib/layouts";
 import { defaultManifest, fallbackStems } from "@/lib/manifest";
 import { normalizeStemHierarchy } from "@/lib/stemHierarchy";
 import { droppedItems, type UploadItem } from "@/lib/uploads";
@@ -45,7 +46,7 @@ export function AssetsTab({
   const availableStems = choices?.stems || fallbackStems;
   const sampleRates = choices?.sample_rates || [44100, 48000, 88200, 96000, 192000];
   const subtypes = choices?.output_subtypes || ["PCM_16", "PCM_24", "PCM_32", "FLOAT"];
-  const channelLayouts = choices?.channel_layouts || ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"];
+  const channelLayouts = choices?.channel_layouts || CHANNEL_LAYOUTS;
   const engineDefaults = defaultManifest.engine;
   const referenceModels = choices?.stem_phase_fix_reference_models || [engineDefaults.stem_phase_fix_reference_model];
   const debleedModels = choices?.stem_debleed_models || [engineDefaults.stem_debleed_model];

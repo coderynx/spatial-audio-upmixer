@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from upmixer_web.features.projects.service import get_project
+from upmixer_web.features.projects.service import _normalized_project_manifest, get_project
 from upmixer_web.features.projects.storage import ProjectStemStorage
 from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectStem, ProjectTrack
 from upmixer_web.shared.storage import ObjectStorage
@@ -226,7 +226,7 @@ def import_project_archive(
                 import_id=import_batch.id,
                 name=project_data["name"],
                 notes=project_data.get("notes"),
-                manifest=project_data["manifest"],
+                manifest=_normalized_project_manifest(project_data["manifest"])[0],
                 scene=project_data.get("scene", {}),
                 view_state=project_data.get("view_state", {}),
                 requested_stems=project_data.get("requested_stems", []),

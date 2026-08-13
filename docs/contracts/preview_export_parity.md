@@ -59,6 +59,14 @@ Every stage below is one function, called from both sides:
 | Crosstalk (transaural) | `spatial::xtc` | `crosstalk/renderer.py` | `stream::output` |
 | BS.775 stereo downmix | `spatial::downmix` | `utils.py` | `stream::output` |
 
+A `stereo` layout (`FORMAT_MAP["stereo"]`, ITU-R BS.2051 System A) has no
+collapse stage at all: the bed *is* two channels, so the preview stays in
+native mode — limiter on, `soft_limit_threshold` 0 — and the export writes the
+same FL/FR bed. The one thing that has to match is the routing table, which is
+why the API stores a stereo project's `mixing.stem_routing` already folded to
+FL/FR (see `docs/project_manifest_parity.md`): both sides then normalize over
+the same channel set.
+
 **Processing order is contracted** and lives in one place — reference match →
 EQ → compression → bass → BS.1770 loudness → limiter *last*. Soft limiting
 after loudness rather than before is deliberate; see
@@ -178,7 +186,7 @@ or that the port itself resolved.
 
 | # | Discrepancy | Status |
 |---|---|---|
-| D3 | `estimateRouteScale` approximates `route_scale` from the routing table, not decoded-buffer energy. | Open — see §3. |
+| D3 | `estimateRouteScale` approximates `route_scale` from the routing table, not decoded-buffer energy. It also sums every channel in the route regardless of the layout, so a route wider than the layout reads as a level error rather than an approximation. | Open — see §3. Neutralized for `stereo` layouts, where the API stores the routing already folded to FL/FR. |
 | D4 | The preview's loudness omitted K-weighting and gating and read a few excerpts, not the whole programme. | Fixed by the port: `stream::engine::measure` runs the real BS.1770 measurement over the whole render. |
 | D9 | Biquad realizations of the mono-maker and bass bands flipped their net effect versus the backend's zero-phase `sosfiltfilt`. | Fixed by the port: there is one implementation, and the mono-maker's zero-phase pass survives streaming via a bounded horizon. |
 | D14 | The look-ahead limiter existed only on the native path, with the collapse paths on the old tanh saturator. | Fixed by the port; the split now follows the export exactly — limiter on native, soft limit on the collapse paths. |

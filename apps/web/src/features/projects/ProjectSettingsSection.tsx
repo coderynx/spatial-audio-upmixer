@@ -5,6 +5,7 @@ import { api, type Configuration, type Project } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { CHANNEL_LAYOUTS, deliveryTypeForLayout } from "@/lib/layouts";
 import type { Manifest } from "@/lib/manifest";
 
 // Project-level identity and speaker layout. Layout lives here (not
@@ -49,11 +50,19 @@ export function ProjectSettingsSection({
         label="Speaker layout"
         value={manifest.mixing.channel_layout}
         onChange={(channel_layout) =>
-          onChange({ ...manifest, mixing: { ...manifest.mixing, channel_layout } })
+          onChange({
+            ...manifest,
+            mixing: { ...manifest.mixing, channel_layout },
+            format: {
+              ...manifest.format,
+              type: deliveryTypeForLayout(channel_layout, manifest.format.type),
+            },
+          })
         }
-        options={(
-          configuration?.choices.channel_layouts || ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
-        ).map((value) => ({ value, label: value }))}
+        options={(configuration?.choices.channel_layouts || CHANNEL_LAYOUTS).map((value) => ({
+          value,
+          label: value,
+        }))}
         hint="Changes the routing graph, spatial preview, and audio preview engine to the exact speaker set of this layout."
       />
       <SelectField

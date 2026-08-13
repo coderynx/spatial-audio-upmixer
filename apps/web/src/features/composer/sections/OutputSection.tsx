@@ -1,4 +1,5 @@
 import { SelectField, ToggleField } from "@/components/forms/fields";
+import { CHANNEL_LAYOUTS, OUTPUT_TYPES, deliveryTypeForLayout, isStereoLayout } from "@/lib/layouts";
 import type { ManifestSectionProps } from "./types";
 
 export function OutputSection({
@@ -8,6 +9,7 @@ export function OutputSection({
 }: ManifestSectionProps) {
   const choices = configuration?.choices;
   const separation = configuration?.capabilities.stem_separation;
+  const stereo = isStereoLayout(manifest.mixing.channel_layout);
   return (
     <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
       <SelectField
@@ -28,7 +30,7 @@ export function OutputSection({
             : separation?.install_message || undefined)
         }
       />
-      <ToggleField
+      {!stereo && <ToggleField
         label="Stereo downmix"
         description="Write an ITU-R BS.775-compatible stereo companion file."
         checked={manifest.format.downmix?.enabled ?? false}
@@ -39,8 +41,8 @@ export function OutputSection({
             downmix: { ...(manifest.format.downmix || { surround_coeff: 0.7071 }), enabled },
           },
         })}
-      />
-      {(manifest.format.downmix?.enabled ?? false) && <SelectField
+      />}
+      {!stereo && (manifest.format.downmix?.enabled ?? false) && <SelectField
         label="Downmix surround coefficient"
         value={String(manifest.format.downmix?.surround_coeff ?? 0.7071)}
         onChange={(surround_coeff) => setManifest({
@@ -59,11 +61,16 @@ export function OutputSection({
           setManifest({
             ...manifest,
             mixing: { ...manifest.mixing, channel_layout },
+            format: {
+              ...manifest.format,
+              type: deliveryTypeForLayout(channel_layout, manifest.format.type),
+            },
           })
         }
-        options={(
-          choices?.channel_layouts || ["5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"]
-        ).map((value) => ({ value, label: value }))}
+        options={(choices?.channel_layouts || CHANNEL_LAYOUTS).map((value) => ({
+          value,
+          label: value,
+        }))}
       />
       {(() => {
         const binauralBeds = choices?.binaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
@@ -78,30 +85,36 @@ export function OutputSection({
               onChange={(type) =>
                 setManifest({ ...manifest, format: { ...manifest.format, type } })
               }
-              options={(choices?.output_types || ["wav", "adm-bwf", "binaural", "transaural"]).map((value) => ({
-                value,
-                label:
-                  value === "adm-bwf"
-                    ? "ADM-BWF"
-                    : value === "binaural"
-                      ? "Binaural (headphone stereo)"
-                      : value === "transaural"
-                        ? "Transaural (crosstalk-cancelled speakers)"
-                        : "Multichannel WAV",
-                disabled:
-                  (value === "binaural" && !bedSupported) ||
-                  (value === "transaural" && !transauralBedSupported),
-              }))}
+              options={(choices?.output_types || OUTPUT_TYPES)
+                .filter((value) => !stereo || value === "wav")
+                .map((value) => ({
+                  value,
+                  label:
+                    value === "adm-bwf"
+                      ? "ADM-BWF"
+                      : value === "binaural"
+                        ? "Binaural (headphone stereo)"
+                        : value === "transaural"
+                          ? "Transaural (crosstalk-cancelled speakers)"
+                          : stereo
+                            ? "Stereo WAV"
+                            : "Multichannel WAV",
+                  disabled:
+                    (value === "binaural" && !bedSupported) ||
+                    (value === "transaural" && !transauralBedSupported),
+                }))}
               hint={
-                manifest.format.type === "binaural"
-                  ? "Renders the speaker layout above as headphone stereo through the Spatial Audio Engine."
-                  : manifest.format.type === "transaural"
-                    ? "Renders the speaker layout above as crosstalk-cancelled stereo for real speakers."
-                    : !bedSupported
-                      ? `Binaural requires speaker layout ${binauralBeds.join(", ")}.`
-                      : !transauralBedSupported
-                        ? `Transaural requires speaker layout ${transauralBeds.join(", ")}.`
-                        : undefined
+                stereo
+                  ? "Two-channel delivery — no object master, bed collapse, or downmix companion."
+                  : manifest.format.type === "binaural"
+                    ? "Renders the speaker layout above as headphone stereo through the Spatial Audio Engine."
+                    : manifest.format.type === "transaural"
+                      ? "Renders the speaker layout above as crosstalk-cancelled stereo for real speakers."
+                      : !bedSupported
+                        ? `Binaural requires speaker layout ${binauralBeds.join(", ")}.`
+                        : !transauralBedSupported
+                          ? `Transaural requires speaker layout ${transauralBeds.join(", ")}.`
+                          : undefined
               }
             />
             {manifest.format.type === "binaural" && (

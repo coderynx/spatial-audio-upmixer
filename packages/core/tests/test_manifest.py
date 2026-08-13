@@ -810,3 +810,28 @@ class TestBlockRegistry:
         assert "_test_section2" in _BLOCK_REGISTRY
         assert "foo" in _BLOCK_REGISTRY["_test_section2"]
         del _BLOCK_REGISTRY["_test_section2"]  # clean up
+
+
+class TestValidateStereoDelivery:
+    def test_accepts_stereo_with_wav(self):
+        validate_manifest(_minimal(mixing={"channel_layout": "stereo"}, format={"type": "wav"}))
+
+    @pytest.mark.parametrize("output_type", ["adm-bwf", "binaural", "transaural"])
+    def test_rejects_stereo_with_a_multichannel_only_delivery(self, output_type):
+        with pytest.raises(ManifestError):
+            validate_manifest(
+                _minimal(mixing={"channel_layout": "stereo"}, format={"type": output_type})
+            )
+
+    def test_rejects_a_per_asset_override_that_breaks_the_project_layout(self):
+        with pytest.raises(ManifestError):
+            validate_manifest(
+                _minimal(
+                    assets=[{"input": "in.flac", "output": "out.wav", "format": {"type": "adm-bwf"}}],
+                    mixing={"channel_layout": "stereo"},
+                )
+            )
+
+    def test_rejects_an_unknown_channel_layout(self):
+        with pytest.raises(ManifestError, match="unsupported value"):
+            validate_manifest(_minimal(mixing={"channel_layout": "9.1.6"}))

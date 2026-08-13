@@ -65,3 +65,22 @@ def test_positioned_stem_honours_an_explicit_manifest_lfe_send():
     scene = {"stems": {"Bass": {"azimuth_deg": 0.0, "elevation_deg": 0.0}}}
     routing = routing_for_scene(scene, config)["Bass"]
     assert routing["LFE"] == pytest.approx(0.42)
+
+
+def test_stereo_layout_routes_only_to_the_two_speakers():
+    config = UpmixConfig(output_format="stereo")
+    routing = routing_for_scene(_scene(0.0, 0.0), config)["Vocals"]
+    assert set(routing) == {"FL", "FR"}
+    assert routing["FL"] == pytest.approx(routing["FR"], abs=1e-9)
+
+
+def test_stereo_layout_pans_toward_the_nearer_speaker():
+    config = UpmixConfig(output_format="stereo")
+    routing = routing_for_scene(_scene(30.0, 0.0), config)["Vocals"]
+    assert routing["FL"] > routing["FR"]
+
+
+def test_stereo_layout_collapses_a_rear_position_to_centre():
+    config = UpmixConfig(output_format="stereo")
+    routing = routing_for_scene(_scene(180.0, 0.0), config)["Vocals"]
+    assert routing["FL"] == pytest.approx(routing["FR"], abs=1e-9)

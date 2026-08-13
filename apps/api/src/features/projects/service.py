@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session, selectinload
 from upmixer.config import UpmixConfig
 from upmixer.manifest import apply_asset_job, parse_manifest
 from upmixer.separation.stem_plan import normalize_stems
-from upmixer.formats import FORMAT_MAP
-from upmixer.separation.stem_router import build_stem_routing
+from upmixer.formats import FORMAT_MAP, validate_delivery
+from upmixer.separation.stem_router import build_stem_routing, fold_route_to_stereo
 from upmixer_web.features.jobs.service import create_job
 from upmixer_web.features.projects.routing import merge_scene, routing_for_scene
 from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS, ProjectStemStorage
@@ -165,8 +165,33 @@ def _migrate_legacy_binaural_shape(manifest: dict[str, Any]) -> dict[str, Any]:
     return manifest
 
 
+def _delivery_type_for_layout(channel_layout: str, output_type: str) -> str:
+    """Fall back to WAV when a stored delivery type cannot carry the layout.
+
+    A project's speaker layout is its primary control — it drives routing, the
+    spatial views and the preview engine — so narrowing it (7.1.4 to 5.1, or to
+    stereo) retargets a delivery type the new layout cannot carry instead of
+    rejecting the edit over a field the user did not touch. Explicit job
+    manifests and CLI flags stay strict; ``formats.validate_delivery`` still
+    rejects them.
+    """
+    try:
+        validate_delivery(channel_layout, output_type)
+    except ValueError:
+        return "wav"
+    return output_type
+
+
 def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    normalized = normalize_job_manifest(_migrate_legacy_binaural_shape(manifest))
+    migrated = _migrate_legacy_binaural_shape(manifest)
+    migrated_mixing = migrated.setdefault("mixing", {})
+    migrated_format = migrated.setdefault("format", {})
+    if isinstance(migrated_mixing, dict) and isinstance(migrated_format, dict):
+        migrated_format["type"] = _delivery_type_for_layout(
+            str(migrated_mixing.setdefault("channel_layout", "7.1.4")),
+            str(migrated_format.get("type", "wav")),
+        )
+    normalized = normalize_job_manifest(migrated)
     engine = normalized.setdefault("engine", {})
     engine["mode"] = "stem"
     stems = _normalize_project_stems(engine.get("stems") or [])
@@ -188,6 +213,14 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
     routing_fmt = FORMAT_MAP[mixing["channel_layout"]]
     if not mixing.get("stem_routing"):
         mixing["stem_routing"] = build_stem_routing(stems, routing_fmt)
+    elif routing_fmt.n_channels == 2:
+        # Folded on the way in so the client preview, which reads only the
+        # manifest, and the export, which folds the built-in base route,
+        # normalize over the same channel set.
+        mixing["stem_routing"] = {
+            stem: fold_route_to_stereo(route)
+            for stem, route in mixing["stem_routing"].items()
+        }
     routing = normalized.setdefault("routing", {})
     routing["content_mix_strength"] = 0.0
     normalized.setdefault("processing", {})["preview"] = False
