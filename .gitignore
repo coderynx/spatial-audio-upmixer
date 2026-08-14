@@ -151,6 +151,14 @@ upmixer_stems_*/
 *.aiff
 *.mp3
 *.m4a
+# Generated filter assets are shipped resources, not test audio: core loads them
+# at runtime (declared as package-data) and the web preview fetches them.
+# Regenerate with scripts/build_{binaural,crosstalk,eq}_filters.py.
+!packages/core/src/binaural/hrir/*.wav
+!packages/core/src/crosstalk/xtc/*.wav
+!apps/web/public/hrir/*.wav
+!apps/web/public/xtc/*.wav
+!apps/web/public/eq_fir/*.wav
 
 ### Python template
 # Byte-compiled / optimized / DLL files
