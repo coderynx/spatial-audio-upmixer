@@ -7,7 +7,9 @@ boundary blending) regardless of the requested overlap.
 from __future__ import annotations
 
 import numpy as np
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 
 from upmixer.separation.inference import demix
 from upmixer.separation.inference.config import ModelConfig

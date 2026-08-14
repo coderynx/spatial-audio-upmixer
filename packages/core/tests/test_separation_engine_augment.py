@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import numpy as np
-import torch
+import pytest
+
+torch = pytest.importorskip("torch")
 
 from upmixer.separation.inference.config import ModelConfig
 from upmixer.separation.inference.device import DeviceManager

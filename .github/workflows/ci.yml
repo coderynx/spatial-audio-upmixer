@@ -5,23 +5,43 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/dsp
+      # dsp-py is a pyo3 extension-module cdylib: its lib test target does not
+      # link standalone, and neither binding crate has tests of its own.
+      - name: Test dsp-core
+        working-directory: packages/dsp
+        run: cargo test -p upmixer-dsp-core --release
+
   python:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/dsp
+      - uses: astral-sh/setup-uv@v10
         with:
           enable-cache: true
+          python-version: "3.13"
       - name: Install
-        run: uv sync --all-packages --extra dev --extra web-dev --extra manifest
-      - name: Test core
-        run: uv run pytest packages/core/tests -q
-      - name: Test api
-        run: uv run pytest apps/api/tests -q
-      - name: Test cli
-        run: uv run pytest apps/cli/tests -q
+        run: uv sync --all-packages --extra dev --extra web-dev --extra manifest --locked
+      - name: Test
+        run: uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q
 
   web:
     runs-on: ubuntu-latest
@@ -30,12 +50,21 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: "22"
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/dsp
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - run: npm ci
+      # The committed public/wasm artifact is rebuilt so the parity tests run
+      # against this commit's Rust, not whatever was last checked in.
+      - run: npm run build:wasm
       - run: npm run build
       - run: npm test

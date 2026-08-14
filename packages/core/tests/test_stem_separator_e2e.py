@@ -10,8 +10,10 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 import soundfile as sf
-import torch
+
+torch = pytest.importorskip("torch")
 
 from upmixer.separation.inference.config import ModelConfig
 from upmixer.separation.inference.registry import ModelSpec
