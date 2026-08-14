@@ -10,6 +10,7 @@ from pathlib import Path
 
 from upmixer.config import UpmixConfig
 from upmixer.manifest import apply_asset_job, parse_manifest
+from upmixer_web.features.projects.layouts import track_prepare_overrides
 from upmixer_web.features.projects.service import get_project
 from upmixer_web.shared.models import Project, ProjectTrack
 from upmixer_web.worker.manager import JobDeleting
@@ -67,7 +68,7 @@ class ProjectRunnerMixin:
                 source_keys = [track.asset.storage_key for track in project.tracks]
                 track_ids = [track.id for track in project.tracks]
                 track_overrides = {
-                    track.id: copy.deepcopy(track.manifest_overrides) for track in project.tracks
+                    track.id: copy.deepcopy(track_prepare_overrides(track)) for track in project.tracks
                 }
                 manifest = copy.deepcopy(project.manifest)
                 requested_stems = list(project.requested_stems)

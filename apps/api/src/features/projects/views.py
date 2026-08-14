@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from upmixer_web.features.projects.schemas import ProjectView, ReferenceMatchAssetView
+from upmixer_web.features.projects.layouts import track_layouts
 from upmixer_web.features.projects.storage import ProjectStemStorage
 from upmixer_web.shared.models import Project
 
@@ -31,6 +32,7 @@ def project_view(
     # the audio route validates asset.import_id against the URL's import_id,
     # so the URL must use the track's own asset, not the project's.
     for track, track_orm in zip(view.tracks, project.tracks, strict=True):
+        track.layouts = track_layouts(track_orm, project)
         track.asset.audio_url = (
             f"{root_path}/api/v1/imports/{track_orm.asset.import_id}/assets/{track.asset.id}/audio"
         )
@@ -57,17 +59,19 @@ def project_view(
             stem.audio_url = base_url
             if stem_by_id[stem.id].preview_relative_path:
                 stem.preview_url = f"{base_url}?quality=preview"
-    meta = project_stems.read_reference_match_meta(project.id) if project_stems else None
-    if meta:
+    for layout in project_stems.reference_match_layouts(project.id) if project_stems else []:
+        meta = project_stems.read_reference_match_meta(project.id, layout)
+        if not meta:
+            continue
         fir_url = None
         if meta.get("channels") and meta.get("curve"):
-            fir_url = f"{root_path}/api/v1/projects/{project.id}/reference-match/fir"
+            fir_url = f"{root_path}/api/v1/projects/{project.id}/reference-match/{layout}/fir"
             # Signature-versioned so the browser's fir_url-keyed decode cache
             # busts on a real recompute; `strength`/`max_db` are appended by
             # the caller as live query params (see ReferenceMatchAssetView).
             if meta.get("signature"):
                 fir_url = f"{fir_url}?v={meta['signature']}"
-        view.reference_match = ReferenceMatchAssetView(
+        view.reference_match[layout] = ReferenceMatchAssetView(
             fir_url=fir_url,
             channels=meta.get("channels", []),
             rms_gain_db=meta.get("rms_gain_db", 0.0),

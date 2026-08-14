@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from upmixer_web.shared.models import Project, ProjectStem, ProjectTrack
 
-REFERENCE_MATCH_META_FILENAME = "reference_match.json"
+REFERENCE_MATCH_META_SUFFIX = ".reference_match.json"
 REFERENCE_MATCH_CACHE_LIMIT = 12
 
 PEAKS_FILENAME = "peaks.bin"
@@ -290,9 +290,13 @@ class ProjectStemStorage:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def _reference_match_meta_path(self, project_id: str, layout: str) -> Path:
+        return self.reference_match_dir(project_id) / f"{layout}{REFERENCE_MATCH_META_SUFFIX}"
+
     def write_reference_match(
         self,
         project_id: str,
+        layout: str,
         curve: list[tuple[float, float]],
         channels: list[str],
         rms_gain_db: float,
@@ -300,8 +304,12 @@ class ProjectStemStorage:
         n_taps: int,
         signature: str,
     ) -> None:
-        """Persist a project's server-precomputed reference-match correction
-        curve and level gain.
+        """Persist one speaker layout's server-precomputed reference-match
+        correction curve and level gain.
+
+        The curve is layout-dependent — it is measured off the mixed bed — so
+        a project carrying tracks in several layouts holds one asset per
+        layout, not one per project.
 
         `curve` is exactly what `ReferenceMatchProcessor.compute_curve`
         returns — strength/max_db-independent (see
@@ -313,11 +321,9 @@ class ProjectStemStorage:
         still applies.
 
         Also mirrors the result into a per-signature cache
-        (`promote_cached_reference_match`) so switching back to a
-        previously-visited speaker layout is a file copy instead of a
-        recompute.
+        (`promote_cached_reference_match`) so returning to a
+        previously-visited layout is a file copy instead of a recompute.
         """
-        directory = self.reference_match_dir(project_id)
         meta = {
             "signature": signature,
             "sample_rate": sample_rate,
@@ -327,16 +333,16 @@ class ProjectStemStorage:
             "rms_gain_db": rms_gain_db,
         }
         raw = json.dumps(meta)
-        (directory / REFERENCE_MATCH_META_FILENAME).write_text(raw, encoding="utf-8")
+        self._reference_match_meta_path(project_id, layout).write_text(raw, encoding="utf-8")
         cache_dir = self._reference_match_cache_dir(project_id)
         (cache_dir / f"{signature}.json").write_text(raw, encoding="utf-8")
         cached = sorted(cache_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
         for stale in cached[REFERENCE_MATCH_CACHE_LIMIT:]:
             stale.unlink(missing_ok=True)
 
-    def promote_cached_reference_match(self, project_id: str, signature: str) -> bool:
+    def promote_cached_reference_match(self, project_id: str, layout: str, signature: str) -> bool:
         """Restore a previously-computed reference-match asset for
-        *signature* as the active one, if a cached copy exists.
+        *signature* as *layout*'s active one, if a cached copy exists.
 
         Lets a layout switch that revisits a signature seen before (e.g.
         toggling speaker layout A -> B -> A) skip the full mix + PSD-match
@@ -345,12 +351,11 @@ class ProjectStemStorage:
         cached = self._reference_match_cache_dir(project_id) / f"{signature}.json"
         if not cached.is_file():
             return False
-        directory = self.reference_match_dir(project_id)
-        shutil.copyfile(cached, directory / REFERENCE_MATCH_META_FILENAME)
+        shutil.copyfile(cached, self._reference_match_meta_path(project_id, layout))
         return True
 
-    def read_reference_match_meta(self, project_id: str) -> dict | None:
-        path = self.root / project_id / "reference_match" / REFERENCE_MATCH_META_FILENAME
+    def read_reference_match_meta(self, project_id: str, layout: str) -> dict | None:
+        path = self.root / project_id / "reference_match" / f"{layout}{REFERENCE_MATCH_META_SUFFIX}"
         if not path.is_file():
             return None
         try:
@@ -358,10 +363,17 @@ class ProjectStemStorage:
         except (OSError, ValueError):
             return None
 
+    def reference_match_layouts(self, project_id: str) -> list[str]:
+        """Layouts this project currently holds a reference-match asset for."""
+        directory = self.root / project_id / "reference_match"
+        if not directory.is_dir():
+            return []
+        return sorted(path.name[: -len(REFERENCE_MATCH_META_SUFFIX)] for path in directory.glob(f"*{REFERENCE_MATCH_META_SUFFIX}"))
+
     def reference_match_fir_wav_bytes(
-        self, project_id: str, strength: float, max_correction_db: float,
+        self, project_id: str, layout: str, strength: float, max_correction_db: float,
     ) -> bytes | None:
-        """Render the reference-match FIR for one ``(strength,
+        """Render one layout's reference-match FIR for a ``(strength,
         max_correction_db)`` pair from the persisted curve, as WAV bytes
         ready to serve.
 
@@ -371,7 +383,7 @@ class ProjectStemStorage:
         (spectral matching disabled, or the reference hasn't been analysed
         yet).
         """
-        meta = self.read_reference_match_meta(project_id)
+        meta = self.read_reference_match_meta(project_id, layout)
         if not meta or not meta.get("curve"):
             return None
         from upmixer.mastering.match_reference import build_curve_fir
@@ -384,5 +396,9 @@ class ProjectStemStorage:
         sf.write(buffer, fir.astype(np.float32), meta["sample_rate"], format="WAV", subtype="FLOAT")
         return buffer.getvalue()
 
-    def clear_reference_match(self, project_id: str) -> None:
-        shutil.rmtree(self.root / project_id / "reference_match", ignore_errors=True)
+    def clear_reference_match(self, project_id: str, layout: str | None = None) -> None:
+        """Drop every layout's asset, or just one layout's when named."""
+        if layout is None:
+            shutil.rmtree(self.root / project_id / "reference_match", ignore_errors=True)
+            return
+        self._reference_match_meta_path(project_id, layout).unlink(missing_ok=True)

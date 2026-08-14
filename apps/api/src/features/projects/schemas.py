@@ -27,7 +27,12 @@ class ProjectTrackView(ApiModel):
     position: int
     status: str
     progress: float
-    manifest_overrides: dict[str, Any] = Field(default_factory=dict)
+    # `layouts` is the track's speaker-layout set, in the order the client
+    # shows them; `layout_overrides` holds each one's own mix/master/delivery
+    # block. A layout with no stored block yet is still listed — read it as an
+    # empty override over the project manifest.
+    layouts: list[str] = Field(default_factory=list)
+    layout_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
     scene_overrides: dict[str, Any] = Field(default_factory=dict)
     source_preview_relative_path: str | None = None
     source_preview_url: str | None = None
@@ -100,7 +105,9 @@ class ProjectView(ApiModel):
     tracks: list[ProjectTrackView] = Field(default_factory=list)
     exports: list[JobView] = Field(default_factory=list)
     mastering_reference: MasteringReferenceView | None = None
-    reference_match: ReferenceMatchAssetView | None = None
+    # One correction curve per speaker layout in use — the curve is measured
+    # off the mixed bed, so it cannot be shared across layouts.
+    reference_match: dict[str, ReferenceMatchAssetView] = Field(default_factory=dict)
     reference_match_pending: bool = False
     peaks_pending: bool = False
 
@@ -124,6 +131,14 @@ class UpdateProjectSettingsRequest(BaseModel):
 class UpdateProjectTrackSettingsRequest(BaseModel):
     manifest_overrides: dict[str, Any] = Field(default_factory=dict)
     scene_overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class SetTrackLayoutsRequest(BaseModel):
+    layouts: list[str] = Field(min_length=1, max_length=16)
+
+
+class ExportProjectRequest(BaseModel):
+    layout: str = Field(min_length=1, max_length=32)
 
 
 class ExpandProjectStemsRequest(BaseModel):

@@ -179,7 +179,15 @@ class Project(Base):
 
 
 class ProjectTrack(Base):
-    """Per-track preparation state and optional project-setting overrides."""
+    """Per-track preparation state and its per-speaker-layout mixes.
+
+    ``layout_overrides`` maps a `FORMAT_MAP` layout name to that layout's own
+    manifest override blocks, so one track carries an independent mix, master
+    and delivery per layout. Its keys *are* the track's layout set — there is
+    no separate list to keep in sync. ``scene_overrides`` stays outside it:
+    azimuth/elevation is a canonical position, while `mixing.stem_routing` is
+    its per-layout realization.
+    """
 
     __tablename__ = "project_tracks"
 
@@ -189,7 +197,7 @@ class ProjectTrack(Base):
     position: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(32), default="queued")
     progress: Mapped[float] = mapped_column(Float, default=0.0)
-    manifest_overrides: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    layout_overrides: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
     scene_overrides: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     source_preview_relative_path: Mapped[str | None] = mapped_column(String(1024))
     source_preview_size_bytes: Mapped[int | None] = mapped_column(Integer)

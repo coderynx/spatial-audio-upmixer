@@ -725,7 +725,7 @@ def test_project_delete_preserves_export_jobs_with_nulled_project_id(tmp_path, m
     engine.dispose()
 
     with TestClient(create_app(settings)) as client:
-        exported = client.post(f"/api/v1/projects/{project_id}/exports")
+        exported = client.post(f"/api/v1/projects/{project_id}/exports", json={"layout": "5.1"})
         assert exported.status_code == 201
         job_id = exported.json()["id"]
 
@@ -785,7 +785,7 @@ def test_project_export_clones_tracks_spanning_multiple_imports(tmp_path, monkey
     engine.dispose()
 
     with TestClient(create_app(settings)) as client:
-        exported = client.post(f"/api/v1/projects/{project_id}/exports")
+        exported = client.post(f"/api/v1/projects/{project_id}/exports", json={"layout": "5.1"})
         assert exported.status_code == 201
         job = exported.json()
         assert len(job["tracks"]) == 2
@@ -846,15 +846,18 @@ def test_add_project_assets_stores_per_file_overrides_and_unions_stems(tmp_path,
         project = response.json()
         assert project["requested_stems"] == ["Vocals", "Bass"]
         track = project["tracks"][0]
-        engine = track["manifest_overrides"]["engine"]
+        # The staged layout becomes the track's first (and so far only) one.
+        assert track["layouts"] == ["7.1.4"]
+        overrides = track["layout_overrides"]["7.1.4"]
+        engine = overrides["engine"]
         assert engine["stems"] == ["Bass"]
         assert engine["stem_bleed_reduction"] is True
         assert engine["stem_phase_fix_scale"] == 0.6
         assert engine["stem_debleed_model"] == "mel_band_roformer_denoise_debleed_gabox.ckpt"
         assert engine["stem_debleed"] == {"Bass": True}
-        assert track["manifest_overrides"]["format"]["sample_rate"] == 48000
-        assert track["manifest_overrides"]["format"]["subtype"] == "PCM_24"
-        assert track["manifest_overrides"]["mixing"]["channel_layout"] == "7.1.4"
+        assert overrides["format"]["sample_rate"] == 48000
+        assert overrides["format"]["subtype"] == "PCM_24"
+        assert overrides["mixing"]["channel_layout"] == "7.1.4"
         stem_routing = project["manifest"]["mixing"]["stem_routing"]
         assert "Vocals" in stem_routing
         assert "Bass" in stem_routing

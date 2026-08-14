@@ -26,8 +26,10 @@ from upmixer_web.features.projects.schemas import (
     AddProjectAssetsRequest,
     CreateProjectRequest,
     ExpandProjectStemsRequest,
+    ExportProjectRequest,
     ProjectView,
     ProjectViewState,
+    SetTrackLayoutsRequest,
     UpdateProjectSettingsRequest,
     UpdateProjectTrackSettingsRequest,
 )
@@ -43,9 +45,10 @@ from upmixer_web.features.projects.service import (
     project_export_job,
     reprepare_project_stems,
     retry_project,
+    set_track_layouts,
     update_project_settings,
     update_project_view_state,
-    update_track_settings,
+    update_track_layout_settings,
 )
 from upmixer_web.features.projects.views import project_view
 from upmixer_web.settings import Settings
@@ -166,13 +169,28 @@ def register_project_routes(
             raise HTTPException(status_code=404, detail="Project not found")
         update_project_view_state(session, project, request.model_dump())
 
-    @app.put("/api/v1/projects/{project_id}/tracks/{track_id}/settings", response_model=ProjectView, tags=["projects"])
-    def save_project_track_settings(project_id: str, track_id: str, request: UpdateProjectTrackSettingsRequest, session: Session = Depends(database_session)) -> ProjectView:
+    @app.put("/api/v1/projects/{project_id}/tracks/{track_id}/layouts", response_model=ProjectView, tags=["projects"])
+    def save_project_track_layouts(project_id: str, track_id: str, request: SetTrackLayoutsRequest, session: Session = Depends(database_session)) -> ProjectView:
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            project = update_track_settings(session, project, track_id, request.manifest_overrides, request.scene_overrides)
+            project = set_track_layouts(session, project, track_id, request.layouts)
+        except TrackNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
+
+    @app.put("/api/v1/projects/{project_id}/tracks/{track_id}/layouts/{layout}/settings", response_model=ProjectView, tags=["projects"])
+    def save_project_track_layout_settings(project_id: str, track_id: str, layout: str, request: UpdateProjectTrackSettingsRequest, session: Session = Depends(database_session)) -> ProjectView:
+        project = get_project(session, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        try:
+            project = update_track_layout_settings(
+                session, project, track_id, layout, request.manifest_overrides, request.scene_overrides
+            )
         except TrackNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -192,12 +210,12 @@ def register_project_routes(
         return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.post("/api/v1/projects/{project_id}/exports", response_model=JobView, status_code=status.HTTP_201_CREATED, tags=["projects"])
-    def export_project(project_id: str, session: Session = Depends(database_session)) -> JobView:
+    def export_project(project_id: str, request: ExportProjectRequest, session: Session = Depends(database_session)) -> JobView:
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            job = project_export_job(session, project, app.state.project_stems)
+            job = project_export_job(session, project, app.state.project_stems, request.layout)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         manager.notify()
@@ -340,17 +358,19 @@ def register_project_routes(
             raise HTTPException(status_code=404, detail="Waveform peaks are not available")
         return FileResponse(path, media_type="application/octet-stream")
 
-    @app.get("/api/v1/projects/{project_id}/reference-match/fir", tags=["projects"])
+    @app.get("/api/v1/projects/{project_id}/reference-match/{layout}/fir", tags=["projects"])
     def read_project_reference_match_fir(
         project_id: str,
+        layout: str,
         strength: float = 1.0,
         max_db: float = 6.0,
         session: Session = Depends(database_session),
     ) -> Response:
-        """Design and serve the reference-match FIR for one (strength,
-        max_db) pair on demand from the project's persisted correction curve
-        — see `ProjectStemStorage.reference_match_fir_wav_bytes`. Cheap
-        enough to call on every slider drag (see
+        """Design and serve one speaker layout's reference-match FIR for a
+        (strength, max_db) pair on demand from that layout's persisted
+        correction curve — see
+        `ProjectStemStorage.reference_match_fir_wav_bytes`. Cheap enough to
+        call on every slider drag (see
         docs/contracts/preview_export_parity.md Ledger D21); the `v=`
         signature query param `views.py` appends is for browser cache-busting
         only and is intentionally not read here.
@@ -360,7 +380,7 @@ def register_project_routes(
             raise HTTPException(status_code=404, detail="Project not found")
         strength = max(0.0, min(1.0, strength))
         max_db = max(0.0, min(24.0, max_db))
-        wav_bytes = app.state.project_stems.reference_match_fir_wav_bytes(project_id, strength, max_db)
+        wav_bytes = app.state.project_stems.reference_match_fir_wav_bytes(project_id, layout, strength, max_db)
         if wav_bytes is None:
             raise HTTPException(status_code=404, detail="Reference-match FIR is not available")
         return Response(content=wav_bytes, media_type="audio/wav")

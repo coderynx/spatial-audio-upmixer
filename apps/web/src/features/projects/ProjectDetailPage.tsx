@@ -63,6 +63,7 @@ import {
 import { useColumnLayout } from "./useColumnLayout";
 import { useEditHistory } from "./useEditHistory";
 import { useKeyCommands } from "./useKeyCommands";
+import { useLayoutSelection } from "./useLayoutSelection";
 import { usePaneLayout } from "./usePaneLayout";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
 import { resolveEngineConstants } from "./masteringProfiles";
@@ -89,10 +90,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const navigate = useNavigate();
   const [project, setProject] = React.useState<Project | null>(null);
   const [manifest, setManifest] = React.useState<Manifest | null>(null);
-  const [selectedTrack, setSelectedTrack] = React.useState<string | null>(null);
   const [selectedStem, setSelectedStem] = React.useState<string | null>(null);
   const [draggedStem, setDraggedStem] = React.useState<string | null>(null);
-  const [editScope, setEditScope] = React.useState<"project" | "track">("project");
   const [activeTab, setActiveTab] = React.useState<Stage>("mixing");
   const [settingsView, setSettingsView] = React.useState(false);
   const [preset, setPreset] = React.useState("balanced");
@@ -126,7 +125,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         if (!initialized.current) {
           initialized.current = true;
           setManifest(normalizeManifest(next.manifest));
-          setSelectedTrack(next.tracks[0]?.id || null);
           // A project with nothing prepared yet has nowhere else useful to
           // land — Mixing/Mastering/Delivery all need a ready track.
           if (next.tracks.length === 0 || !next.prepared_stems.length) setActiveTab("assets");
@@ -185,33 +183,40 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     }, 350);
   }, [project, projectId, shouldApplyProject]);
   const history = useEditHistory(projectId);
+  const { selection, setSelection } = useLayoutSelection(projectId, project);
+  const selectedTrack = selection?.trackId || null;
+  const selectedLayout = selection?.layout || "7.1.4";
   const selected = project?.tracks.find((track) => track.id === selectedTrack) || null;
-  const effectiveManifest = React.useMemo(() => {
-    if (!manifest || !selected || editScope === "project") return manifest;
-    const overrides = selected.manifest_overrides as Partial<Manifest>;
+  // Mixing, Mastering and Delivery all edit one (track, layout) pair: a mix
+  // for stereo and a mix for 7.1.4 are different mixes, so each layout owns
+  // its own routing, balance, master and delivery container. The project
+  // manifest underneath is only the default a new layout is seeded from.
+  const trackManifest = React.useMemo(() => {
+    if (!manifest || !selected) return manifest;
+    const overrides = (selected.layout_overrides[selectedLayout] || {}) as Partial<Manifest>;
     return normalizeManifest({
       ...manifest,
       ...overrides,
       engine: { ...manifest.engine, ...overrides.engine },
-      mixing: { ...manifest.mixing, ...overrides.mixing },
+      mixing: { ...manifest.mixing, ...overrides.mixing, channel_layout: selectedLayout },
       routing: { ...manifest.routing, ...overrides.routing },
       mastering: { ...manifest.mastering, ...overrides.mastering },
       processing: { ...manifest.processing, ...overrides.processing },
       format: { ...manifest.format, ...overrides.format },
     });
-  }, [editScope, manifest, selected]);
+  }, [manifest, selected, selectedLayout]);
   const saveProjectScope = React.useCallback((next: Manifest) => {
     setManifest(next);
     queueSave(next);
   }, [queueSave]);
-  // Bound to the track it was called for, not read from `selected` at call
-  // time — a history entry closes over this with the track captured at
-  // record time, so undoing a track-scope edit after switching tracks still
-  // targets the track the edit was actually made on.
-  const saveTrack = React.useCallback((track: ProjectTrack, next: Manifest) => {
+  // Bound to the track and layout it was called for, not read from
+  // `selected`/`selectedLayout` at call time — a history entry closes over
+  // this with both captured at record time, so undoing an edit after
+  // switching track or layout still targets what the edit was made on.
+  const saveTrack = React.useCallback((track: ProjectTrack, layout: string, next: Manifest) => {
     if (!projectId) return;
     const seq = ++projectRequestSeq.current;
-    void api.saveProjectTrack(projectId, track.id, {
+    void api.saveProjectTrackLayout(projectId, track.id, layout, {
       manifest_overrides: {
         engine: { stems: next.engine.stems }, mixing: next.mixing, routing: next.routing,
         mastering: next.mastering, processing: next.processing, format: next.format,
@@ -220,51 +225,22 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     }).then((updated) => { if (shouldApplyProject(seq)) setProject(updated); })
       .catch((reason) => setError((reason as Error).message));
   }, [projectId, shouldApplyProject]);
-  // `merge` collapses consecutive calls carrying the same manifest field
-  // into one undo step (a fader drag) — see `useEditHistory`. Only the
-  // continuous controls (routing, gain, anchor strength) pass it.
-  const updateManifest = React.useCallback((next: Manifest, merge?: boolean) => {
-    if (!effectiveManifest) return;
-    if (editScope === "project") {
-      history.record(effectiveManifest, next, saveProjectScope, merge);
-      return;
-    }
-    if (!selected) return;
-    const track = selected;
-    history.record(effectiveManifest, next, (value) => saveTrack(track, value), merge);
-  }, [editScope, selected, effectiveManifest, saveProjectScope, saveTrack, history]);
-  // Project-wide settings (name, default speaker layout, preview quality) —
-  // ProjectSettingsSection only. This is the inherited default a new track
-  // starts from, distinct from `updateTrackManifest` below.
+  // Project-wide settings (name, preview quality) — ProjectSettingsSection
+  // only. Speaker layout is no longer among them: it is per track, chosen in
+  // the Prepare tab and selected in the tracks panel.
   const updateProjectManifest = (next: Manifest) => {
     if (!manifest) return;
     history.record(manifest, next, saveProjectScope);
   };
-  // Mastering and Delivery are always per-track — each track carries its own
-  // master and delivery format independent of the Mixing tab's project/track
-  // edit-scope toggle (which only governs mixing/routing edits). Unlike
-  // `effectiveManifest`/`updateManifest` above, this ignores `editScope`
-  // entirely: there is no "one master for every track" mode for these two
-  // stages, only "this track's master."
-  const trackManifest = React.useMemo(() => {
-    if (!manifest || !selected) return manifest;
-    const overrides = selected.manifest_overrides as Partial<Manifest>;
-    return normalizeManifest({
-      ...manifest,
-      ...overrides,
-      engine: { ...manifest.engine, ...overrides.engine },
-      mixing: { ...manifest.mixing, ...overrides.mixing },
-      routing: { ...manifest.routing, ...overrides.routing },
-      mastering: { ...manifest.mastering, ...overrides.mastering },
-      processing: { ...manifest.processing, ...overrides.processing },
-      format: { ...manifest.format, ...overrides.format },
-    });
-  }, [manifest, selected]);
-  const updateTrackManifest = React.useCallback((next: Manifest) => {
+  // `merge` collapses consecutive calls carrying the same manifest field
+  // into one undo step (a fader drag) — see `useEditHistory`. Only the
+  // continuous controls (routing, gain, anchor strength) pass it.
+  const updateTrackManifest = React.useCallback((next: Manifest, merge?: boolean) => {
     if (!selected || !trackManifest) return;
     const track = selected;
-    history.record(trackManifest, next, (value) => saveTrack(track, value), true);
-  }, [selected, trackManifest, saveTrack, history]);
+    const layout = selectedLayout;
+    history.record(trackManifest, next, (value) => saveTrack(track, layout, value), merge);
+  }, [selected, selectedLayout, trackManifest, saveTrack, history]);
   const saveReference = async (mastering_reference_id: string | null) => {
     if (!projectId || !project || !manifest) return;
     const seq = ++projectRequestSeq.current;
@@ -313,7 +289,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // Stable identity across renders unless the layout actually changes — fed
   // straight into HazeView/ElevationView/ChannelMeters, which are memoized
   // specifically so they don't re-render on every playback frame.
-  const routingLayout = effectiveManifest?.mixing.channel_layout || "7.1.4";
+  const routingLayout = trackManifest?.mixing.channel_layout || "7.1.4";
   const stereoLayout = isStereoLayout(routingLayout);
   const channels = React.useMemo(
     () => configuration?.choices.layout_channels?.[routingLayout] ?? [],
@@ -357,7 +333,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // Mastering is always per-track (see trackManifest below): the Mastering tab
   // edits the selected track's master and saves it to that track's overrides,
   // never the project-level default. The preview must render that same
-  // per-track master — sourcing it from `effectiveManifest` instead would read
+  // per-track master — sourcing it from `trackManifest` instead would read
   // the project-level block in the default project edit-scope, so per-track
   // mastering edits would never reach the audio engine.
   // strength/spectrum/rms/max_db come entirely from the manifest (instant,
@@ -366,7 +342,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // the level gain come from the server-precomputed asset.
   const previewMastering = React.useMemo(() => {
     if (!trackManifest?.mastering) return trackManifest?.mastering;
-    const asset = project?.reference_match;
+    const asset = project?.reference_match?.[selectedLayout];
     if (!asset) return trackManifest.mastering;
     const liveMatch = trackManifest.mastering.match_reference;
     return {
@@ -380,7 +356,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         max_db: liveMatch?.max_db,
       },
     };
-  }, [trackManifest?.mastering, project?.reference_match]);
+  }, [trackManifest?.mastering, project?.reference_match, selectedLayout]);
   const engineConstants = React.useMemo(
     () => (configuration?.constants ? resolveEngineConstants(configuration.constants) : null),
     [configuration],
@@ -389,7 +365,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     () => monitorMastering(previewMastering, masteringBypassed),
     [previewMastering, masteringBypassed],
   );
-  const preview = useStemPreview(previewStems, {}, effectiveManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants);
+  const preview = useStemPreview(previewStems, {}, trackManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants);
   // A non-stereo layout switch decides output mode itself: native only if
   // the current output device actually has that many channels
   // (`preview.nativeSupported`), otherwise binaural at the flat profile —
@@ -461,51 +437,51 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   // above — HazeView/ElevationView are memoized against every prop.
   const setHazeIntensity = React.useCallback((next: number) => patchViewState({ hazeIntensity: next }), [patchViewState]);
   const setElevationIntensity = React.useCallback((next: number) => patchViewState({ elevationIntensity: next }), [patchViewState]);
-  const routing: StemRouting = React.useMemo(() => effectiveManifest?.mixing.stem_routing || {}, [effectiveManifest]);
+  const routing: StemRouting = React.useMemo(() => trackManifest?.mixing.stem_routing || {}, [trackManifest]);
   const updateRoute = (stem: string, patch: Record<string, number>) => {
-    if (!effectiveManifest) return;
-    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_routing: { ...routing, [stem]: { ...routing[stem], ...patch } } } }, true);
+    if (!trackManifest) return;
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_routing: { ...routing, [stem]: { ...routing[stem], ...patch } } } }, true);
   };
   const applyPreset = async () => {
-    if (!effectiveManifest || !stemNames.length) return;
+    if (!trackManifest || !stemNames.length) return;
     try {
-      const next = await api.resolveStemRouting({ stems: stemNames, channel_layout: effectiveManifest.mixing.channel_layout, preset, intensity: presetIntensity });
-      updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_routing: next } });
+      const next = await api.resolveStemRouting({ stems: stemNames, channel_layout: trackManifest.mixing.channel_layout, preset, intensity: presetIntensity });
+      updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_routing: next } });
     } catch (reason) { setError((reason as Error).message); }
   };
   const toggleEnabled = React.useCallback((stem: string) => {
-    if (!effectiveManifest) return;
-    const current = effectiveManifest.mixing.stem_enabled[stem] !== false;
-    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_enabled: { ...effectiveManifest.mixing.stem_enabled, [stem]: !current }, stem_solo: effectiveManifest.mixing.stem_solo.filter((solo) => solo !== stem) } });
-  }, [effectiveManifest, updateManifest]);
+    if (!trackManifest) return;
+    const current = trackManifest.mixing.stem_enabled[stem] !== false;
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_enabled: { ...trackManifest.mixing.stem_enabled, [stem]: !current }, stem_solo: trackManifest.mixing.stem_solo.filter((solo) => solo !== stem) } });
+  }, [trackManifest, updateTrackManifest]);
   const toggleSolo = React.useCallback((stem: string) => {
-    if (!effectiveManifest) return;
-    const solo = effectiveManifest.mixing.stem_solo;
-    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_solo: solo.includes(stem) ? solo.filter((item) => item !== stem) : [...solo, stem] } });
-  }, [effectiveManifest, updateManifest]);
+    if (!trackManifest) return;
+    const solo = trackManifest.mixing.stem_solo;
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_solo: solo.includes(stem) ? solo.filter((item) => item !== stem) : [...solo, stem] } });
+  }, [trackManifest, updateTrackManifest]);
   // Stable identities for the memoized TimelineView/MixerView — an inline
   // arrow here would defeat the memo the design spec requires these canvas
   // surfaces to keep.
   const previewCommitScrub = preview.commitScrub;
   const commitScrub = React.useCallback((value: number) => { void previewCommitScrub(value); }, [previewCommitScrub]);
   const setStemGain = React.useCallback((stem: string, gain: number) => {
-    if (!effectiveManifest) return;
-    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_rebalance: { ...effectiveManifest.mixing.stem_rebalance, [stem]: gain } } }, true);
-  }, [effectiveManifest, updateManifest]);
+    if (!trackManifest) return;
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_rebalance: { ...trackManifest.mixing.stem_rebalance, [stem]: gain } } }, true);
+  }, [trackManifest, updateTrackManifest]);
   const setAnchorStrength = React.useCallback((stem_source_anchor_strength: number) => {
-    if (!effectiveManifest) return;
-    updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_source_anchor_strength } }, true);
-  }, [effectiveManifest, updateManifest]);
+    if (!trackManifest) return;
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_source_anchor_strength } }, true);
+  }, [trackManifest, updateTrackManifest]);
   // Stems that produce no sound right now — muted outright, or silenced
   // because something else is soloed. The timeline dims their lanes and the
   // mixer labels the difference, since colour alone can't carry it.
   const silentStems = React.useMemo(() => {
-    const solo = effectiveManifest?.mixing.stem_solo || [];
+    const solo = trackManifest?.mixing.stem_solo || [];
     return orderedStems.filter((stem) => (
-      effectiveManifest?.mixing.stem_enabled[stem] === false
+      trackManifest?.mixing.stem_enabled[stem] === false
       || (solo.length > 0 && !solo.includes(stem))
     ));
-  }, [effectiveManifest, orderedStems]);
+  }, [trackManifest, orderedStems]);
   const transportDisabled =
     !preview.supported || !preview.ready || !previewStems.length || preview.measuring;
   const { shortcutsOpen, setShortcutsOpen } = useKeyCommands({
@@ -516,8 +492,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     onSelectStem: setSelectedStem,
     onToggleMute: toggleEnabled,
     onToggleSolo: toggleSolo,
-    manifest: effectiveManifest,
-    onManifestChange: updateManifest,
+    manifest: trackManifest,
+    onManifestChange: updateTrackManifest,
     paneView,
     onChangePane: changePane,
     onToggleMasterBypass: () => patchViewState({ masteringBypassed: !masteringBypassed }),
@@ -527,7 +503,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const exportProject = async () => {
     if (!projectId) return;
     setExporting(true);
-    try { await api.exportProject(projectId); navigate("/jobs"); } catch (reason) { setError((reason as Error).message); } finally { setExporting(false); }
+    try { await api.exportProject(projectId, selectedLayout); navigate("/jobs"); } catch (reason) { setError((reason as Error).message); } finally { setExporting(false); }
   };
   const retry = async () => {
     if (!projectId) return;
@@ -665,10 +641,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       <section className="min-h-0 flex-1 overflow-auto p-3">
         <ProjectSettingsSection
           project={project}
-          manifest={effectiveManifest || manifest}
           configuration={configuration}
           onRename={(name) => void renameProject(name)}
-          onChange={(next) => updateProjectManifest(next)}
           onPreviewQualityChange={(quality) => void savePreviewQuality(quality)}
         />
       </section>
@@ -678,7 +652,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           project={project}
           configuration={configuration}
           onProjectUpdate={(next) => { if (shouldApplyProject(++projectRequestSeq.current)) setProject(next); }}
-          onOpenTrack={(trackId) => { setSelectedTrack(trackId); setActiveTab("mixing"); }}
+          onOpenTrack={(trackId) => {
+            const track = project.tracks.find((item) => item.id === trackId);
+            setSelection({ trackId, layout: track?.layouts[0] || selectedLayout });
+            setActiveTab("mixing");
+          }}
           onRetry={() => void retry()}
           onReprepare={() => void reprepareStems()}
         />
@@ -695,8 +673,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       const trackRail = (
         <TrackRail
           tracks={project.tracks}
-          value={selectedTrack}
-          onChange={setSelectedTrack}
+          value={selection}
+          onChange={setSelection}
           collapsed={trackRailCollapsed}
         />
       );
@@ -843,11 +821,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             loading={peaksLoading}
             pending={Boolean(project?.peaks_pending)}
             mutedStems={silentStems}
-            enabled={effectiveManifest?.mixing.stem_enabled || {}}
-            solo={effectiveManifest?.mixing.stem_solo || []}
+            enabled={trackManifest?.mixing.stem_enabled || {}}
+            solo={trackManifest?.mixing.stem_solo || []}
             onToggleMute={toggleEnabled}
             onToggleSolo={toggleSolo}
-            gains={effectiveManifest?.mixing.stem_rebalance || {}}
+            gains={trackManifest?.mixing.stem_rebalance || {}}
             onGain={setStemGain}
             stemLevels={preview.stemLevels}
             stemChannelCounts={stemChannelCounts}
@@ -867,7 +845,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             onCommitScrub={commitScrub}
           />
         )}
-        {paneView === "mixer" && effectiveManifest && (
+        {paneView === "mixer" && trackManifest && (
           <MixerView
             className="shrink-0 border-t"
             style={{ height: paneHeight }}
@@ -875,14 +853,14 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             stemChannels={stemChannelCounts}
             selectedStem={selectedStem}
             onSelectStem={setSelectedStem}
-            gains={effectiveManifest.mixing.stem_rebalance}
+            gains={trackManifest.mixing.stem_rebalance}
             onGain={setStemGain}
-            enabled={effectiveManifest.mixing.stem_enabled}
-            solo={effectiveManifest.mixing.stem_solo}
+            enabled={trackManifest.mixing.stem_enabled}
+            solo={trackManifest.mixing.stem_solo}
             onToggleMute={toggleEnabled}
             onToggleSolo={toggleSolo}
             stemLevels={preview.stemLevels}
-            anchorStrength={effectiveManifest.mixing.stem_source_anchor_strength}
+            anchorStrength={trackManifest.mixing.stem_source_anchor_strength}
             onAnchorStrength={setAnchorStrength}
             headphoneLevels={preview.headphoneLevels}
             volume={preview.volume}
@@ -911,12 +889,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       if (activeTab === "mixing") return <div className="grid min-h-0 flex-1 xl:grid-cols-[auto_minmax(0,1fr)_320px]">
         {trackRail}
         {previewPanel}
-        {effectiveManifest && <div className="flex min-h-0 flex-col overflow-y-auto border-l bg-card">
-          <InspectorGroup
-            title="Routing preset"
-            actions={<select aria-label="Edit scope" className="h-6 rounded-md border bg-secondary px-1 text-[11px]" value={editScope} onChange={(event) => setEditScope(event.target.value as "project" | "track")}><option value="project">Project</option><option value="track" disabled={!selected}>Track</option></select>}
-          >
-            <p className="mb-2 text-[11px] text-muted-foreground">{editScope === "project" ? "Default for every track" : `Override: ${selected?.asset.title || selected?.asset.filename}`}</p>
+        {trackManifest && <div className="flex min-h-0 flex-col overflow-y-auto border-l bg-card">
+          <InspectorGroup title="Routing preset">
+            <p className="mb-2 truncate text-[11px] text-muted-foreground">{`${selected?.asset.title || selected?.asset.filename} · ${selectedLayout}`}</p>
             <select className="flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px]" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets ?? []).map((name) => <option key={name}>{name}</option>)}</select>
             <label className="mt-2.5 block text-[11px] text-muted-foreground">Intensity <span className="float-right tabular-nums">{presetIntensity.toFixed(2)}</span><Slider className="mt-2" min={0} max={1} step={0.01} value={[presetIntensity]} onValueChange={([value]) => setPresetIntensity(value)} /></label>
             <Button className="mt-2.5 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 />Apply preset</Button>
@@ -924,7 +899,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           <InspectorGroup title="Stem">
             {selectedStem ? (() => {
               const SelectedStemIcon = getStemIcon(selectedStem);
-              const stemMuted = effectiveManifest.mixing.stem_enabled[selectedStem] === false;
+              const stemMuted = trackManifest.mixing.stem_enabled[selectedStem] === false;
               return <>
                 {/* The section's one title, standing in for the fader's own
                     nameplate below (`showNameplate={false}`) — repeating the
@@ -935,7 +910,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                   <span className="min-w-0 flex-1 truncate">{selectedStem}</span>
                   <span className="text-[11px] font-normal text-muted-foreground">{stemMuted ? "muted" : "enabled"}</span>
                 </p>
-                <StemControls route={routing[selectedStem] || {}} channels={channels} eq={effectiveManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onEq={(eq) => updateManifest({ ...effectiveManifest, mixing: { ...effectiveManifest.mixing, stem_eq: (() => { const next = { ...effectiveManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
+                <StemControls route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
                   stemEqProfiles={configuration?.choices.stem_eq_profiles}
                 />
                 {/* The mixer pane can be collapsed or switched to the
@@ -949,10 +924,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                     subjectName="Selected stem"
                     showNameplate={false}
                     channels={stemChannelCounts[selectedStem] ?? 1}
-                    gain={effectiveManifest.mixing.stem_rebalance[selectedStem] || 0}
+                    gain={trackManifest.mixing.stem_rebalance[selectedStem] || 0}
                     onGain={(gain) => setStemGain(selectedStem, gain)}
                     muted={stemMuted}
-                    soloed={effectiveManifest.mixing.stem_solo.includes(selectedStem)}
+                    soloed={trackManifest.mixing.stem_solo.includes(selectedStem)}
                     silent={silentStems.includes(selectedStem)}
                     onToggleMute={() => toggleEnabled(selectedStem)}
                     onToggleSolo={() => toggleSolo(selectedStem)}
@@ -1020,7 +995,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       <StatusSeparator />
       <StatusCell label="Channels" value={channels.length} />
       <StatusSeparator />
-      <StatusCell label="Stems" value={`${stemNames.filter((stem) => effectiveManifest?.mixing.stem_enabled[stem] !== false).length}/${stemNames.length}`} />
+      <StatusCell label="Stems" value={`${stemNames.filter((stem) => trackManifest?.mixing.stem_enabled[stem] !== false).length}/${stemNames.length}`} />
       <StatusSeparator />
       <StatusCell
         label="Monitor"

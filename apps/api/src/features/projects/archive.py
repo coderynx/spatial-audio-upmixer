@@ -17,11 +17,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from upmixer_web.features.projects.service import _normalized_project_manifest, get_project
-from upmixer_web.features.projects.storage import ProjectStemStorage
+from upmixer_web.features.projects.storage import REFERENCE_MATCH_META_SUFFIX, ProjectStemStorage
 from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectStem, ProjectTrack
 from upmixer_web.shared.storage import ObjectStorage
 
-ARCHIVE_FORMAT_VERSION = 1
+ARCHIVE_FORMAT_VERSION = 2
 MANIFEST_FILENAME = "project.json"
 
 
@@ -30,6 +30,34 @@ def safe_component(name: str) -> str:
     entry filename."""
     cleaned = "".join(ch if ch.isalnum() or ch in "-_.@ " else "_" for ch in name)
     return cleaned or "stem"
+
+
+def _archived_reference_match(
+    manifest: dict[str, Any], project_manifest: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Read archived reference-match curves as ``{layout: meta}``. A format-1
+    archive stored one unkeyed curve; it belongs to the project's layout."""
+    stored = manifest.get("reference_match")
+    if not isinstance(stored, dict) or not stored:
+        return {}
+    if "curve" not in stored:
+        return {layout: meta for layout, meta in stored.items() if isinstance(meta, dict)}
+    layout = project_manifest.get("mixing", {}).get("channel_layout", "7.1.4")
+    return {layout: stored}
+
+
+def _track_layout_overrides(
+    track_data: dict[str, Any], project_manifest: dict[str, Any]
+) -> dict[str, Any]:
+    """Read a track's per-layout mixes, folding a format-1 archive's single
+    ``manifest_overrides`` block onto the layout it was mixed for."""
+    layouts = track_data.get("layout_overrides")
+    if isinstance(layouts, dict) and layouts:
+        return layouts
+    overrides = track_data.get("manifest_overrides") or {}
+    mixing = overrides.get("mixing") if isinstance(overrides.get("mixing"), dict) else {}
+    layout = mixing.get("channel_layout") or project_manifest.get("mixing", {}).get("channel_layout", "7.1.4")
+    return {layout: {**overrides, "mixing": {**mixing, "channel_layout": layout}}}
 
 
 def export_project_archive(
@@ -86,7 +114,7 @@ def export_project_archive(
 
             manifest_tracks.append({
                 "position": track.position,
-                "manifest_overrides": track.manifest_overrides,
+                "layout_overrides": track.layout_overrides,
                 "scene_overrides": track.scene_overrides,
                 "asset": {
                     "filename": asset.filename,
@@ -121,8 +149,12 @@ def export_project_archive(
 
         # The reference-match asset is now just a JSON curve (see
         # `ProjectStemStorage.write_reference_match`) — no separate binary
-        # blob to bundle, embed the meta dict directly in the manifest.
-        reference_match_meta = project_stems.read_reference_match_meta(project.id)
+        # blob to bundle, embed the meta dicts directly in the manifest, one
+        # per speaker layout the project holds a curve for.
+        reference_match_meta = {
+            layout: project_stems.read_reference_match_meta(project.id, layout)
+            for layout in project_stems.reference_match_layouts(project.id)
+        }
 
         manifest = {
             "format_version": ARCHIVE_FORMAT_VERSION,
@@ -210,8 +242,9 @@ def import_project_archive(
     try:
         with zipfile.ZipFile(archive_path) as archive:
             manifest = json.loads(archive.read(MANIFEST_FILENAME))
-            if manifest.get("format_version") != ARCHIVE_FORMAT_VERSION:
-                raise ValueError(f"Unsupported project archive version: {manifest.get('format_version')}")
+            archive_version = manifest.get("format_version")
+            if archive_version not in (1, ARCHIVE_FORMAT_VERSION):
+                raise ValueError(f"Unsupported project archive version: {archive_version}")
             project_data = manifest["project"]
             tracks_data = manifest.get("tracks", [])
 
@@ -281,7 +314,7 @@ def import_project_archive(
                 track = ProjectTrack(
                     asset_id=asset.id, position=track_data.get("position", index),
                     status="ready", progress=1.0,
-                    manifest_overrides=track_data.get("manifest_overrides", {}),
+                    layout_overrides=_track_layout_overrides(track_data, project.manifest),
                     scene_overrides=track_data.get("scene_overrides", {}),
                 )
                 project.tracks.append(track)
@@ -319,10 +352,11 @@ def import_project_archive(
                     track.source_preview_relative_path = str(preview_dest.relative_to(project_stems.root))
                     track.source_preview_size_bytes = preview_dest.stat().st_size
 
-            reference_match_meta = manifest.get("reference_match")
-            if reference_match_meta:
+            for layout, layout_meta in _archived_reference_match(manifest, project.manifest).items():
                 rm_dir = project_stems.reference_match_dir(project.id)
-                (rm_dir / "reference_match.json").write_text(json.dumps(reference_match_meta), encoding="utf-8")
+                (rm_dir / f"{layout}{REFERENCE_MATCH_META_SUFFIX}").write_text(
+                    json.dumps(layout_meta), encoding="utf-8"
+                )
 
         session.commit()
         return get_project(session, project.id)  # type: ignore[return-value]

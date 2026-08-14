@@ -1,4 +1,5 @@
-import { AudioLines } from "lucide-react";
+import * as React from "react";
+import { AudioLines, ChevronDown, ChevronRight } from "lucide-react";
 import type { ProjectTrack } from "@/api";
 import { cn } from "@/lib/utils";
 
@@ -7,10 +8,18 @@ function statusDot(status: string) {
   return status === "failed" ? "bg-destructive" : "bg-warning";
 }
 
+export type LayoutSelection = { trackId: string; layout: string };
+
 /** Left counterpart to the Mixing/Mastering/Delivery right panel — the
  * per-track selector those three stages share, moved out of the top bar
  * (where `TrackSwitcher` used to render it as a cramped dropdown) into a
  * real panel with room for every track's name and state at a glance.
+ *
+ * A track expands into its speaker layouts, and a *layout* is what the three
+ * stages are actually keyed on: each (track, layout) pair carries its own
+ * mix, master and delivery, so switching one here re-points the whole right
+ * panel and rebuilds the preview engine. The layout set itself is edited in
+ * the Prepare tab, not here — this is a selector.
  *
  * Stays mounted at `w-0` when collapsed rather than unmounting (`null`) —
  * `w-56`/`w-0` transition on `width`, clipped by `overflow-hidden`, is what
@@ -28,10 +37,11 @@ export function TrackRail({
   collapsed,
 }: {
   tracks: ProjectTrack[];
-  value: string | null;
-  onChange: (trackId: string) => void;
+  value: LayoutSelection | null;
+  onChange: (selection: LayoutSelection) => void;
   collapsed: boolean;
 }) {
+  const [collapsedTracks, setCollapsedTracks] = React.useState<Record<string, boolean>>({});
   return (
     <aside
       aria-hidden={collapsed}
@@ -47,38 +57,83 @@ export function TrackRail({
       </div>
       <nav className="min-h-0 w-56 flex-1 overflow-y-auto p-2">
         {tracks.map((track) => {
-          const active = track.id === value;
           const label = track.asset.title || track.asset.filename;
           const dot = statusDot(track.status);
+          const open = !collapsedTracks[track.id];
+          const activeTrack = track.id === value?.trackId;
           return (
-            <button
-              key={track.id}
-              type="button"
-              tabIndex={collapsed ? -1 : undefined}
-              aria-current={active ? "true" : undefined}
-              aria-label={dot ? `${label} — ${track.status}` : undefined}
-              onClick={() => onChange(track.id)}
-              className={cn(
-                "mb-0.5 flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] transition-colors",
-                active
-                  ? "bg-primary/15 font-medium text-primary"
-                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-            >
-              <span className="relative shrink-0">
-                <AudioLines className="h-4 w-4" aria-hidden="true" />
-                {dot && (
-                  <span
-                    className={cn("absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-card", dot)}
-                    aria-hidden="true"
-                  />
+            <div key={track.id} className="mb-0.5">
+              <div
+                className={cn(
+                  "flex h-8 w-full items-center gap-1 rounded-md pr-2 text-[13px]",
+                  activeTrack ? "text-foreground" : "text-muted-foreground",
                 )}
-              </span>
-              <span className="min-w-0 flex-1 truncate">{label}</span>
-              <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                {track.stems.length || ""}
-              </span>
-            </button>
+              >
+                <button
+                  type="button"
+                  tabIndex={collapsed ? -1 : undefined}
+                  aria-label={open ? `Collapse ${label}` : `Expand ${label}`}
+                  aria-expanded={open}
+                  onClick={() =>
+                    setCollapsedTracks((current) => ({ ...current, [track.id]: !current[track.id] }))
+                  }
+                  className="grid h-6 w-6 shrink-0 place-items-center rounded-md hover:bg-accent hover:text-foreground"
+                >
+                  {open ? (
+                    <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  tabIndex={collapsed ? -1 : undefined}
+                  aria-label={dot ? `${label} — ${track.status}` : undefined}
+                  onClick={() =>
+                    onChange({ trackId: track.id, layout: activeTrack && value ? value.layout : track.layouts[0] })
+                  }
+                  className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left hover:text-foreground"
+                >
+                  <span className="relative shrink-0">
+                    <AudioLines className="h-4 w-4" aria-hidden="true" />
+                    {dot && (
+                      <span
+                        className={cn("absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-card", dot)}
+                        aria-hidden="true"
+                      />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                    {track.stems.length || ""}
+                  </span>
+                </button>
+              </div>
+              {open && (
+                <div className="ml-3 border-l pl-1">
+                  {track.layouts.map((layout) => {
+                    const active = activeTrack && layout === value?.layout;
+                    return (
+                      <button
+                        key={layout}
+                        type="button"
+                        tabIndex={collapsed ? -1 : undefined}
+                        aria-current={active ? "true" : undefined}
+                        onClick={() => onChange({ trackId: track.id, layout })}
+                        className={cn(
+                          "mb-0.5 flex h-7 w-full items-center rounded-md px-2 text-left text-[12px] transition-colors",
+                          active
+                            ? "bg-primary/15 font-medium text-primary"
+                            : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                        )}
+                      >
+                        <span className="min-w-0 flex-1 truncate">{layout}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           );
         })}
       </nav>

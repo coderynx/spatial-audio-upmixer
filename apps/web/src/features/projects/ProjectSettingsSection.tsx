@@ -5,26 +5,18 @@ import { api, type Configuration, type Project } from "@/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { CHANNEL_LAYOUTS, deliveryTypeForLayout } from "@/lib/layouts";
-import type { Manifest } from "@/lib/manifest";
-
-// Project-level identity and speaker layout. Layout lives here (not
-// Delivery) since it is the single control both the spatial preview graph
-// and the audio preview engine key off of — see useStemPreview's
-// `layoutChannels` argument.
+// Project-level identity and preview taste. Speaker layout is deliberately
+// absent: it is per track (a track carries a mix per layout), chosen in the
+// Prepare tab and selected in the tracks panel.
 export function ProjectSettingsSection({
   project,
-  manifest,
   configuration,
   onRename,
-  onChange,
   onPreviewQualityChange,
 }: {
   project: Project;
-  manifest: Manifest;
   configuration: Configuration | null;
   onRename: (name: string) => void;
-  onChange: (next: Manifest) => void;
   onPreviewQualityChange: (quality: string) => void;
 }) {
   const [name, setName] = React.useState(project.name);
@@ -46,25 +38,6 @@ export function ProjectSettingsSection({
           onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
         />
       </div>
-      <SelectField
-        label="Speaker layout"
-        value={manifest.mixing.channel_layout}
-        onChange={(channel_layout) =>
-          onChange({
-            ...manifest,
-            mixing: { ...manifest.mixing, channel_layout },
-            format: {
-              ...manifest.format,
-              type: deliveryTypeForLayout(channel_layout, manifest.format.type),
-            },
-          })
-        }
-        options={(configuration?.choices.channel_layouts || CHANNEL_LAYOUTS).map((value) => ({
-          value,
-          label: value,
-        }))}
-        hint="Changes the routing graph, spatial preview, and audio preview engine to the exact speaker set of this layout."
-      />
       <SelectField
         label="Preview audio quality"
         value={project.preview_quality}

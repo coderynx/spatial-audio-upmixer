@@ -14,6 +14,7 @@ from upmixer.config import UpmixConfig
 from upmixer.manifest import apply_asset_job, parse_manifest
 from upmixer.mastering.match_reference import ReferenceMatchProcessor
 from upmixer.separation.stem_pipeline import PreMasterAbort, StemUpmixPipeline
+from upmixer_web.features.projects.layouts import project_default_layout, track_layouts
 from upmixer_web.features.projects.service import get_project
 from upmixer_web.features.projects.storage import ProjectStemStorage
 from upmixer_web.shared.models import Project
@@ -21,8 +22,18 @@ from upmixer_web.shared.models import Project
 _log = logging.getLogger("upmixer_web")
 
 
-def _reference_match_signature(project: Project) -> str | None:
-    """Hash of everything a project's reference-match curve asset depends on.
+def project_layouts(project: Project) -> list[str]:
+    """Every speaker layout the project's tracks are mixed in, in first-use
+    order — the set that needs a reference-match curve of its own."""
+    layouts: dict[str, None] = {}
+    for track in project.tracks:
+        for layout in track_layouts(track, project):
+            layouts.setdefault(layout, None)
+    return list(layouts) or [project_default_layout(project)]
+
+
+def _reference_match_signature(project: Project, layout: str) -> str | None:
+    """Hash of everything one layout's reference-match curve asset depends on.
 
     Deliberately excludes live mixing edits (routing/rebalance/stem EQ/
     anchor) — the asset is a bounded Tier-3 approximation computed against a
@@ -47,17 +58,23 @@ def _reference_match_signature(project: Project) -> str | None:
     """
     if not project.mastering_reference_id:
         return None
-    manifest = project.manifest if isinstance(project.manifest, dict) else {}
-    mixing = manifest.get("mixing", {}) if isinstance(manifest.get("mixing"), dict) else {}
     reference = project.mastering_reference
     payload = {
         "reference_id": project.mastering_reference_id,
         "reference_sha256": reference.sha256 if reference else None,
-        "channel_layout": mixing.get("channel_layout"),
+        "channel_layout": layout,
         "stem_generation": project.stem_generation,
     }
     raw = json.dumps(payload, sort_keys=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
+
+
+def _layout_needs_work(project: Project, layout: str, project_stems: ProjectStemStorage) -> bool:
+    target_signature = _reference_match_signature(project, layout)
+    if target_signature is None:
+        return False
+    existing = project_stems.read_reference_match_meta(project.id, layout)
+    return not existing or existing.get("signature") != target_signature
 
 
 def _reference_match_needs_work(project: Project | None, project_stems: ProjectStemStorage) -> bool:
@@ -72,15 +89,15 @@ def _reference_match_needs_work(project: Project | None, project_stems: ProjectS
     """
     if not project:
         return False
-    target_signature = _reference_match_signature(project)
-    if target_signature is None:
-        # No reference attached — work is needed only to clear a
-        # still-existing asset from a prior reference.
-        return project_stems.read_reference_match_meta(project.id) is not None
+    if not project.mastering_reference_id:
+        # No reference attached — work is needed only to clear still-existing
+        # assets from a prior reference.
+        return bool(project_stems.reference_match_layouts(project.id))
     if not project.prepared_stems or not project.tracks:
         return False
-    existing = project_stems.read_reference_match_meta(project.id)
-    return not existing or existing.get("signature") != target_signature
+    layouts = project_layouts(project)
+    stale = [layout for layout in project_stems.reference_match_layouts(project.id) if layout not in layouts]
+    return bool(stale) or any(_layout_needs_work(project, layout, project_stems) for layout in layouts)
 
 
 class ReferenceMatchMixin:
@@ -156,18 +173,34 @@ class ReferenceMatchMixin:
                 )
 
     def _try_promote_reference_match(self, project: Project | None, project_id: str) -> bool:
-        """Restore a cached asset for *project*'s current target signature as
-        the active one, if one was computed earlier (see
+        """Restore cached assets for every layout's current target signature
+        as the active ones, if they were computed earlier (see
         `ProjectStemStorage.promote_cached_reference_match`). Shared by the
         scheduling fast-path and the authoritative compute path so both agree
         on when a cache hit makes work unnecessary.
+
+        Drops assets for layouts no track uses any more on the way past —
+        that part is pure file deletion, so it never needs the executor.
+
+        All-or-nothing on the promotion itself: one layout still needing a
+        real compute means the run has to happen anyway, so a partial
+        promotion would only leave the `_reference_match_needs_work` check
+        disagreeing with itself.
         """
-        if not project:
+        if not project or not project.mastering_reference_id:
             return False
-        target_signature = _reference_match_signature(project)
-        if target_signature is None:
-            return False
-        return self.project_stems.promote_cached_reference_match(project_id, target_signature)
+        layouts = project_layouts(project)
+        for stale in self.project_stems.reference_match_layouts(project_id):
+            if stale not in layouts:
+                self.project_stems.clear_reference_match(project_id, stale)
+        pending = [layout for layout in layouts if _layout_needs_work(project, layout, self.project_stems)]
+        promoted = [
+            layout for layout in pending
+            if self.project_stems.promote_cached_reference_match(
+                project_id, layout, _reference_match_signature(project, layout) or "",
+            )
+        ]
+        return len(promoted) == len(pending)
 
     def reference_match_pending(self, project_id: str) -> bool:
         """Whether a reference-match recompute is queued or running for
@@ -177,9 +210,9 @@ class ReferenceMatchMixin:
             return project_id in self._refmatch_pending or project_id in self._refmatch_running
 
     def prepare_reference_match(self, project_id: str) -> None:
-        """Recompute a project's server-side reference-match curve asset if
-        its signature has drifted since the last compute; a cheap no-op
-        otherwise.
+        """Recompute the project's server-side reference-match curve assets —
+        one per speaker layout its tracks use — where the signature has
+        drifted since the last compute; a cheap no-op otherwise.
 
         Runs in the caller's thread rather than a :class:`JobSubprocess`: this
         is only safe because it never runs inference itself — it bails if the
@@ -195,25 +228,48 @@ class ReferenceMatchMixin:
             project = get_project(session, project_id)
             if not project:
                 return
-            target_signature = _reference_match_signature(project)
-            if target_signature is None:
+            if not project.mastering_reference_id:
                 self.project_stems.clear_reference_match(project_id)
                 return
+            layouts = project_layouts(project)
+            for stale in self.project_stems.reference_match_layouts(project_id):
+                if stale not in layouts:
+                    self.project_stems.clear_reference_match(project_id, stale)
             if not project.prepared_stems or not project.tracks:
                 return
-            existing = self.project_stems.read_reference_match_meta(project_id)
+            pending = [layout for layout in layouts if _layout_needs_work(project, layout, self.project_stems)]
+
+        for layout in pending:
+            self._prepare_layout_reference_match(project_id, layout)
+
+    def _prepare_layout_reference_match(self, project_id: str, layout: str) -> None:
+        """Mix one layout's bed and persist its reference-match curve."""
+        with self.sessions() as session:
+            project = get_project(session, project_id)
+            if not project or not project.prepared_stems:
+                return
+            target_signature = _reference_match_signature(project, layout)
+            if target_signature is None:
+                return
+            existing = self.project_stems.read_reference_match_meta(project_id, layout)
             if existing and existing.get("signature") == target_signature:
                 return
-            if self.project_stems.promote_cached_reference_match(project_id, target_signature):
+            if self.project_stems.promote_cached_reference_match(project_id, layout, target_signature):
                 return
             reference = project.mastering_reference
             if reference is None:
                 return
+            # The curve is measured off this layout's own bed, so it has to be
+            # mixed from a track that actually carries the layout.
+            track = next((item for item in project.tracks if layout in track_layouts(item, project)), None)
+            if track is None:
+                return
             manifest = copy.deepcopy(project.manifest)
+            manifest.setdefault("mixing", {})["channel_layout"] = layout
             requested_stems = list(project.requested_stems)
-            track_id = project.tracks[0].id
-            track_overrides = copy.deepcopy(project.tracks[0].manifest_overrides)
-            source_key = project.tracks[0].asset.storage_key
+            track_id = track.id
+            track_overrides = copy.deepcopy(track.layout_overrides.get(layout, {}))
+            source_key = track.asset.storage_key
             reference_key = reference.storage_key
 
         stem_dir = self.project_stems.stem_dir(project_id, track_id)
@@ -258,7 +314,7 @@ class ReferenceMatchMixin:
                     # `reference_match_pending` window on every unrelated
                     # settings save while stems stay unprepared.
                     self.project_stems.write_reference_match(
-                        project_id, [], [], 0.0, 0, 0, target_signature,
+                        project_id, layout, [], [], 0.0, 0, 0, target_signature,
                     )
                     return
 
@@ -300,6 +356,7 @@ class ReferenceMatchMixin:
             return
         self.project_stems.write_reference_match(
             project_id,
+            layout,
             captured["curve"],
             captured["channels"],
             captured["rms_gain_db"],

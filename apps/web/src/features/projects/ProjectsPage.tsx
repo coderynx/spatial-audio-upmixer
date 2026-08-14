@@ -361,9 +361,11 @@ export function ProjectsPage({
   );
 }
 
+/** Layout is per track, and a track carries several — so a project answers
+ * with the distinct set across its tracks, not one value. */
 function projectLayout(project: Project) {
-  const mixing = (project.manifest as { mixing?: { channel_layout?: string } }).mixing;
-  return mixing?.channel_layout || "—";
+  const layouts = [...new Set(project.tracks.flatMap((track) => track.layouts))];
+  return layouts.join(", ") || "—";
 }
 
 function StemChip({ stem, pending }: { stem: string; pending: boolean }) {

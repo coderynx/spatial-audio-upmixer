@@ -7,7 +7,9 @@ import { api } from "@/api";
 import type { Configuration, Project, ProjectStem, ProjectTrack } from "@/api";
 import { formatBytes, formatDuration } from "@/lib/format";
 import { downloadWithProgress } from "@/lib/download";
+import { CHANNEL_LAYOUTS } from "@/lib/layouts";
 import { getStemColor, getStemIcon } from "@/lib/stems";
+import { cn } from "@/lib/utils";
 
 function statusVariant(status: string) {
   if (status === "ready") return "success" as const;
@@ -24,11 +26,13 @@ export function PreparedTrackTree({
   configuration,
   onOpenTrack,
   onReprepare,
+  onProjectUpdate,
 }: {
   project: Project;
   configuration: Configuration | null;
   onOpenTrack: (trackId: string) => void;
   onReprepare: () => void;
+  onProjectUpdate: (project: Project) => void;
 }) {
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({});
   const canReprepare = !IN_FLIGHT_STATUSES.has(project.status);
@@ -61,6 +65,7 @@ export function PreparedTrackTree({
             open={!collapsed[track.id]}
             onToggle={() => setCollapsed((current) => ({ ...current, [track.id]: !current[track.id] }))}
             onOpenTrack={() => onOpenTrack(track.id)}
+            onProjectUpdate={onProjectUpdate}
           />
         ))}
       </div>
@@ -75,6 +80,7 @@ function TrackRow({
   open,
   onToggle,
   onOpenTrack,
+  onProjectUpdate,
 }: {
   projectId: string;
   track: ProjectTrack;
@@ -82,10 +88,11 @@ function TrackRow({
   open: boolean;
   onToggle: () => void;
   onOpenTrack: () => void;
+  onProjectUpdate: (project: Project) => void;
 }) {
-  const overrides = track.manifest_overrides as { mixing?: { channel_layout?: string } };
-  const layout = overrides?.mixing?.channel_layout;
-  const channelNames = layout ? configuration?.choices.layout_channels?.[layout] : undefined;
+  // Stem zones are read against the track's first layout — the stems
+  // themselves are layout-independent, this only names their channels.
+  const channelNames = configuration?.choices.layout_channels?.[track.layouts[0]];
   const busy = track.status !== "ready" && track.status !== "failed";
   const [downloadProgress, setDownloadProgress] = React.useState<number | null>(null);
   const [downloadError, setDownloadError] = React.useState<string | null>(null);
@@ -120,7 +127,6 @@ function TrackRow({
           <p className="truncate text-[11px] text-muted-foreground">
             {formatDuration(track.asset.duration_seconds)} · {track.asset.channels ?? "—"} ch ·{" "}
             {track.asset.sample_rate ? `${track.asset.sample_rate / 1000} kHz` : "—"} · {formatBytes(track.asset.size_bytes)}
-            {layout ? ` · ${layout}` : ""}
           </p>
         </div>
         <Badge variant={statusVariant(track.status)} className="shrink-0 capitalize">
@@ -155,6 +161,12 @@ function TrackRow({
           </>
         )}
       </div>
+      <TrackLayoutPicker
+        projectId={projectId}
+        track={track}
+        configuration={configuration}
+        onProjectUpdate={onProjectUpdate}
+      />
       {track.error && (
         <p className="border-t bg-destructive/10 px-3 py-1.5 text-[11px] text-destructive">{track.error}</p>
       )}
@@ -171,6 +183,73 @@ function TrackRow({
       {open && track.stems.length === 0 && !busy && (
         <p className="border-t bg-muted/10 px-3 py-2 pl-11 text-[11px] text-muted-foreground">No stems catalogued.</p>
       )}
+    </div>
+  );
+}
+
+/** A track's speaker layouts. Each one it carries owns a complete, separate
+ * mix, master and delivery — adding one seeds it from the track's current
+ * mix re-placed onto the new speakers, removing one discards that layout's
+ * work, so the last one can't be removed. */
+function TrackLayoutPicker({
+  projectId,
+  track,
+  configuration,
+  onProjectUpdate,
+}: {
+  projectId: string;
+  track: ProjectTrack;
+  configuration: Configuration | null;
+  onProjectUpdate: (project: Project) => void;
+}) {
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const available = configuration?.choices.channel_layouts || CHANNEL_LAYOUTS;
+
+  async function toggle(layout: string) {
+    const next = track.layouts.includes(layout)
+      ? track.layouts.filter((item) => item !== layout)
+      : [...track.layouts, layout];
+    if (!next.length) return;
+    setSaving(true);
+    setError(null);
+    try {
+      onProjectUpdate(await api.setTrackLayouts(projectId, track.id, next));
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-t bg-muted/10 px-3 py-2 pl-11">
+      <span className="mr-1 text-[11px] text-muted-foreground">Speaker layouts</span>
+      {available.map((layout) => {
+        const active = track.layouts.includes(layout);
+        const last = active && track.layouts.length === 1;
+        return (
+          <button
+            key={layout}
+            type="button"
+            role="switch"
+            aria-checked={active}
+            aria-label={`${layout} layout for ${track.asset.title || track.asset.filename}`}
+            disabled={saving || last}
+            title={last ? "A track must keep at least one speaker layout" : undefined}
+            onClick={() => void toggle(layout)}
+            className={cn(
+              "h-6 rounded-md border px-2 text-[11px] transition-colors disabled:opacity-60",
+              active
+                ? "border-primary/40 bg-primary/15 font-medium text-primary"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            {layout}
+          </button>
+        );
+      })}
+      {error && <span className="text-[11px] text-destructive">{error}</span>}
     </div>
   );
 }

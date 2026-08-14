@@ -115,6 +115,15 @@ should be.
 | P2 | **Seek warm-up.** A seek renders a discarded run-up so the filter states settle; without it the Haas-delayed sends would drop out and the compressor would re-attack. Inside the run-up the states are still converging. | 500 ms run-up; lands within 1e-6 of a straight play-through |
 | P3 | **Correction latency, in two stages.** The loudness/true-peak correction is a real BS.1770 measurement. A fast pass over a handful of excerpts lands first and is what the "calibrating loudness" UI waits for; an exact pass over the whole programme then keeps running in the background and refines the gain once it lands. Both are advanced in slices from the render callback (`stream::measure`), and the transport stays gated until the fast pass lands, so the preview never plays uncorrected; between the two, it plays on the fast pass's gain. Whatever the pass is meant to measure — parameter block and filter set both — has to reach the worklet before the `measure` message does, since the pass forks the engine as it stands (D29). | Fast pass: a few seconds, advances while paused or playing. Exact pass: ~2-3 min for an eight-minute track, only advances while paused (§4) |
 
+Switching speaker layout is deliberately **not** a fourth entry. Selecting a
+different layout in the tracks panel rebuilds the preview from scratch — new
+`AudioContext`, new worklet node, stems re-decoded, loudness re-measured —
+rather than reaching the engine as a parameter change. An `AudioWorkletNode`'s
+`outputChannelCount` is fixed at construction, so a native-output layout
+change cannot reuse the node; and because the rebuild is total, there is no
+window in which the preview renders one layout's mix through another's
+topology. The cost is latency on a user action, not a parity gap.
+
 Two former Tier-3 gaps are **closed**: the preview's loudness is now the real
 BS.1770 measurement over the whole render rather than an excerpt-sampled
 estimate (ledger D4), and its true peak uses the standard's own kernel rather
@@ -186,7 +195,7 @@ or that the port itself resolved.
 
 | # | Discrepancy | Status |
 |---|---|---|
-| D3 | `estimateRouteScale` approximates `route_scale` from the routing table, not decoded-buffer energy. It also sums every channel in the route regardless of the layout, so a route wider than the layout reads as a level error rather than an approximation. | Open — see §3. Neutralized for `stereo` layouts, where the API stores the routing already folded to FL/FR. |
+| D3 | `estimateRouteScale` approximates `route_scale` from the routing table, not decoded-buffer energy. It also sums every channel in the route regardless of the layout, so a route wider than the layout reads as a level error rather than an approximation. | Open — see §3. Neutralized for `stereo` layouts, where the API stores each layout's routing already folded to FL/FR (`_normalize_layout_mix`, applied per layout block now that a track carries one mix per layout), and a layout added to a track has its routing rebuilt for that layout's own channel set rather than inherited wider. |
 | D4 | The preview's loudness omitted K-weighting and gating and read a few excerpts, not the whole programme. | Fixed by the port: `stream::engine::measure` runs the real BS.1770 measurement over the whole render. |
 | D9 | Biquad realizations of the mono-maker and bass bands flipped their net effect versus the backend's zero-phase `sosfiltfilt`. | Fixed by the port: there is one implementation, and the mono-maker's zero-phase pass survives streaming via a bounded horizon. |
 | D14 | The look-ahead limiter existed only on the native path, with the collapse paths on the old tanh saturator. | Fixed by the port; the split now follows the export exactly — limiter on native, soft limit on the collapse paths. |

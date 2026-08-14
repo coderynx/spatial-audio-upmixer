@@ -54,7 +54,7 @@ def test_export_then_import_reconstructs_an_identical_workspace(tmp_path):
         )
         track = ProjectTrack(
             project=project, asset=asset, position=0,
-            manifest_overrides={"mastering": {"loudness_target": -16.0}},
+            layout_overrides={"5.1": {"mastering": {"loudness_target": -16.0}}},
         )
         session.add_all([batch, asset, project, track])
         session.flush()
@@ -88,7 +88,7 @@ def test_export_then_import_reconstructs_an_identical_workspace(tmp_path):
 
         imported_track = imported.tracks[0]
         assert imported_track.id != track.id
-        assert imported_track.manifest_overrides == {"mastering": {"loudness_target": -16.0}}
+        assert imported_track.layout_overrides == {"5.1": {"mastering": {"loudness_target": -16.0}}}
         assert imported_track.asset.filename == "source.wav"
         assert imported_track.asset.import_id != asset.import_id
         assert len(imported_track.stems) == 1

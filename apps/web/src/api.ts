@@ -108,7 +108,12 @@ export type ProjectTrack = {
   position: number
   status: string
   progress: number
-  manifest_overrides: Record<string, unknown>
+  // `layouts` is the track's speaker-layout set, in display order;
+  // `layout_overrides` holds each one's own mix/master/delivery block. A
+  // listed layout with no stored block yet reads as an empty override over
+  // the project manifest.
+  layouts: string[]
+  layout_overrides: Record<string, Record<string, unknown>>
   scene_overrides: Record<string, unknown>
   source_preview_url: string | null
   // Server-precomputed waveform envelopes, served as their own binary asset
@@ -159,7 +164,9 @@ export type Project = {
   tracks: ProjectTrack[]
   exports: Job[]
   mastering_reference?: MasteringReference | null
-  reference_match?: ReferenceMatchAsset | null
+  // One correction curve per speaker layout in use — the curve is measured
+  // off the mixed bed, so it cannot be shared across layouts.
+  reference_match?: Record<string, ReferenceMatchAsset>
   // True while a reference-match recompute is queued or running on the
   // server (see upmixer_web/worker.py::WorkerManager.schedule_reference_match)
   // — the frontend keeps polling while this is set so `reference_match`
@@ -263,15 +270,18 @@ export const api = {
     request<Project>(`/api/v1/projects/${projectId}/assets`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   saveProject: (id: string, payload: { name?: string; notes?: string | null; manifest: Record<string, unknown>; scene: Record<string, unknown>; mastering_reference_id?: string | null; preview_quality?: string }) =>
     request<Project>(`/api/v1/projects/${id}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
-  saveProjectTrack: (projectId: string, trackId: string, payload: { manifest_overrides: Record<string, unknown>; scene_overrides: Record<string, unknown> }) =>
-    request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+  saveProjectTrackLayout: (projectId: string, trackId: string, layout: string, payload: { manifest_overrides: Record<string, unknown>; scene_overrides: Record<string, unknown> }) =>
+    request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}/layouts/${encodeURIComponent(layout)}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+  setTrackLayouts: (projectId: string, trackId: string, layouts: string[]) =>
+    request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}/layouts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layouts }) }),
   saveProjectViewState: (id: string, payload: Record<string, unknown>) =>
     request<void>(`/api/v1/projects/${id}/view-state`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   expandProjectStems: (id: string, stems: string[]) =>
     request<Project>(`/api/v1/projects/${id}/stems`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stems }) }),
   retryProject: (id: string) => request<Project>(`/api/v1/projects/${id}/retry`, { method: "POST" }),
   reprepareProjectStems: (id: string) => request<Project>(`/api/v1/projects/${id}/stems/reprepare`, { method: "POST" }),
-  exportProject: (id: string) => request<Job>(`/api/v1/projects/${id}/exports`, { method: "POST" }),
+  exportProject: (id: string, layout: string) =>
+    request<Job>(`/api/v1/projects/${id}/exports`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout }) }),
   deleteProject: (id: string) => request(`/api/v1/projects/${id}`, { method: "DELETE" }),
   // DAW-style Save/Open: a portable .upmix.zip, distinct from exportProject
   // above (which renders a deliverable mix, not a re-editable workspace).

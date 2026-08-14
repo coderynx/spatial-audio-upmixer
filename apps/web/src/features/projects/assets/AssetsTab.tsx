@@ -221,7 +221,7 @@ export function AssetsTab({
       {showLog && <PreparationPanel project={project} onRetry={onRetry} />}
 
       {project.tracks.length > 0 && (
-        <PreparedTrackTree project={project} configuration={configuration} onOpenTrack={onOpenTrack} onReprepare={onReprepare} />
+        <PreparedTrackTree project={project} configuration={configuration} onOpenTrack={onOpenTrack} onReprepare={onReprepare} onProjectUpdate={onProjectUpdate} />
       )}
     </div>
   );

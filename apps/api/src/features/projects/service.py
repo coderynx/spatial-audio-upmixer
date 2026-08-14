@@ -12,9 +12,16 @@ from sqlalchemy.orm import Session, selectinload
 from upmixer.config import UpmixConfig
 from upmixer.manifest import apply_asset_job, parse_manifest
 from upmixer.separation.stem_plan import normalize_stems
-from upmixer.formats import FORMAT_MAP, validate_delivery
-from upmixer.separation.stem_router import build_stem_routing, fold_route_to_stereo
+from upmixer.formats import FORMAT_MAP
+from upmixer.separation.stem_router import build_stem_routing
 from upmixer_web.features.jobs.service import create_job
+from upmixer_web.features.projects.layouts import (
+    delivery_type_for_layout,
+    migrate_legacy_binaural_shape,
+    normalize_layout_mix,
+    track_layouts,
+    track_prepare_overrides,
+)
 from upmixer_web.features.projects.routing import merge_scene, routing_for_scene
 from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS, ProjectStemStorage
 from upmixer_web.shared.manifests import normalize_job_manifest
@@ -116,6 +123,23 @@ def _validate_track_overrides(project: Project, overrides: dict[str, Any]) -> No
     normalize_job_manifest(merged)
 
 
+def _normalized_track_layout_block(
+    project: Project, layout: str, overrides: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate one layout's override block and pin it to that layout.
+
+    The same checks a track override has always had, plus the layout work the
+    project manifest already did for itself — which track overrides never ran,
+    so a per-track two-channel layout used to keep an unfolded multichannel
+    routing.
+    """
+    block = copy.deepcopy(overrides)
+    _validate_track_overrides(project, block)
+    normalize_layout_mix(block, layout, list(project.requested_stems))
+    normalize_job_manifest(_deep_merge(project.manifest, block))
+    return block
+
+
 def _normalize_project_stems(stems: Iterable[str]) -> list[str]:
     """Keep a parent stem only when none of its detailed stems is requested."""
     normalized = normalize_stems(list(stems))
@@ -137,57 +161,12 @@ def list_projects(session: Session, limit: int = 100, offset: int = 0) -> list[P
     ).all())
 
 
-def _migrate_legacy_binaural_shape(manifest: dict[str, Any]) -> dict[str, Any]:
-    """Fold older stored shapes of the binaural render into the current one.
-
-    Binaural has moved twice: originally a ``mixing.channel_layout: binaural``
-    value with the real bed under ``mixing.binaural.bed``, then briefly an
-    independent ``mixing.binaural.enabled`` flag — it is now
-    ``format.type: binaural`` (a delivery format, alongside ``wav``/
-    ``adm-bwf``) with ``format.binaural.profile``. Migrate in place so
-    previously stored projects keep validating and round-tripping.
-    """
-    manifest = copy.deepcopy(manifest)
-    mixing = manifest.get("mixing")
-    if not isinstance(mixing, dict):
-        return manifest
-    legacy_binaural = mixing.pop("binaural", None)
-    if not isinstance(legacy_binaural, dict):
-        return manifest
-    was_binaural = mixing.get("channel_layout") == "binaural" or legacy_binaural.get("enabled") is True
-    if mixing.get("channel_layout") == "binaural":
-        mixing["channel_layout"] = legacy_binaural.get("bed", "7.1.4")
-    if not was_binaural:
-        return manifest
-    format_block = manifest.setdefault("format", {})
-    format_block["type"] = "binaural"
-    format_block["binaural"] = {"profile": legacy_binaural.get("profile", "studio")}
-    return manifest
-
-
-def _delivery_type_for_layout(channel_layout: str, output_type: str) -> str:
-    """Fall back to WAV when a stored delivery type cannot carry the layout.
-
-    A project's speaker layout is its primary control — it drives routing, the
-    spatial views and the preview engine — so narrowing it (7.1.4 to 5.1, or to
-    stereo) retargets a delivery type the new layout cannot carry instead of
-    rejecting the edit over a field the user did not touch. Explicit job
-    manifests and CLI flags stay strict; ``formats.validate_delivery`` still
-    rejects them.
-    """
-    try:
-        validate_delivery(channel_layout, output_type)
-    except ValueError:
-        return "wav"
-    return output_type
-
-
 def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    migrated = _migrate_legacy_binaural_shape(manifest)
+    migrated = migrate_legacy_binaural_shape(manifest)
     migrated_mixing = migrated.setdefault("mixing", {})
     migrated_format = migrated.setdefault("format", {})
     if isinstance(migrated_mixing, dict) and isinstance(migrated_format, dict):
-        migrated_format["type"] = _delivery_type_for_layout(
+        migrated_format["type"] = delivery_type_for_layout(
             str(migrated_mixing.setdefault("channel_layout", "7.1.4")),
             str(migrated_format.get("type", "wav")),
         )
@@ -199,9 +178,6 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
     mixing = normalized.setdefault("mixing", {})
     if isinstance(mixing.get("stem_solo"), str):
         mixing["stem_solo"] = [mixing["stem_solo"]]
-    mixing.setdefault("channel_layout", "7.1.4")
-    if mixing["channel_layout"] not in FORMAT_MAP:
-        raise ValueError("Unknown channel layout")
     mixing["spatial"] = {"profile": "balanced", "intensity": 0.0, "preanalyze": False}
     mixing["stem_source_anchor_strength"] = mixing.get("stem_source_anchor_strength", 0.0)
     format_block = normalized.setdefault("format", {})
@@ -210,17 +186,7 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
     binaural.setdefault("profile", "studio")
     transaural = format_block.setdefault("transaural", {})
     transaural.setdefault("profile", "stereo")
-    routing_fmt = FORMAT_MAP[mixing["channel_layout"]]
-    if not mixing.get("stem_routing"):
-        mixing["stem_routing"] = build_stem_routing(stems, routing_fmt)
-    elif routing_fmt.n_channels == 2:
-        # Folded on the way in so the client preview, which reads only the
-        # manifest, and the export, which folds the built-in base route,
-        # normalize over the same channel set.
-        mixing["stem_routing"] = {
-            stem: fold_route_to_stereo(route)
-            for stem, route in mixing["stem_routing"].items()
-        }
+    normalize_layout_mix(normalized, str(mixing.setdefault("channel_layout", "7.1.4")), stems)
     routing = normalized.setdefault("routing", {})
     routing["content_mix_strength"] = 0.0
     normalized.setdefault("processing", {})["preview"] = False
@@ -261,8 +227,10 @@ def add_project_assets(
 ) -> Project:
     """Add every asset in a freshly-ingested import batch to a project as new
     tracks, queuing preparation. ``per_asset_overrides`` maps a `MediaAsset.id`
-    to that track's own `manifest_overrides` (stems/sample_rate/subtype/
-    channel_layout), validated the same way `update_track_settings` does.
+    to that track's own override blocks (stems/sample_rate/subtype/
+    channel_layout), validated the same way `update_track_layout_settings`
+    does. The staged `mixing.channel_layout` becomes the track's first layout;
+    further layouts are added later from the Prepare tab.
 
     Sets the project's own ``import_id`` when this is its first import, so an
     empty project keeps one FK anchor once it has any tracks at all — later
@@ -295,10 +263,10 @@ def add_project_assets(
             routing_fmt = FORMAT_MAP[mixing.get("channel_layout", "7.1.4")]
             stem_routing.update(build_stem_routing(missing_stems, routing_fmt))
 
+    project_layout = str(project.manifest.get("mixing", {}).get("channel_layout", "7.1.4"))
     for offset, asset in enumerate(import_batch.assets):
         overrides = per_asset_overrides.get(asset.id, {})
-        if overrides:
-            _validate_track_overrides(project, overrides)
+        layout = str(overrides.get("mixing", {}).get("channel_layout") or project_layout)
         # Append through the relationship, not a bare session.add(...): the
         # caller's `project` was already loaded (with `tracks` selectinloaded,
         # possibly empty) before this call, and expire_on_commit=False means
@@ -307,7 +275,7 @@ def add_project_assets(
         project.tracks.append(ProjectTrack(
             asset_id=asset.id,
             position=start_position + offset,
-            manifest_overrides=copy.deepcopy(overrides),
+            layout_overrides={layout: _normalized_track_layout_block(project, layout, overrides)},
         ))
     if project.import_id is None:
         project.import_id = import_batch.id
@@ -368,18 +336,68 @@ def update_project_view_state(session: Session, project: Project, view_state: di
     session.commit()
 
 
-def update_track_settings(
-    session: Session,
-    project: Project,
-    track_id: str,
-    manifest_overrides: dict[str, Any],
-    scene_overrides: dict[str, Any],
-) -> Project:
+def _track_or_raise(project: Project, track_id: str) -> ProjectTrack:
     track = next((item for item in project.tracks if item.id == track_id), None)
     if not track:
         raise TrackNotFoundError("Project track not found")
-    _validate_track_overrides(project, manifest_overrides)
-    track.manifest_overrides = copy.deepcopy(manifest_overrides)
+    return track
+
+
+def _seed_layout_block(project: Project, layout: str, source: dict[str, Any]) -> dict[str, Any]:
+    """Start a new layout from the track's existing mix, minus the one thing
+    that cannot cross layouts: `stem_routing` is keyed by speaker name, so it
+    is dropped and rebuilt for the new layout's own channel set rather than
+    carried over half-valid."""
+    seed = copy.deepcopy(source)
+    mixing = seed.get("mixing")
+    if isinstance(mixing, dict):
+        mixing.pop("stem_routing", None)
+    return _normalized_track_layout_block(project, layout, seed)
+
+
+def set_track_layouts(
+    session: Session, project: Project, track_id: str, layouts: Iterable[str]
+) -> Project:
+    """Replace a track's layout set. Layouts it gains are seeded from the
+    track's current mix, re-placed onto the new layout's speakers; layouts it
+    loses take their mix with them. A track always keeps at least one."""
+    track = _track_or_raise(project, track_id)
+    wanted = list(dict.fromkeys(layouts))
+    if not wanted:
+        raise ValueError("A track must keep at least one speaker layout")
+    unknown = [layout for layout in wanted if layout not in FORMAT_MAP]
+    if unknown:
+        raise ValueError(f"Unknown channel layout: {', '.join(unknown)}")
+    current = track.layout_overrides
+    source = track_prepare_overrides(track)
+    track.layout_overrides = {
+        layout: copy.deepcopy(current[layout])
+        if layout in current
+        else _seed_layout_block(project, layout, source)
+        for layout in wanted
+    }
+    project.revision += 1
+    session.commit()
+    return get_project(session, project.id)  # type: ignore[return-value]
+
+
+def update_track_layout_settings(
+    session: Session,
+    project: Project,
+    track_id: str,
+    layout: str,
+    manifest_overrides: dict[str, Any],
+    scene_overrides: dict[str, Any],
+) -> Project:
+    """Save one layout's mix on a track. Every other layout on that track is
+    untouched — that separation is the point of the per-layout store."""
+    track = _track_or_raise(project, track_id)
+    if layout not in track_layouts(track, project):
+        raise ValueError("Track does not have that speaker layout")
+    track.layout_overrides = {
+        **track.layout_overrides,
+        layout: _normalized_track_layout_block(project, layout, manifest_overrides),
+    }
     track.scene_overrides = copy.deepcopy(scene_overrides)
     project.revision += 1
     session.commit()
@@ -432,8 +450,14 @@ def _resolve_track_routing(
     return routing_for_scene(scene, config) or None
 
 
-def project_export_job(session: Session, project: Project, project_stems: ProjectStemStorage) -> Job:
-    """Create a self-contained export job from an immutable project snapshot.
+def project_export_job(
+    session: Session, project: Project, project_stems: ProjectStemStorage, layout: str
+) -> Job:
+    """Create a self-contained export job for one speaker layout, from an
+    immutable project snapshot.
+
+    One export renders one layout, so only the tracks that actually have
+    ``layout`` take part — the job stays one asset per `JobTrack`.
 
     The job needs nothing from `features.projects` at run time: each track's
     resolved stem-routing and manifest overrides are baked into
@@ -447,12 +471,16 @@ def project_export_job(session: Session, project: Project, project_stems: Projec
         raise ValueError("Project stems are not ready for export")
     if not project.tracks:
         raise ValueError("Project has no tracks to export")
+    tracks = [track for track in project.tracks if layout in track_layouts(track, project)]
+    if not tracks:
+        raise ValueError(f"No track uses the {layout} speaker layout")
     manifest = copy.deepcopy(project.manifest)
     manifest.setdefault("engine", {})["stems"] = list(project.prepared_stems)
+    manifest.setdefault("mixing", {})["channel_layout"] = layout
 
     tracks_snapshot: dict[str, dict[str, Any]] = {}
-    for track in project.tracks:
-        overrides = copy.deepcopy(track.manifest_overrides)
+    for track in tracks:
+        overrides = copy.deepcopy(track.layout_overrides.get(layout, {}))
         scene = merge_scene(project.scene, track.scene_overrides)
         routing = _resolve_track_routing(manifest, overrides, project.prepared_stems, scene)
         if routing:
@@ -468,11 +496,11 @@ def project_export_job(session: Session, project: Project, project_stems: Projec
     # None, for an empty-created project) once assets are added incrementally
     # — Job.import_id only needs an anchor for its FK, so any track's own
     # import batch will do; the actual JobTracks are cloned from `assets=`.
-    anchor_import = project.import_batch or project.tracks[0].asset.import_batch
+    anchor_import = project.import_batch or tracks[0].asset.import_batch
     job = create_job(
-        session, anchor_import, f"{project.name} export", manifest, True,
+        session, anchor_import, f"{project.name} export ({layout})", manifest, True,
         mastering_reference=project.mastering_reference,
-        assets=[track.asset for track in project.tracks],
+        assets=[track.asset for track in tracks],
     )
     job.project_id = project.id
     job.project_revision = project.revision

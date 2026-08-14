@@ -676,6 +676,36 @@ state change per click, not a fresh element every render).
   component itself is unchanged and still used by `ManifestEditor.tsx`
   (job composition), so nothing there was touched.
 
+### 6.7 Tracks panel: track → speaker layout
+
+`TrackRail` is a two-level tree, not a flat list. A track expands into the
+speaker layouts it carries, and a **layout row is the real selection target**:
+Mixing, Mastering and Delivery all edit one (track, layout) pair, since each
+layout owns its own mix, master and delivery.
+
+- Selection state is `{ trackId, layout }`, persisted per project
+  (`useLayoutSelection`) and reconciled against the project on every load — a
+  deleted track or a layout removed in Prepare must never leave a dangling
+  pair. It resolves during render, not in an effect: one frame against a stale
+  pair costs the preview engine a full teardown/rebuild at the wrong layout.
+- Clicking the **track** row selects it while keeping the layout already
+  chosen for it, so moving between tracks doesn't silently change layout.
+- Disclosure reuses the chevron + collapsed-record idiom already in
+  `PreparedTrackTree`, not a new accordion primitive — neither
+  `@radix-ui/react-accordion` nor `react-collapsible` is installed, and
+  adding one for two lines of state is not warranted.
+- Layout rows are `h-7` against the track row's `h-8`, indented behind a
+  `border-l`, and use the same `bg-primary/15 text-primary` active state as
+  every other selection in the app. `aria-current="true"` marks the selected
+  layout; the track row does not compete for it.
+
+**The rail selects layouts; it does not edit the set.** Adding or removing a
+layout happens in the Prepare tab, on the track's own row
+(`TrackLayoutPicker`): one `role="switch"` chip per layout the server offers,
+active chips tinted `primary`. The last remaining chip is disabled with a
+title explaining why — removing a layout discards that layout's mix, so the
+rule is stated on the control rather than enforced by a silent no-op.
+
 ### Semantic colour mapping
 
 | Meaning | Token | Examples |

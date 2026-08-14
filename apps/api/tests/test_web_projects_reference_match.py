@@ -100,22 +100,22 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
         )
         manager.prepare_reference_match(project_id)
 
-        meta = project_stems.read_reference_match_meta(project_id)
+        meta = project_stems.read_reference_match_meta(project_id, "5.1")
         assert meta is not None
         assert meta["curve"], "a correction curve should always be persisted (both stages are forced on server-side)"
         assert meta["channels"], "the curve should list the non-LFE channels it applies to"
         first_signature = meta["signature"]
 
         view = client.get(f"/api/v1/projects/{project_id}").json()
-        assert view["reference_match"] is not None
-        assert view["reference_match"]["fir_url"]
+        assert view["reference_match"]["5.1"] is not None
+        assert view["reference_match"]["5.1"]["fir_url"]
         # The URL is versioned with the asset's signature (see
         # `_project_view` in apps/api/src/api.py) so the browser's
         # fir_url-keyed decode cache (useStemPreview.ts's
         # refMatchBufferCache) is naturally busted on a real recompute
         # instead of serving a stale FIR for the AudioContext's lifetime.
-        assert f"v={first_signature}" in view["reference_match"]["fir_url"]
-        fir_response = client.get(view["reference_match"]["fir_url"])
+        assert f"v={first_signature}" in view["reference_match"]["5.1"]["fir_url"]
+        fir_response = client.get(view["reference_match"]["5.1"]["fir_url"])
         assert fir_response.status_code == 200
         assert fir_response.headers["content-type"].startswith("audio/")
 
@@ -129,7 +129,7 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
         with patch.object(ReferenceMatchProcessor, "compute_curve", _counting_compute_curve):
             manager.prepare_reference_match(project_id)
         assert call_count["n"] == 0, "unchanged signature must not recompute"
-        assert project_stems.read_reference_match_meta(project_id)["signature"] == first_signature
+        assert project_stems.read_reference_match_meta(project_id, "5.1")["signature"] == first_signature
 
         # strength/spectrum/rms/max_db are all live client-side knobs applied
         # on top of the persisted curve/gain (the precompute always derives
@@ -151,7 +151,7 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
         with patch.object(ReferenceMatchProcessor, "compute_curve", _counting_compute_curve):
             manager.prepare_reference_match(project_id)
         assert call_count["n"] == 0, "strength/spectrum/rms/max_db changes must not recompute"
-        assert project_stems.read_reference_match_meta(project_id)["signature"] == first_signature
+        assert project_stems.read_reference_match_meta(project_id, "5.1")["signature"] == first_signature
 
         # A channel-layout change *does* change what the curve is computed
         # against (a different target bed) — must trigger a real recompute.
@@ -162,20 +162,23 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
         with patch.object(ReferenceMatchProcessor, "compute_curve", _counting_compute_curve):
             manager.prepare_reference_match(project_id)
         assert call_count["n"] == 1, "a channel_layout change must trigger a real recompute"
-        new_signature = project_stems.read_reference_match_meta(project_id)["signature"]
+        new_signature = project_stems.read_reference_match_meta(project_id, "7.1")["signature"]
         assert new_signature != first_signature
+        assert project_stems.read_reference_match_meta(project_id, "5.1") is None, (
+            "the layout the project left behind should not keep a stale curve"
+        )
 
         # The served fir_url must change with the signature, so the
         # browser's cache treats this as a different asset.
         view = client.get(f"/api/v1/projects/{project_id}").json()
-        assert f"v={new_signature}" in view["reference_match"]["fir_url"]
+        assert f"v={new_signature}" in view["reference_match"]["7.1"]["fir_url"]
 
         with factory() as session:
             project = session.get(Project, project_id)
             project.mastering_reference_id = None
             session.commit()
         manager.prepare_reference_match(project_id)
-        assert project_stems.read_reference_match_meta(project_id) is None
+        assert project_stems.read_reference_match_meta(project_id, "7.1") is None
 
     engine.dispose()
 
@@ -250,7 +253,7 @@ def test_worker_prepare_reference_match_applies_track_manifest_overrides(tmp_pat
             )
             track = ProjectTrack(
                 project=project, asset=asset, position=0,
-                manifest_overrides={"engine": {"stem_batch_size": 4}},
+                layout_overrides={"5.1": {"engine": {"stem_batch_size": 4}}},
             )
             session.add_all([batch, asset, reference, project, track])
             session.commit()
@@ -351,7 +354,7 @@ def test_worker_prepare_reference_match_skips_when_stems_not_prepared(tmp_path, 
         # re-prepare leaves the store in.
         manager.prepare_reference_match(project_id)
 
-        meta = client.app.state.project_stems.read_reference_match_meta(project_id)
+        meta = client.app.state.project_stems.read_reference_match_meta(project_id, "5.1")
         assert meta is not None
         assert meta["channels"] == []
         assert meta["curve"] == []
@@ -498,7 +501,7 @@ def test_worker_schedule_reference_match_coalesces_and_reports_pending(tmp_path,
         # One real pass, plus one coalesced trailing check that no-ops
         # immediately (signature unchanged) — never one pass per call.
         assert call_count["n"] == 1
-        assert client.app.state.project_stems.read_reference_match_meta(project_id) is not None
+        assert client.app.state.project_stems.read_reference_match_meta(project_id, "5.1") is not None
 
     engine.dispose()
 
@@ -582,7 +585,7 @@ def test_worker_schedule_reference_match_skips_pending_when_nothing_to_do(tmp_pa
             # Populate an up-to-date asset first, exactly like a real settings
             # save that changed something reference-match-relevant would.
             manager.prepare_reference_match(project_id)
-            assert manager.project_stems.read_reference_match_meta(project_id) is not None
+            assert manager.project_stems.read_reference_match_meta(project_id, "5.1") is not None
 
             # Case 1: signature already up to date (e.g. a mixing/volume edit,
             # which `_reference_match_signature` deliberately excludes) — must
@@ -688,7 +691,7 @@ def test_worker_schedule_reference_match_still_runs_to_clear_removed_reference(t
         manager._refmatch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-refmatch-clear")
         try:
             manager.prepare_reference_match(project_id)
-            assert manager.project_stems.read_reference_match_meta(project_id) is not None
+            assert manager.project_stems.read_reference_match_meta(project_id, "5.1") is not None
 
             with factory() as session:
                 project = session.get(Project, project_id)
@@ -699,7 +702,7 @@ def test_worker_schedule_reference_match_still_runs_to_clear_removed_reference(t
             deadline = time.monotonic() + 5
             while manager.reference_match_pending(project_id) and time.monotonic() < deadline:
                 time.sleep(0.05)
-            assert manager.project_stems.read_reference_match_meta(project_id) is None
+            assert manager.project_stems.read_reference_match_meta(project_id, "5.1") is None
         finally:
             manager._refmatch_executor.shutdown(wait=True)
 
@@ -776,10 +779,10 @@ def test_fir_endpoint_varies_with_strength_and_max_db(tmp_path, monkeypatch):
             {"Vocals": np.full((len(samples), 2), 0.2, dtype=np.float32)},
         )
         manager.prepare_reference_match(project_id)
-        meta = project_stems.read_reference_match_meta(project_id)
+        meta = project_stems.read_reference_match_meta(project_id, "5.1")
         assert meta["curve"]
 
-        base_url = f"/api/v1/projects/{project_id}/reference-match/fir"
+        base_url = f"/api/v1/projects/{project_id}/reference-match/5.1/fir"
         full_strength = client.get(base_url, params={"strength": 1.0, "max_db": 6.0})
         half_strength = client.get(base_url, params={"strength": 0.5, "max_db": 6.0})
         clamped = client.get(base_url, params={"strength": 1.0, "max_db": 1.0})
@@ -862,7 +865,7 @@ def test_prepare_reference_match_reuses_cached_layout_asset(tmp_path, monkeypatc
         )
 
         manager.prepare_reference_match(project_id)
-        meta_51 = project_stems.read_reference_match_meta(project_id)
+        meta_51 = project_stems.read_reference_match_meta(project_id, "5.1")
         signature_51 = meta_51["signature"]
 
         with factory() as session:
@@ -870,7 +873,7 @@ def test_prepare_reference_match_reuses_cached_layout_asset(tmp_path, monkeypatc
             project.manifest = {**project.manifest, "mixing": {"channel_layout": "7.1"}}
             session.commit()
         manager.prepare_reference_match(project_id)
-        meta_71 = project_stems.read_reference_match_meta(project_id)
+        meta_71 = project_stems.read_reference_match_meta(project_id, "7.1")
         assert meta_71["signature"] != signature_51
 
         with factory() as session:
@@ -884,7 +887,7 @@ def test_prepare_reference_match_reuses_cached_layout_asset(tmp_path, monkeypatc
         with patch.object(ReferenceMatchProcessor, "compute_curve", _forbidden_compute_curve):
             manager.prepare_reference_match(project_id)
 
-        restored = project_stems.read_reference_match_meta(project_id)
+        restored = project_stems.read_reference_match_meta(project_id, "5.1")
         assert restored == meta_51, "the promoted asset must exactly match the original 5.1 asset"
 
     engine.dispose()
@@ -963,14 +966,14 @@ def test_schedule_reference_match_promotes_cache_without_pending(tmp_path, monke
         manager._refmatch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-refmatch-cache")
         try:
             manager.prepare_reference_match(project_id)
-            signature_51 = project_stems.read_reference_match_meta(project_id)["signature"]
+            signature_51 = project_stems.read_reference_match_meta(project_id, "5.1")["signature"]
 
             with factory() as session:
                 project = session.get(Project, project_id)
                 project.manifest = {**project.manifest, "mixing": {"channel_layout": "7.1"}}
                 session.commit()
             manager.prepare_reference_match(project_id)
-            assert project_stems.read_reference_match_meta(project_id)["signature"] != signature_51
+            assert project_stems.read_reference_match_meta(project_id, "7.1")["signature"] != signature_51
 
             with factory() as session:
                 project = session.get(Project, project_id)
@@ -981,7 +984,7 @@ def test_schedule_reference_match_promotes_cache_without_pending(tmp_path, monke
             assert not manager.reference_match_pending(project_id), (
                 "a cache hit must resolve inline, never opening the pending window"
             )
-            assert project_stems.read_reference_match_meta(project_id)["signature"] == signature_51
+            assert project_stems.read_reference_match_meta(project_id, "5.1")["signature"] == signature_51
         finally:
             manager._refmatch_executor.shutdown(wait=True)
 
@@ -991,9 +994,9 @@ def test_schedule_reference_match_promotes_cache_without_pending(tmp_path, monke
 def test_reference_match_cache_prunes_stale_entries_without_orphaning_active_asset(tmp_path):
     """`write_reference_match`'s per-signature cache must not grow without
     bound as `stem_generation` (or any other signature input) churns — old
-    entries beyond `REFERENCE_MATCH_CACHE_LIMIT` are pruned, and the active
-    `reference_match.json` slot every reader relies on must never be among
-    the pruned files."""
+    entries beyond `REFERENCE_MATCH_CACHE_LIMIT` are pruned, and the layout's
+    active slot every reader relies on must never be among the pruned
+    files."""
     from upmixer_web.features.projects.storage import REFERENCE_MATCH_CACHE_LIMIT, ProjectStemStorage
 
     project_stems = ProjectStemStorage(tmp_path)
@@ -1002,7 +1005,7 @@ def test_reference_match_cache_prunes_stale_entries_without_orphaning_active_ass
     signatures = [f"sig-{i:02d}" for i in range(REFERENCE_MATCH_CACHE_LIMIT + 3)]
     for signature in signatures:
         project_stems.write_reference_match(
-            project_id, [[100.0, 0.0]], ["FL", "FR"], 0.0, 48_000, 1023, signature,
+            project_id, "5.1", [[100.0, 0.0]], ["FL", "FR"], 0.0, 48_000, 1023, signature,
         )
 
     cache_dir = project_stems.reference_match_dir(project_id) / "cache"
@@ -1012,11 +1015,11 @@ def test_reference_match_cache_prunes_stale_entries_without_orphaning_active_ass
         "pruning must keep the newest entries, not an arbitrary subset"
     )
 
-    active = project_stems.read_reference_match_meta(project_id)
+    active = project_stems.read_reference_match_meta(project_id, "5.1")
     assert active is not None and active["signature"] == signatures[-1]
 
-    assert project_stems.promote_cached_reference_match(project_id, signatures[-1])
-    assert not project_stems.promote_cached_reference_match(project_id, signatures[0]), (
+    assert project_stems.promote_cached_reference_match(project_id, "5.1", signatures[-1])
+    assert not project_stems.promote_cached_reference_match(project_id, "5.1", signatures[0]), (
         "a pruned signature must no longer be promotable"
     )
 
@@ -1183,13 +1186,13 @@ def test_startup_sweep_schedules_reference_match_for_projects_with_a_reference(t
     )
     # No prepare_reference_match call here — the point is that the lifespan
     # startup sweep is what schedules it, with nothing else triggering it.
-    assert project_stems.read_reference_match_meta(project_id) is None
+    assert project_stems.read_reference_match_meta(project_id, "5.1") is None
 
     with TestClient(app):
         deadline = time.monotonic() + 10
         meta = None
         while time.monotonic() < deadline:
-            meta = project_stems.read_reference_match_meta(project_id)
+            meta = project_stems.read_reference_match_meta(project_id, "5.1")
             if meta is not None:
                 break
             time.sleep(0.05)

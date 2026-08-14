@@ -18,7 +18,7 @@ const project: Project = {
   prepared_stems: ["Vocals"], stem_generation: 1, preview_quality: "high", revision: 1, error: null,
   created_at: "2026-01-01T12:00:00Z", updated_at: "2026-01-01T12:01:00Z",
   tracks: [{
-    id: "track-1", position: 0, status: "ready", progress: 1, manifest_overrides: {}, scene_overrides: {},
+    id: "track-1", position: 0, status: "ready", progress: 1, layouts: ["7.1.4"], layout_overrides: {}, scene_overrides: {},
     source_preview_url: null, error: null, asset,
     peaks_url: null, peaks_bins: 0, peaks_stem_keys: [], peaks_duration_seconds: null,
     stems: [{ id: "stem-1", stem_key: "Vocals", sample_rate: 48000, channels: 2, size_bytes: 1, audio_url: "/vocals.wav", preview_url: null }],
@@ -35,7 +35,7 @@ vi.mock("@/api", async (importOriginal) => {
       getProject: vi.fn(async () => project),
       exportProject: vi.fn(async () => ({ id: "job-1" })),
       saveProject: vi.fn(async () => project),
-      saveProjectTrack: vi.fn(async () => project),
+      saveProjectTrackLayout: vi.fn(async () => project),
       retryProject: vi.fn(async () => project),
       resolveStemRouting: vi.fn(async () => ({})),
       saveProjectViewState: vi.fn(async () => undefined),
@@ -66,14 +66,6 @@ function renderPage(configuration: Configuration | null = null) {
 
 function channelCount() {
   return screen.getByText("Channels").parentElement?.textContent?.replace("Channels", "").trim();
-}
-
-// SelectField (unlike OutputModeSelect's device picker) renders a bare
-// <label>/<select> pair with no htmlFor/aria-label association, so
-// getByLabelText can't resolve it — locate the <select> by its label text's
-// sibling instead.
-function selectFieldByLabel(label: string) {
-  return screen.getByText(label).parentElement?.querySelector("select") as HTMLSelectElement;
 }
 
 // Saves are debounced, so calls recorded by one test would otherwise still be
@@ -119,7 +111,8 @@ describe("ProjectDetailPage tabs", () => {
     expect(screen.getByText("Normalize output")).toBeInTheDocument();
     const exportButton = screen.getByRole("button", { name: /Export project/ });
     fireEvent.click(exportButton);
-    await waitFor(() => expect(api.exportProject).toHaveBeenCalledWith("project-1"));
+    // One export renders one layout: the selected one.
+    await waitFor(() => expect(api.exportProject).toHaveBeenCalledWith("project-1", "7.1.4"));
   });
 
   it("puts transport position on the timeline instead of a second seek bar in the transport", async () => {
@@ -153,9 +146,9 @@ describe("ProjectDetailPage tabs", () => {
     const fader = screen.getByRole("slider", { name: "Vocals gain" });
     fireEvent.keyDown(fader, { key: "ArrowDown" });
 
-    await waitFor(() => expect(api.saveProject).toHaveBeenCalled());
-    const [, payload] = vi.mocked(api.saveProject).mock.calls.at(-1)!;
-    const saved = payload.manifest as unknown as { mixing: { stem_rebalance: Record<string, number> } };
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());
+    const [, , , payload] = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)!;
+    const saved = payload.manifest_overrides as unknown as { mixing: { stem_rebalance: Record<string, number> } };
     expect(saved.mixing.stem_rebalance.Vocals).toBeCloseTo(-0.1);
   });
 
@@ -175,9 +168,9 @@ describe("ProjectDetailPage tabs", () => {
     expect(inspectorFader).toBeInTheDocument();
 
     fireEvent.keyDown(inspectorFader, { key: "ArrowUp" });
-    await waitFor(() => expect(api.saveProject).toHaveBeenCalled());
-    const [, payload] = vi.mocked(api.saveProject).mock.calls.at(-1)!;
-    const saved = payload.manifest as unknown as { mixing: { stem_rebalance: Record<string, number> } };
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());
+    const [, , , payload] = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)!;
+    const saved = payload.manifest_overrides as unknown as { mixing: { stem_rebalance: Record<string, number> } };
     expect(saved.mixing.stem_rebalance.Vocals).toBeCloseTo(0.1);
   });
 
@@ -261,18 +254,17 @@ describe("ProjectDetailPage tabs", () => {
     expect(frontBackLabel.compareDocumentPosition(inspectorFader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("writes mastering edits to the selected track, independent of the mixing tab's edit scope", async () => {
+  it("writes mastering edits to the selected track's selected layout", async () => {
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
 
-    // Mixing's edit scope stays on its default ("project") — mastering must
-    // still save per-track regardless, since it has no project-wide mode.
     await user.click(screen.getByRole("button", { name: /Mastering/ }));
     fireEvent.click(screen.getByRole("switch", { name: "Loudness" }));
 
-    await waitFor(() => expect(api.saveProjectTrack).toHaveBeenCalled());
-    const [, , payload] = vi.mocked(api.saveProjectTrack).mock.calls.at(-1)!;
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());
+    const [, , layout, payload] = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)!;
+    expect(layout).toBe("7.1.4");
     const savedOverrides = payload.manifest_overrides as unknown as { mastering: { loudness: { normalize: boolean } } };
     expect(savedOverrides.mastering.loudness.normalize).toBe(false);
   });
@@ -294,9 +286,9 @@ describe("ProjectDetailPage tabs", () => {
     const lfeSlider = screen.getByRole("slider", { name: "LFE send" });
     fireEvent.keyDown(lfeSlider, { key: "ArrowUp" });
 
-    await waitFor(() => expect(api.saveProject).toHaveBeenCalled());
-    const [, payload] = vi.mocked(api.saveProject).mock.calls.at(-1)!;
-    const saved = payload.manifest as unknown as { mixing: { stem_routing: Record<string, Record<string, number>> } };
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());
+    const [, , , payload] = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)!;
+    const saved = payload.manifest_overrides as unknown as { mixing: { stem_routing: Record<string, Record<string, number>> } };
     expect(saved.mixing.stem_routing.Vocals.LFE).toBeCloseTo(0.01);
   });
 
@@ -346,16 +338,18 @@ describe("ProjectDetailPage output mode on layout switch", () => {
     const config = {
       choices: { layout_channels: { "5.1": ["FL", "FR", "C", "LFE", "SL", "SR"] } },
     } as unknown as Configuration;
-    vi.mocked(api.getProject).mockResolvedValueOnce({
+    // The track carries both layouts; selection starts on the first, and the
+    // tracks panel is where a layout switch now happens.
+    vi.mocked(api.getProject).mockResolvedValue({
       ...project,
       manifest: { mixing: { channel_layout: "stereo" } },
+      tracks: [{ ...project.tracks[0], layouts: ["stereo", "5.1"] }],
     });
     const user = userEvent.setup();
     renderPage(config);
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
 
-    await user.click(screen.getByRole("button", { name: "Settings" }));
-    await user.selectOptions(selectFieldByLabel("Speaker layout"), "5.1");
+    await user.click(screen.getByRole("button", { name: "5.1" }));
 
     await waitFor(() => {
       const [, payload] = vi.mocked(api.saveProjectViewState).mock.calls.at(-1)!;
@@ -396,9 +390,9 @@ describe("ProjectDetailPage keyboard shortcuts", () => {
 
     fireEvent.keyDown(document.body, { key: "m" });
 
-    await waitFor(() => expect(api.saveProject).toHaveBeenCalled());
-    const [, payload] = vi.mocked(api.saveProject).mock.calls.at(-1)!;
-    const saved = payload.manifest as unknown as { mixing: { stem_enabled: Record<string, boolean> } };
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());
+    const [, , , payload] = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)!;
+    const saved = payload.manifest_overrides as unknown as { mixing: { stem_enabled: Record<string, boolean> } };
     expect(saved.mixing.stem_enabled.Vocals).toBe(false);
   });
 
@@ -411,21 +405,21 @@ describe("ProjectDetailPage keyboard shortcuts", () => {
     await user.click(screen.getByRole("button", { name: "Vocals" }));
 
     fireEvent.keyDown(document.body, { key: "m" });
-    await waitFor(() => expect(api.saveProject).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalledTimes(1));
 
     // jsdom reports an empty navigator.platform, so IS_MAC is false under
     // vitest even when the suite runs on a real Mac — undo/redo must be
     // reachable via ctrlKey here, not metaKey.
     fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
-    await waitFor(() => expect(api.saveProject).toHaveBeenCalledTimes(2));
-    const undonePayload = vi.mocked(api.saveProject).mock.calls.at(-1)![1];
-    const undone = undonePayload.manifest as unknown as { mixing: { stem_enabled: Record<string, boolean> } };
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalledTimes(2));
+    const undonePayload = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)![3];
+    const undone = undonePayload.manifest_overrides as unknown as { mixing: { stem_enabled: Record<string, boolean> } };
     expect(undone.mixing.stem_enabled.Vocals).not.toBe(false);
 
     fireEvent.keyDown(document.body, { key: "z", ctrlKey: true, shiftKey: true });
-    await waitFor(() => expect(api.saveProject).toHaveBeenCalledTimes(3));
-    const redonePayload = vi.mocked(api.saveProject).mock.calls.at(-1)![1];
-    const redone = redonePayload.manifest as unknown as { mixing: { stem_enabled: Record<string, boolean> } };
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalledTimes(3));
+    const redonePayload = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)![3];
+    const redone = redonePayload.manifest_overrides as unknown as { mixing: { stem_enabled: Record<string, boolean> } };
     expect(redone.mixing.stem_enabled.Vocals).toBe(false);
   });
 
@@ -457,5 +451,61 @@ describe("ProjectDetailPage keyboard shortcuts", () => {
     expect(screen.queryByRole("group", { name: "Mixer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
     expect(api.saveProject).not.toHaveBeenCalled();
+  });
+});
+
+describe("ProjectDetailPage track/layout tree", () => {
+  const multiLayout = {
+    ...project,
+    tracks: [{
+      ...project.tracks[0],
+      layouts: ["7.1.4", "stereo"],
+      layout_overrides: {
+        "7.1.4": { mastering: { compressor: { ratio: 2 } } },
+        stereo: { mastering: { compressor: { ratio: 8 } } },
+      },
+    }],
+  };
+
+  it("lists a layout row per layout the track carries", async () => {
+    vi.mocked(api.getProject).mockResolvedValue(multiLayout);
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    expect(screen.getByRole("button", { name: "7.1.4" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "stereo" })).toBeInTheDocument();
+    // The first layout is selected until the user picks another.
+    expect(screen.getByRole("button", { name: "7.1.4" })).toHaveAttribute("aria-current", "true");
+  });
+
+  it("saves an edit against the layout selected in the tree", async () => {
+    vi.mocked(api.getProject).mockResolvedValue(multiLayout);
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "stereo" }));
+    await user.click(screen.getByRole("button", { name: /Mastering/ }));
+    fireEvent.click(screen.getByRole("switch", { name: "Loudness" }));
+
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());
+    const [, , layout] = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)!;
+    expect(layout).toBe("stereo");
+  });
+
+  it("shows the selected layout's own mix, not another layout's", async () => {
+    vi.mocked(api.getProject).mockResolvedValue(multiLayout);
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /Mastering/ }));
+    const ratioOn714 = screen.getByRole("slider", { name: /ratio/i }).getAttribute("aria-valuenow");
+
+    await user.click(screen.getByRole("button", { name: "stereo" }));
+    const ratioOnStereo = screen.getByRole("slider", { name: /ratio/i }).getAttribute("aria-valuenow");
+
+    expect(ratioOn714).toBe("2");
+    expect(ratioOnStereo).toBe("8");
   });
 });

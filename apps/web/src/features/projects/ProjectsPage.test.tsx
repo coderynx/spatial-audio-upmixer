@@ -32,6 +32,16 @@ function makeProject(overrides: Partial<Project> = {}): Project {
   };
 }
 
+function makeTrack(layouts: string[]): Project["tracks"][number] {
+  return {
+    id: `track-${layouts.join("-")}`, position: 0, status: "ready", progress: 1,
+    layouts, layout_overrides: {}, scene_overrides: {}, source_preview_url: null,
+    peaks_url: null, peaks_bins: 0, peaks_stem_keys: [], peaks_duration_seconds: null,
+    error: null, stems: [],
+    asset: { id: "asset-1", size_bytes: 1 } as Project["tracks"][number]["asset"],
+  };
+}
+
 function renderPage(projects: Project[]) {
   const onDelete = vi.fn();
   const onCreate = vi.fn();
@@ -72,10 +82,14 @@ describe("ProjectsPage", () => {
     expect(screen.getAllByText("Still separating").length).toBeGreaterThan(0);
   });
 
-  it("inspects the selected project's layout and preview quality", () => {
-    renderPage([makeProject()]);
+  it("inspects the selected project's layouts and preview quality", () => {
+    // Layout is per track now, and a track can carry several — the project
+    // row reports the distinct set across its tracks.
+    renderPage([makeProject({
+      tracks: [makeTrack(["7.1.4"]), makeTrack(["7.1.4", "stereo"])],
+    })]);
     expect(screen.getByText("Preview quality")).toBeInTheDocument();
-    expect(screen.getAllByText("7.1.4").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("7.1.4, stereo").length).toBeGreaterThan(0);
     expect(screen.getByText("Revision")).toBeInTheDocument();
   });
 });
