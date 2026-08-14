@@ -59,6 +59,8 @@ def test_configuration_serves_engine_constants(web_client):
         "comp_profiles", "bass_profiles", "bass_sub_cutoff_hz", "bass_mid_cutoff_hz",
         "bass_excite_blend", "bass_excite_drive", "bass_lf_spreads",
         "bass_punch_fast_ms", "bass_punch_slow_ms", "bass_punch_max_db",
+        "bass_decorr_low_hz", "bass_decorr_high_hz", "bass_decorr_sections",
+        "bass_decorr_max_delay_ms", "bass_decorr_fast_ms", "bass_decorr_slow_ms",
         "binaural_loudness_max_gain_db",
         "crosstalk_loudness_max_gain_db", "voicing_params", "transaural_voicing_params",
         "eq_fir_assets", "stem_eq_fir_assets", "decode_filter_set", "xtc_filter_set",

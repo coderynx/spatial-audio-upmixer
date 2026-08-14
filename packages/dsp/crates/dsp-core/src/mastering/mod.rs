@@ -4,6 +4,7 @@
 
 pub mod bass;
 pub mod compressor;
+pub mod decorrelate;
 pub mod eq;
 pub mod limiter;
 

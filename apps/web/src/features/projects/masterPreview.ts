@@ -39,6 +39,7 @@ export type MasterPreview = {
     excite?: boolean | null;
     lfe_mode?: string | null;
     lfe_send?: number | null;
+    decorrelate?: number | null;
     lfe_gain_db?: number | null;
   };
 };

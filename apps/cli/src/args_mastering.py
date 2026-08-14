@@ -76,6 +76,7 @@ def add_mastering_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--mastering-bass-lfe-mode",  choices=["off", "add", "split"], default=None, metavar="MODE", help="LFE feed: off, add (downmix-safe copy), or split (energy-preserving, LF-light on fold-down).")
     parser.add_argument("--mastering-bass-lfe-send",  type=float, default=None, metavar="W",  help="LFE share of the unified LF bus (0.0–1.0).")
     parser.add_argument("--mastering-bass-lfe",       type=float, default=None, metavar="DB", help="LFE channel gain trim in dB.")
+    parser.add_argument("--mastering-bass-decorrelate", type=float, default=None, metavar="D", help="Mid-bass decorrelation depth (0.0–1.0): spread the sustained 100–300 Hz band across channels. Leaves everything below the unify crossover mono.")
 
     parser.add_argument(
         "--match-reference",

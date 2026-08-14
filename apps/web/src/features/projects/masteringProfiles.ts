@@ -53,6 +53,7 @@ export type BassProfile = {
   lfe_mode: BassLfeMode;
   lfe_send: number;
   lfe_gain_db: number;
+  decorrelate: number;
 };
 
 /** A mastering block as the project stores it: a profile name plus per-field
@@ -255,6 +256,12 @@ export type ServedEngineConstants = {
   bass_punch_fast_ms: number;
   bass_punch_slow_ms: number;
   bass_punch_max_db: number;
+  bass_decorr_low_hz: number;
+  bass_decorr_high_hz: number;
+  bass_decorr_sections: number;
+  bass_decorr_max_delay_ms: number;
+  bass_decorr_fast_ms: number;
+  bass_decorr_slow_ms: number;
   binaural_loudness_max_gain_db: number;
   crosstalk_loudness_max_gain_db: number;
   voicing_params: Record<string, ServedVoicingParams>;
@@ -294,6 +301,12 @@ export type EngineConstants = {
   punchFastMs: number;
   punchSlowMs: number;
   punchMaxDb: number;
+  decorrLowHz: number;
+  decorrHighHz: number;
+  decorrSections: number;
+  decorrMaxDelayMs: number;
+  decorrFastMs: number;
+  decorrSlowMs: number;
   binauralLoudnessMaxGainDb: number;
   crosstalkLoudnessMaxGainDb: number;
   voicingParams: Record<SpatialProfile, VoicingParams>;
@@ -360,6 +373,12 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     punchFastMs: s.bass_punch_fast_ms,
     punchSlowMs: s.bass_punch_slow_ms,
     punchMaxDb: s.bass_punch_max_db,
+    decorrLowHz: s.bass_decorr_low_hz,
+    decorrHighHz: s.bass_decorr_high_hz,
+    decorrSections: s.bass_decorr_sections,
+    decorrMaxDelayMs: s.bass_decorr_max_delay_ms,
+    decorrFastMs: s.bass_decorr_fast_ms,
+    decorrSlowMs: s.bass_decorr_slow_ms,
     binauralLoudnessMaxGainDb: s.binaural_loudness_max_gain_db,
     crosstalkLoudnessMaxGainDb: s.crosstalk_loudness_max_gain_db,
     voicingParams: mapVoicing<SpatialProfile>(s.voicing_params),

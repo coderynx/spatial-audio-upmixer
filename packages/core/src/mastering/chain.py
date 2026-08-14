@@ -24,8 +24,8 @@ Processing order
    full-band sidechain otherwise squashes before the shaper ever sees it.
 2.5 **Bass control** (optional) — multichannel bass management: sub/mid-bass
    EQ, LF unification across the bed with redistribution, transient shaping
-   and harmonic excitation on the unified bus, an LFE send, and an LFE gain
-   trim.  Controlled by ``config.mastering_bass_profile`` and individual
+   and harmonic excitation on the unified bus, mid-bass decorrelation, an LFE
+   send, and an LFE gain trim.  Controlled by ``config.mastering_bass_profile`` and individual
    ``mastering_bass_*`` params.  Disabled when both profile and all individual
    params are unset.
 
@@ -222,6 +222,7 @@ class MasteringChain:
             or cfg.mastering_bass_lfe_send is not None
             or cfg.mastering_bass_lfe_gain_db is not None
             or cfg.mastering_bass_excite is not None
+            or cfg.mastering_bass_decorrelate is not None
         )
         if _bass_active:
             from .bass import BassController, BASS_PROFILES
@@ -242,6 +243,7 @@ class MasteringChain:
                 lfe_mode=_bp("mastering_bass_lfe_mode", "off"),
                 lfe_send=_bp("mastering_bass_lfe_send"),
                 lfe_gain_db=_bp("mastering_bass_lfe_gain_db"),
+                decorrelate=_bp("mastering_bass_decorrelate"),
                 lfe_authoring_gain=cfg.lfe_gain,
                 sample_rate=sample_rate,
             )

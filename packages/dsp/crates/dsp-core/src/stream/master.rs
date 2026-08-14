@@ -12,6 +12,7 @@ use crate::kernels::minfilter::{minimum_filter1d, BorderMode};
 use crate::kernels::upfirdn::upfirdn_up;
 use crate::loudness::{TRUE_PEAK_FIR_4X, TRUE_PEAK_OVERSAMPLE};
 use crate::mastering::bass::{excite_harmonics, BassParams, PunchState};
+use crate::mastering::decorrelate::Decorrelator;
 use crate::mastering::limiter::{LimiterParams, FIR_DELAY, FIR_MARGIN_SAMPLES};
 use crate::mastering::non_lfe;
 
@@ -23,6 +24,12 @@ use super::state::HorizonFiltFilt;
 /// At 100 ms the 80-120 Hz filter has decayed by `e^-40`, so truncating there
 /// is below any tolerance that matters — see `state::HorizonFiltFilt`.
 pub const UNIFY_HORIZON_MS: f64 = 100.0;
+
+/// The decorrelator's own, longer horizon. Its band split is a 4th-order
+/// 100-300 Hz band-pass, whose impulse response is still 2e-6 of peak at
+/// 100 ms where the unifier's 2nd-order low-pass is at 8e-20 — truncating
+/// there showed up directly as a block-size dependence around 1e-8.
+pub const DECORR_HORIZON_MS: f64 = 300.0;
 
 /// Causal, per-channel front of the chain.
 pub struct CausalChain {
@@ -247,6 +254,54 @@ impl LfUnifier {
                 let h = harmonics.map_or(0.0, |h| h[k]);
                 queue[i][start + k] += (bus[k] + h) * weight;
             }
+        }
+    }
+}
+
+/// Mid-bass decorrelation over the same look-ahead window as [`LfUnifier`].
+///
+/// Mirrors the tail of `mastering::bass::bass_control`: the zero-phase band
+/// comes off the *pre*-unification queue, exactly as offline takes it before
+/// calling `lf_unify`, and the resulting delta is added to the unified block.
+/// That ordering is what lets this read its look-ahead out of `pre`, whose
+/// samples are already final, instead of needing a second horizon behind the
+/// unifier.
+pub struct StreamingDecorrelator {
+    filter: HorizonFiltFilt,
+    channels: Vec<(usize, Decorrelator)>,
+}
+
+impl StreamingDecorrelator {
+    /// `None` when the stage is off or its band collapsed — see
+    /// [`crate::mastering::decorrelate::band_sos`].
+    pub fn new(
+        sample_rate: u32,
+        n_channels: usize,
+        lfe: Option<usize>,
+        params: &BassParams,
+    ) -> Option<Self> {
+        let sos = crate::mastering::decorrelate::band_sos(sample_rate, params)?;
+        let horizon = (sample_rate as f64 * DECORR_HORIZON_MS / 1000.0) as usize;
+        Some(Self {
+            filter: HorizonFiltFilt::new(sos, horizon, horizon),
+            channels: non_lfe(n_channels, lfe)
+                .into_iter()
+                .map(|i| (i, Decorrelator::new(i, sample_rate, params)))
+                .collect(),
+        })
+    }
+
+    /// Decorrelate `window[..][..]`, taking the band from `pre[..][start..end]`
+    /// and reading outward from there for the zero-phase pass's context.
+    pub fn process(&mut self, pre: &[Vec<f64>], window: &mut [Vec<f64>], start: usize, end: usize) {
+        if end <= start {
+            return;
+        }
+        for (i, decorrelator) in self.channels.iter_mut() {
+            let Some(source) = pre.get(*i) else { continue };
+            let Some(out) = window.get_mut(*i) else { continue };
+            let band = self.filter.process_window(source, start, end);
+            decorrelator.run(out, &band);
         }
     }
 }

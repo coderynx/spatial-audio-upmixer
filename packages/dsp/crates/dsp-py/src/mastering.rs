@@ -70,7 +70,9 @@ fn bus_compress<'py>(
 #[pyfunction]
 #[pyo3(signature = (channels, lfe_index, lf_targets, sample_rate, sub_gain_db, mid_gain_db,
                     unify_hz, punch, excite, lfe_gain_db, sub_cutoff_hz, mid_cutoff_hz,
-                    excite_blend, excite_drive, punch_fast_ms, punch_slow_ms, punch_max_db))]
+                    excite_blend, excite_drive, punch_fast_ms, punch_slow_ms, punch_max_db,
+                    decorrelate, decorr_low_hz, decorr_high_hz, decorr_sections,
+                    decorr_max_delay_ms, decorr_fast_ms, decorr_slow_ms))]
 #[allow(clippy::too_many_arguments)]
 fn bass_control<'py>(
     py: Python<'py>,
@@ -91,6 +93,13 @@ fn bass_control<'py>(
     punch_fast_ms: f64,
     punch_slow_ms: f64,
     punch_max_db: f64,
+    decorrelate: f64,
+    decorr_low_hz: f64,
+    decorr_high_hz: f64,
+    decorr_sections: usize,
+    decorr_max_delay_ms: f64,
+    decorr_fast_ms: f64,
+    decorr_slow_ms: f64,
 ) -> Vec<Bound<'py, PyArray1<f64>>> {
     let mut bed = to_bed(channels);
     py.detach(|| bass::bass_control(
@@ -112,6 +121,13 @@ fn bass_control<'py>(
             punch_fast_ms,
             punch_slow_ms,
             punch_max_db,
+            decorrelate,
+            decorr_low_hz,
+            decorr_high_hz,
+            decorr_sections,
+            decorr_max_delay_ms,
+            decorr_fast_ms,
+            decorr_slow_ms,
         },
     ));
     from_bed(py, bed)

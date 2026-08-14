@@ -1,6 +1,6 @@
 //! Live parameter edits and the rebuilds a topology change forces.
 
-use super::{build_unifier, PreviewEngine, GAIN_RAMP_MS};
+use super::{build_decorrelator, build_unifier, PreviewEngine, GAIN_RAMP_MS};
 use crate::stream::master::StreamingLimiter;
 use crate::stream::params::EngineParams;
 use crate::stream::routing::StemRouteState;
@@ -70,6 +70,7 @@ impl PreviewEngine {
             || old.master.lf_targets != self.params.master.lf_targets
         {
             self.unifier = build_unifier(self.sample_rate, n_channels, &self.params);
+            self.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params);
         }
 
         if old.master != self.params.master {
@@ -112,6 +113,7 @@ impl PreviewEngine {
             .compressor
             .map(|c| StreamingCompressor::new(c, self.sample_rate, n_channels));
         self.unifier = build_unifier(self.sample_rate, n_channels, &self.params);
+        self.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params);
     }
 
     /// Rebuild the per-stem routing state and gain smoothers to match

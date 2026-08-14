@@ -111,6 +111,113 @@ separate band-limiting filter on the send. The harmonic exciter is deliberately
 kept **off** the LFE path: tanh's third and fifth harmonics of a 40–80 Hz
 fundamental land at 120–400 Hz, above what the channel may carry.
 
+### Mid-bass decorrelation (100-300 Hz)
+
+*(Implemented by `packages/dsp/crates/dsp-core/src/mastering/decorrelate.rs`,
+mirrored for the preview by `stream::master::StreamingDecorrelator`.)*
+
+Below ~80 Hz, decorrelating across channels is inaudible at best and comb
+filters at worst (Welti & Devantier, JAES 54(5) 2006) — which is what the mono
+`lf_bus` above is for. The "deep, enveloping" multichannel low end the same
+literature describes comes from a *different* band: **100-300 Hz, decorrelated
+per channel**. That is what this stage does, and it is the second half of the
+bass-management effect.
+
+Per non-LFE channel, a cascade of `DECORR_SECTIONS` (32) 2nd-order allpass
+sections, seeded per channel index so every speaker gets its own pole set while
+the whole stage stays reproducible:
+
+- **Pole angles** are spaced at constant density on the Glasberg & Moore
+  **ERB-rate** scale across 100-300 Hz, with a per-section jitter — roughly one
+  pole per critical band rather than per hertz (Kermit-Canfield & Abel,
+  "Signal Decorrelation Using Perceptually Informed Allpass Filters", DAFx-16).
+  100-300 Hz spans only ~4.4 ERB units, which is why 8 sections suffice; the
+  paper's 500/1000-section smearing thresholds are full-band figures and do not
+  apply here.
+- **Channels are staggered deterministically** across the group-delay budget
+  (`DELAY_STAGGER`) rather than each drawing from one common distribution.
+  Independent draws converge on the same average response over a band this
+  narrow: measured mean pairwise |correlation| across eight channels got
+  *worse* with more sections, 0.64 at 8 sections rising to 0.95 at 128.
+- **Pole radius** is drawn in `[0.5, r_max)`, with `r_max` set from the
+  `DECORR_MAX_DELAY_MS` (30 ms) ceiling via a section's peak group delay
+  `2(1+r)/(1-r)`, and hard-capped at 0.95. Past ~30 ms the cascade reads as a
+  room rather than as width.
+
+**Only the sustained component is decorrelated.** A fast/slow envelope pair on
+the band (30 ms / 300 ms) yields a sustain weight `clamp(slow/fast, 0, 1)`: an
+onset drives the fast envelope above the slow one and gates the cascade out, so
+transients pass unsmeared. Both envelopes are primed on the first sample —
+started cold, the slow one's rise reads a programme's opening as one long onset.
+
+### Why the band split is zero-phase
+
+Reconstruction is `x - band + allpass(band)`, whose response is
+`1 + B(w)*(A(w) - 1)`. Inside the pass band `|B| = 1`, and that collapses to
+`|A| = 1` **only when `B` is real**. Run causally, `B` carries its own phase lag
+and the rotated copy beats against the residual — a measured **3 dB dip at
+200 Hz**. So the band is taken zero-phase, the same discipline `lf_unify` uses
+for its low band.
+
+Two consequences follow:
+
+- The band-pass is **4th order**. A 2nd-order pass never reaches unity across
+  only 1.6 octaves, which spreads ripple over the whole band instead of its
+  edges.
+- Its zero-phase pass needs its own, longer horizon than the unifier's:
+  `DECORR_HORIZON_MS` = **300 ms** against the unifier's 100 ms. A 4th-order
+  100-300 Hz band-pass is still 2e-6 of peak at 100 ms where the unifier's
+  2nd-order low-pass is at 8e-20; truncating there showed up directly as a
+  block-size dependence around 1e-8 in the preview.
+
+At the two -3 dB skirts `|B| ~ 0.71`, so some ripple there is inherent to
+replacing a band with a phase-rotated copy of itself. It scales with
+`decorrelate` and is the documented cost of the stage, not a defect.
+
+### What this stage can and cannot do
+
+Decorrelating a band only ~180 Hz wide is physically bounded. Two channels
+decorrelate when their group-delay difference satisfies `dtau * bandwidth >~ 1`,
+which here means **~5.6 ms of separation per channel pair**. The 30 ms ceiling
+therefore supplies enough separation for a handful of distinct classes, not for
+eleven independent ones — `DELAY_STAGGER` has six, and a 7.1.4 bed wraps.
+
+Measured on band-limited noise, mean pairwise |correlation| across eight
+channels, and in-band level error at partial depth:
+
+| sections | mean \|corr\| | level at depth 0.25 | level at depth 0.5 |
+|---|---|---|---|
+| 8 | 0.64 | −2.1 dB | −2.7 dB |
+| 16 | 0.57 | +0.7 dB | +0.8 dB |
+| 32 | 0.49 | +0.1 dB | +0.1 dB |
+| 96 | 0.37 | −0.2 dB | −0.3 dB |
+
+Below ~32 sections the cascade's output is still *anti-correlated* with the dry
+band (−0.31 at 8 sections), so the blend cancels rather than spreads and the
+in-band level drops. 32 is the smallest count at which the level holds. So the
+stage **reduces** the coherent sum rather than eliminating it, and that is a
+bound of the band, not a tuning shortfall.
+
+### What it does to level
+
+The cascade is unity-magnitude, so **each channel keeps its own level** (within
+about a dB — the sustain gate settles near 0.97 on steady tones, and a partial
+blend of two decorrelated signals sits a few tenths down). What drops is the
+**coherent sum at the listening position**: two independently-allpassed copies
+add at ~3 dB rather than 6. That reduction *is* the enveloping effect, and it is
+the deliberate inverse of the `Sigma-a = 1` invariant the unified band below
+holds to.
+
+The band never reaches below the unifier: the low corner is clamped up to
+`unify_hz`, and the stage disables itself outright if that leaves no band. So
+`Sigma-a = 1` is untouched — the two bands are disjoint by construction, which
+is also what lets the delta be derived from the pre-unification signal and the
+preview read its look-ahead from the same queue the unifier uses.
+
+Every shipped profile ships with `decorrelate = 0`. It is opt-in via
+`mastering_bass_decorrelate` / `--mastering-bass-decorrelate` / the web panel's
+Placement > Width control.
+
 ### Known asymmetry
 
 The EQ and reference-match stages skip LFE for their spectral correction
@@ -370,6 +477,9 @@ surface is `--stem-pan STEM=VALUE`.
 - [ ] Bass management: `unify_hz` clamped to 40–120 Hz so the bus stays inside the LFE bandwidth limit
 - [ ] Bass management: an LFE share carries the −10 dB authoring gain, so playback's +10 dB restores it exactly
 - [ ] Bass management: `split` is flagged as downmix-lossy; `add` leaves the mains bit-identical to `off`
+- [ ] Bass management: decorrelation stays at or above `unify_hz`, so the mono LF bus and its Sigma-a = 1 invariant are untouched
+- [ ] Bass management: the decorrelator's band split is zero-phase (a causal split combs ~3 dB at 200 Hz)
+- [ ] Bass management: allpass group delay is capped at 30 ms, past which the cascade reads as reverb rather than width
 - [ ] Downmix centre coefficient a₀ = 0.707 (−3.01 dB) default
 - [ ] Downmix surround coefficient b₀ = 0.707 (−3.01 dB) default; alternative 0.500
 - [ ] Sound system designator uses U+M+B format (e.g. 4+5+0 for System D)

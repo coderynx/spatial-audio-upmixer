@@ -30,7 +30,10 @@ fn params_json(with_master: bool) -> String {
                      "punch": 0.25, "excite": true, "lfe_gain_db": 1.0,
                      "sub_cutoff_hz": 80.0, "mid_cutoff_hz": 200.0,
                      "excite_blend": 0.15, "excite_drive": 3.0,
-                     "punch_fast_ms": 10.0, "punch_slow_ms": 120.0, "punch_max_db": 6.0},
+                     "punch_fast_ms": 10.0, "punch_slow_ms": 120.0, "punch_max_db": 6.0,
+                     "decorrelate": 0.35, "decorr_low_hz": 100.0, "decorr_high_hz": 300.0,
+                     "decorr_sections": 32, "decorr_max_delay_ms": 30.0,
+                     "decorr_fast_ms": 30.0, "decorr_slow_ms": 300.0},
             "limiter": {"ceiling_dbtp": -1.0, "lookahead_ms": 5.0, "release_ms": 50.0,
                         "safety_margin_db": 0.1},
             "lf_targets": [[0, 0.4], [1, 0.4], [2, 0.1], [3, 0.1]]
@@ -190,6 +193,13 @@ fn streaming_mastering_matches_the_offline_chain() {
             punch_fast_ms: 10.0,
             punch_slow_ms: 120.0,
             punch_max_db: 6.0,
+            decorrelate: 0.35,
+            decorr_low_hz: 100.0,
+            decorr_high_hz: 300.0,
+            decorr_sections: 32,
+            decorr_max_delay_ms: 30.0,
+            decorr_fast_ms: 30.0,
+            decorr_slow_ms: 300.0,
         },
     );
     lookahead_limit(

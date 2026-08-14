@@ -1,6 +1,7 @@
 //! Multichannel low-end control: band gains, LF unification with
-//! redistribution, transient shaping, harmonic excitation, LFE trim. Profile
-//! values, the spread tables and the target-weight arithmetic are owned by
+//! redistribution, transient shaping, harmonic excitation, mid-bass
+//! decorrelation, LFE trim. Profile values, the spread tables and the
+//! target-weight arithmetic are owned by
 //! `packages/core/src/mastering/bass.py`.
 
 use crate::kernels::biquad::sosfilt;
@@ -33,6 +34,13 @@ pub struct BassParams {
     pub punch_fast_ms: f64,
     pub punch_slow_ms: f64,
     pub punch_max_db: f64,
+    pub decorrelate: f64,
+    pub decorr_low_hz: f64,
+    pub decorr_high_hz: f64,
+    pub decorr_sections: usize,
+    pub decorr_max_delay_ms: f64,
+    pub decorr_fast_ms: f64,
+    pub decorr_slow_ms: f64,
 }
 
 /// Boost or cut a band additively: `out = (x - band) + band * gain`.
@@ -57,8 +65,8 @@ fn apply_band_gain(
         .collect()
 }
 
-/// The low band, zero-phase so the complement `x - low` stays time-aligned.
-fn low_band(sos: &[[f64; 6]], x: &[f64]) -> Vec<f64> {
+/// A band taken zero-phase, so the complement `x - band` stays time-aligned.
+pub(crate) fn zero_phase(sos: &[[f64; 6]], x: &[f64]) -> Vec<f64> {
     if x.len() > UNIFY_FILTFILT_MIN_LEN {
         sosfiltfilt(sos, x).unwrap_or_else(|| sosfilt(sos, x))
     } else {
@@ -125,7 +133,7 @@ fn lf_unify(
     let nyq = sample_rate as f64 / 2.0;
     let sos = butter_sos(2, (unify_hz / nyq).clamp(1e-4, 0.999), BandType::Low);
 
-    let lows: Vec<Vec<f64>> = bed_idx.iter().map(|&i| low_band(&sos, &bed[i])).collect();
+    let lows: Vec<Vec<f64>> = bed_idx.iter().map(|&i| zero_phase(&sos, &bed[i])).collect();
     let n = lows.iter().map(|l| l.len()).max().unwrap_or(0);
     if n == 0 {
         return;
@@ -191,9 +199,26 @@ pub fn bass_control(
         }
     }
 
+    // Taken before unification, which is what lets the streaming mirror read
+    // its look-ahead out of the same pre-unification queue. The two bands are
+    // disjoint — the decorrelator's low corner is clamped up to `unify_hz` —
+    // so nothing the unifier does belongs in this band anyway.
+    let bands = super::decorrelate::band_sos(sample_rate, p).map(|sos| {
+        bed_idx
+            .iter()
+            .map(|&i| zero_phase(&sos, &bed[i]))
+            .collect::<Vec<_>>()
+    });
+
     if let Some(unify_hz) = p.unify_hz {
         if !bed_idx.is_empty() && !lf_targets.is_empty() {
             lf_unify(bed, lfe, lf_targets, &bed_idx, sample_rate, unify_hz, p);
+        }
+    }
+
+    if let Some(bands) = bands {
+        for (&i, band) in bed_idx.iter().zip(bands.iter()) {
+            super::decorrelate::Decorrelator::new(i, sample_rate, p).run(&mut bed[i], band);
         }
     }
 
@@ -226,6 +251,13 @@ mod tests {
             punch_fast_ms: 10.0,
             punch_slow_ms: 120.0,
             punch_max_db: 6.0,
+            decorrelate: 0.0,
+            decorr_low_hz: 100.0,
+            decorr_high_hz: 300.0,
+            decorr_sections: 32,
+            decorr_max_delay_ms: 30.0,
+            decorr_fast_ms: 30.0,
+            decorr_slow_ms: 300.0,
         }
     }
 

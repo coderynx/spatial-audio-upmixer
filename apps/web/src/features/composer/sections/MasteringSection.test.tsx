@@ -203,13 +203,16 @@ describe("MasteringSection bass controls", () => {
     expect(screen.getAllByText("Bass from every speaker").length).toBeGreaterThan(0);
   });
 
-  it("hides the whole placement group on a layout with nowhere to place bass", () => {
-    // Stereo has two bed channels and no LFE, so every placement control is
-    // inert. Showing them dimmed is what made the panel unreadable.
+  it("hides spread and the subwoofer on a layout with nowhere to place bass", () => {
+    // Stereo has two bed channels and no LFE, so redistribution has nothing
+    // to act on. Showing those dimmed is what made the panel unreadable.
     renderAt("stereo");
-    expect(screen.queryByText("Placement")).toBeNull();
     expect(screen.queryByText("Spread")).toBeNull();
     expect(screen.queryByText("Subwoofer")).toBeNull();
+    // Width still applies: decorrelating FL against FR is the stereo case the
+    // stage exists for, so the group itself stays.
+    expect(screen.getByText("Placement")).toBeInTheDocument();
+    expect(screen.getByLabelText("Width")).toBeInTheDocument();
   });
 
   it("shows spread but not the subwoofer on a layout with no LFE", () => {

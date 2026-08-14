@@ -204,6 +204,13 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
             punch_fast_ms: c.punchFastMs,
             punch_slow_ms: c.punchSlowMs,
             punch_max_db: c.punchMaxDb,
+            decorrelate: bass.decorrelate,
+            decorr_low_hz: c.decorrLowHz,
+            decorr_high_hz: c.decorrHighHz,
+            decorr_sections: c.decorrSections,
+            decorr_max_delay_ms: c.decorrMaxDelayMs,
+            decorr_fast_ms: c.decorrFastMs,
+            decorr_slow_ms: c.decorrSlowMs,
           }
         : null,
       limiter:

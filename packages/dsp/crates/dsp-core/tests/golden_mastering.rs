@@ -115,6 +115,7 @@ fn bus_compression_matches_python() {
 fn bass_control_matches_python() {
     for name in [
         "bass_boost", "bass_cut", "bass_mono", "bass_enhance", "bass_deep", "bass_cinema",
+        "bass_decorrelate",
     ] {
         let c = Case::load(name);
         let (mut bed, names) = stage_bed(&c);
@@ -148,6 +149,13 @@ fn bass_control_matches_python() {
             punch_fast_ms: c.param_f64("punch_fast_ms"),
             punch_slow_ms: c.param_f64("punch_slow_ms"),
             punch_max_db: c.param_f64("punch_max_db"),
+            decorrelate: c.param_f64("decorrelate"),
+            decorr_low_hz: c.param_f64("decorr_low_hz"),
+            decorr_high_hz: c.param_f64("decorr_high_hz"),
+            decorr_sections: c.param_usize("decorr_sections"),
+            decorr_max_delay_ms: c.param_f64("decorr_max_delay_ms"),
+            decorr_fast_ms: c.param_f64("decorr_fast_ms"),
+            decorr_slow_ms: c.param_f64("decorr_slow_ms"),
         };
         bass_control(&mut bed, lfe, &lf_targets, c.param_usize("sample_rate") as u32, &p);
         assert_bed(&c, &bed, &names);

@@ -121,6 +121,7 @@ class UpmixConfig:
     mastering_bass_lfe_mode: str | None = None
     mastering_bass_lfe_send: float | None = None
     mastering_bass_lfe_gain_db: float | None = None
+    mastering_bass_decorrelate: float | None = None
 
     mastering_match_ref_path: str | None = None
     mastering_match_ref_strength: float = 0.7

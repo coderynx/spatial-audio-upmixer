@@ -45,7 +45,7 @@ def _make_bc(**kwargs) -> BassController:
     defaults = dict(
         sub_gain_db=0.0, mid_gain_db=0.0, unify_hz=None, spread="bed",
         punch=0.0, excite=False, lfe_mode="off", lfe_send=0.0, lfe_gain_db=0.0,
-        lfe_authoring_gain=LFE_AUTHORING_GAIN, sample_rate=44100,
+        decorrelate=0.0, lfe_authoring_gain=LFE_AUTHORING_GAIN, sample_rate=44100,
     )
     defaults.update(kwargs)
     return BassController(**defaults)
@@ -54,7 +54,7 @@ def _make_bc(**kwargs) -> BassController:
 class TestBassProfiles:
     def test_all_profiles_have_required_keys(self):
         required = {"sub_gain_db", "mid_gain_db", "unify_hz", "spread", "punch",
-                    "excite", "lfe_mode", "lfe_send", "lfe_gain_db"}
+                    "excite", "lfe_mode", "lfe_send", "lfe_gain_db", "decorrelate"}
         for name, p in BASS_PROFILES.items():
             assert required <= set(p.keys()), f"Profile '{name}' missing keys"
 
@@ -395,3 +395,103 @@ class TestExciteOverrideParity:
         off = _make_bc(excite=False, **args).process(chs)
         on = _make_bc(excite=True, **args).process(chs)
         assert np.sum(on["FL"] ** 2) > np.sum(off["FL"] ** 2)
+
+
+class TestBassDecorrelate:
+    """The 100-300 Hz band, spread across channels by an allpass cascade.
+
+    Everything below ``unify_hz`` is deliberately untouched — that band is
+    mono by design and carries the Sigma-a = 1 invariant.
+    """
+
+    def _mid_bass_bed(self, n=96000, sample_rate=48000):
+        # Noise already confined to the band, so total energy is in-band
+        # energy. A single tone would only probe one frequency, where any
+        # blend of a signal with a phase-rotated copy of itself combs.
+        from scipy.signal import butter, sosfiltfilt
+
+        rng = np.random.default_rng(7)
+        sos = butter(4, [120 / (sample_rate / 2), 280 / (sample_rate / 2)],
+                     "bandpass", output="sos")
+        band = sosfiltfilt(sos, rng.standard_normal(n)) * 0.3
+        return {name: band.copy() for name in ("FL", "FR", "C", "SL", "SR")}
+
+    def test_zero_is_a_bypass(self):
+        chs = self._mid_bass_bed()
+        out = _make_bc(decorrelate=0.0, sample_rate=48000).process(chs)
+        for name in chs:
+            assert np.array_equal(out[name], chs[name])
+
+    def test_channels_diverge_from_each_other(self):
+        chs = self._mid_bass_bed()
+        out = _make_bc(decorrelate=1.0, sample_rate=48000).process(chs)
+        settled = slice(24000, None)
+        assert not np.allclose(out["FL"][settled], out["FR"][settled])
+        assert not np.allclose(out["FL"][settled], out["SL"][settled])
+
+    def test_each_channel_keeps_its_own_level(self):
+        chs = self._mid_bass_bed()
+        out = _make_bc(decorrelate=1.0, sample_rate=48000).process(chs)
+        settled = slice(24000, None)
+        # The cascade is unity-magnitude and the blend is constant-power, so
+        # the band holds its level. Under a dB is the claim — decorrelation
+        # must not become a gain control.
+        for name in chs:
+            ratio = np.sum(out[name][settled] ** 2) / np.sum(chs[name][settled] ** 2)
+            assert abs(10 * np.log10(ratio)) < 1.0, f"{name} level moved by {ratio}"
+
+    def test_the_level_holds_at_partial_depth_too(self):
+        # Where a linear blend would fail: it averages (1-w)**2 + w**2 of the
+        # power, since the band and its rotated copy are decorrelated.
+        chs = self._mid_bass_bed()
+        settled = slice(24000, None)
+        for depth in (0.25, 0.5, 0.7):
+            out = _make_bc(decorrelate=depth, sample_rate=48000).process(dict(chs))
+            ratio = np.sum(out["FL"][settled] ** 2) / np.sum(chs["FL"][settled] ** 2)
+            assert abs(10 * np.log10(ratio)) < 1.0, f"depth {depth} moved by {ratio}"
+
+    def test_the_coherent_sum_drops(self):
+        chs = self._mid_bass_bed()
+        out = _make_bc(decorrelate=1.0, sample_rate=48000).process(chs)
+        settled = slice(24000, None)
+        before = sum(chs[name][settled] for name in chs)
+        after = sum(out[name][settled] for name in chs)
+        assert np.sum(after ** 2) < np.sum(before ** 2) * 0.9
+
+    def test_the_unified_sub_band_survives_intact(self):
+        # Unified at 90 Hz with a 40 Hz source. The decorrelator's band starts
+        # at 100 Hz, so what reaches the mono bus is only the band-pass
+        # skirt — bounded, not zero, the same way any soft crossover leaks.
+        from scipy.signal import butter, sosfiltfilt
+
+        chs = _bass_in_front()
+        args = dict(unify_hz=90.0, spread="bed", sample_rate=48000)
+        plain = _make_bc(decorrelate=0.0, **args).process(chs)
+        spread = _make_bc(decorrelate=1.0, **args).process(chs)
+
+        sos = butter(2, 90 / 24000, "low", output="sos")
+        settled = slice(24000, None)
+        low_plain = sosfiltfilt(sos, sum(plain.values()))[settled]
+        low_spread = sosfiltfilt(sos, sum(spread.values()))[settled]
+        moved = np.sum((low_spread - low_plain) ** 2) / np.sum(low_plain ** 2)
+        assert moved < 1e-6, f"the mono bus moved by {moved}"
+
+    def test_output_stays_finite(self):
+        chs = self._mid_bass_bed()
+        out = _make_bc(decorrelate=1.0, unify_hz=90.0, sample_rate=48000).process(chs)
+        for name in out:
+            assert np.all(np.isfinite(out[name])), name
+
+    def test_the_config_param_reaches_the_chain(self):
+        from upmixer.config import UpmixConfig
+        from upmixer.mastering.chain import MasteringChain
+        from upmixer.formats import FORMAT_MAP
+
+        cfg = UpmixConfig(mastering_bass_decorrelate=0.5, loudness_normalize=False)
+        chs = self._mid_bass_bed(n=48000)
+        fmt = FORMAT_MAP["5.1"]
+        bed = {ch.value: chs.get(ch.value, np.zeros(48000)) for ch in fmt.channels}
+        out, _ = MasteringChain(cfg).process(dict(bed), 48000, fmt)
+        settled = slice(24000, None)
+        assert not np.allclose(out["FL"][settled], bed["FL"][settled])
+        assert not np.allclose(out["FL"][settled], out["FR"][settled])

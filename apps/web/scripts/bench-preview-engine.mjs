@@ -152,6 +152,11 @@ function params(mode, decodeTaps) {
         sub_gain_db: 1, mid_gain_db: 0.5, unify_hz: 120, punch: 0.3, excite: true, lfe_gain_db: 0,
         sub_cutoff_hz: 80, mid_cutoff_hz: 200, excite_blend: 0.3, excite_drive: 2,
         punch_fast_ms: 10, punch_slow_ms: 120, punch_max_db: 6,
+        // Worst case for the decorrelator too: full depth, so it runs a
+        // zero-phase band split plus an 8-section cascade on all 11 non-LFE
+        // channels rather than being skipped.
+        decorrelate: 1, decorr_low_hz: 100, decorr_high_hz: 300, decorr_sections: 32,
+        decorr_max_delay_ms: 30, decorr_fast_ms: 30, decorr_slow_ms: 300,
       },
       limiter: mode === "native"
         ? { ceiling_dbtp: -1, lookahead_ms: 5, release_ms: 50, safety_margin_db: 0.3 }

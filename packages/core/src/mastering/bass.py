@@ -17,10 +17,16 @@ Four processing stages (all optional):
    leaves the *coherent* low-frequency level unchanged: N channels carrying
    correlated bass sum at 20·log10(N) dB, so redistributing without that
    invariant is a level error, not a spread.
-3. **Transient shaping and harmonic excitation** — both run once, on the mono
+3. **Mid-bass decorrelation** — an ERB-warped allpass cascade per channel over
+   the 100-300 Hz band, gated to the sustained part of the signal. Below
+   ``unify_hz`` nothing is touched: that band is mono by design. Decorrelating
+   here is what the research attributes the "enveloping" multichannel low end
+   to, and it deliberately lowers the *summed* level in the band while leaving
+   each channel's own level alone.
+4. **Transient shaping and harmonic excitation** — both run once, on the mono
    bus, rather than per channel. The exciter is kept off the LFE: tanh's third
    and fifth harmonics land above the 120 Hz the channel is band-limited to.
-4. **LFE gain trim** — simple linear gain on the LFE channel only (dB).
+5. **LFE gain trim** — simple linear gain on the LFE channel only (dB).
 
 LFE modes
 ---------
@@ -71,6 +77,7 @@ _rbk("mastering", {
         "lfe_mode":    ("config", "mastering_bass_lfe_mode"),
         "lfe_send":    ("config", "mastering_bass_lfe_send"),
         "lfe_gain_db": ("config", "mastering_bass_lfe_gain_db"),
+        "decorrelate": ("config", "mastering_bass_decorrelate"),
     },
 })
 del _rbk
@@ -79,27 +86,31 @@ del _rbk
 BASS_PROFILES: dict[str, dict] = {
     "boost": dict(
         sub_gain_db=2.0, mid_gain_db=1.0, unify_hz=None, spread="bed",
-        punch=0.0, excite=False, lfe_mode="off", lfe_send=0.0, lfe_gain_db=1.5,
+        punch=0.0, excite=False, lfe_mode="off", lfe_send=0.0, lfe_gain_db=1.5, decorrelate=0.0,
     ),
     "cut": dict(
         sub_gain_db=-2.5, mid_gain_db=-1.5, unify_hz=None, spread="bed",
-        punch=0.0, excite=False, lfe_mode="off", lfe_send=0.0, lfe_gain_db=-1.0,
+        punch=0.0, excite=False, lfe_mode="off", lfe_send=0.0, lfe_gain_db=-1.0, decorrelate=0.0,
     ),
     "mono": dict(
         sub_gain_db=0.0, mid_gain_db=0.0, unify_hz=90.0, spread="front",
         punch=0.0, excite=False, lfe_mode="off", lfe_send=0.0, lfe_gain_db=0.0,
+        decorrelate=0.0,
     ),
     "enhance": dict(
         sub_gain_db=1.5, mid_gain_db=0.5, unify_hz=90.0, spread="bed",
         punch=0.2, excite=True, lfe_mode="add", lfe_send=0.25, lfe_gain_db=1.0,
+        decorrelate=0.0,
     ),
     "deep": dict(
         sub_gain_db=1.0, mid_gain_db=0.5, unify_hz=90.0, spread="bed",
         punch=0.25, excite=True, lfe_mode="add", lfe_send=0.3, lfe_gain_db=1.0,
+        decorrelate=0.0,
     ),
     "cinema": dict(
         sub_gain_db=1.0, mid_gain_db=0.0, unify_hz=80.0, spread="bed",
         punch=0.0, excite=False, lfe_mode="split", lfe_send=0.5, lfe_gain_db=0.0,
+        decorrelate=0.0,
     ),
 }
 
@@ -129,6 +140,17 @@ EXCITE_DRIVE: float = 3.0
 PUNCH_FAST_MS: float = 10.0
 PUNCH_SLOW_MS: float = 120.0
 PUNCH_MAX_DB: float = 6.0
+
+DECORR_LOW_HZ: float = 100.0
+DECORR_HIGH_HZ: float = 300.0
+DECORR_SECTIONS: int = 32
+# Kermit-Canfield & Abel put the reverb-vs-width threshold near here; past it
+# the cascade reads as a room rather than as spread.
+DECORR_MAX_DELAY_MS: float = 30.0
+# Slow enough not to track the band's own 100-300 Hz carrier, which would ride
+# the gate down on steady tones.
+DECORR_FAST_MS: float = 30.0
+DECORR_SLOW_MS: float = 300.0
 
 
 def resolve_lf_targets(
@@ -203,6 +225,9 @@ class BassController:
         lfe_send:           LFE share of the LF bus [0.0-1.0].
         lfe_gain_db:        dB gain trim applied to the LFE channel only.
                             0.0 = no change.
+        decorrelate:        Mid-bass decorrelation depth [0.0-1.0], applied to
+                            the sustained part of the 100-300 Hz band of every
+                            non-LFE channel. 0.0 = bypass.
         lfe_authoring_gain: BS.775-4 Annex 7 LFE authoring gain, linear.
         sample_rate:        Audio sample rate in Hz.
     """
@@ -218,6 +243,7 @@ class BassController:
         lfe_mode: str,
         lfe_send: float,
         lfe_gain_db: float,
+        decorrelate: float,
         lfe_authoring_gain: float,
         sample_rate: int,
     ) -> None:
@@ -234,6 +260,7 @@ class BassController:
         self._lfe_mode = lfe_mode
         self._lfe_send = float(lfe_send)
         self._lfe_db = float(lfe_gain_db)
+        self._decorrelate = float(np.clip(decorrelate, 0.0, 1.0))
         self._lfe_authoring_gain = float(lfe_authoring_gain)
         self._sr = sample_rate
 
@@ -284,6 +311,13 @@ class BassController:
             PUNCH_FAST_MS,
             PUNCH_SLOW_MS,
             PUNCH_MAX_DB,
+            self._decorrelate,
+            DECORR_LOW_HZ,
+            DECORR_HIGH_HZ,
+            DECORR_SECTIONS,
+            DECORR_MAX_DELAY_MS,
+            DECORR_FAST_MS,
+            DECORR_SLOW_MS,
         )
 
         if self._sub_db != 0.0 or self._mid_db != 0.0:
@@ -300,6 +334,11 @@ class BassController:
             _log.debug("  BassController: punch %+.2f", self._punch)
         if self._excite:
             _log.debug("  BassController: harmonic exciter enabled")
+        if self._decorrelate > 0.0:
+            _log.debug(
+                "  BassController: %.0f-%.0f Hz decorrelated %.2f over %d sections",
+                DECORR_LOW_HZ, DECORR_HIGH_HZ, self._decorrelate, DECORR_SECTIONS,
+            )
         if self._lfe_db != 0.0:
             _log.debug("  BassController: LFE %+.1f dB", self._lfe_db)
 

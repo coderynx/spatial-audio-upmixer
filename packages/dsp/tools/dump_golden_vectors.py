@@ -232,9 +232,10 @@ def _write_stage(name: str, out: dict[str, np.ndarray], params: dict, tol: float
 def dump_mastering() -> None:
     from upmixer.config import UpmixConfig
     from upmixer.mastering.bass import (
-        BASS_PROFILES, EXCITE_BLEND, EXCITE_DRIVE, MID_CUTOFF_HZ,
-        PUNCH_FAST_MS, PUNCH_MAX_DB, PUNCH_SLOW_MS, SUB_CUTOFF_HZ,
-        BassController, resolve_lf_targets,
+        BASS_PROFILES, DECORR_FAST_MS, DECORR_HIGH_HZ, DECORR_LOW_HZ,
+        DECORR_MAX_DELAY_MS, DECORR_SECTIONS, DECORR_SLOW_MS, EXCITE_BLEND,
+        EXCITE_DRIVE, MID_CUTOFF_HZ, PUNCH_FAST_MS, PUNCH_MAX_DB,
+        PUNCH_SLOW_MS, SUB_CUTOFF_HZ, BassController, resolve_lf_targets,
     )
     from upmixer.mastering.compressor import COMP_PROFILES, BusCompressor
     from upmixer.mastering.eq import EQ_PROFILES, SpectralShaper, _build_fir
@@ -264,8 +265,12 @@ def dump_mastering() -> None:
         _write_stage(f"comp_{profile}", out, dict(params), 1e-12)
 
     lfe_authoring_gain = UpmixConfig().lfe_gain
-    for profile in BASS_PROFILES:
-        params = BASS_PROFILES[profile]
+    # Every shipped profile leaves decorrelation off, so it needs a case of its
+    # own for the cross-language check to cover the cascade at all.
+    bass_cases = dict(BASS_PROFILES)
+    bass_cases["decorrelate"] = {**BASS_PROFILES["deep"], "decorrelate": 0.6}
+    for profile in bass_cases:
+        params = bass_cases[profile]
         out = BassController(
             sample_rate=MASTERING_SR, lfe_authoring_gain=lfe_authoring_gain, **params
         ).process(dict(bed))
@@ -290,6 +295,12 @@ def dump_mastering() -> None:
                 "punch_fast_ms": PUNCH_FAST_MS,
                 "punch_slow_ms": PUNCH_SLOW_MS,
                 "punch_max_db": PUNCH_MAX_DB,
+                "decorr_low_hz": DECORR_LOW_HZ,
+                "decorr_high_hz": DECORR_HIGH_HZ,
+                "decorr_sections": DECORR_SECTIONS,
+                "decorr_max_delay_ms": DECORR_MAX_DELAY_MS,
+                "decorr_fast_ms": DECORR_FAST_MS,
+                "decorr_slow_ms": DECORR_SLOW_MS,
                 "lf_targets": [[i, w] for i, w in targets],
             },
             1e-11,

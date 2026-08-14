@@ -58,6 +58,7 @@ export type Manifest = {
       lfe_mode: string | null;
       lfe_send: number | null;
       lfe_gain_db: number | null;
+      decorrelate: number | null;
     };
   };
   routing: {
@@ -170,6 +171,7 @@ export const defaultManifest: Manifest = {
       lfe_mode: null,
       lfe_send: null,
       lfe_gain_db: null,
+      decorrelate: null,
     },
   },
   routing: {

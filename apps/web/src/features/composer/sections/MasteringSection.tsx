@@ -484,11 +484,10 @@ export function MasteringSection({
         </FieldGroup>
 
         {/* Bass management redistributes the low band across a speaker array.
-            A layout that offers neither a wider bed nor a subwoofer has
-            nothing for these to act on, so they are not rendered at all
-            rather than shown dimmed. */}
-        {(canSpread || hasLfe) && (
-          <FieldGroup title="Placement">
+            Spread and the subwoofer feed need a layout that offers one, so
+            they are not rendered at all rather than shown dimmed. Width acts
+            between any two channels, so the group itself always renders. */}
+        <FieldGroup title="Placement">
             {canSpread && (
               <SelectField
                 label="Spread"
@@ -536,8 +535,21 @@ export function MasteringSection({
                 </div>
               </>
             )}
+            {/* Decorrelation spreads the sustained 100-300 Hz band across
+                channels; everything under the crossover stays mono. */}
+            <div className={POT_GRID}>
+              <NullablePotField
+                label="Width"
+                value={bass.decorrelate}
+                defaultValue={0}
+                min={0}
+                max={1}
+                step={0.01}
+                disabled={bassOff}
+                onChange={(decorrelate) => setMastering({ bass: { ...bass, decorrelate } })}
+              />
+            </div>
           </FieldGroup>
-        )}
       </EffectPanel>
     </div>
   );

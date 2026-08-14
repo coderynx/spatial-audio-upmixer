@@ -124,6 +124,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.mastering_bass_lfe_send = max(0.0, min(1.0, args.mastering_bass_lfe_send))
     if args.mastering_bass_lfe is not None:
         config.mastering_bass_lfe_gain_db = args.mastering_bass_lfe
+    if args.mastering_bass_decorrelate is not None:
+        config.mastering_bass_decorrelate = max(0.0, min(1.0, args.mastering_bass_decorrelate))
     if args.match_reference is not None:
         config.mastering_match_ref_path = args.match_reference
     if args.match_reference_strength is not None:

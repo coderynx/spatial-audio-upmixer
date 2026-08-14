@@ -228,6 +228,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "mastering_bass_lfe_mode":       ("mastering_bass_lfe_mode",       str),
     "mastering_bass_lfe_send":       ("mastering_bass_lfe_send",       float),
     "mastering_bass_lfe_gain_db":    ("mastering_bass_lfe_gain_db",    float),
+    "mastering_bass_decorrelate":    ("mastering_bass_decorrelate",    float),
     "mastering_match_ref_path":     ("mastering_match_ref_path",     str),
     "mastering_match_ref_strength": ("mastering_match_ref_strength",  float),
     "mastering_match_ref_spectrum": ("mastering_match_ref_spectrum",  bool),

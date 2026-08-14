@@ -1,16 +1,16 @@
 {
-  "name": "bass_boost",
+  "name": "bass_decorrelate",
   "params": {
-    "sub_gain_db": 2.0,
-    "mid_gain_db": 1.0,
-    "unify_hz": -1.0,
+    "sub_gain_db": 1.0,
+    "mid_gain_db": 0.5,
+    "unify_hz": 90.0,
     "spread": "bed",
-    "punch": 0.0,
-    "excite": false,
-    "lfe_mode": "off",
-    "lfe_send": 0.0,
-    "lfe_gain_db": 1.5,
-    "decorrelate": 0.0,
+    "punch": 0.25,
+    "excite": true,
+    "lfe_mode": "add",
+    "lfe_send": 0.3,
+    "lfe_gain_db": 1.0,
+    "decorrelate": 0.6,
     "sub_cutoff_hz": 80.0,
     "mid_cutoff_hz": 200.0,
     "excite_blend": 0.15,
@@ -24,7 +24,24 @@
     "decorr_max_delay_ms": 30.0,
     "decorr_fast_ms": 30.0,
     "decorr_slow_ms": 300.0,
-    "lf_targets": [],
+    "lf_targets": [
+      [
+        0,
+        0.3333333333333333
+      ],
+      [
+        1,
+        0.3333333333333333
+      ],
+      [
+        2,
+        0.3333333333333333
+      ],
+      [
+        3,
+        0.09486832980505137
+      ]
+    ],
     "channels": [
       "FL",
       "FR",
@@ -38,19 +55,19 @@
   "tolerance": 1e-11,
   "arrays": {
     "ch_FL": {
-      "file": "bass_boost.ch_FL.f64",
+      "file": "bass_decorrelate.ch_FL.f64",
       "len": 12000
     },
     "ch_FR": {
-      "file": "bass_boost.ch_FR.f64",
+      "file": "bass_decorrelate.ch_FR.f64",
       "len": 12000
     },
     "ch_C": {
-      "file": "bass_boost.ch_C.f64",
+      "file": "bass_decorrelate.ch_C.f64",
       "len": 12000
     },
     "ch_LFE": {
-      "file": "bass_boost.ch_LFE.f64",
+      "file": "bass_decorrelate.ch_LFE.f64",
       "len": 12000
     }
   }
