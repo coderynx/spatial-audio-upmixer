@@ -1,4 +1,4 @@
-"""Tests for upmixer.mastering_bass — BassController + BASS_PROFILES."""
+"""Tests for upmixer.mastering.bass — BassController + BASS_PROFILES."""
 from __future__ import annotations
 
 import numpy as np
@@ -7,8 +7,14 @@ import pytest
 from upmixer.mastering.bass import (
     BASS_PROFILES,
     BASS_PROFILE_NAMES,
+    LF_SPREADS,
+    LFE_MODES,
     BassController,
+    resolve_lf_targets,
 )
+
+LFE_AUTHORING_GAIN = 0.31622776601683794
+LFE_REPLAY_GAIN = 10.0 ** (10.0 / 20.0)
 
 
 def _channels_51(n: int = 44100, amplitude: float = 0.3) -> dict[str, np.ndarray]:
@@ -24,11 +30,22 @@ def _channels_714(n: int = 44100, amplitude: float = 0.3) -> dict[str, np.ndarra
             ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"]}
 
 
+def _bass_in_front(n: int = 96000, sample_rate: int = 48000) -> dict[str, np.ndarray]:
+    """A stereo source's low end as the router leaves it: front pair only."""
+    t = np.arange(n) / sample_rate
+    bass = (0.5 * np.sin(2 * np.pi * 40 * t)).astype(np.float64)
+    silence = np.zeros(n, dtype=np.float64)
+    return {
+        "FL": bass.copy(), "FR": bass.copy(), "C": silence.copy(), "LFE": silence.copy(),
+        "SL": silence.copy(), "SR": silence.copy(), "BL": silence.copy(), "BR": silence.copy(),
+    }
+
+
 def _make_bc(**kwargs) -> BassController:
     defaults = dict(
-        sub_gain_db=0.0, mid_gain_db=0.0,
-        mono_cutoff_hz=None, excite=False, lfe_gain_db=0.0,
-        sample_rate=44100,
+        sub_gain_db=0.0, mid_gain_db=0.0, unify_hz=None, spread="bed",
+        punch=0.0, excite=False, lfe_mode="off", lfe_send=0.0, lfe_gain_db=0.0,
+        lfe_authoring_gain=LFE_AUTHORING_GAIN, sample_rate=44100,
     )
     defaults.update(kwargs)
     return BassController(**defaults)
@@ -36,8 +53,8 @@ def _make_bc(**kwargs) -> BassController:
 
 class TestBassProfiles:
     def test_all_profiles_have_required_keys(self):
-        required = {"sub_gain_db", "mid_gain_db", "mono_cutoff_hz",
-                    "excite", "lfe_gain_db"}
+        required = {"sub_gain_db", "mid_gain_db", "unify_hz", "spread", "punch",
+                    "excite", "lfe_mode", "lfe_send", "lfe_gain_db"}
         for name, p in BASS_PROFILES.items():
             assert required <= set(p.keys()), f"Profile '{name}' missing keys"
 
@@ -45,28 +62,83 @@ class TestBassProfiles:
         assert isinstance(BASS_PROFILE_NAMES, tuple)
         assert set(BASS_PROFILE_NAMES) == set(BASS_PROFILES.keys())
 
-    def test_enhance_has_excite(self):
-        assert BASS_PROFILES["enhance"]["excite"] is True
+    def test_profile_spreads_and_modes_are_valid(self):
+        for name, p in BASS_PROFILES.items():
+            assert p["spread"] in LF_SPREADS, f"Profile '{name}' has an unknown spread"
+            assert p["lfe_mode"] in LFE_MODES, f"Profile '{name}' has an unknown LFE mode"
 
-    def test_mono_profile_has_cutoff(self):
-        assert BASS_PROFILES["mono"]["mono_cutoff_hz"] is not None
+    def test_deep_is_the_unified_multichannel_preset(self):
+        p = BASS_PROFILES["deep"]
+        assert p["unify_hz"] is not None
+        assert p["spread"] == "bed"
+        assert p["excite"] is True
+        assert p["punch"] > 0.0
+
+    def test_cinema_splits_into_the_lfe(self):
+        assert BASS_PROFILES["cinema"]["lfe_mode"] == "split"
+        assert BASS_PROFILES["cinema"]["lfe_send"] > 0.0
+
+
+class TestResolveLfTargets:
+    def test_weights_sum_to_one_without_an_lfe_send(self):
+        names = list(_channels_51())
+        targets = resolve_lf_targets(names, "bed", "off", 0.5, LFE_AUTHORING_GAIN)
+        assert sum(w for _, w in targets) == pytest.approx(1.0)
+
+    def test_only_layout_channels_are_targeted(self):
+        targets = resolve_lf_targets(["FL", "FR"], "all", "off", 0.0, LFE_AUTHORING_GAIN)
+        assert [i for i, _ in targets] == [0, 1]
+
+    def test_add_leaves_the_bed_at_full_weight(self):
+        names = list(_channels_51())
+        targets = resolve_lf_targets(names, "bed", "add", 0.25, LFE_AUTHORING_GAIN)
+        lfe = names.index("LFE")
+        bed = [w for i, w in targets if i != lfe]
+        assert sum(bed) == pytest.approx(1.0)
+        assert dict(targets)[lfe] == pytest.approx(0.25 * LFE_AUTHORING_GAIN)
+
+    def test_split_conserves_the_sum_through_the_replay_gain(self):
+        names = list(_channels_51())
+        targets = resolve_lf_targets(names, "bed", "split", 0.5, LFE_AUTHORING_GAIN)
+        lfe = names.index("LFE")
+        played = sum(
+            w * LFE_REPLAY_GAIN if i == lfe else w
+            for i, w in targets
+        )
+        assert played == pytest.approx(1.0)
+
+    def test_a_layout_without_an_lfe_ignores_the_send(self):
+        targets = resolve_lf_targets(["FL", "FR"], "front", "split", 0.5, LFE_AUTHORING_GAIN)
+        assert sum(w for _, w in targets) == pytest.approx(1.0)
+
+    def test_unknown_spread_raises(self):
+        with pytest.raises(KeyError):
+            resolve_lf_targets(["FL", "FR"], "nowhere", "off", 0.0, LFE_AUTHORING_GAIN)
+
+    def test_unknown_lfe_mode_raises(self):
+        with pytest.raises(ValueError):
+            resolve_lf_targets(["FL", "FR"], "bed", "sideways", 0.0, LFE_AUTHORING_GAIN)
 
 
 class TestBassControllerInit:
     def test_constructs_with_defaults(self):
-        bc = _make_bc()
-        assert bc is not None
+        assert _make_bc() is not None
 
     def test_zero_params_no_error(self):
-        bc = _make_bc(sub_gain_db=0.0, mid_gain_db=0.0)
-        out = bc.process(_channels_51())
+        out = _make_bc().process(_channels_51())
         for arr in out.values():
             assert np.all(np.isfinite(arr))
+
+    def test_unify_cutoff_is_clamped_to_the_lfe_band(self):
+        """Above 120 Hz the bus would carry content the LFE cannot."""
+        chs = _bass_in_front()
+        low = _make_bc(unify_hz=400.0, sample_rate=48000).process(chs)
+        clamped = _make_bc(unify_hz=120.0, sample_rate=48000).process(chs)
+        np.testing.assert_allclose(low["FL"], clamped["FL"], atol=1e-12)
 
 
 class TestBassControllerBypass:
     def test_all_zero_passes_through(self):
-        """0 dB sub/mid, no mono, no excite, 0 dB LFE → output ≈ input."""
         chs = _channels_51()
         out = _make_bc().process(chs)
         for name in chs:
@@ -102,14 +174,13 @@ class TestBassControllerLFE:
         chs = _channels_51()
         lfe_orig = chs["LFE"].copy()
         out = _make_bc(lfe_gain_db=6.0).process(chs)
-        # 6 dB → ~2× amplitude
         ratio = float(np.max(np.abs(out["LFE"]))) / (float(np.max(np.abs(lfe_orig))) + 1e-20)
         assert ratio == pytest.approx(2.0, rel=0.01), "6 dB LFE gain not applied correctly"
 
     def test_lfe_cut_applied(self):
         chs = _channels_51()
         out = _make_bc(lfe_gain_db=-6.0).process(chs)
-        rms_in  = float(np.sqrt(np.mean(chs["LFE"] ** 2)))
+        rms_in = float(np.sqrt(np.mean(chs["LFE"] ** 2)))
         rms_out = float(np.sqrt(np.mean(out["LFE"] ** 2)))
         assert rms_out < rms_in
 
@@ -122,102 +193,205 @@ class TestBassControllerLFE:
 
 class TestBassControllerEQ:
     def test_sub_boost_increases_rms(self):
-        chs = _channels_51()
-        out = _make_bc(sub_gain_db=6.0).process(chs)
-        # Overall RMS of non-LFE should be slightly higher due to sub boost
-        rms_in  = float(np.sqrt(np.mean(chs["FL"] ** 2)))
-        rms_out = float(np.sqrt(np.mean(out["FL"] ** 2)))
-        # The change may be small (only affects <80 Hz band), but must be finite
-        assert np.isfinite(rms_out)
+        chs = _bass_in_front()
+        out = _make_bc(sub_gain_db=6.0, sample_rate=48000).process(chs)
+        assert np.sum(out["FL"] ** 2) > np.sum(chs["FL"] ** 2) * 3.0
 
     def test_output_finite_with_all_stages(self):
         chs = _channels_714()
-        bc = BassController(
-            sub_gain_db=2.0, mid_gain_db=1.0,
-            mono_cutoff_hz=80.0, excite=True, lfe_gain_db=1.5,
-            sample_rate=44100,
+        bc = _make_bc(
+            sub_gain_db=2.0, mid_gain_db=1.0, unify_hz=90.0, spread="all",
+            punch=0.3, excite=True, lfe_mode="add", lfe_send=0.3, lfe_gain_db=1.5,
         )
         out = bc.process(chs)
         for name, arr in out.items():
             assert np.all(np.isfinite(arr)), f"Non-finite in {name}"
 
 
-class TestBassMonoMaker:
-    def test_mono_content_is_preserved_at_crossover(self):
-        t = np.linspace(0, 4, 4 * 48_000, endpoint=False)
-        signal = np.sin(2 * np.pi * 100 * t)
-        out = _make_bc(mono_cutoff_hz=100.0, sample_rate=48_000).process(
-            {"FL": signal, "FR": signal}
-        )
-        ratio = np.sqrt(np.mean(out["FL"][48_000:] ** 2) / np.mean(signal[48_000:] ** 2))
-        assert ratio == pytest.approx(1.0, abs=1e-3)
+class TestLfUnify:
+    """The invariant the whole stage rests on: redistribution must move the
+    low end around the array without changing its coherent level."""
 
-    def test_bass_mono_makes_lr_more_similar(self):
-        """After bass-mono, FL and FR low-freq difference should drop significantly."""
-        t = np.linspace(0, 2, 2 * 44100, endpoint=False)
-        # Use independent L/R signals at very low freq to test mono-isation
-        fl = np.sin(2 * np.pi * 40 * t).astype(np.float64)
-        fr = np.sin(2 * np.pi * 40 * t + 0.5).astype(np.float64)  # phase offset
-        chs = {"FL": fl, "FR": fr, "C": fl.copy(), "LFE": fl.copy(),
-               "SL": fl.copy(), "SR": fr.copy()}
+    def _bed_sum(self, channels: dict[str, np.ndarray]) -> np.ndarray:
+        return sum(ch for name, ch in channels.items() if name != "LFE")
 
-        from scipy.signal import butter, sosfilt
-        sos_lp = butter(2, 40.0 / (44100 / 2), btype="low", output="sos")
+    def test_the_coherent_low_end_is_preserved(self):
+        chs = _bass_in_front()
+        before = self._bed_sum(chs)
+        out = _make_bc(unify_hz=90.0, spread="bed", sample_rate=48000).process(chs)
+        after = self._bed_sum(out)
+        residual = float(np.sum((after[24000:] - before[24000:]) ** 2))
+        assert residual < float(np.sum(before[24000:] ** 2)) * 1e-6
 
-        # Difference before
-        diff_before = float(np.sqrt(np.mean((sosfilt(sos_lp, fl) - sosfilt(sos_lp, fr)) ** 2)))
+    def test_the_low_end_reaches_the_whole_bed(self):
+        chs = _bass_in_front()
+        out = _make_bc(unify_hz=90.0, spread="bed", sample_rate=48000).process(chs)
+        for name in ["C", "SL", "SR", "BL", "BR"]:
+            assert np.sum(out[name] ** 2) > 0.0, f"{name} got no low end"
+        assert np.sum(out["FL"] ** 2) < np.sum(chs["FL"] ** 2) * 0.5
 
-        out = _make_bc(mono_cutoff_hz=100.0).process(chs)
+    def test_front_spread_keeps_the_surrounds_high_passed(self):
+        chs = _bass_in_front()
+        out = _make_bc(unify_hz=90.0, spread="front", sample_rate=48000).process(chs)
+        for name in ["C", "SL", "SR", "BL", "BR"]:
+            np.testing.assert_allclose(out[name], 0.0, atol=1e-12)
 
-        # Difference after mono-making
-        diff_after = float(np.sqrt(np.mean((sosfilt(sos_lp, out["FL"]) - sosfilt(sos_lp, out["FR"])) ** 2)))
+    def test_a_stereo_layout_is_a_no_op(self):
+        """`bed` resolves to {FL, FR} at 1/2 each, which is what was there."""
+        n = 48000
+        t = np.arange(n) / 48000
+        bass = (0.5 * np.sin(2 * np.pi * 40 * t)).astype(np.float64)
+        chs = {"FL": bass.copy(), "FR": bass.copy()}
+        out = _make_bc(unify_hz=90.0, spread="bed", sample_rate=48000).process(chs)
+        np.testing.assert_allclose(out["FL"], chs["FL"], atol=1e-9)
 
-        assert diff_after < diff_before * 0.2, (
-            f"Bass mono-maker did not significantly reduce L/R difference "
-            f"(before={diff_before:.4f}, after={diff_after:.4f})"
-        )
+    def test_add_leaves_the_mains_untouched(self):
+        chs = _bass_in_front()
+        without = _make_bc(unify_hz=90.0, sample_rate=48000).process(chs)
+        with_send = _make_bc(
+            unify_hz=90.0, lfe_mode="add", lfe_send=0.3, sample_rate=48000
+        ).process(chs)
+        for name in ["FL", "FR", "C", "SL", "SR"]:
+            np.testing.assert_array_equal(without[name], with_send[name])
+        assert np.sum(with_send["LFE"] ** 2) > 0.0
 
-    def test_mono_maker_output_finite(self):
-        chs = _channels_714()
-        out = _make_bc(mono_cutoff_hz=80.0).process(chs)
+    def test_split_conserves_the_low_end_through_the_replay_gain(self):
+        chs = _bass_in_front()
+        mains = _make_bc(unify_hz=90.0, sample_rate=48000).process(chs)
+        split = _make_bc(
+            unify_hz=90.0, lfe_mode="split", lfe_send=0.5, sample_rate=48000
+        ).process(chs)
+        reference = self._bed_sum(mains) + mains["LFE"] * LFE_REPLAY_GAIN
+        played = self._bed_sum(split) + split["LFE"] * LFE_REPLAY_GAIN
+        np.testing.assert_allclose(played, reference, atol=1e-9)
+
+    def test_unification_commutes_with_a_shared_upstream_gain(self):
+        """EQ and reference matching apply one shared curve to every bed
+        channel — which is what lets bass control ignore them."""
+        chs = _bass_in_front()
+        gain = 1.7
+        scaled = {name: ch * gain for name, ch in chs.items()}
+        first = _make_bc(unify_hz=90.0, sample_rate=48000).process(scaled)
+        after = _make_bc(unify_hz=90.0, sample_rate=48000).process(chs)
+        for name in chs:
+            np.testing.assert_allclose(first[name], after[name] * gain, atol=1e-9)
+
+    def test_out_of_phase_bass_collapses(self):
+        n = 96000
+        t = np.arange(n) / 48000
+        bass = (0.5 * np.sin(2 * np.pi * 40 * t)).astype(np.float64)
+        chs = {"FL": bass.copy(), "FR": -bass.copy()}
+        out = _make_bc(unify_hz=90.0, spread="front", sample_rate=48000).process(chs)
+        assert np.sum(out["FL"][24000:] ** 2) < np.sum(bass[24000:] ** 2) * 0.02
+
+    def test_output_finite_on_a_full_immersive_bed(self):
+        out = _make_bc(unify_hz=90.0, spread="all").process(_channels_714())
         for arr in out.values():
             assert np.all(np.isfinite(arr))
+
+
+class TestBassPunch:
+    def _burst(self, n: int = 96000, sample_rate: int = 48000) -> dict[str, np.ndarray]:
+        t = np.arange(n) / sample_rate
+        tone = (0.5 * np.sin(2 * np.pi * 40 * t)).astype(np.float64)
+        tone[n // 3:] *= 0.2
+        return {"FL": tone.copy(), "FR": tone.copy()}
+
+    def _attack_to_sustain(self, ch: np.ndarray, n: int) -> float:
+        attack = float(np.sum(ch[4800:n // 3] ** 2))
+        sustain = float(np.sum(ch[n // 3 + 9600:] ** 2))
+        return attack / max(sustain, 1e-20)
+
+    def test_zero_punch_is_a_bypass(self):
+        chs = self._burst()
+        flat = _make_bc(unify_hz=90.0, sample_rate=48000).process(chs)
+        explicit = _make_bc(unify_hz=90.0, punch=0.0, sample_rate=48000).process(chs)
+        np.testing.assert_array_equal(flat["FL"], explicit["FL"])
+
+    def test_positive_punch_favours_the_attack(self):
+        chs = self._burst()
+        n = len(chs["FL"])
+        flat = _make_bc(unify_hz=90.0, sample_rate=48000).process(chs)
+        shaped = _make_bc(unify_hz=90.0, punch=0.5, sample_rate=48000).process(chs)
+        assert (
+            self._attack_to_sustain(shaped["FL"], n)
+            > self._attack_to_sustain(flat["FL"], n) * 1.05
+        )
+
+    def test_negative_punch_densifies(self):
+        chs = self._burst()
+        n = len(chs["FL"])
+        flat = _make_bc(unify_hz=90.0, sample_rate=48000).process(chs)
+        smooth = _make_bc(unify_hz=90.0, punch=-0.5, sample_rate=48000).process(chs)
+        assert (
+            self._attack_to_sustain(smooth["FL"], n)
+            < self._attack_to_sustain(flat["FL"], n)
+        )
 
 
 class TestBassExciter:
-    def test_exciter_output_finite(self):
+    def test_exciter_needs_unification(self):
+        """The exciter runs on the LF bus, so it is inert without one."""
         chs = _channels_51()
-        bc = BassController(
-            sub_gain_db=0.0, mid_gain_db=0.0, mono_cutoff_hz=None,
-            excite=True, lfe_gain_db=0.0, sample_rate=44100,
-        )
-        out = bc.process(chs)
+        out = _make_bc(excite=True).process(chs)
+        for name in chs:
+            np.testing.assert_allclose(out[name], chs[name], atol=1e-6)
+
+    def test_exciter_output_finite(self):
+        out = _make_bc(unify_hz=90.0, excite=True).process(_channels_51())
         for arr in out.values():
             assert np.all(np.isfinite(arr))
 
-    def test_exciter_lfe_unchanged(self):
-        chs = _channels_51()
-        lfe_orig = chs["LFE"].copy()
-        bc = BassController(
-            sub_gain_db=0.0, mid_gain_db=0.0, mono_cutoff_hz=None,
-            excite=True, lfe_gain_db=0.0, sample_rate=44100,
-        )
-        out = bc.process(chs)
-        np.testing.assert_array_equal(out["LFE"], lfe_orig)
+    def test_exciter_adds_energy_to_the_bed(self):
+        chs = _bass_in_front()
+        plain = _make_bc(unify_hz=90.0, sample_rate=48000).process(chs)
+        excited = _make_bc(unify_hz=90.0, excite=True, sample_rate=48000).process(chs)
+        assert np.sum(excited["FL"] ** 2) > np.sum(plain["FL"] ** 2)
+
+    def test_exciter_stays_out_of_the_lfe(self):
+        """tanh's harmonics land above the 120 Hz the LFE is limited to."""
+        chs = _bass_in_front()
+        args = dict(unify_hz=90.0, lfe_mode="add", lfe_send=0.3, sample_rate=48000)
+        plain = _make_bc(**args).process(chs)
+        excited = _make_bc(excite=True, **args).process(chs)
+        np.testing.assert_array_equal(plain["LFE"], excited["LFE"])
 
 
 @pytest.mark.parametrize("profile_name", list(BASS_PROFILES.keys()))
 def test_all_profiles_run(profile_name):
     p = BASS_PROFILES[profile_name]
-    bc = BassController(
-        sub_gain_db=p["sub_gain_db"],
-        mid_gain_db=p["mid_gain_db"],
-        mono_cutoff_hz=p["mono_cutoff_hz"],
-        excite=p["excite"],
-        lfe_gain_db=p["lfe_gain_db"],
-        sample_rate=44100,
-    )
+    bc = _make_bc(**{k: p[k] for k in p})
     chs = _channels_51()
     out = bc.process(chs)
     for name, arr in out.items():
         assert np.all(np.isfinite(arr)), f"Non-finite in profile {profile_name}, {name}"
+
+
+class TestExciteOverrideParity:
+    """`excite` is nullable so the UI switch can force it off. A plain bool
+    made "unset" and "explicitly off" the same value, so the export kept a
+    profile's exciter running while the preview turned it off."""
+
+    def _resolved(self, excite):
+        from upmixer.config import UpmixConfig
+        cfg = UpmixConfig(mastering_bass_profile="deep", mastering_bass_excite=excite)
+        preset = BASS_PROFILES["deep"]
+        val = cfg.mastering_bass_excite
+        return val if val is not None else preset["excite"]
+
+    def test_unset_takes_the_profile(self):
+        assert BASS_PROFILES["deep"]["excite"] is True
+        assert self._resolved(None) is True
+
+    def test_explicitly_off_beats_a_profile_that_wants_it_on(self):
+        assert self._resolved(False) is False
+
+    def test_explicitly_on_is_kept(self):
+        assert self._resolved(True) is True
+
+    def test_the_exciter_actually_changes_the_output(self, ):
+        chs = _bass_in_front()
+        args = dict(unify_hz=90.0, sample_rate=48000)
+        off = _make_bc(excite=False, **args).process(chs)
+        on = _make_bc(excite=True, **args).process(chs)
+        assert np.sum(on["FL"] ** 2) > np.sum(off["FL"] ** 2)

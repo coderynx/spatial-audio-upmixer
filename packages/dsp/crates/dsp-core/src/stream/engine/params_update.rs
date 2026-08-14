@@ -1,7 +1,7 @@
 //! Live parameter edits and the rebuilds a topology change forces.
 
-use super::{PreviewEngine, GAIN_RAMP_MS};
-use crate::stream::master::{MonoMaker, StreamingLimiter};
+use super::{build_unifier, PreviewEngine, GAIN_RAMP_MS};
+use crate::stream::master::StreamingLimiter;
 use crate::stream::params::EngineParams;
 use crate::stream::routing::StemRouteState;
 use crate::stream::state::{OnePole, StreamingCompressor};
@@ -17,7 +17,7 @@ impl PreviewEngine {
     /// of itself that actually moved: nothing here re-renders a preroll or
     /// discards `pre`/`post`, so playback never gaps. The new mix reaches
     /// the speakers once the look-ahead already rendered under the old
-    /// params has drained — audible lag on the order of the mono-maker's
+    /// params has drained — audible lag on the order of the LF unifier's
     /// horizon plus the limiter's lookahead, not audible silence.
     pub fn update_params(&mut self, params: EngineParams) {
         let old = std::mem::replace(&mut self.params, params);
@@ -52,21 +52,24 @@ impl PreviewEngine {
             }
         }
 
+        let n_channels = self.params.speakers.len();
         match self.params.master.compressor {
             None => self.compressor = None,
             Some(c) => match &mut self.compressor {
                 Some(existing) => existing.retune(c, self.sample_rate),
-                None => self.compressor = Some(StreamingCompressor::new(c, self.sample_rate)),
+                None => {
+                    self.compressor =
+                        Some(StreamingCompressor::new(c, self.sample_rate, n_channels))
+                }
             },
         }
 
-        let old_mono_cutoff = old.master.bass.and_then(|b| b.mono_cutoff_hz);
-        let new_mono_cutoff = self.params.master.bass.and_then(|b| b.mono_cutoff_hz);
-        if old_mono_cutoff != new_mono_cutoff || old.master.stereo_pairs != self.params.master.stereo_pairs {
-            // Stateless across calls (see `MonoMaker::process`), so a plain
-            // rebuild is already the cheap path here.
-            self.mono = new_mono_cutoff
-                .map(|hz| MonoMaker::new(self.sample_rate, hz, self.params.master.stereo_pairs.clone()));
+        // The unifier carries the punch envelopes, so it is rebuilt only when
+        // its own configuration moved — a rebuild restarts them cold.
+        if old.master.bass != self.params.master.bass
+            || old.master.lf_targets != self.params.master.lf_targets
+        {
+            self.unifier = build_unifier(self.sample_rate, n_channels, &self.params);
         }
 
         if old.master != self.params.master {
@@ -107,13 +110,8 @@ impl PreviewEngine {
             .params
             .master
             .compressor
-            .map(|c| StreamingCompressor::new(c, self.sample_rate));
-        self.mono = self
-            .params
-            .master
-            .bass
-            .and_then(|b| b.mono_cutoff_hz)
-            .map(|hz| MonoMaker::new(self.sample_rate, hz, self.params.master.stereo_pairs.clone()));
+            .map(|c| StreamingCompressor::new(c, self.sample_rate, n_channels));
+        self.unifier = build_unifier(self.sample_rate, n_channels, &self.params);
     }
 
     /// Rebuild the per-stem routing state and gain smoothers to match

@@ -57,7 +57,9 @@ def test_configuration_serves_engine_constants(web_client):
         "itu_center_coeff", "diffuse_send_blend", "speaker_directions",
         "surround_haas_ms", "height_haas_ms",
         "comp_profiles", "bass_profiles", "bass_sub_cutoff_hz", "bass_mid_cutoff_hz",
-        "bass_excite_blend", "bass_excite_drive", "binaural_loudness_max_gain_db",
+        "bass_excite_blend", "bass_excite_drive", "bass_lf_spreads",
+        "bass_punch_fast_ms", "bass_punch_slow_ms", "bass_punch_max_db",
+        "binaural_loudness_max_gain_db",
         "crosstalk_loudness_max_gain_db", "voicing_params", "transaural_voicing_params",
         "eq_fir_assets", "stem_eq_fir_assets", "decode_filter_set", "xtc_filter_set",
     }

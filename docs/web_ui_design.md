@@ -363,6 +363,26 @@ renders those better and for free. Reach for the Radix `Select` only when an
 option needs more than a label. Format marks are neutral icons, never a
 vendor's logo.
 
+**Render only what the current context can act on**, and read "context" as
+the delivery target, not just the primary parameter's own value. Bass control
+is the second reference: its placement controls redistribute the low band
+across a speaker array, so on a two-channel layout — no LFE, and every spread
+resolving to the same pair — the whole group is *absent*, not dimmed. A
+dimmed control still claims panel space and still implies an effect it cannot
+produce, which is worse than an honest omission. Dim only what is temporarily
+unavailable (the effect is switched off); omit what this layout can never
+use.
+
+**Grouping inside a panel.** Once a panel carries more than one idea, split
+its body into named runs with `FieldGroup` (`MasteringSection`) rather than
+letting one pot bank absorb unrelated parameters: a `border-t pt-2.5` rule
+(suppressed on the first group) under an 11px `font-semibold uppercase
+tracking-[.06em] text-muted-foreground` label — the same micro-label the table
+headers use, not a heading style of its own. Bass splits into **Tone** (what
+it sounds like) and **Placement** (where it goes). Groups are for distinct
+concerns, not for making a short panel look organized; a panel with one idea
+takes no headings at all.
+
 **Control text.** The label is the documentation. Do not add a sentence
 explaining what "Match spectrum" or "Bass exciter" means. Keep prose only
 where it carries information the label cannot — a constraint, a unit, or a

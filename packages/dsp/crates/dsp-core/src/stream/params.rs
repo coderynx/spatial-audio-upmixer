@@ -109,9 +109,12 @@ pub struct MasterParams {
     pub bass: Option<BassParams>,
     #[serde(default)]
     pub limiter: Option<LimiterParams>,
-    /// Stereo pairs the bass mono-maker couples, as speaker indices.
+    /// Where the LF unifier hands the low band back, as
+    /// `(speaker index, weight)`. Weights normally sum to 1, which is what
+    /// leaves the coherent low-frequency level unchanged; the LFE entry, when
+    /// present, already carries its BS.775 authoring gain.
     #[serde(default)]
-    pub stereo_pairs: Vec<(usize, usize)>,
+    pub lf_targets: Vec<(usize, f64)>,
     /// Scalar loudness/true-peak correction measured by the precompute pass.
     #[serde(default = "unit_scale")]
     pub output_gain: f64,

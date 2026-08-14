@@ -195,6 +195,8 @@ export type Configuration = {
     eq_profiles: string[]
     compressor_profiles: string[]
     bass_profiles: string[]
+    bass_spreads?: string[]
+    bass_lfe_modes?: string[]
     stem_eq_profiles: string[]
     stem_phase_fix_reference_models?: string[]
     stem_debleed_models?: string[]

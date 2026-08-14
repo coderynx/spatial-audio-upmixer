@@ -24,13 +24,16 @@ fn params_json(with_master: bool) -> String {
         r#"
         "master": {
             "compressor": {"threshold_db": -18.0, "ratio": 2.0, "attack_ms": 20.0,
-                           "release_ms": 200.0, "knee_db": 6.0, "makeup_db": 0.0},
-            "bass": {"sub_gain_db": 1.5, "mid_gain_db": 0.5, "mono_cutoff_hz": 80.0,
-                     "excite": true, "lfe_gain_db": 1.0, "sub_cutoff_hz": 80.0,
-                     "mid_cutoff_hz": 200.0, "excite_blend": 0.15, "excite_drive": 3.0},
+                           "release_ms": 200.0, "knee_db": 6.0, "makeup_db": 0.0,
+                           "sidechain_hpf_hz": 100.0},
+            "bass": {"sub_gain_db": 1.5, "mid_gain_db": 0.5, "unify_hz": 80.0,
+                     "punch": 0.25, "excite": true, "lfe_gain_db": 1.0,
+                     "sub_cutoff_hz": 80.0, "mid_cutoff_hz": 200.0,
+                     "excite_blend": 0.15, "excite_drive": 3.0,
+                     "punch_fast_ms": 10.0, "punch_slow_ms": 120.0, "punch_max_db": 6.0},
             "limiter": {"ceiling_dbtp": -1.0, "lookahead_ms": 5.0, "release_ms": 50.0,
                         "safety_margin_db": 0.1},
-            "stereo_pairs": [[0, 1]]
+            "lf_targets": [[0, 0.4], [1, 0.4], [2, 0.1], [3, 0.1]]
         },"#
     } else {
         r#""master": {},"#
@@ -165,23 +168,28 @@ fn streaming_mastering_matches_the_offline_chain() {
             release_ms: 200.0,
             knee_db: 6.0,
             makeup_db: 0.0,
+            sidechain_hpf_hz: Some(100.0),
         },
     );
     bass_control(
         &mut offline,
         lfe,
-        &[(0, 1)],
+        &[(0, 0.4), (1, 0.4), (2, 0.1), (3, 0.1)],
         SR,
         &BassParams {
             sub_gain_db: 1.5,
             mid_gain_db: 0.5,
-            mono_cutoff_hz: Some(80.0),
+            unify_hz: Some(80.0),
+            punch: 0.25,
             excite: true,
             lfe_gain_db: 1.0,
             sub_cutoff_hz: 80.0,
             mid_cutoff_hz: 200.0,
             excite_blend: 0.15,
             excite_drive: 3.0,
+            punch_fast_ms: 10.0,
+            punch_slow_ms: 120.0,
+            punch_max_db: 6.0,
         },
     );
     lookahead_limit(

@@ -73,28 +73,70 @@ pub struct StreamingCompressor {
     params: CompParams,
     fast: OnePole,
     slow: OnePole,
+    /// One detector high-pass per bed channel, indexed by channel, built only
+    /// when `params.sidechain_hpf_hz` is set.
+    sidechain: Vec<SosFilter>,
+    n_channels: usize,
+}
+
+fn sidechain_filters(params: &CompParams, sample_rate: u32, n_channels: usize) -> Vec<SosFilter> {
+    let nyq = sample_rate as f64 / 2.0;
+    match params.sidechain_hpf_hz {
+        None => Vec::new(),
+        Some(hz) => {
+            let sos = crate::kernels::butter::butter_sos(
+                2,
+                (hz / nyq).clamp(1e-4, 0.999),
+                crate::kernels::butter::BandType::High,
+            );
+            (0..n_channels).map(|_| SosFilter::from_flat(&sos)).collect()
+        }
+    }
 }
 
 impl StreamingCompressor {
-    pub fn new(params: CompParams, sample_rate: u32) -> Self {
+    pub fn new(params: CompParams, sample_rate: u32, n_channels: usize) -> Self {
         Self {
             params,
             fast: OnePole::new(params.attack_ms, sample_rate as f64),
             slow: OnePole::new(params.release_ms, sample_rate as f64),
+            sidechain: sidechain_filters(&params, sample_rate, n_channels),
+            n_channels,
         }
     }
 
     pub fn reset(&mut self) {
         self.fast.reset();
         self.slow.reset();
+        for filter in &mut self.sidechain {
+            filter.reset();
+        }
     }
 
     /// Adopt new config, keeping the envelope followers' state — a live
     /// threshold/ratio/attack edit should not restart the compressor cold.
+    /// The detector filters are rebuilt only when the sidechain cutoff moved.
     pub fn retune(&mut self, params: CompParams, sample_rate: u32) {
         self.fast.retune(params.attack_ms, sample_rate as f64);
         self.slow.retune(params.release_ms, sample_rate as f64);
+        if self.params.sidechain_hpf_hz != params.sidechain_hpf_hz {
+            self.sidechain = sidechain_filters(&params, sample_rate, self.n_channels);
+        }
         self.params = params;
+    }
+
+    /// Linked sidechain RMS across every non-LFE channel, with the detector
+    /// high-pass applied per channel when one is configured.
+    pub fn linked_rms(&mut self, bed: &[Vec<f64>], non_lfe: &[usize], frame: usize) -> f64 {
+        let mut acc = 0.0;
+        for &i in non_lfe {
+            let v = match self.sidechain.get_mut(i) {
+                Some(filter) => filter.tick(bed[i][frame]),
+                None => bed[i][frame],
+            };
+            acc += v * v;
+        }
+        (acc / non_lfe.len() as f64 + 1e-20).sqrt()
     }
 
     /// Gain to apply to every non-LFE channel for one sample, given the

@@ -144,15 +144,24 @@ function params(mode, decodeTaps) {
       reference_gain: 1, reference_fir: [],
       eq_fir: Array.from({ length: 1023 }, (_, i) => (i === 511 ? 1 : Math.sin(i * 0.01) * 1e-3)),
       eq_strength: 1,
-      compressor: { threshold_db: -18, ratio: 2, attack_ms: 20, release_ms: 200, knee_db: 6, makeup_db: 0 },
+      compressor: {
+        threshold_db: -18, ratio: 2, attack_ms: 20, release_ms: 200, knee_db: 6, makeup_db: 0,
+        sidechain_hpf_hz: 100,
+      },
       bass: {
-        sub_gain_db: 1, mid_gain_db: 0.5, mono_cutoff_hz: 120, excite: true, lfe_gain_db: 0,
+        sub_gain_db: 1, mid_gain_db: 0.5, unify_hz: 120, punch: 0.3, excite: true, lfe_gain_db: 0,
         sub_cutoff_hz: 80, mid_cutoff_hz: 200, excite_blend: 0.3, excite_drive: 2,
+        punch_fast_ms: 10, punch_slow_ms: 120, punch_max_db: 6,
       },
       limiter: mode === "native"
         ? { ceiling_dbtp: -1, lookahead_ms: 5, release_ms: 50, safety_margin_db: 0.3 }
         : null,
-      stereo_pairs: [[0, 1], [4, 5], [6, 7], [8, 9], [10, 11]],
+      // Worst case: the `all` spread, so the unifier runs one zero-phase pass
+      // per non-LFE channel and every one of them takes a return.
+      lf_targets: [
+        ...[0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11].map((i) => [i, 1 / 11]),
+        [3, 0.3 * 0.31622776601683794],
+      ],
       output_gain: 1,
     },
     output_mode: mode,

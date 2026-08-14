@@ -53,12 +53,13 @@ _rbk("mastering", {
         "release_ms":   ("config", "mastering_comp_release_ms"),
         "knee_db":      ("config", "mastering_comp_knee_db"),
         "makeup_db":    ("config", "mastering_comp_makeup_db"),
+        "sidechain_hpf_hz": ("config", "mastering_comp_sidechain_hpf_hz"),
     },
 })
 del _rbk
 
 
-COMP_PROFILES: dict[str, dict[str, float]] = {
+COMP_PROFILES: dict[str, dict] = {
     "transparent": dict(
         threshold_db=-22.0,
         ratio=1.5,
@@ -66,6 +67,7 @@ COMP_PROFILES: dict[str, dict[str, float]] = {
         release_ms=300.0,
         knee_db=9.0,
         makeup_db=0.0,
+        sidechain_hpf_hz=None,
     ),
     "glue": dict(
         threshold_db=-18.0,
@@ -74,6 +76,7 @@ COMP_PROFILES: dict[str, dict[str, float]] = {
         release_ms=200.0,
         knee_db=6.0,
         makeup_db=0.0,
+        sidechain_hpf_hz=None,
     ),
     "warm": dict(
         threshold_db=-15.0,
@@ -82,6 +85,7 @@ COMP_PROFILES: dict[str, dict[str, float]] = {
         release_ms=400.0,
         knee_db=12.0,
         makeup_db=0.0,
+        sidechain_hpf_hz=None,
     ),
 }
 
@@ -99,6 +103,9 @@ class BusCompressor:
         release_ms:   Release time constant in milliseconds.
         knee_db:      Soft-knee width in dB (``0.0`` = hard knee).
         makeup_db:    Makeup gain in dB applied after compression.
+        sidechain_hpf_hz: High-pass on the detector only, so low
+                      frequencies stop driving gain reduction across the
+                      whole bed.  ``None`` = full-band sidechain.
         sample_rate:  Audio sample rate in Hz.
 
     Raises:
@@ -113,6 +120,7 @@ class BusCompressor:
         release_ms: float,
         knee_db: float,
         makeup_db: float,
+        sidechain_hpf_hz: float | None,
         sample_rate: int,
     ) -> None:
         if ratio < 1.0:
@@ -123,6 +131,9 @@ class BusCompressor:
         self._release_ms = float(release_ms)
         self._knee = float(max(0.0, knee_db))
         self._makeup = float(makeup_db)
+        self._sidechain_hpf = (
+            float(sidechain_hpf_hz) if sidechain_hpf_hz is not None else None
+        )
         self._sr = int(sample_rate)
 
 
@@ -155,6 +166,7 @@ class BusCompressor:
             self._release_ms,
             self._knee,
             self._makeup,
+            self._sidechain_hpf,
         )
 
         _log.info(

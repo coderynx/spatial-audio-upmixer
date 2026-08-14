@@ -51,7 +51,7 @@ Every stage below is one function, called from both sides:
 | Reference match | `match_reference::{spectrum,curve}` | `mastering/match_reference/` | `stream::master` |
 | Spectral EQ | `mastering::eq` | `mastering/eq.py` | `stream::master` |
 | Bus compression | `mastering::compressor` | `mastering/compressor.py` | `stream::master` |
-| Bass control | `mastering::bass` | `mastering/bass.py` | `stream::master` |
+| Bass management | `mastering::bass` | `mastering/bass.py` | `stream::master` |
 | BS.1770 loudness / true peak | `loudness` | `loudness.py` | `stream::engine::measure` |
 | Look-ahead limiter | `mastering::limiter` | `mastering/limiter.py` | `stream::master` |
 | Ambisonic encode / HOA decode | `spatial::ambisonics` | `binaural/renderer.py` | `stream::output` |
@@ -71,6 +71,26 @@ the same channel set.
 EQ → compression → bass → BS.1770 loudness → limiter *last*. Soft limiting
 after loudness rather than before is deliberate; see
 `packages/core/src/mastering/chain.py`'s module docstring.
+
+Two things about that order are load-bearing rather than conventional, and
+neither is obvious from the code:
+
+- **Bass must stay after reference matching.**
+  `mastering/match_reference/spectrum.py` compares a BS.1770-weighted *power*
+  sum against the reference, so correlated bass spread across N channels reads
+  as a ~10·log₁₀(N) dB low-frequency deficit — about 8.5 dB on a 7.1.4 floor
+  bed. Unifying first would make the matcher lean on its ±2 dB sub-bass clamp
+  on every render. Do not reorder these as an optimization.
+- **Bass never has to compensate for what runs ahead of it.** EQ and reference
+  matching each apply *one shared curve* to every non-LFE channel, and the bus
+  compressor applies *one linked gain*. Identical LTI filtering and identical
+  time-varying gain both commute with the LF sum — `H{Σ lowᵢ} = Σ H{lowᵢ}`,
+  `g(t)·Σ lowᵢ = Σ g(t)·lowᵢ` — so nothing upstream can decorrelate the bed,
+  and the Σa = 1 invariant holds whatever curve ran. The reference matcher's
+  own docstring gives the reason the curve is shared: per-channel curves would
+  desynchronize the inter-channel phase that BS.775 fold-down and transaural
+  crosstalk cancellation depend on. `mastering::bass`'s
+  `unification_commutes_with_a_shared_upstream_gain` pins this.
 
 The one thing that can break identity is **build provenance**: the browser
 loads a committed `apps/web/public/wasm/upmixer_dsp.wasm`, not a wasm built on
@@ -206,4 +226,5 @@ or that the port itself resolved.
 | D27 | The loudness correction was measured in a single blocking call inside the render callback — ~57 s of frozen audio thread for an eight-minute track, on load and on every output-mode switch. | Fixed: `stream::measure` advances a forked engine in slices, with streaming BS.1770 meters pinned bit-identical to the offline ones. The correction now arrives late (P3) instead of stopping the audio. |
 | D24 | `dsp_master_bed` skipped LFE entirely for reference matching; LFE should take the level gain and skip only the spectral curve (D21). | Fixed. The streaming engine was already correct. |
 | D29 | A calibration measured whatever was in the worklet's engine when the `measure` message landed, which was not what the caller had just set: `updateParams` coalesces to one post per animation frame while every other message posts immediately, and a profile switch fired its filter-set fetch *after* asking for the measurement. So the monitoring level a profile settled on depended on which profile preceded it and on whether a fetch won the race — different on every switch and every reload. | Fixed: `DspEngineClient` flushes the pending parameter block ahead of any other message, `retuneVoicing`/`retuneCrosstalkVoicing` load the profile's filter set before recalibrating, and a switch back to a mode whose measurement an in-flight pass is about to overwrite re-measures instead of claiming it is calibrated. |
+| D30 | The preview forwarded only the mastering *profile name* for bass and compression (`audioEngine.ts` read `mastering.bass.profile` and `engineParams.ts` re-read the preset from the served constants), so the per-field pot overrides the UI already exposed never reached the worklet. Moving any bass or compressor pot changed the export while the preview kept playing the bare preset. | Fixed: `resolveBassParams`/`resolveCompParams` merge the profile with the project's overrides in `masteringProfiles.ts`, and `MasterMix` now carries resolved blocks rather than names. `engineParams.test.ts::forwards per-field overrides, not just the profile preset` pins it. |
 | D28 | The whole-programme measurement D27 introduced (§ P3) advanced only while paused and only from a `resume()`d `AudioContext`; a fresh context starts suspended and the worklet never registered its own progress callback, so the "calibrating loudness" UI could hang indefinitely with no feedback, and at best took minutes on an eight-minute track. | Fixed: the context resumes on init (with a pointer-gesture fallback for autoplay policy), the worklet's progress reaches the UI, and measurement runs in two stages — a fast excerpt pass clears the UI in seconds, then the exact whole-programme pass keeps refining the gain in the background (§ P3). |

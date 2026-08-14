@@ -2,7 +2,7 @@
 //!
 //! The worklet owns the decoded stems, so the engine can always look ahead.
 //! Two queues carry that look-ahead: `pre` holds the causal chain's output
-//! and feeds the mono-maker's zero-phase pass, `post` holds the mono-maker's
+//! and feeds the LF unifier's zero-phase pass, `post` holds the LF unifier's
 //! output and feeds the limiter's forward-window minimum. Nothing is emitted
 //! until its full look-ahead exists, which is what lets both stages be the
 //! offline algorithm rather than a causal approximation of one.
@@ -16,7 +16,7 @@ use std::sync::Arc;
 use crate::kernels::fft::RealFft;
 use crate::kernels::stft::hann_periodic;
 
-use crate::stream::master::{linked_rms, CausalChain, MonoMaker, StreamingLimiter, MONO_HORIZON_MS};
+use crate::stream::master::{CausalChain, LfUnifier, StreamingLimiter, UNIFY_HORIZON_MS};
 use crate::stream::meters::{Level, Meters};
 use crate::stream::output::OutputStage;
 use crate::stream::params::EngineParams;
@@ -24,12 +24,12 @@ use crate::stream::routing::{shape_index, LfeBus, StemRouteState};
 use crate::stream::state::{OnePole, StreamingCompressor};
 
 /// Run-up rendered and discarded before a seek lands, long enough to cover
-/// the Haas delays, the compressor's release, and the mono-maker's horizon.
+/// the Haas delays, the compressor's release, and the LF unifier's horizon.
 const SEEK_PREROLL_MS: f64 = 500.0;
 
-/// Frames the mono-maker advances per call. Larger amortizes its zero-phase
+/// Frames the LF unifier advances per call. Larger amortizes its zero-phase
 /// context further but raises the worst-case cost of a single render.
-const MONO_STRIDE: usize = 512;
+const UNIFY_STRIDE: usize = 512;
 
 /// Metering window, in frames — matches the pre-Rust preview's 2048-sample
 /// analyser tap. `render()` runs one audio-worklet quantum (128 frames) at a
@@ -95,7 +95,7 @@ pub struct PreviewEngine {
     lfe_bus: LfeBus,
     causal: Vec<CausalChain>,
     compressor: Option<StreamingCompressor>,
-    mono: Option<MonoMaker>,
+    unifier: Option<LfUnifier>,
     limiter: Option<StreamingLimiter>,
     output: OutputStage,
     /// Set once the host ships the decode/XTC banks over their own binary
@@ -111,9 +111,9 @@ pub struct PreviewEngine {
     master_gain: OnePole,
     pre: Queue,
     post: Queue,
-    mono_done: usize,
+    unify_done: usize,
     emitted: usize,
-    mono_horizon: usize,
+    unify_horizon: usize,
     total_frames: usize,
     meters: Meters,
     /// Trailing `METER_WINDOW_FRAMES` of the collapsed output, kept only for
@@ -128,6 +128,27 @@ pub struct PreviewEngine {
 /// `OutputStage::new` reads its taps from whichever engine field currently
 /// owns them — the persistent override if the host has set one, otherwise
 /// the parameter block's own `decode_taps`/`xtc_taps`.
+/// The unifier exists only when the bass block asks for a crossover and the
+/// caller resolved somewhere to put the low end.
+pub(super) fn build_unifier(
+    sample_rate: u32,
+    n_channels: usize,
+    params: &EngineParams,
+) -> Option<LfUnifier> {
+    let bass = params.master.bass?;
+    bass.unify_hz?;
+    if params.master.lf_targets.is_empty() {
+        return None;
+    }
+    Some(LfUnifier::new(
+        sample_rate,
+        n_channels,
+        params.lfe_index,
+        bass,
+        params.master.lf_targets.clone(),
+    ))
+}
+
 fn build_output(
     sample_rate: u32,
     params: &EngineParams,
@@ -156,12 +177,8 @@ impl PreviewEngine {
         let compressor = params
             .master
             .compressor
-            .map(|c| StreamingCompressor::new(c, sample_rate));
-        let mono = params
-            .master
-            .bass
-            .and_then(|b| b.mono_cutoff_hz)
-            .map(|hz| MonoMaker::new(sample_rate, hz, params.master.stereo_pairs.clone()));
+            .map(|c| StreamingCompressor::new(c, sample_rate, n_channels));
+        let unifier = build_unifier(sample_rate, n_channels, &params);
         let limiter = params
             .master
             .limiter
@@ -199,13 +216,13 @@ impl PreviewEngine {
             routes,
             causal,
             compressor,
-            mono,
+            unifier,
             limiter,
             pre: Queue::new(n_channels),
             post: Queue::new(n_channels),
-            mono_done: 0,
+            unify_done: 0,
             emitted: 0,
-            mono_horizon: (sample_rate as f64 * MONO_HORIZON_MS / 1000.0) as usize,
+            unify_horizon: (sample_rate as f64 * UNIFY_HORIZON_MS / 1000.0) as usize,
             total_frames,
             meters: Meters::default(),
             output_meter_tail: vec![Vec::new(); 2],
@@ -347,7 +364,8 @@ impl PreviewEngine {
             if let Some(comp) = &mut self.compressor {
                 if !non_lfe.is_empty() {
                     for i in 0..count {
-                        let gain = comp.tick(linked_rms(&bed, &non_lfe, i));
+                        let rms = comp.linked_rms(&bed, &non_lfe, i);
+                        let gain = comp.tick(rms);
                         for &ch in &non_lfe {
                             bed[ch][i] *= gain;
                         }
@@ -364,19 +382,19 @@ impl PreviewEngine {
         }
     }
 
-    /// Run the mono-maker until `post` reaches `target` frames.
+    /// Run the LF unifier until `post` reaches `target` frames.
     fn fill_post(&mut self, target: usize) {
-        if self.mono_done >= target.min(self.total_frames) {
+        if self.unify_done >= target.min(self.total_frames) {
             return;
         }
-        // The mono-maker's zero-phase pass filters `horizon` samples either
+        // The LF unifier's zero-phase pass filters `horizon` samples either
         // side of what it emits, so emitting a render quantum at a time would
         // redo that context ~75 times over. Advance in strides instead.
-        let target = target.max(self.mono_done + MONO_STRIDE).min(self.total_frames);
-        let horizon = if self.mono.is_some() { self.mono_horizon } else { 0 };
+        let target = target.max(self.unify_done + UNIFY_STRIDE).min(self.total_frames);
+        let horizon = if self.unifier.is_some() { self.unify_horizon } else { 0 };
         self.fill_pre(target + horizon);
 
-        let start = self.mono_done;
+        let start = self.unify_done;
         let end = target.min(self.pre.end());
         if end <= start {
             return;
@@ -389,27 +407,28 @@ impl PreviewEngine {
             .map(|c| c[(start - self.pre.base)..(end - self.pre.base)].to_vec())
             .collect();
 
-        if let Some(mono) = &self.mono {
-            // The mono-maker needs context on both sides; hand it the whole
+        let base = self.pre.base;
+        if let Some(unifier) = &mut self.unifier {
+            // The LF unifier needs context on both sides; hand it the whole
             // live `pre` window and let it read outward from there.
             let mut full: Vec<Vec<f64>> = self.pre.channels.clone();
-            mono.process(&mut full, start - self.pre.base, end - self.pre.base);
+            unifier.process(&mut full, start - base, end - base);
             window = full
                 .iter()
-                .map(|c| c[(start - self.pre.base)..(end - self.pre.base)].to_vec())
+                .map(|c| c[(start - base)..(end - base)].to_vec())
                 .collect();
         }
 
-        // The exciter and LFE trim follow the mono-maker, so they run here
-        // rather than in the causal front — see `CausalChain::post_mono`.
+        // The LFE trim follows the LF unifier, so it runs here rather than in
+        // the causal front — see `CausalChain::lfe_trim`.
         let lfe_gain_db = self.params.master.bass.map(|b| b.lfe_gain_db).unwrap_or(0.0);
         for (channel, mut block) in window.into_iter().enumerate() {
             if !self.params.bypass_mastering {
-                self.causal[channel].post_mono(&mut block, lfe_gain_db);
+                self.causal[channel].lfe_trim(&mut block, lfe_gain_db);
             }
             self.post.channels[channel].extend(block);
         }
-        self.mono_done = end;
+        self.unify_done = end;
     }
 
     /// Render `n_frames` of the mastered bed into `out`, channel-major.
@@ -502,7 +521,7 @@ impl PreviewEngine {
 
         self.emitted += emit;
         self.post.drain_to(self.emitted.saturating_sub(METER_WINDOW_FRAMES));
-        self.pre.drain_to(self.emitted.saturating_sub(self.mono_horizon));
+        self.pre.drain_to(self.emitted.saturating_sub(self.unify_horizon));
         emit
     }
 
@@ -515,6 +534,9 @@ impl PreviewEngine {
         if let Some(comp) = &mut self.compressor {
             comp.reset();
         }
+        if let Some(unifier) = &mut self.unifier {
+            unifier.reset();
+        }
         let n_channels = self.params.speakers.len();
         self.causal = (0..n_channels)
             .map(|i| {
@@ -525,7 +547,7 @@ impl PreviewEngine {
         self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
         self.pre = Queue::new(n_channels);
         self.post = Queue::new(n_channels);
-        self.mono_done = 0;
+        self.unify_done = 0;
         self.emitted = 0;
     }
 }

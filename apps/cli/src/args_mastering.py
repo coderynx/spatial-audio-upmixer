@@ -42,25 +42,40 @@ def add_mastering_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--mastering-comp-attack",    type=float, default=None, metavar="MS",  help="Override compressor attack time in ms.")
     parser.add_argument("--mastering-comp-release",   type=float, default=None, metavar="MS",  help="Override compressor release time in ms.")
     parser.add_argument("--mastering-comp-makeup",    type=float, default=None, metavar="DB",  help="Override compressor makeup gain in dB.")
+    parser.add_argument(
+        "--mastering-comp-sidechain-hpf",
+        type=float,
+        default=None,
+        metavar="HZ",
+        help=(
+            "High-pass the compressor's detector at this frequency so the "
+            "bed's low end stops driving gain reduction across every channel. "
+            "Recommended alongside --mastering-bass-punch."
+        ),
+    )
 
-    _BASS_CHOICES = ["boost", "cut", "mono", "enhance"]
+    _BASS_CHOICES = ["boost", "cut", "mono", "enhance", "deep", "cinema"]
     parser.add_argument(
         "--mastering-bass",
         choices=_BASS_CHOICES,
         default=None,
         metavar="PROFILE",
         help=(
-            "Apply multichannel bass control to the master bus (optional). "
+            "Apply multichannel bass management to the master bus (optional). "
             f"Choices: {', '.join(_BASS_CHOICES)}. "
             "LFE is handled separately from the main bed. "
             "Applied after bus compression, before loudness normalization."
         ),
     )
-    parser.add_argument("--mastering-bass-sub",          type=float, default=None, metavar="DB", help="Bass control: sub-bass (<80 Hz) gain in dB.")
-    parser.add_argument("--mastering-bass-mid",          type=float, default=None, metavar="DB", help="Bass control: mid-bass (80–200 Hz) gain in dB.")
-    parser.add_argument("--mastering-bass-mono-cutoff",  type=float, default=None, metavar="HZ", help="Bass mono-maker: sum L/R below this frequency (Hz).")
-    parser.add_argument("--mastering-bass-excite",       action="store_true",                    help="Enable bass harmonic exciter (tanh waveshaping on sub-bass band).")
-    parser.add_argument("--mastering-bass-lfe",          type=float, default=None, metavar="DB", help="LFE channel gain trim in dB.")
+    parser.add_argument("--mastering-bass-sub",       type=float, default=None, metavar="DB", help="Bass control: sub-bass (<80 Hz) gain in dB.")
+    parser.add_argument("--mastering-bass-mid",       type=float, default=None, metavar="DB", help="Bass control: mid-bass (80–200 Hz) gain in dB.")
+    parser.add_argument("--mastering-bass-unify",     type=float, default=None, metavar="HZ", help="LF unification crossover in Hz (40–120): sum every channel's low band to one bus and redistribute it.")
+    parser.add_argument("--mastering-bass-spread",    choices=["front", "bed", "all"], default=None, metavar="WHERE", help="Where the unified low end goes: front (FL/FR), bed (floor channels), or all (incl. heights).")
+    parser.add_argument("--mastering-bass-punch",     type=float, default=None, metavar="P",  help="Transient shaping on the LF bus (-1.0 to 1.0): positive favours attacks, negative densifies.")
+    parser.add_argument("--mastering-bass-excite",    action="store_true",                    help="Enable the harmonic exciter on the unified LF bus (kept out of the LFE).")
+    parser.add_argument("--mastering-bass-lfe-mode",  choices=["off", "add", "split"], default=None, metavar="MODE", help="LFE feed: off, add (downmix-safe copy), or split (energy-preserving, LF-light on fold-down).")
+    parser.add_argument("--mastering-bass-lfe-send",  type=float, default=None, metavar="W",  help="LFE share of the unified LF bus (0.0–1.0).")
+    parser.add_argument("--mastering-bass-lfe",       type=float, default=None, metavar="DB", help="LFE channel gain trim in dB.")
 
     parser.add_argument(
         "--match-reference",

@@ -18,11 +18,25 @@ Processing order
    Cosmetic only; does not substitute for loudness normalization.  Controlled
    by ``config.mastering_comp_profile`` (``None`` = disabled).  Individual
    param fields (``mastering_comp_threshold_db``, etc.) override the profile
-   when set.
-2.5 **Bass control** (optional) — multichannel low-end shaper: sub/mid-bass EQ,
-   bass mono-maker for L/R pairs, harmonic exciter, LFE gain trim.  Controlled
-   by ``config.mastering_bass_profile`` and individual ``mastering_bass_*``
-   params.  Disabled when both profile and all individual params are unset.
+   when set.  ``mastering_comp_sidechain_hpf_hz`` high-passes the detector
+   only, which is what keeps the bed's low end from driving gain reduction
+   across every channel — pair it with bass control's ``punch``, which the
+   full-band sidechain otherwise squashes before the shaper ever sees it.
+2.5 **Bass control** (optional) — multichannel bass management: sub/mid-bass
+   EQ, LF unification across the bed with redistribution, transient shaping
+   and harmonic excitation on the unified bus, an LFE send, and an LFE gain
+   trim.  Controlled by ``config.mastering_bass_profile`` and individual
+   ``mastering_bass_*`` params.  Disabled when both profile and all individual
+   params are unset.
+
+   This stage runs *after* reference matching for a reason that is not
+   cosmetic: ``match_reference/spectrum.py`` compares a BS.1770-weighted
+   *power* sum against the reference, so correlated bass spread across N
+   channels reads as a ~10·log10(N) dB low-frequency deficit.  Unifying first
+   would make the matcher lean on its ±2 dB sub-bass clamp on every render.
+   The EQ, reference and compression stages ahead of it all apply one shared
+   curve or one linked gain to every bed channel, which commutes with the LF
+   sum — so bass control never has to compensate for what they did.
 3. **ITU-R BS.1770-5 loudness normalization** (if
    ``config.loudness_normalize`` is ``True``).  A scalar linear gain is applied
    to all channels simultaneously — no dynamic processing, no clipping.  The
@@ -188,6 +202,11 @@ class MasteringChain:
                     makeup_db=cfg.mastering_comp_makeup_db
                     if cfg.mastering_comp_makeup_db is not None
                     else preset["makeup_db"],
+                    sidechain_hpf_hz=(
+                        cfg.mastering_comp_sidechain_hpf_hz
+                        if cfg.mastering_comp_sidechain_hpf_hz is not None
+                        else preset["sidechain_hpf_hz"]
+                    ),
                     sample_rate=sample_rate,
                 )
                 channels = comp.process(channels)
@@ -196,15 +215,19 @@ class MasteringChain:
             cfg.mastering_bass_profile is not None
             or cfg.mastering_bass_sub_gain_db is not None
             or cfg.mastering_bass_mid_gain_db is not None
-            or cfg.mastering_bass_mono_cutoff_hz is not None
+            or cfg.mastering_bass_unify_hz is not None
+            or cfg.mastering_bass_spread is not None
+            or cfg.mastering_bass_punch is not None
+            or cfg.mastering_bass_lfe_mode is not None
+            or cfg.mastering_bass_lfe_send is not None
             or cfg.mastering_bass_lfe_gain_db is not None
-            or cfg.mastering_bass_excite
+            or cfg.mastering_bass_excite is not None
         )
         if _bass_active:
             from .bass import BassController, BASS_PROFILES
             preset = BASS_PROFILES.get(cfg.mastering_bass_profile or "", {})
 
-            def _bp(attr: str, default: float = 0.0) -> float:
+            def _bp(attr: str, default=0.0):
                 val = getattr(cfg, attr)
                 stripped = attr.removeprefix("mastering_bass_")
                 return val if val is not None else preset.get(stripped, default)
@@ -212,13 +235,14 @@ class MasteringChain:
             bass = BassController(
                 sub_gain_db=_bp("mastering_bass_sub_gain_db"),
                 mid_gain_db=_bp("mastering_bass_mid_gain_db"),
-                mono_cutoff_hz=(
-                    cfg.mastering_bass_mono_cutoff_hz
-                    if cfg.mastering_bass_mono_cutoff_hz is not None
-                    else preset.get("mono_cutoff_hz")
-                ),
-                excite=cfg.mastering_bass_excite or preset.get("excite", False),
+                unify_hz=_bp("mastering_bass_unify_hz", None),
+                spread=_bp("mastering_bass_spread", "bed"),
+                punch=_bp("mastering_bass_punch"),
+                excite=_bp("mastering_bass_excite", False),
+                lfe_mode=_bp("mastering_bass_lfe_mode", "off"),
+                lfe_send=_bp("mastering_bass_lfe_send"),
                 lfe_gain_db=_bp("mastering_bass_lfe_gain_db"),
+                lfe_authoring_gain=cfg.lfe_gain,
                 sample_rate=sample_rate,
             )
             channels = bass.process(channels)

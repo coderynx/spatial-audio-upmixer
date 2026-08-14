@@ -14,12 +14,11 @@
 import type { ProjectStem, StemScene } from "@/api";
 import { applyTruePeakCeiling, loudnessGainFor } from "./audioAnalysis";
 import type {
-  BassProfileName,
-  CompProfileName,
   EngineConstants,
   SpatialProfile,
   TransauralProfile,
 } from "./masteringProfiles";
+import { resolveBassParams, resolveCompParams } from "./masteringProfiles";
 import type { MasterPreview } from "./masterPreview";
 import { DspEngineClient } from "./wasmEngine/engineClient";
 import { buildEngineParams } from "./wasmEngine/engineParams";
@@ -310,7 +309,11 @@ export class PreviewAudioEngine {
   }
 
   private buildParams() {
-    const bass = (this.mastering?.bass?.profile ?? null) as BassProfileName | null;
+    // Resolve the profile against the project's per-field overrides here, so
+    // a moved pot reaches the worklet instead of being replaced by the bare
+    // preset on the way (ledger D30).
+    const bass = resolveBassParams(this.mastering?.bass, this.constants.bassProfiles);
+    const comp = resolveCompParams(this.mastering?.compressor, this.constants.compProfiles);
     const target = this.mastering?.loudness?.target ?? -18;
     const normalize = this.mastering?.loudness?.normalize ?? true;
     // One gain stage covers the whole job here, unlike the export chain's two,
@@ -343,8 +346,8 @@ export class PreviewAudioEngine {
         constants: this.constants,
       }),
       master: {
-        compProfile: (this.mastering?.compressor?.profile ?? null) as CompProfileName | null,
-        bassProfile: bass,
+        comp,
+        bass,
         eqFir: this.taps.masterEqTaps ?? undefined,
         eqStrength: this.mastering?.eq?.strength ?? 1,
         referenceFir: this.taps.referenceTaps ?? undefined,

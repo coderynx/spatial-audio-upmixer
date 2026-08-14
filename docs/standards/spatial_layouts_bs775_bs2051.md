@@ -43,6 +43,86 @@ Define normative loudspeaker positions (azimuth/elevation), channel labels, LFE 
 
 ---
 
+## Bass management — LF unification and redistribution
+
+*(Implemented by `packages/core/src/mastering/bass.py` →
+`packages/dsp/crates/dsp-core/src/mastering/bass.rs`; contracted stage order
+in `docs/contracts/preview_export_parity.md` §1.)*
+
+The mastering bass stage treats the low band as **one signal with one owner**:
+it is extracted from every non-LFE channel before redistribution, rather than
+left wherever the router put it. The reference architecture is the Dolby Atmos
+Renderer's bass management ("handle bass extraction from object signals before
+they are rendered to speaker feeds", 45–200 Hz).
+
+### The crossover
+
+The low band is taken with a zero-phase 2nd-order Butterworth low-pass at
+`unify_hz`, clamped to **40–120 Hz** so the bus never carries content outside
+the LFE's own bandwidth limit. The high band is the **exact complement**,
+`high = x − low`, taken by subtraction rather than by a second filter: a
+complementary LR4 pair does *not* sum flat once run zero-phase
+(|LP|² + |HP|² = 0.5 at f_c), whereas subtraction is exact for any low-pass.
+The residual therefore keeps whatever the filter did not capture, per channel,
+which is inherent to a soft crossover and not a defect.
+
+### The Σa = 1 invariant
+
+`lf_bus` is the **unweighted sum** of the extracted low bands, so returning it
+over target weights that sum to 1 preserves the coherent low-frequency level
+exactly. This is the invariant the whole stage rests on: N channels carrying
+correlated bass sum as pressure at 20·log₁₀(N) dB — +16.9 dB across a 7.1.4
+floor bed — so redistributing without it is a level error, not a spread.
+
+Spread sets (`LF_SPREADS`), weighted 1/N over the channels a layout actually
+has:
+
+| `spread` | destinations |
+|---|---|
+| `front` | FL, FR |
+| `bed` | FL, FR, C, SL, SR, BL, BR |
+| `all` | bed + TFL, TFR, TBL, TBR |
+
+Degenerate layouts are safe by construction: on System A (0+2+0), `bed`
+resolves to {FL, FR} at 1/2 each, which is numerically a no-op.
+
+### LFE modes
+
+| mode | mains | LFE | downmix |
+|---|---|---|---|
+| `off` | Σa = 1 | untouched, keeps its router content | unaffected |
+| `add` | Σa = 1 | `+ lfe_send · lf_bus · g_auth` | safe — mains bit-identical to `off` |
+| `split` | Σa = 1 − `lfe_send` | `+ lfe_send · lf_bus · g_auth` | **LF-light** |
+
+`g_auth` is the −10 dB authoring gain above (`UpmixConfig.lfe_gain`). Playback
+applies the matching +10 dB replay gain, so `split` conserves the coherent sum
+end to end:
+
+```
+mains(1 − w) + w · g_auth · 10^(10/20)  =  (1 − w) + w  =  1
+```
+
+`split` is LF-light on fold-down precisely because the downmix matrices below
+carry **no LFE term** — that is the documented tradeoff, not a regression, and
+it is why the mode is explicit rather than implied.
+
+Since `unify_hz` ≤ 120 Hz, the bus is already inside the LFE band and needs no
+separate band-limiting filter on the send. The harmonic exciter is deliberately
+kept **off** the LFE path: tanh's third and fifth harmonics of a 40–80 Hz
+fundamental land at 120–400 Hz, above what the channel may carry.
+
+### Known asymmetry
+
+The EQ and reference-match stages skip LFE for their spectral correction
+(deliberate — a channel band-limited to 120 Hz has no meaningful ratio against
+a full-range reference), and the bus compressor bypasses LFE entirely including
+makeup gain. So the bed's low band reaches bass control EQ'd and compressed
+while the LFE has not been. The Σa = 1 conservation still holds exactly *within*
+the stage; this is pre-existing bed/LFE balance and is not compensated for in
+the unifier.
+
+---
+
 ## BS.775-4 — Downmix Matrices
 
 *(BS.775-4 Annex D)*
@@ -286,6 +366,10 @@ surface is `--stem-pan STEM=VALUE`.
 - [ ] LFE bandwidth limit = 120 Hz (not 80 Hz or 200 Hz) — per BS.775-4 Annex 7
 - [ ] LFE level offset = −10 dB relative to full-scale channels — per BS.775-4 Annex 7 / BS.2051-3 Table 1 Note 5
 - [ ] LFE excluded from downmix sum unless explicitly included
+- [ ] Bass management: LF redistribution weights sum to 1 (coherent level preserved, no N-channel buildup)
+- [ ] Bass management: `unify_hz` clamped to 40–120 Hz so the bus stays inside the LFE bandwidth limit
+- [ ] Bass management: an LFE share carries the −10 dB authoring gain, so playback's +10 dB restores it exactly
+- [ ] Bass management: `split` is flagged as downmix-lossy; `add` leaves the mains bit-identical to `off`
 - [ ] Downmix centre coefficient a₀ = 0.707 (−3.01 dB) default
 - [ ] Downmix surround coefficient b₀ = 0.707 (−3.01 dB) default; alternative 0.500
 - [ ] Sound system designator uses U+M+B format (e.g. 4+5+0 for System D)

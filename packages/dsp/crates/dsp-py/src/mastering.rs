@@ -34,7 +34,7 @@ fn apply_fir<'py>(
 
 #[pyfunction]
 #[pyo3(signature = (channels, lfe_index, sample_rate, threshold_db, ratio, attack_ms,
-                    release_ms, knee_db, makeup_db))]
+                    release_ms, knee_db, makeup_db, sidechain_hpf_hz))]
 #[allow(clippy::too_many_arguments)]
 fn bus_compress<'py>(
     py: Python<'py>,
@@ -47,6 +47,7 @@ fn bus_compress<'py>(
     release_ms: f64,
     knee_db: f64,
     makeup_db: f64,
+    sidechain_hpf_hz: Option<f64>,
 ) -> (Vec<Bound<'py, PyArray1<f64>>>, f64, f64) {
     let mut bed = to_bed(channels);
     let info = py.detach(|| compressor::bus_compress(
@@ -60,48 +61,57 @@ fn bus_compress<'py>(
             release_ms,
             knee_db,
             makeup_db,
+            sidechain_hpf_hz,
         },
     ));
     (from_bed(py, bed), info.max_gr_db, info.avg_gr_db)
 }
 
 #[pyfunction]
-#[pyo3(signature = (channels, lfe_index, stereo_pairs, sample_rate, sub_gain_db, mid_gain_db,
-                    mono_cutoff_hz, excite, lfe_gain_db, sub_cutoff_hz, mid_cutoff_hz,
-                    excite_blend, excite_drive))]
+#[pyo3(signature = (channels, lfe_index, lf_targets, sample_rate, sub_gain_db, mid_gain_db,
+                    unify_hz, punch, excite, lfe_gain_db, sub_cutoff_hz, mid_cutoff_hz,
+                    excite_blend, excite_drive, punch_fast_ms, punch_slow_ms, punch_max_db))]
 #[allow(clippy::too_many_arguments)]
 fn bass_control<'py>(
     py: Python<'py>,
     channels: Vec<PyReadonlyArray1<'py, f64>>,
     lfe_index: Option<usize>,
-    stereo_pairs: Vec<(usize, usize)>,
+    lf_targets: Vec<(usize, f64)>,
     sample_rate: u32,
     sub_gain_db: f64,
     mid_gain_db: f64,
-    mono_cutoff_hz: Option<f64>,
+    unify_hz: Option<f64>,
+    punch: f64,
     excite: bool,
     lfe_gain_db: f64,
     sub_cutoff_hz: f64,
     mid_cutoff_hz: f64,
     excite_blend: f64,
     excite_drive: f64,
+    punch_fast_ms: f64,
+    punch_slow_ms: f64,
+    punch_max_db: f64,
 ) -> Vec<Bound<'py, PyArray1<f64>>> {
     let mut bed = to_bed(channels);
     py.detach(|| bass::bass_control(
         &mut bed,
         lfe_index,
-        &stereo_pairs,
+        &lf_targets,
         sample_rate,
         &bass::BassParams {
             sub_gain_db,
             mid_gain_db,
-            mono_cutoff_hz,
+            unify_hz,
+            punch,
             excite,
             lfe_gain_db,
             sub_cutoff_hz,
             mid_cutoff_hz,
             excite_blend,
             excite_drive,
+            punch_fast_ms,
+            punch_slow_ms,
+            punch_max_db,
         },
     ));
     from_bed(py, bed)

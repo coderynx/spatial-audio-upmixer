@@ -106,12 +106,20 @@ class UpmixConfig:
     mastering_comp_release_ms: float | None = None
     mastering_comp_knee_db: float | None = None
     mastering_comp_makeup_db: float | None = None
+    mastering_comp_sidechain_hpf_hz: float | None = None
 
     mastering_bass_profile: str | None = None
     mastering_bass_sub_gain_db: float | None = None
     mastering_bass_mid_gain_db: float | None = None
-    mastering_bass_mono_cutoff_hz: float | None = None
-    mastering_bass_excite: bool = False
+    mastering_bass_unify_hz: float | None = None
+    mastering_bass_spread: str | None = None
+    mastering_bass_punch: float | None = None
+    # Tri-state like every other bass override: None = take the profile's
+    # value, True/False = force it. A plain bool could not express "the
+    # profile turns the exciter on and the user turned it back off".
+    mastering_bass_excite: bool | None = None
+    mastering_bass_lfe_mode: str | None = None
+    mastering_bass_lfe_send: float | None = None
     mastering_bass_lfe_gain_db: float | None = None
 
     mastering_match_ref_path: str | None = None

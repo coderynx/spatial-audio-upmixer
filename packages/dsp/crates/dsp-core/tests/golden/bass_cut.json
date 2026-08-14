@@ -3,19 +3,21 @@
   "params": {
     "sub_gain_db": -2.5,
     "mid_gain_db": -1.5,
-    "mono_cutoff_hz": -1.0,
+    "unify_hz": -1.0,
+    "spread": "bed",
+    "punch": 0.0,
     "excite": false,
+    "lfe_mode": "off",
+    "lfe_send": 0.0,
     "lfe_gain_db": -1.0,
     "sub_cutoff_hz": 80.0,
     "mid_cutoff_hz": 200.0,
     "excite_blend": 0.15,
     "excite_drive": 3.0,
-    "stereo_pairs": [
-      [
-        0,
-        1
-      ]
-    ],
+    "punch_fast_ms": 10.0,
+    "punch_slow_ms": 120.0,
+    "punch_max_db": 6.0,
+    "lf_targets": [],
     "channels": [
       "FL",
       "FR",

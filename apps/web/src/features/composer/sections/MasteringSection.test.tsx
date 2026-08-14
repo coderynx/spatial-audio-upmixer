@@ -150,3 +150,95 @@ describe("MasteringSection", () => {
     );
   });
 });
+
+describe("MasteringSection bass controls", () => {
+  const withLayout = (channels: Record<string, string[]>) => ({
+    ...configuration,
+    choices: {
+      ...configuration.choices,
+      bass_profiles: ["deep", "cinema"],
+      bass_spreads: ["front", "bed", "all"],
+      bass_lfe_modes: ["off", "add", "split"],
+      layout_channels: channels,
+    },
+  });
+
+  const LAYOUTS = {
+    stereo: ["FL", "FR"],
+    "5.0": ["FL", "FR", "C", "SL", "SR"],
+    "7.1.4": ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"],
+  };
+
+  const renderAt = (layout: string, profile: string | null = "deep") =>
+    render(
+      <MasteringSection
+        manifest={{
+          ...defaultManifest,
+          mixing: { ...defaultManifest.mixing, channel_layout: layout },
+          mastering: {
+            ...defaultManifest.mastering,
+            bass: { ...defaultManifest.mastering.bass, profile },
+          },
+        }}
+        setManifest={vi.fn()}
+        configuration={withLayout(LAYOUTS) as Configuration}
+        masteringReference={null}
+        referenceUploading={false}
+        referenceError={null}
+        onReferenceUpload={vi.fn()}
+        onReferenceClear={vi.fn()}
+      />,
+    );
+
+  // `SelectField` renders a bare <Label>, so the select is reached through
+  // its wrapper rather than by label association. Pots carry `aria-label`.
+  const select = (label: string) =>
+    screen.getByText(label).parentElement!.querySelector("select")!;
+
+  it("names the profile in plain language rather than by its manifest value", () => {
+    renderAt("7.1.4");
+    // "deep" is the stored value; "Deep / Bass from every speaker" is the
+    // documentation, carried on the option itself.
+    expect(screen.getAllByText("Deep").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Bass from every speaker").length).toBeGreaterThan(0);
+  });
+
+  it("hides the whole placement group on a layout with nowhere to place bass", () => {
+    // Stereo has two bed channels and no LFE, so every placement control is
+    // inert. Showing them dimmed is what made the panel unreadable.
+    renderAt("stereo");
+    expect(screen.queryByText("Placement")).toBeNull();
+    expect(screen.queryByText("Spread")).toBeNull();
+    expect(screen.queryByText("Subwoofer")).toBeNull();
+  });
+
+  it("shows spread but not the subwoofer on a layout with no LFE", () => {
+    renderAt("5.0");
+    expect(screen.getByText("Placement")).toBeInTheDocument();
+    expect(select("Spread")).toBeInTheDocument();
+    expect(screen.queryByText("Subwoofer")).toBeNull();
+    expect(screen.queryByLabelText("Sub level")).toBeNull();
+  });
+
+  it("shows every placement control on a layout that has an LFE", () => {
+    renderAt("7.1.4");
+    expect(select("Spread")).toBeInTheDocument();
+    expect(select("Subwoofer")).toBeInTheDocument();
+    expect(screen.getByLabelText("Sub level")).toBeInTheDocument();
+    expect(screen.getByLabelText("Sub trim")).toBeInTheDocument();
+  });
+
+  it("keeps the tone controls on every layout", () => {
+    renderAt("stereo");
+    expect(screen.getByText("Tone")).toBeInTheDocument();
+    for (const label of ["Sub gain", "Mid-bass", "Crossover", "Punch"]) {
+      expect(screen.getByLabelText(label)).not.toHaveAttribute("data-disabled");
+    }
+  });
+
+  it("disables the body while the effect is switched off", () => {
+    renderAt("7.1.4", null);
+    expect(screen.getByLabelText("Sub gain")).toHaveAttribute("data-disabled");
+    expect(select("Spread")).toBeDisabled();
+  });
+});

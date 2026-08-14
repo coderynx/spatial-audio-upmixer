@@ -4,7 +4,8 @@
 //! uniformly, so surround imaging survives the stage. Profile values are
 //! owned by `packages/core/src/mastering/compressor.py`.
 
-use crate::kernels::biquad::lfilter;
+use crate::kernels::biquad::{lfilter, sosfilt};
+use crate::kernels::butter::{butter_sos, BandType};
 use crate::kernels::sum::pairwise_sum;
 
 use super::non_lfe;
@@ -17,6 +18,12 @@ pub struct CompParams {
     pub release_ms: f64,
     pub knee_db: f64,
     pub makeup_db: f64,
+    /// High-pass on the detector only, so low frequencies stop driving gain
+    /// reduction across the whole bed. `None` leaves the sidechain
+    /// full-band. The bed sums N channels whose low end is correlated and
+    /// whose mid/high is not, so LF is over-represented in the envelope by a
+    /// factor that grows with the layout.
+    pub sidechain_hpf_hz: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -50,7 +57,7 @@ pub fn gain_reduction_db(env_db: f64, p: &CompParams) -> f64 {
 }
 
 /// One-pole smoothing coefficient for a time constant in milliseconds.
-fn alpha(ms: f64, sample_rate: u32) -> f64 {
+pub(super) fn alpha(ms: f64, sample_rate: u32) -> f64 {
     let dt = 1.0 / sample_rate as f64;
     1.0 - (-dt / (ms.max(0.01) / 1000.0)).exp()
 }
@@ -72,9 +79,18 @@ pub fn bus_compress(
     }
     let n_ch = bed_idx.len() as f64;
 
+    let nyq = sample_rate as f64 / 2.0;
+    let sidechain_sos = p
+        .sidechain_hpf_hz
+        .map(|hz| butter_sos(2, (hz / nyq).clamp(1e-4, 0.999), BandType::High));
+
     let mut x_sq = vec![0.0; n];
     for &i in &bed_idx {
-        for (acc, v) in x_sq.iter_mut().zip(bed[i].iter()) {
+        let detector = sidechain_sos
+            .as_ref()
+            .map(|sos| sosfilt(sos, &bed[i]));
+        let detector = detector.as_deref().unwrap_or(&bed[i]);
+        for (acc, v) in x_sq.iter_mut().zip(detector.iter()) {
             *acc += v * v;
         }
     }
@@ -118,6 +134,7 @@ mod tests {
             release_ms: 200.0,
             knee_db: 6.0,
             makeup_db: 0.0,
+            sidechain_hpf_hz: None,
         }
     }
 
@@ -151,6 +168,36 @@ mod tests {
         bus_compress(&mut bed, Some(1), 48_000, &params());
         assert_eq!(bed[1], loud);
         assert!(bed[0].last().unwrap() < &0.9);
+    }
+
+    #[test]
+    fn the_sidechain_high_pass_keeps_bass_out_of_the_detector() {
+        let sr = 48_000;
+        let n = 24_000;
+        let signal: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 / sr as f64;
+                0.9 * (2.0 * std::f64::consts::PI * 40.0 * t).sin()
+                    + 0.05 * (2.0 * std::f64::consts::PI * 2000.0 * t).sin()
+            })
+            .collect();
+
+        let mut full_band = vec![signal.clone(), signal.clone()];
+        let wide = bus_compress(&mut full_band, None, sr, &params());
+
+        let mut filtered = vec![signal.clone(), signal.clone()];
+        let p = CompParams { sidechain_hpf_hz: Some(100.0), ..params() };
+        let narrow = bus_compress(&mut filtered, None, sr, &p);
+
+        assert!(
+            narrow.avg_gr_db < wide.avg_gr_db,
+            "{} vs {}",
+            narrow.avg_gr_db,
+            wide.avg_gr_db
+        );
+        // The detector is filtered; the signal the gain multiplies is not.
+        let ratio = filtered[0][n - 1] / signal[n - 1];
+        assert!(ratio.is_finite() && ratio > 0.0, "output lost its low end");
     }
 
     #[test]

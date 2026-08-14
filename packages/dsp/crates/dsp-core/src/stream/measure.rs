@@ -203,7 +203,7 @@ mod tests {
                           "lfe_cutoff_hz": 120.0, "lfe_filter_order": 4, "lfe_gain": 0.316},
                 "stems": [{"routing": [["FL", 0.9], ["FR", 0.9]], "rebalance_db": 0.0,
                            "enabled": true, "eq_fir": [], "route_scale": 1.0}],
-                "master": {"stereo_pairs": [[0, 1]]},
+                "master": {"lf_targets": [[0, 0.5], [1, 0.5]]},
                 "output_mode": "stereo",
                 "soft_limit_threshold": 0.0
             }"#,

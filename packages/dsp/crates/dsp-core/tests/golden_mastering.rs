@@ -104,6 +104,7 @@ fn bus_compression_matches_python() {
             release_ms: c.param_f64("release_ms"),
             knee_db: c.param_f64("knee_db"),
             makeup_db: c.param_f64("makeup_db"),
+            sidechain_hpf_hz: c.meta["params"]["sidechain_hpf_hz"].as_f64(),
         };
         bus_compress(&mut bed, lfe, c.param_usize("sample_rate") as u32, &p);
         assert_bed(&c, &bed, &names);
@@ -112,23 +113,43 @@ fn bus_compression_matches_python() {
 
 #[test]
 fn bass_control_matches_python() {
-    for name in ["bass_boost", "bass_cut", "bass_mono", "bass_enhance"] {
+    for name in [
+        "bass_boost", "bass_cut", "bass_mono", "bass_enhance", "bass_deep", "bass_cinema",
+    ] {
         let c = Case::load(name);
         let (mut bed, names) = stage_bed(&c);
         let lfe = names.iter().position(|n| n == "LFE");
-        let mono = c.param_f64("mono_cutoff_hz");
+        let unify = c.param_f64("unify_hz");
+        // `bass.py` resolves the spread and LFE mode into weights; the core
+        // only ever sees the resolved table.
+        let lf_targets: Vec<(usize, f64)> = c.meta["params"]["lf_targets"]
+            .as_array()
+            .expect("lf targets")
+            .iter()
+            .map(|entry| {
+                let pair = entry.as_array().expect("target pair");
+                (
+                    pair[0].as_u64().expect("target index") as usize,
+                    pair[1].as_f64().expect("target weight"),
+                )
+            })
+            .collect();
         let p = BassParams {
             sub_gain_db: c.param_f64("sub_gain_db"),
             mid_gain_db: c.param_f64("mid_gain_db"),
-            mono_cutoff_hz: (mono > 0.0).then_some(mono),
+            unify_hz: (unify > 0.0).then_some(unify),
+            punch: c.param_f64("punch"),
             excite: c.meta["params"]["excite"].as_bool().expect("excite flag"),
             lfe_gain_db: c.param_f64("lfe_gain_db"),
             sub_cutoff_hz: c.param_f64("sub_cutoff_hz"),
             mid_cutoff_hz: c.param_f64("mid_cutoff_hz"),
             excite_blend: c.param_f64("excite_blend"),
             excite_drive: c.param_f64("excite_drive"),
+            punch_fast_ms: c.param_f64("punch_fast_ms"),
+            punch_slow_ms: c.param_f64("punch_slow_ms"),
+            punch_max_db: c.param_f64("punch_max_db"),
         };
-        bass_control(&mut bed, lfe, &[(0, 1)], c.param_usize("sample_rate") as u32, &p);
+        bass_control(&mut bed, lfe, &lf_targets, c.param_usize("sample_rate") as u32, &p);
         assert_bed(&c, &bed, &names);
     }
 }

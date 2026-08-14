@@ -102,16 +102,26 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.mastering_comp_release_ms = args.mastering_comp_release
     if args.mastering_comp_makeup is not None:
         config.mastering_comp_makeup_db = args.mastering_comp_makeup
+    if args.mastering_comp_sidechain_hpf is not None:
+        config.mastering_comp_sidechain_hpf_hz = args.mastering_comp_sidechain_hpf
     if args.mastering_bass is not None:
         config.mastering_bass_profile = args.mastering_bass
     if args.mastering_bass_sub is not None:
         config.mastering_bass_sub_gain_db = args.mastering_bass_sub
     if args.mastering_bass_mid is not None:
         config.mastering_bass_mid_gain_db = args.mastering_bass_mid
-    if args.mastering_bass_mono_cutoff is not None:
-        config.mastering_bass_mono_cutoff_hz = args.mastering_bass_mono_cutoff
+    if args.mastering_bass_unify is not None:
+        config.mastering_bass_unify_hz = args.mastering_bass_unify
+    if args.mastering_bass_spread is not None:
+        config.mastering_bass_spread = args.mastering_bass_spread
+    if args.mastering_bass_punch is not None:
+        config.mastering_bass_punch = max(-1.0, min(1.0, args.mastering_bass_punch))
     if args.mastering_bass_excite:
         config.mastering_bass_excite = True
+    if args.mastering_bass_lfe_mode is not None:
+        config.mastering_bass_lfe_mode = args.mastering_bass_lfe_mode
+    if args.mastering_bass_lfe_send is not None:
+        config.mastering_bass_lfe_send = max(0.0, min(1.0, args.mastering_bass_lfe_send))
     if args.mastering_bass_lfe is not None:
         config.mastering_bass_lfe_gain_db = args.mastering_bass_lfe
     if args.match_reference is not None:

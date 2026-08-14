@@ -35,17 +35,91 @@ export type CompProfile = {
   release_ms: number;
   knee_db: number;
   makeup_db: number;
+  sidechain_hpf_hz: number | null;
 };
 
-export type BassProfileName = "boost" | "cut" | "mono" | "enhance";
+export type BassProfileName = "boost" | "cut" | "mono" | "enhance" | "deep" | "cinema";
+
+export type LfSpreadName = "front" | "bed" | "all";
+export type BassLfeMode = "off" | "add" | "split";
 
 export type BassProfile = {
   sub_gain_db: number;
   mid_gain_db: number;
-  mono_cutoff_hz: number | null;
+  unify_hz: number | null;
+  spread: LfSpreadName;
+  punch: number;
   excite: boolean;
+  lfe_mode: BassLfeMode;
+  lfe_send: number;
   lfe_gain_db: number;
 };
+
+/** A mastering block as the project stores it: a profile name plus per-field
+ * overrides, any of which may be null meaning "use the profile's value".
+ *
+ * Values are loosely typed because they arrive from the stored manifest,
+ * whose enum-valued fields the API validates; only the key set is pinned. */
+type Overrides<T> = { profile?: string | null } & { [K in keyof T]?: unknown };
+
+/** Resolve a profile name plus overrides into concrete values.
+ *
+ * Both the export chain (`mastering/chain.py`) and the preview have to do
+ * this; doing it here rather than inside the engine-parameter builder is what
+ * keeps a moved pot from being silently dropped on the way to the worklet
+ * (see docs/contracts/preview_export_parity.md). */
+function resolveProfile<T extends object>(
+  block: Overrides<T> | null | undefined,
+  presets: Record<string, T>,
+): T | null {
+  if (!block) return null;
+  const preset = block.profile ? presets[block.profile] : undefined;
+  if (!preset) return null;
+  const resolved = { ...preset };
+  for (const key of Object.keys(preset) as (keyof T)[]) {
+    const override = block[key];
+    if (override !== undefined && override !== null) resolved[key] = override as T[keyof T];
+  }
+  return resolved;
+}
+
+export const resolveBassParams = (
+  block: Overrides<BassProfile> | null | undefined,
+  presets: Record<string, BassProfile>,
+) => resolveProfile(block, presets);
+
+export const resolveCompParams = (
+  block: Overrides<CompProfile> | null | undefined,
+  presets: Record<string, CompProfile>,
+) => resolveProfile(block, presets);
+
+/** Mirror of `bass.py`'s `resolve_lf_targets`: `(speaker index, weight)` pairs
+ * for the LF redistribution. Non-LFE weights sum to 1 in `off`/`add` and to
+ * `1 - lfe_send` in `split`; the LFE entry carries the BS.775 authoring gain,
+ * which playback's +10 dB replay gain undoes. */
+export function resolveLfTargets(
+  speakers: string[],
+  bass: BassProfile,
+  spreads: Record<string, string[]>,
+  lfeAuthoringGain: number,
+): [number, number][] {
+  const members = spreads[bass.spread];
+  if (!members) return [];
+  const index = new Map(speakers.map((name, i) => [name, i]));
+  const present = members.filter((name) => index.has(name)).map((name) => index.get(name)!);
+  if (present.length === 0) return [];
+
+  const lfe = index.get("LFE");
+  const send =
+    lfe === undefined || bass.lfe_mode === "off"
+      ? 0
+      : Math.min(1, Math.max(0, bass.lfe_send));
+  const bedShare = bass.lfe_mode === "split" ? 1 - send : 1;
+
+  const targets: [number, number][] = present.map((i) => [i, bedShare / present.length]);
+  if (send > 0) targets.push([lfe!, send * lfeAuthoringGain]);
+  return targets;
+}
 
 // --- Channel-bed router (ported from upmixer/separation/stem_router.py) —
 // see docs/web_architecture.md "Preview audio graph" for why (not HRTF panning). --
@@ -177,6 +251,10 @@ export type ServedEngineConstants = {
   bass_mid_cutoff_hz: number;
   bass_excite_blend: number;
   bass_excite_drive: number;
+  bass_lf_spreads: Record<string, string[]>;
+  bass_punch_fast_ms: number;
+  bass_punch_slow_ms: number;
+  bass_punch_max_db: number;
   binaural_loudness_max_gain_db: number;
   crosstalk_loudness_max_gain_db: number;
   voicing_params: Record<string, ServedVoicingParams>;
@@ -212,6 +290,10 @@ export type EngineConstants = {
   midCutoffHz: number;
   exciteBlend: number;
   exciteDrive: number;
+  lfSpreads: Record<LfSpreadName, string[]>;
+  punchFastMs: number;
+  punchSlowMs: number;
+  punchMaxDb: number;
   binauralLoudnessMaxGainDb: number;
   crosstalkLoudnessMaxGainDb: number;
   voicingParams: Record<SpatialProfile, VoicingParams>;
@@ -274,6 +356,10 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     midCutoffHz: s.bass_mid_cutoff_hz,
     exciteBlend: s.bass_excite_blend,
     exciteDrive: s.bass_excite_drive,
+    lfSpreads: s.bass_lf_spreads as Record<LfSpreadName, string[]>,
+    punchFastMs: s.bass_punch_fast_ms,
+    punchSlowMs: s.bass_punch_slow_ms,
+    punchMaxDb: s.bass_punch_max_db,
     binauralLoudnessMaxGainDb: s.binaural_loudness_max_gain_db,
     crosstalkLoudnessMaxGainDb: s.crosstalk_loudness_max_gain_db,
     voicingParams: mapVoicing<SpatialProfile>(s.voicing_params),

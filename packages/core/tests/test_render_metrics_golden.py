@@ -35,49 +35,49 @@ _FMT = FORMAT_MAP["7.1.4"]
 
 # Pinned as hex-packed doubles (like test_mastering_golden.py) to avoid
 # float-repr ambiguity across regenerations.
-_GOLDEN_LKFS_HEX = "c01afd710da2745e"
-_GOLDEN_TP_HEX = "c022fa89bc8f700c"
+_GOLDEN_LKFS_HEX = "c01addd0c75f9da7"
+_GOLDEN_TP_HEX = "c022a210a6db20e0"
 _GOLDEN_CHANNEL_RMS_HEX = {
-    "BL": "3fc10c130a7555ad",
-    "BR": "3fc1250e90d5763a",
-    "C": "3fc0afa8a2085f32",
-    "FL": "3fbd8ba1f30a1037",
-    "FR": "3fc061d7ff607b53",
-    "LFE": "3fc540ea676bbfbf",
-    "SL": "3fc1363d912b56ce",
-    "SR": "3fc143071bdcb9bb",
-    "TBL": "3fc16a5d900fa852",
-    "TBR": "3fc177f478f3e43f",
-    "TFL": "3fc14da43c414263",
-    "TFR": "3fc15c0658410d9d",
+    "BL": "3fc139df66cbe1c0",
+    "BR": "3fc1482cf9953fb1",
+    "C": "3fc10bc926ae56c5",
+    "FL": "3fbb3b4963159621",
+    "FR": "3fc0e9c1dc8431aa",
+    "LFE": "3fc542a2d230fdc3",
+    "SL": "3fc152de48e21760",
+    "SR": "3fc15b5f3d1a7920",
+    "TBL": "3fc1723717a2d74a",
+    "TBR": "3fc17e905511ad28",
+    "TFL": "3fc1594554eaf932",
+    "TFR": "3fc1658011cd6bf7",
 }
 
 # Regenerate via `REGENERATE_GOLDEN=1 python3 -m pytest
 # tests/test_render_metrics_golden.py::test_python_reference_match_metrics_golden -s`.
-_GOLDEN_REFMATCH_LKFS_HEX = "c0262a4aa3758190"
-_GOLDEN_REFMATCH_TP_HEX = "c0289991dd142ada"
+_GOLDEN_REFMATCH_LKFS_HEX = "c026067f8c654a2f"
+_GOLDEN_REFMATCH_TP_HEX = "c0284be7d95899f7"
 _GOLDEN_REFMATCH_CHANNEL_RMS_HEX = {
-    "BL": "3fb2c09119ca7b5e",
-    "BR": "3fb2d74b030d4948",
-    "C": "3fb4edaeb65cfa8d",
-    "FL": "3fb2b42fe238c0af",
-    "FR": "3fc0c52aaddbf420",
-    "LFE": "3fb55a08e16149e3",
-    "SL": "3fb2ec9f6a5aed8e",
-    "SR": "3fb37410307e3ba5",
-    "TBL": "3fb332283496f2c0",
-    "TBR": "3fb3317359e3c213",
-    "TFL": "3fb3cb1f6ccfb9c6",
-    "TFR": "3fb31a5e9d71ed6c",
+    "BL": "3fb2f4ae0cd8c892",
+    "BR": "3fb2ffebea60d98a",
+    "C": "3fb560fc39cd57c3",
+    "FL": "3fb176faef547bdf",
+    "FR": "3fc1638c34240f52",
+    "LFE": "3fb55c407f3421f4",
+    "SL": "3fb30e15486fbc88",
+    "SR": "3fb39044fbc8cd23",
+    "TBL": "3fb33ac0d4d56de6",
+    "TBR": "3fb338b810847156",
+    "TFL": "3fb3d79b8f57e4a3",
+    "TFR": "3fb324c2a9749708",
 }
 
 # Regenerate via `REGENERATE_GOLDEN=1 python3 -m pytest
 # tests/test_render_metrics_golden.py::test_python_binaural_metrics_golden -s`.
-_GOLDEN_BINAURAL_LKFS_HEX = "c03200000000001c"
-_GOLDEN_BINAURAL_TP_HEX = "c026d2368a3b80c0"
+_GOLDEN_BINAURAL_LKFS_HEX = "c032000000000000"
+_GOLDEN_BINAURAL_TP_HEX = "c026663c306f4318"
 _GOLDEN_BINAURAL_CHANNEL_RMS_HEX = {
-    "FL": "3fb661491b33a6f0",
-    "FR": "3fb6711655bd520e",
+    "FL": "3fb6717e10a29857",
+    "FR": "3fb680e4890fc927",
 }
 
 

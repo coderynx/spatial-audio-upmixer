@@ -27,13 +27,18 @@ export type MasterPreview = {
     release_ms?: number | null;
     knee_db?: number | null;
     makeup_db?: number | null;
+    sidechain_hpf_hz?: number | null;
   };
   bass?: {
     profile?: string | null;
     sub_gain_db?: number | null;
     mid_gain_db?: number | null;
-    mono_cutoff_hz?: number | null;
+    unify_hz?: number | null;
+    spread?: string | null;
+    punch?: number | null;
     excite?: boolean | null;
+    lfe_mode?: string | null;
+    lfe_send?: number | null;
     lfe_gain_db?: number | null;
   };
 };

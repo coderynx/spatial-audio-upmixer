@@ -28,7 +28,11 @@ def engine_constants() -> dict[str, Any]:
         BASS_PROFILES,
         EXCITE_BLEND,
         EXCITE_DRIVE,
+        LF_SPREADS,
         MID_CUTOFF_HZ,
+        PUNCH_FAST_MS,
+        PUNCH_MAX_DB,
+        PUNCH_SLOW_MS,
         SUB_CUTOFF_HZ,
     )
     from upmixer.mastering.compressor import COMP_PROFILES
@@ -83,6 +87,10 @@ def engine_constants() -> dict[str, Any]:
         "bass_mid_cutoff_hz": MID_CUTOFF_HZ,
         "bass_excite_blend": EXCITE_BLEND,
         "bass_excite_drive": EXCITE_DRIVE,
+        "bass_lf_spreads": {name: list(channels) for name, channels in LF_SPREADS.items()},
+        "bass_punch_fast_ms": PUNCH_FAST_MS,
+        "bass_punch_slow_ms": PUNCH_SLOW_MS,
+        "bass_punch_max_db": PUNCH_MAX_DB,
         "binaural_loudness_max_gain_db": BINAURAL_LOUDNESS_MAX_GAIN_DB,
         "crosstalk_loudness_max_gain_db": CROSSTALK_LOUDNESS_MAX_GAIN_DB,
         "voicing_params": {p.value: asdict(v) for p, v in BINAURAL_VOICING.items()},
@@ -99,7 +107,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     from upmixer.crosstalk.profiles import CROSSTALK_PROFILES
     from upmixer.formats import BINAURAL_BED_FORMATS, FORMAT_MAP, TRANSAURAL_BED_FORMATS
     from upmixer.manifest import list_manifest_keys, manifest_parameter_schema
-    from upmixer.mastering.bass import BASS_PROFILES
+    from upmixer.mastering.bass import BASS_PROFILES, LFE_MODES, LF_SPREAD_NAMES
     from upmixer.mastering.compressor import COMP_PROFILES
     from upmixer.mastering.eq import EQ_PROFILES
     from upmixer.separation.bleed_reduction import DEBLEED_MODELS, PHASE_FIX_REFERENCE_MODELS
@@ -128,6 +136,8 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
             "eq_profiles": sorted(EQ_PROFILES),
             "compressor_profiles": sorted(COMP_PROFILES),
             "bass_profiles": sorted(BASS_PROFILES),
+            "bass_spreads": list(LF_SPREAD_NAMES),
+            "bass_lfe_modes": list(LFE_MODES),
             "stem_eq_profiles": sorted(STEM_EQ_PROFILES),
             "stem_phase_fix_reference_models": list(PHASE_FIX_REFERENCE_MODELS),
             "stem_debleed_models": list(DEBLEED_MODELS),

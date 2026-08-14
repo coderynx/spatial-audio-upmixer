@@ -14,7 +14,7 @@ impl PreviewEngine {
         let target = frame.min(self.total_frames);
         self.rewind();
         self.emitted = target;
-        self.mono_done = target;
+        self.unify_done = target;
         self.pre.base = target;
         self.post.base = target;
         // A cold jump has rendered nothing at the new position yet, so the

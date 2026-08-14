@@ -11,7 +11,7 @@ pub(crate) struct MasterParams {
     #[serde(default)]
     pub(crate) lfe_index: Option<usize>,
     #[serde(default)]
-    pub(crate) stereo_pairs: Vec<(usize, usize)>,
+    pub(crate) lf_targets: Vec<(usize, f64)>,
     /// Reference-match level gain, applied before the correction FIR.
     #[serde(default = "unit")]
     pub(crate) reference_gain: f64,

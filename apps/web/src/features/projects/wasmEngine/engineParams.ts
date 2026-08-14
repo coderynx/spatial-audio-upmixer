@@ -6,13 +6,14 @@
 // mix. See docs/contracts/preview_export_parity.md §2.
 
 import type {
-  BassProfileName,
-  CompProfileName,
+  BassProfile,
+  CompProfile,
   EngineConstants,
   SpatialProfile,
   TransauralProfile,
   VoicingParams,
 } from "../masteringProfiles";
+import { resolveLfTargets } from "../masteringProfiles";
 
 export type OutputMode = "binaural" | "transaural" | "stereo" | "native";
 
@@ -97,8 +98,11 @@ export type StemMix = {
 };
 
 export type MasterMix = {
-  compProfile?: CompProfileName | null;
-  bassProfile?: BassProfileName | null;
+  /** Already resolved — profile preset merged with the project's per-field
+   * overrides. Resolving upstream is what keeps a moved pot from being
+   * dropped between the UI and the worklet (ledger D30). */
+  comp?: CompProfile | null;
+  bass?: BassProfile | null;
   eqFir?: Float64Array | number[];
   eqStrength?: number;
   referenceFir?: Float64Array | number[];
@@ -123,14 +127,6 @@ export type BuildEngineParamsInput = {
   bypassMastering?: boolean;
 };
 
-const MONO_PAIRS: [string, string][] = [
-  ["FL", "FR"],
-  ["SL", "SR"],
-  ["BL", "BR"],
-  ["TFL", "TFR"],
-  ["TBL", "TBR"],
-];
-
 /** Build the JSON parameter block the worklet hands to the core. */
 export function buildEngineParams(input: BuildEngineParamsInput): Record<string, unknown> {
   const { constants: c, layoutChannels, outputMode } = input;
@@ -141,8 +137,8 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
   const lfeIndex = index.get("LFE");
 
   const master = input.master ?? {};
-  const comp = master.compProfile ? c.compProfiles[master.compProfile] : null;
-  const bass = master.bassProfile ? c.bassProfiles[master.bassProfile] : null;
+  const comp = master.comp ?? null;
+  const bass = master.bass ?? null;
 
   const voicing =
     outputMode === "transaural"
@@ -197,13 +193,17 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
         ? {
             sub_gain_db: bass.sub_gain_db,
             mid_gain_db: bass.mid_gain_db,
-            mono_cutoff_hz: bass.mono_cutoff_hz,
+            unify_hz: bass.unify_hz,
+            punch: bass.punch,
             excite: bass.excite,
             lfe_gain_db: bass.lfe_gain_db,
             sub_cutoff_hz: c.subCutoffHz,
             mid_cutoff_hz: c.midCutoffHz,
             excite_blend: c.exciteBlend,
             excite_drive: c.exciteDrive,
+            punch_fast_ms: c.punchFastMs,
+            punch_slow_ms: c.punchSlowMs,
+            punch_max_db: c.punchMaxDb,
           }
         : null,
       limiter:
@@ -215,11 +215,10 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
               safety_margin_db: c.safetyMarginDb,
             }
           : null,
-      stereo_pairs: MONO_PAIRS.flatMap(([left, right]) => {
-        const l = index.get(left);
-        const r = index.get(right);
-        return l !== undefined && r !== undefined ? [[l, r]] : [];
-      }),
+      lf_targets:
+        bass && bass.unify_hz !== null
+          ? resolveLfTargets(speakers, bass, c.lfSpreads, c.lfeGain)
+          : [],
       output_gain: master.outputGain ?? 1,
     },
     output_mode: outputMode,

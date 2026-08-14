@@ -62,7 +62,7 @@ pub unsafe extern "C" fn dsp_master_bed(
         compressor::bus_compress(&mut bed, params.lfe_index, sample_rate, &comp);
     }
     if let Some(bass) = params.bass {
-        bass::bass_control(&mut bed, params.lfe_index, &params.stereo_pairs, sample_rate, &bass);
+        bass::bass_control(&mut bed, params.lfe_index, &params.lf_targets, sample_rate, &bass);
     }
     let reduction = match params.limiter {
         Some(l) => limiter::lookahead_limit(&mut bed, sample_rate, &l),

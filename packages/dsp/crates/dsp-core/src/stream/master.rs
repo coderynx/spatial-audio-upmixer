@@ -1,26 +1,28 @@
 //! The mastering bus, rendered incrementally.
 //!
-//! Stages split by what they need to see. Reference match, EQ, compression,
-//! the bass band gains and the exciter are causal and simply carry their
-//! state. The mono-maker's zero-phase pass and the limiter's forward-window
-//! minimum both need to look ahead, so the engine keeps a queue in front of
-//! them and only emits samples that have their full look-ahead behind them.
+//! Stages split by what they need to see. Reference match, EQ, compression
+//! and the bass band gains are causal and simply carry their state. The LF
+//! unifier's zero-phase pass and the limiter's forward-window minimum both
+//! need to look ahead, so the engine keeps a queue in front of them and only
+//! emits samples that have their full look-ahead behind them.
 
 use crate::kernels::biquad::SosFilter;
 use crate::kernels::butter::{butter_sos, BandType};
 use crate::kernels::minfilter::{minimum_filter1d, BorderMode};
 use crate::kernels::upfirdn::upfirdn_up;
 use crate::loudness::{TRUE_PEAK_FIR_4X, TRUE_PEAK_OVERSAMPLE};
+use crate::mastering::bass::{excite_harmonics, BassParams, PunchState};
 use crate::mastering::limiter::{LimiterParams, FIR_DELAY, FIR_MARGIN_SAMPLES};
+use crate::mastering::non_lfe;
 
 use super::conv::StreamingConvolver;
 use super::params::MasterParams;
 use super::state::HorizonFiltFilt;
 
-/// Look-behind and look-ahead the mono-maker's zero-phase pass runs with.
-/// At 100 ms the 80-100 Hz filter has decayed by `e^-40`, so truncating there
+/// Look-behind and look-ahead the LF unifier's zero-phase pass runs with.
+/// At 100 ms the 80-120 Hz filter has decayed by `e^-40`, so truncating there
 /// is below any tolerance that matters — see `state::HorizonFiltFilt`.
-pub const MONO_HORIZON_MS: f64 = 100.0;
+pub const UNIFY_HORIZON_MS: f64 = 100.0;
 
 /// Causal, per-channel front of the chain.
 pub struct CausalChain {
@@ -30,7 +32,6 @@ pub struct CausalChain {
     eq_strength: f64,
     sub: Option<(SosFilter, f64)>,
     mid: Option<(SosFilter, SosFilter, f64)>,
-    exciter: Option<(SosFilter, f64, f64)>,
     is_lfe: bool,
 }
 
@@ -58,13 +59,6 @@ impl CausalChain {
                     10.0_f64.powf(b.mid_gain_db / 20.0),
                 )
             }),
-            exciter: bass.filter(|b| b.excite && !is_lfe).map(|b| {
-                (
-                    SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::Low)),
-                    b.excite_drive,
-                    b.excite_blend,
-                )
-            }),
             is_lfe,
         }
     }
@@ -73,9 +67,9 @@ impl CausalChain {
     /// scalars, assigned directly; the reference/EQ convolvers keep their
     /// history via [`StreamingConvolver::retune_kernel`] when their FIR
     /// content changed, or are added/dropped when it went to/from empty. The
-    /// bass sub/mid/exciter filters are cheap to rebuild outright (a few
-    /// biquad sections), so they're only touched — and only reset — when
-    /// `new.bass` actually differs from what this chain was built with.
+    /// bass sub/mid filters are cheap to rebuild outright (a few biquad
+    /// sections), so they're only touched — and only reset — when `new.bass`
+    /// actually differs from what this chain was built with.
     pub fn retune(&mut self, sample_rate: u32, old: &MasterParams, new: &MasterParams) {
         self.reference_gain = new.reference_gain;
         self.eq_strength = new.eq_strength;
@@ -116,13 +110,6 @@ impl CausalChain {
                     10.0_f64.powf(b.mid_gain_db / 20.0),
                 )
             });
-            self.exciter = bass.filter(|b| b.excite && !self.is_lfe).map(|b| {
-                (
-                    SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::Low)),
-                    b.excite_drive,
-                    b.excite_blend,
-                )
-            });
         }
     }
 
@@ -145,7 +132,7 @@ impl CausalChain {
         out
     }
 
-    /// The band gains, which run before the mono-maker.
+    /// The band gains, which run before the LF unifier.
     pub fn band_gains(&mut self, block: &mut [f64]) {
         if let Some((filter, gain)) = &mut self.sub {
             for v in block.iter_mut() {
@@ -161,15 +148,9 @@ impl CausalChain {
         }
     }
 
-    /// The exciter and LFE trim, which `BassController` runs *after* the
-    /// mono-maker — reversing them measurably changes the low end.
-    pub fn post_mono(&mut self, block: &mut [f64], lfe_gain_db: f64) {
-        if let Some((filter, drive, blend)) = &mut self.exciter {
-            for v in block.iter_mut() {
-                let sub = filter.tick(*v);
-                *v += (sub * *drive).tanh() * *blend;
-            }
-        }
+    /// The LFE trim, which `BassController` runs *after* the LF unifier —
+    /// reversing them measurably changes the low end.
+    pub fn lfe_trim(&mut self, block: &mut [f64], lfe_gain_db: f64) {
         if self.is_lfe && lfe_gain_db != 0.0 {
             let g = 10.0_f64.powf(lfe_gain_db / 20.0);
             for v in block.iter_mut() {
@@ -179,34 +160,92 @@ impl CausalChain {
     }
 }
 
-/// Bass mono-maker over a look-ahead window.
-pub struct MonoMaker {
+/// LF unification over a look-ahead window.
+///
+/// Mirrors `mastering::bass::lf_unify`: one low band per non-LFE channel,
+/// summed to a mono bus, transient-shaped, excited, then handed back over the
+/// caller-resolved target weights. The punch envelopes are causal, so they
+/// advance only over what is emitted — the same discipline
+/// [`StreamingLimiter`]'s release smoother follows.
+pub struct LfUnifier {
     filter: HorizonFiltFilt,
-    pairs: Vec<(usize, usize)>,
+    bed_idx: Vec<usize>,
+    lf_targets: Vec<(usize, f64)>,
+    lfe: Option<usize>,
+    params: BassParams,
+    punch: PunchState,
+    sample_rate: u32,
 }
 
-impl MonoMaker {
-    pub fn new(sample_rate: u32, cutoff_hz: f64, pairs: Vec<(usize, usize)>) -> Self {
+impl LfUnifier {
+    pub fn new(
+        sample_rate: u32,
+        n_channels: usize,
+        lfe: Option<usize>,
+        params: BassParams,
+        lf_targets: Vec<(usize, f64)>,
+    ) -> Self {
         let nyq = sample_rate as f64 / 2.0;
-        let horizon = (sample_rate as f64 * MONO_HORIZON_MS / 1000.0) as usize;
-        let sos = butter_sos(2, (cutoff_hz / nyq).clamp(1e-4, 0.999), BandType::Low);
-        Self { filter: HorizonFiltFilt::new(sos, horizon, horizon), pairs }
+        let horizon = (sample_rate as f64 * UNIFY_HORIZON_MS / 1000.0) as usize;
+        let cutoff = params.unify_hz.unwrap_or(nyq);
+        let sos = butter_sos(2, (cutoff / nyq).clamp(1e-4, 0.999), BandType::Low);
+        Self {
+            filter: HorizonFiltFilt::new(sos, horizon, horizon),
+            bed_idx: non_lfe(n_channels, lfe),
+            lf_targets,
+            lfe,
+            params,
+            punch: PunchState::default(),
+            sample_rate,
+        }
     }
 
-    /// Couple each pair's low band across `queue[start..end]`.
-    pub fn process(&self, queue: &mut [Vec<f64>], start: usize, end: usize) {
-        for &(l, r) in &self.pairs {
-            if l >= queue.len() || r >= queue.len() {
+    /// Drop the punch envelopes. The zero-phase pass carries nothing across
+    /// calls, so this is the whole of the unifier's state.
+    pub fn reset(&mut self) {
+        self.punch = PunchState::default();
+    }
+
+    /// Unify the low band across `queue[..][start..end]`, reading outward
+    /// from `start`/`end` for the zero-phase pass's context.
+    pub fn process(&mut self, queue: &mut [Vec<f64>], start: usize, end: usize) {
+        if end <= start || self.lf_targets.is_empty() {
+            return;
+        }
+        let n = end - start;
+        let mut bus = vec![0.0; n];
+        let mut lows: Vec<Vec<f64>> = Vec::with_capacity(self.bed_idx.len());
+        for &i in &self.bed_idx {
+            if i >= queue.len() {
+                lows.push(Vec::new());
                 continue;
             }
-            let low_l = self.filter.process_window(&queue[l], start, end);
-            let low_r = self.filter.process_window(&queue[r], start, end);
-            for i in start..end {
-                let mono = (low_l[i - start] + low_r[i - start]) * 0.5;
-                let dry_l = queue[l][i];
-                let dry_r = queue[r][i];
-                queue[l][i] = mono + (dry_l - low_l[i - start]);
-                queue[r][i] = mono + (dry_r - low_r[i - start]);
+            let low = self.filter.process_window(&queue[i], start, end);
+            for (acc, v) in bus.iter_mut().zip(low.iter()) {
+                *acc += v;
+            }
+            lows.push(low);
+        }
+        self.punch.run(&mut bus, self.sample_rate, &self.params);
+
+        for (&i, low) in self.bed_idx.iter().zip(lows.iter()) {
+            if i >= queue.len() {
+                continue;
+            }
+            for (k, l) in low.iter().enumerate() {
+                queue[i][start + k] -= l;
+            }
+        }
+
+        let harmonics = self.params.excite.then(|| excite_harmonics(&bus, &self.params));
+        for &(i, weight) in &self.lf_targets {
+            if i >= queue.len() || weight == 0.0 {
+                continue;
+            }
+            let harmonics = harmonics.as_ref().filter(|_| Some(i) != self.lfe);
+            for k in 0..n.min(queue[i].len().saturating_sub(start)) {
+                let h = harmonics.map_or(0.0, |h| h[k]);
+                queue[i][start + k] += (bus[k] + h) * weight;
             }
         }
     }
@@ -316,12 +355,3 @@ impl StreamingLimiter {
     }
 }
 
-/// Linked sidechain RMS across every non-LFE channel, for the compressor.
-pub fn linked_rms(bed: &[Vec<f64>], non_lfe: &[usize], frame: usize) -> f64 {
-    let mut acc = 0.0;
-    for &i in non_lfe {
-        let v = bed[i][frame];
-        acc += v * v;
-    }
-    (acc / non_lfe.len() as f64 + 1e-20).sqrt()
-}

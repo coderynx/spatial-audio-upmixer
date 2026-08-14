@@ -230,9 +230,11 @@ def _write_stage(name: str, out: dict[str, np.ndarray], params: dict, tol: float
 
 
 def dump_mastering() -> None:
+    from upmixer.config import UpmixConfig
     from upmixer.mastering.bass import (
-        BASS_PROFILES, EXCITE_BLEND, EXCITE_DRIVE, MID_CUTOFF_HZ, SUB_CUTOFF_HZ,
-        BassController,
+        BASS_PROFILES, EXCITE_BLEND, EXCITE_DRIVE, MID_CUTOFF_HZ,
+        PUNCH_FAST_MS, PUNCH_MAX_DB, PUNCH_SLOW_MS, SUB_CUTOFF_HZ,
+        BassController, resolve_lf_targets,
     )
     from upmixer.mastering.compressor import COMP_PROFILES, BusCompressor
     from upmixer.mastering.eq import EQ_PROFILES, SpectralShaper, _build_fir
@@ -261,20 +263,34 @@ def dump_mastering() -> None:
         out = BusCompressor(sample_rate=MASTERING_SR, **params).process(dict(bed))
         _write_stage(f"comp_{profile}", out, dict(params), 1e-12)
 
+    lfe_authoring_gain = UpmixConfig().lfe_gain
     for profile in BASS_PROFILES:
         params = BASS_PROFILES[profile]
-        out = BassController(sample_rate=MASTERING_SR, **params).process(dict(bed))
+        out = BassController(
+            sample_rate=MASTERING_SR, lfe_authoring_gain=lfe_authoring_gain, **params
+        ).process(dict(bed))
+        targets = (
+            resolve_lf_targets(
+                list(MASTERING_CHANNELS), params["spread"], params["lfe_mode"],
+                params["lfe_send"], lfe_authoring_gain,
+            )
+            if params["unify_hz"] is not None
+            else []
+        )
         _write_stage(
             f"bass_{profile}",
             out,
             {
-                **{k: (v if v is not None else -1.0) if k == "mono_cutoff_hz" else v
+                **{k: (v if v is not None else -1.0) if k == "unify_hz" else v
                    for k, v in params.items()},
                 "sub_cutoff_hz": SUB_CUTOFF_HZ,
                 "mid_cutoff_hz": MID_CUTOFF_HZ,
                 "excite_blend": EXCITE_BLEND,
                 "excite_drive": EXCITE_DRIVE,
-                "stereo_pairs": [[0, 1]],
+                "punch_fast_ms": PUNCH_FAST_MS,
+                "punch_slow_ms": PUNCH_SLOW_MS,
+                "punch_max_db": PUNCH_MAX_DB,
+                "lf_targets": [[i, w] for i, w in targets],
             },
             1e-11,
         )

@@ -40,6 +40,7 @@ def _make_comp(**kwargs) -> BusCompressor:
         release_ms=200.0,
         knee_db=6.0,
         makeup_db=0.0,
+        sidechain_hpf_hz=None,
         sample_rate=44100,
     )
     defaults.update(kwargs)
@@ -48,7 +49,10 @@ def _make_comp(**kwargs) -> BusCompressor:
 
 class TestCompProfiles:
     def test_all_profiles_have_required_keys(self):
-        required = {"threshold_db", "ratio", "attack_ms", "release_ms", "knee_db", "makeup_db"}
+        required = {
+            "threshold_db", "ratio", "attack_ms", "release_ms",
+            "knee_db", "makeup_db", "sidechain_hpf_hz",
+        }
         for name, p in COMP_PROFILES.items():
             assert required <= set(p.keys()), f"Profile '{name}' missing keys"
 
@@ -158,9 +162,39 @@ class TestBusCompressorCompression:
             release_ms=p["release_ms"],
             knee_db=p["knee_db"],
             makeup_db=p["makeup_db"],
+            sidechain_hpf_hz=p["sidechain_hpf_hz"],
             sample_rate=48000,
         )
         chs = _loud_channels()
         out = c.process(chs)
         for name, arr in out.items():
             assert np.all(np.isfinite(arr))
+
+
+class TestBusCompressorSidechain:
+    def _bass_heavy(self, n: int = 48000) -> dict[str, np.ndarray]:
+        """Loud low end under a quiet broadband bed."""
+        t = np.linspace(0, 1, n, endpoint=False)
+        sig = (0.9 * np.sin(2 * np.pi * 40 * t) + 0.05 * np.sin(2 * np.pi * 2000 * t))
+        return {k: sig.astype(np.float64).copy() for k in ["FL", "FR", "C", "LFE", "SL", "SR"]}
+
+    def test_none_leaves_the_sidechain_full_band(self):
+        chs = self._bass_heavy()
+        wide = _make_comp(sample_rate=48000).process(chs)
+        again = _make_comp(sidechain_hpf_hz=None, sample_rate=48000).process(chs)
+        for name in wide:
+            assert np.array_equal(wide[name], again[name])
+
+    def test_high_passing_the_detector_reduces_gain_reduction(self):
+        chs = self._bass_heavy()
+        wide = _make_comp(sample_rate=48000).process(chs)
+        narrow = _make_comp(sidechain_hpf_hz=100.0, sample_rate=48000).process(chs)
+        # Less gain reduction means more surviving level on the bed.
+        assert np.sum(narrow["FL"] ** 2) > np.sum(wide["FL"] ** 2)
+
+    def test_the_low_end_still_reaches_the_output(self):
+        """The filter belongs to the detector, not the signal path."""
+        chs = self._bass_heavy()
+        out = _make_comp(sidechain_hpf_hz=100.0, sample_rate=48000).process(chs)
+        assert np.all(np.isfinite(out["FL"]))
+        assert np.max(np.abs(out["FL"])) > 0.5

@@ -45,13 +45,18 @@ export type Manifest = {
       release_ms: number | null;
       knee_db: number | null;
       makeup_db: number | null;
+      sidechain_hpf_hz: number | null;
     };
     bass: {
       profile: string | null;
       sub_gain_db: number | null;
       mid_gain_db: number | null;
-      mono_cutoff_hz: number | null;
-      excite: boolean;
+      unify_hz: number | null;
+      spread: string | null;
+      punch: number | null;
+      excite: boolean | null;
+      lfe_mode: string | null;
+      lfe_send: number | null;
       lfe_gain_db: number | null;
     };
   };
@@ -152,13 +157,18 @@ export const defaultManifest: Manifest = {
       release_ms: null,
       knee_db: null,
       makeup_db: null,
+      sidechain_hpf_hz: null,
     },
     bass: {
       profile: null,
       sub_gain_db: null,
       mid_gain_db: null,
-      mono_cutoff_hz: null,
-      excite: false,
+      unify_hz: null,
+      spread: null,
+      punch: null,
+      excite: null,
+      lfe_mode: null,
+      lfe_send: null,
       lfe_gain_db: null,
     },
   },

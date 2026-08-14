@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { TEST_ENGINE_CONSTANTS, TEST_SERVED_CONSTANTS } from "../engineConstants.fixture";
+import { resolveBassParams } from "../masteringProfiles";
 import { buildEngineParams, type BuildEngineParamsInput } from "./engineParams";
 
 const constants = TEST_ENGINE_CONSTANTS;
@@ -65,15 +66,37 @@ describe("buildEngineParams", () => {
     expect(stems[0].routing.map(([name]) => name)).toEqual(["FL"]);
   });
 
-  it("pairs only the stereo pairs the layout actually has", () => {
-    const wide = buildEngineParams(input()).master as { stereo_pairs: number[][] };
-    // FL/FR, SL/SR, TFL/TFR, TBL/TBR — but no BL/BR in this layout.
-    expect(wide.stereo_pairs).toHaveLength(4);
-
-    const narrow = buildEngineParams(input({ layoutChannels: ["FL", "FR", "LFE"] })).master as {
-      stereo_pairs: number[][];
+  it("spreads the low end only over channels the layout actually has", () => {
+    const bass = { ...constants.bassProfiles.deep, lfe_mode: "off" as const, lfe_send: 0 };
+    const wide = buildEngineParams(input({ master: { bass } })).master as {
+      lf_targets: [number, number][];
     };
-    expect(narrow.stereo_pairs).toEqual([[0, 1]]);
+    // FL/FR/C/SL/SR — but no BL/BR in this layout.
+    expect(wide.lf_targets).toHaveLength(5);
+    const total = wide.lf_targets.reduce((sum, [, weight]) => sum + weight, 0);
+    expect(total).toBeCloseTo(1, 12);
+
+    const narrow = buildEngineParams(input({ layoutChannels: ["FL", "FR", "LFE"], master: { bass } }))
+      .master as { lf_targets: [number, number][] };
+    expect(narrow.lf_targets).toEqual([
+      [0, 0.5],
+      [1, 0.5],
+    ]);
+  });
+
+  it("folds the LFE authoring gain into a split send", () => {
+    const bass = { ...constants.bassProfiles.cinema };
+    const params = buildEngineParams(input({ master: { bass } })).master as {
+      lf_targets: [number, number][];
+    };
+    const lfeIndex = 3;
+    const lfe = params.lf_targets.find(([i]) => i === lfeIndex);
+    expect(lfe?.[1]).toBeCloseTo(bass.lfe_send * constants.lfeGain, 12);
+    // Mains keep what the LFE did not take, so the coherent level survives
+    // playback's +10 dB replay gain.
+    const bed = params.lf_targets.filter(([i]) => i !== lfeIndex);
+    const bedTotal = bed.reduce((sum, [, weight]) => sum + weight, 0);
+    expect(bedTotal).toBeCloseTo(1 - bass.lfe_send, 12);
   });
 
   it("arms the look-ahead limiter only on the native path", () => {
@@ -96,11 +119,35 @@ describe("buildEngineParams", () => {
 
   it("resolves mastering profiles into the core's parameter shape", () => {
     const params = buildEngineParams(
-      input({ master: { compProfile: "glue", bassProfile: "enhance" } }),
-    ).master as { compressor: { ratio: number }; bass: { excite_drive: number } };
+      input({
+        master: { comp: constants.compProfiles.glue, bass: constants.bassProfiles.enhance },
+      }),
+    ).master as {
+      compressor: { ratio: number };
+      bass: { excite_drive: number; punch: number; unify_hz: number };
+    };
 
     expect(params.compressor.ratio).toBe(constants.compProfiles.glue.ratio);
     expect(params.bass.excite_drive).toBe(constants.exciteDrive);
+    expect(params.bass.punch).toBe(constants.bassProfiles.enhance.punch);
+    expect(params.bass.unify_hz).toBe(constants.bassProfiles.enhance.unify_hz);
+  });
+
+  it("forwards per-field overrides, not just the profile preset", () => {
+    // The preview used to send the bare preset, so a moved pot changed the
+    // export and not what the user heard (ledger D30).
+    const overridden = resolveBassParams(
+      { profile: "enhance", punch: -0.4, unify_hz: 55 },
+      constants.bassProfiles,
+    )!;
+    const params = buildEngineParams(input({ master: { bass: overridden } })).master as {
+      bass: { punch: number; unify_hz: number; excite: boolean };
+    };
+
+    expect(params.bass.punch).toBe(-0.4);
+    expect(params.bass.unify_hz).toBe(55);
+    // Untouched fields still come from the profile.
+    expect(params.bass.excite).toBe(constants.bassProfiles.enhance.excite);
   });
 
   it("produces a block the core accepts", () => {
