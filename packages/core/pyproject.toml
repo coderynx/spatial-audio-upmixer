@@ -1,0 +1,86 @@
+[project]
+name = "upmixer"
+version = "0.1.0"
+description = "Stereo to multichannel audio upmixer"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11,<3.14"
+keywords = ["audio", "upmix", "dolby-atmos", "surround-sound", "stem-separation"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Conversion",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.12",
+    "soundfile>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "matplotlib>=3.7",
+    "pyyaml>=6.0",
+]
+manifest = [
+    "pyyaml>=6.0",
+]
+separation = [
+    "torch>=2.1",
+    "einops>=0.7",
+    "librosa>=0.10",
+    "numba>=0.60",
+    "pyyaml>=6.0",
+    "beartype>=0.18",
+    "rotary-embedding-torch>=0.6",
+]
+separation-cpu = [
+    "upmixer[separation]",
+]
+separation-gpu = [
+    # Same package set as separation-cpu; install a CUDA-enabled torch build
+    # first (see https://pytorch.org/get-started/locally/ for the matching
+    # --index-url), then this extra to pull in the rest.
+    "upmixer[separation]",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "upmixer",
+    "upmixer.analysis",
+    "upmixer.binaural",
+    "upmixer.crosstalk",
+    "upmixer.decomposition",
+    "upmixer.eval",
+    "upmixer.io",
+    "upmixer.manifest",
+    "upmixer.mastering",
+    "upmixer.routing",
+    "upmixer.separation",
+    "upmixer.separation.inference",
+    "upmixer.separation.inference.archs",
+    "upmixer.upmix",
+]
+
+[tool.setuptools.package-dir]
+upmixer = "src"
+
+[tool.setuptools.package-data]
+upmixer = [
+    "binaural/hrir/*.wav",
+    "crosstalk/xtc/*.wav",
+    "separation/inference/configs/*.yaml",
+]
+
+[tool.pytest.ini_options]
+addopts = "-m 'not perf'"
+markers = [
+    "perf: performance benchmarks (run with -m perf; skipped in CI by default)",
+]

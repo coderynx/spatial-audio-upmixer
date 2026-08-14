@@ -4,7 +4,82 @@ Spatial Audio Upmixer is a Python library and command-line tool for converting m
 audio into higher-channel-count spatial beds. It combines content-aware spatial processing, optional neural source
 separation, and a shared mastering chain to produce standard multichannel WAV or ADM-BWF files.
 
-The installable package, Python namespace, and command remain `upmixer`.
+The installable library package and Python namespace remain `upmixer`. The `upmixer` command now ships from a
+separate `upmixer-cli` package (which depends on `upmixer`), so you can install just the library without a CLI
+footprint. This repository is a uv workspace monorepo — `packages/core` (library), `apps/cli`, `apps/api`, and
+`apps/web` — see `AGENTS.md` for the full layout.
+
+An optional web application adds interactive track and album workflows without changing the CLI. It uses the same manifests and processing pipelines, so browser-configured jobs remain portable to automation.
+
+## Web application
+
+The stack is two processes: the FastAPI server (`apps/api`) and the React client (`apps/web`). Stem separation
+needs Python 3.11, 3.12, or 3.13 and one of the `separation-cpu`/`separation-gpu` extras, chosen per platform below.
+
+### 1. Install the API
+
+Pick a CPU/GPU extra for your platform, then sync the workspace:
+
+| Platform | Extra | Notes |
+|---|---|---|
+| macOS (Apple Silicon) | `separation-cpu` | The in-core inference engine selects MPS acceleration automatically — there is no separate "GPU" package for Apple Silicon. |
+| macOS (Intel) | `separation-cpu` | CPU only; no MPS or CUDA path exists on Intel Macs. |
+| Linux, NVIDIA GPU | `separation-gpu` | Install a CUDA-enabled `torch` build **first** (see below), then the extra. |
+| Linux, CPU only | `separation-cpu` | |
+| Windows, NVIDIA GPU | `separation-gpu` | Install a CUDA-enabled `torch` build **first** (see below), then the extra. |
+| Windows, CPU only | `separation-cpu` | |
+
+**uv (recommended):**
+
+```bash
+# CPU / Apple Silicon MPS / macOS Intel:
+uv sync --all-packages --extra dev --extra web-dev --extra manifest --extra separation-cpu
+
+# NVIDIA CUDA (Linux/Windows) — install the matching CUDA torch build first,
+# then sync so separation-gpu doesn't pull the CPU-only wheel over it:
+uv sync --all-packages --extra dev --extra web-dev --extra manifest
+uv pip install torch --index-url https://download.pytorch.org/whl/cu121  # match your CUDA version, see pytorch.org/get-started/locally
+uv sync --all-packages --extra dev --extra web-dev --extra manifest --extra separation-gpu
+```
+
+**Plain pip alternative** (from the repository root, editable install — do not `pip install upmixer` by name, it
+is not published):
+
+```bash
+# CPU / Apple Silicon MPS / macOS Intel:
+python3 -m pip install -e "packages/core[separation-cpu]" -e apps/api
+
+# NVIDIA CUDA (Linux/Windows):
+python3 -m pip install torch --index-url https://download.pytorch.org/whl/cu121  # match your CUDA version
+python3 -m pip install -e "packages/core[separation-gpu]" -e apps/api
+```
+
+Without stem separation (mastering/routing only, no `torch` dependency), drop the extra entirely:
+
+```bash
+uv sync --all-packages --extra dev --extra web-dev --extra manifest
+```
+
+### 2. Run the API
+
+```bash
+cd apps/api
+uv run upmixer-web       # or: python3 -m upmixer_web, with a plain-pip install
+```
+
+`UPMIXER_DATA_DIR` defaults to `./data` relative to the process's working directory — run with cwd `apps/api`, or
+set it explicitly. Copy `.env.example` at the repository root to `apps/api/.env` (or export the variables) to
+configure `UPMIXER_HOST`, `UPMIXER_PORT`, `UPMIXER_DATABASE_URL`, `UPMIXER_ALLOWED_ORIGINS`, and related settings.
+
+### 3. Run the web client
+
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. API documentation is available at `http://localhost:8000/api/docs`. See [Web architecture](docs/web_architecture.md) for persistence, storage interfaces, job states, endpoints, reverse-proxy setup, GPU containers, and extension boundaries.
 
 ## Features
 
@@ -21,13 +96,19 @@ The installable package, Python namespace, and command remain `upmixer`.
 
 ## Requirements
 
-- Python 3.11 or later
+- Python 3.11, 3.12, or 3.13
 - WAV or FLAC input readable by [libsndfile](https://libsndfile.github.io/)
 - Additional CPU or GPU dependencies for stem separation
 
 ## Installation
 
-Install the core package for realtime processing:
+Install the CLI (pulls in the `upmixer` library automatically):
+
+```bash
+python3 -m pip install upmixer-cli
+```
+
+Or install just the library, for realtime processing without a CLI:
 
 ```bash
 python3 -m pip install upmixer
@@ -36,14 +117,14 @@ python3 -m pip install upmixer
 Install stem separation support for CPU or GPU inference:
 
 ```bash
-python3 -m pip install "upmixer[separation-cpu]"
-python3 -m pip install "upmixer[separation-gpu]"
+python3 -m pip install "upmixer-cli[separation-cpu]"
+python3 -m pip install "upmixer-cli[separation-gpu]"
 ```
 
 YAML manifests require PyYAML. JSON manifests work with the core installation.
 
 ```bash
-python3 -m pip install "upmixer[manifest]"
+python3 -m pip install "upmixer-cli[manifest]"
 ```
 
 For local development:
@@ -51,7 +132,7 @@ For local development:
 ```bash
 git clone https://github.com/coderynx/audio-upmixer.git
 cd audio-upmixer
-python3 -m pip install -e ".[dev]"
+uv sync --all-packages --extra dev --extra web-dev --extra manifest
 ```
 
 ## Quick Start
@@ -88,7 +169,7 @@ saved run state to skip outputs whose input and settings still match.
 | Mode | Best for | How it works | Additional dependency |
 |---|---|---|---|
 | `realtime` | Fast previews, general files, and parallel batches | Coherence analysis separates correlated direct sound from diffuse ambience, then derives center, surround, back, height, and LFE content | None |
-| `stem` | Music, complex mixes, and deliberate instrument placement | Separates requested sources, analyzes each stem, routes it spatially, blends native source zones when requested, and masters the result | `audio-separator` extra |
+| `stem` | Music, complex mixes, and deliberate instrument placement | Separates requested sources, analyzes each stem, routes it spatially, blends native source zones when requested, and masters the result | `separation-cpu`/`separation-gpu` extra |
 
 Realtime mode treats mono as a centered stereo pair. For multichannel input it preserves existing channels and derives
 only the channels needed by the target layout.
@@ -138,9 +219,10 @@ weights. Override these limits with `--stem-segment-size`, `--stem-chunk-duratio
 `--stem-model-cache-size`. For a 4-core, low-memory VM, keep `--cpu-priority auto`, batch size 1, and place
 `--stem-cache-dir` on the SSD.
 
-Stem separation is provided through
-[python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) by nomadkaraoke, using supported Demucs,
-MDX, and RoFormer-family models.
+Stem separation runs on an in-core PyTorch inference engine
+(`upmixer/separation/inference/`) driving BS-RoFormer, Mel-Band RoFormer, and
+TFC-TDF (MDX23C) architectures directly, with model integration not tied to
+any third-party wrapper's supported-model list.
 
 ## Supported Layouts
 
@@ -176,6 +258,29 @@ upmixer surround.wav output.wav --input-format 5.1.2 --format 7.1.4
 | 5.1.4 | 10 | 4 |
 | 7.1.2 | 10 | 2 |
 | 7.1.4 | 12 | 4 |
+
+### Binaural (Spatial Audio Engine)
+
+`--output-type binaural` is a delivery format alongside `wav`/`adm-bwf`, not a channel layout — pick it to render a
+headphone-ready stereo WAV instead of the discrete speaker bed you chose with `--format` (which must be one of
+`5.1.4` / `7.1.2` / `7.1.4`). The pipeline upmixes/masters to that bed as normal, then collapses it to stereo
+through one of three profiles (`--binaural-profile`):
+
+| Profile | For | Room | Consumer voicing |
+|---|---|---|---|
+| `studio` (default) | Professional monitoring, as if in a treated spatial-audio mixing room | Neutral measured-style room | None |
+| `listening` | Flattering "hi-fi system" consumer preview on headphones | Reference cinema room (studio room amount, warmer tail) | Hi-fi enhance (loudness-matched): +2 dB bass, +3 dB air, +1.5 dB presence, +15% cinema width |
+| `flat` | Anechoic reference — verify the mix with zero added coloration | None | None |
+
+```bash
+upmixer input.wav monitor.wav --format 7.1.4 --output-type binaural --binaural-profile studio
+upmixer input.wav consumer.wav --format 7.1.4 --output-type binaural --binaural-profile listening
+```
+
+Mutually exclusive with `--output-type adm-bwf` (ADM-BWF requires a discrete channel-based bed) since both share the
+same `--output-type` flag. See [`docs/standards/spatial_audio_engine.md`](docs/standards/spatial_audio_engine.md)
+for the full signal-graph contract — the same one the web UI's in-preview Spatial Audio Engine profile selector
+implements.
 
 ## CLI Workflows
 
@@ -265,6 +370,21 @@ Global `engine`, `mixing`, `routing`, `format`, `mastering`, and `processing` bl
 configuration blocks are deep-merged, so an override changes only the specified keys. Keep `engine.mode` consistent
 across a manifest batch because one pipeline type is reused for the complete run.
 
+Optional stereo companion output uses the ITU-R BS.775 matrix. Omit `output` to
+derive a sibling filename from each multichannel asset output:
+
+```yaml
+format:
+  downmix:
+    enabled: true
+    surround_coeff: 0.7071
+```
+
+The web server owns uploaded input/output/cache paths and downmix filenames.
+Projects expose the same delivery setting and publish the companion as an artifact.
+See [`docs/project_manifest_parity.md`](docs/project_manifest_parity.md) for the
+project-to-manifest mapping and intentionally unsupported fields.
+
 Configuration precedence is:
 
 ```text
@@ -280,6 +400,8 @@ CLI flags > per-asset manifest values > global manifest values > UpmixConfig def
 | [`stem_hierarchical.yaml`](examples/stem_hierarchical.yaml) | Automatic crowd, primary, drum, and backing-vocal stages |
 | [`atmos_music.yaml`](examples/atmos_music.yaml) | YAML ADM-BWF music-authoring bed |
 | [`atmos_music.json`](examples/atmos_music.json) | Equivalent JSON ADM-BWF example |
+| [`binaural_studio.yaml`](examples/binaural_studio.yaml) | Headphone export, neutral Studio monitoring profile |
+| [`binaural_listening.yaml`](examples/binaural_listening.yaml) | Headphone export, Listening (reference cinema room) profile |
 | [`batch_album_stem.yaml`](examples/batch_album_stem.yaml) | Explicit album jobs with shared stem settings |
 | [`batch_dir_stem.yaml`](examples/batch_dir_stem.yaml) | Directory expansion and per-directory overrides |
 | [`batch_explicit_jobs.yaml`](examples/batch_explicit_jobs.yaml) | Per-track deep-merged overrides |
@@ -390,29 +512,27 @@ from upmixer import (
 
 ## Development
 
-Install development dependencies and run the complete suite:
+Install development dependencies and run each package's suite:
 
 ```bash
-python3 -m pip install -e ".[dev]"
-python3 -m pytest -q
+uv sync --all-packages --extra dev --extra web-dev --extra manifest
+uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q
 ```
 
 Performance and real-model checks are opt-in:
 
 ```bash
-python3 -m pytest -m perf -s
+uv run pytest packages/core/tests -m perf -s
 ```
 
-Build distributions when the `build` package is installed:
+Build a distribution for a given package:
 
 ```bash
-python3 -m build
+uv build packages/core
 ```
 
 ## References
 
-- [python-audio-separator](https://github.com/nomadkaraoke/python-audio-separator) by nomadkaraoke — external source
-  separation library used by stem mode.
 - [ITU-R BS.1770](https://www.itu.int/rec/R-REC-BS.1770/) — audio programme loudness and true-peak measurement.
 - [ITU-R BS.2076](https://www.itu.int/rec/R-REC-BS.2076/) — Audio Definition Model.
 - [ITU-R BS.775](https://www.itu.int/rec/R-REC-BS.775/) and
@@ -428,4 +548,4 @@ standards.
 
 ## License
 
-[MIT](LICENSE)
+[AGPL-3.0-or-later](LICENSE)

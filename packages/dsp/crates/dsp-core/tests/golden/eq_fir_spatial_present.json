@@ -1,0 +1,45 @@
+{
+  "name": "eq_fir_spatial_present",
+  "params": {
+    "profile": "spatial-present",
+    "sample_rate": 48000,
+    "n_taps": 1023,
+    "breakpoints": [
+      [
+        20,
+        0.0
+      ],
+      [
+        500,
+        0.0
+      ],
+      [
+        2000,
+        1.0
+      ],
+      [
+        4000,
+        2.0
+      ],
+      [
+        6000,
+        1.5
+      ],
+      [
+        10000,
+        1.0
+      ],
+      [
+        20000,
+        1.5
+      ]
+    ]
+  },
+  "tolerance": 1e-10,
+  "arrays": {
+    "taps": {
+      "file": "eq_fir_spatial_present.taps.f64",
+      "len": 1023
+    }
+  }
+}

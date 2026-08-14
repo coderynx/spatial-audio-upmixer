@@ -1,0 +1,15 @@
+{
+  "name": "generator_parity",
+  "params": {
+    "n": 4096,
+    "sample_rate": 48000,
+    "seed_phase": 1.5
+  },
+  "tolerance": 1e-14,
+  "arrays": {
+    "signal": {
+      "file": "generator_parity.signal.f64",
+      "len": 4096
+    }
+  }
+}

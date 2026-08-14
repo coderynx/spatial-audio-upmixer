@@ -1,0 +1,45 @@
+{
+  "name": "eq_fir_spatial_warm",
+  "params": {
+    "profile": "spatial-warm",
+    "sample_rate": 48000,
+    "n_taps": 1023,
+    "breakpoints": [
+      [
+        20,
+        0.0
+      ],
+      [
+        100,
+        1.0
+      ],
+      [
+        300,
+        1.5
+      ],
+      [
+        1000,
+        0.5
+      ],
+      [
+        3000,
+        -0.5
+      ],
+      [
+        8000,
+        0.0
+      ],
+      [
+        20000,
+        0.0
+      ]
+    ]
+  },
+  "tolerance": 1e-10,
+  "arrays": {
+    "taps": {
+      "file": "eq_fir_spatial_warm.taps.f64",
+      "len": 1023
+    }
+  }
+}

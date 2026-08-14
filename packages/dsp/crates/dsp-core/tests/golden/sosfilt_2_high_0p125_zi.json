@@ -1,0 +1,19 @@
+{
+  "name": "sosfilt_2_high_0p125_zi",
+  "params": {
+    "order": 2,
+    "wn": 0.125,
+    "btype": "high"
+  },
+  "tolerance": 1e-13,
+  "arrays": {
+    "sos": {
+      "file": "sosfilt_2_high_0p125_zi.sos.f64",
+      "len": 6
+    },
+    "zi": {
+      "file": "sosfilt_2_high_0p125_zi.zi.f64",
+      "len": 2
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "lfilter_onepole_0p5",
+  "params": {
+    "alpha": 0.5
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "input": {
+      "file": "lfilter_onepole_0p5.input.f64",
+      "len": 2048
+    },
+    "output": {
+      "file": "lfilter_onepole_0p5.output.f64",
+      "len": 2048
+    }
+  }
+}

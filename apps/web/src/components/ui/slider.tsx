@@ -1,0 +1,10 @@
+import * as SliderPrimitive from "@radix-ui/react-slider"
+import * as React from "react"
+import { cn } from "@/lib/utils"
+
+export const Slider = React.forwardRef<React.ElementRef<typeof SliderPrimitive.Root>, React.ComponentPropsWithoutRef<typeof SliderPrimitive.Root>>(
+  // Radix only applies `aria-label`/`aria-labelledby` to the Thumb it renders,
+  // not the Root that receives them — pull them off `props` here so a single
+  // aria-label prop on <Slider> (this app never renders more than one thumb)
+  // names the actual role="slider" element instead of silently doing nothing.
+  ({ className, "aria-label": ariaLabel, "aria-labelledby": ariaLabelledBy, ...props }, ref) => <SliderPrimitive.Root ref={ref} className={cn("relative flex w-full touch-none select-none items-center", className)} {...props}><SliderPrimitive.Track className="relative h-1 w-full grow overflow-hidden rounded-full bg-secondary"><SliderPrimitive.Range className="absolute h-full bg-primary" /></SliderPrimitive.Track><SliderPrimitive.Thumb aria-label={ariaLabel} aria-labelledby={ariaLabelledBy} className="block h-3.5 w-3.5 rounded-full border border-black/10 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-40" /></SliderPrimitive.Root>)

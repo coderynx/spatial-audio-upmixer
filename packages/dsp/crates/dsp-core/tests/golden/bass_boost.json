@@ -1,0 +1,48 @@
+{
+  "name": "bass_boost",
+  "params": {
+    "sub_gain_db": 2.0,
+    "mid_gain_db": 1.0,
+    "mono_cutoff_hz": -1.0,
+    "excite": false,
+    "lfe_gain_db": 1.5,
+    "sub_cutoff_hz": 80.0,
+    "mid_cutoff_hz": 200.0,
+    "excite_blend": 0.15,
+    "excite_drive": 3.0,
+    "stereo_pairs": [
+      [
+        0,
+        1
+      ]
+    ],
+    "channels": [
+      "FL",
+      "FR",
+      "C",
+      "LFE"
+    ],
+    "n": 12000,
+    "sample_rate": 48000,
+    "hot": false
+  },
+  "tolerance": 1e-11,
+  "arrays": {
+    "ch_FL": {
+      "file": "bass_boost.ch_FL.f64",
+      "len": 12000
+    },
+    "ch_FR": {
+      "file": "bass_boost.ch_FR.f64",
+      "len": 12000
+    },
+    "ch_C": {
+      "file": "bass_boost.ch_C.f64",
+      "len": 12000
+    },
+    "ch_LFE": {
+      "file": "bass_boost.ch_LFE.f64",
+      "len": 12000
+    }
+  }
+}

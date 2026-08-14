@@ -1,0 +1,53 @@
+[project]
+name = "upmixer-cli"
+version = "0.1.0"
+description = "Command-line interface for the upmixer spatial audio upmixer"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11,<3.14"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Conversion",
+]
+dependencies = [
+    "upmixer",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+manifest = [
+    "upmixer[manifest]",
+]
+separation-cpu = [
+    "upmixer[separation-cpu]",
+]
+separation-gpu = [
+    "upmixer[separation-gpu]",
+]
+
+[project.scripts]
+upmixer = "upmixer_cli.__main__:main"
+
+[tool.uv.sources]
+upmixer = { workspace = true }
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["upmixer_cli"]
+
+[tool.setuptools.package-dir]
+upmixer_cli = "src"
+
+[tool.pytest.ini_options]
+addopts = "-m 'not perf'"
+markers = [
+    "perf: performance benchmarks (run with -m perf; skipped in CI by default)",
+]

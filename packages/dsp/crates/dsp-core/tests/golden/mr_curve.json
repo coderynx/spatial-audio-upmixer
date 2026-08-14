@@ -1,0 +1,60 @@
+{
+  "name": "mr_curve",
+  "params": {
+    "channels": [
+      "FL",
+      "FR",
+      "C",
+      "LFE"
+    ],
+    "n": 12000,
+    "sample_rate": 48000,
+    "n_fft": 8192,
+    "hot": false,
+    "ref_seed_phases": [
+      7.0,
+      9.0
+    ],
+    "ref_scale": 0.8,
+    "target_weights": [
+      1.0,
+      1.0,
+      1.0,
+      0.0
+    ],
+    "ref_weights": [
+      1.0,
+      1.0
+    ],
+    "min_freq_hz": 20.0,
+    "max_freq_hz": 20000.0,
+    "grid_step_oct": 0.041666666666666664,
+    "smooth_sigma_oct": 0.3333333333333333,
+    "norm_low_hz": 100.0,
+    "norm_high_hz": 10000.0,
+    "confidence_floor_db": 40.0,
+    "taper_low": [
+      20.0,
+      25.0
+    ],
+    "taper_high": [
+      18000.0,
+      20000.0
+    ],
+    "n_breakpoints": 64,
+    "clamp_knee_db": 2.0,
+    "bass_clamp_hz": 120.0,
+    "bass_clamp_db": 2.0
+  },
+  "tolerance": 1e-08,
+  "arrays": {
+    "freqs": {
+      "file": "mr_curve.freqs.f64",
+      "len": 64
+    },
+    "gains_db": {
+      "file": "mr_curve.gains_db.f64",
+      "len": 64
+    }
+  }
+}

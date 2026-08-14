@@ -1,0 +1,35 @@
+{
+  "name": "mr_smooth",
+  "params": {
+    "min_freq_hz": 20.0,
+    "max_freq_hz": 20000.0,
+    "grid_step_oct": 0.041666666666666664,
+    "smooth_sigma_oct": 0.3333333333333333,
+    "norm_low_hz": 100.0,
+    "norm_high_hz": 10000.0,
+    "confidence_floor_db": 40.0,
+    "taper_low": [
+      20.0,
+      25.0
+    ],
+    "taper_high": [
+      18000.0,
+      20000.0
+    ],
+    "n_breakpoints": 64,
+    "clamp_knee_db": 2.0,
+    "bass_clamp_hz": 120.0,
+    "bass_clamp_db": 2.0
+  },
+  "tolerance": 1e-11,
+  "arrays": {
+    "input": {
+      "file": "mr_smooth.input.f64",
+      "len": 240
+    },
+    "output": {
+      "file": "mr_smooth.output.f64",
+      "len": 240
+    }
+  }
+}

@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Apple system colors, as used by the pro iPad apps (Logic Pro, Final Cut
+   Pro). Hex values are Apple's; the HSL triples are the direct conversion
+   Tailwind's `hsl(var(--token))` mappings need. */
+@layer base {
+  :root {
+    --background: 240 24% 96%;
+    --foreground: 0 0% 0%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 0%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 0%;
+    --primary: 211 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 8% 91%;
+    --secondary-foreground: 0 0% 0%;
+    --muted: 240 12% 94%;
+    --muted-foreground: 240 2% 45%;
+    --accent: 240 8% 88%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 3 100% 59%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 135 59% 49%;
+    --success-foreground: 0 0% 100%;
+    --warning: 35 100% 50%;
+    --warning-foreground: 0 0% 0%;
+    --border: 240 2% 82%;
+    --input: 240 2% 82%;
+    --ring: 211 100% 50%;
+    --radius: 0.625rem;
+    --topbar-h: 2.75rem;
+  }
+  .dark {
+    /* #131316 — a charcoal in the same 240 hue family as the rest of the dark
+       ramp rather than Apple's pure-black systemBackground. Pure black left
+       the workspace substrate reading as a hole behind the chrome; this keeps
+       it clearly below `card` while still letting the canvas displays recess
+       into it. */
+    --background: 240 6% 8%;
+    --foreground: 0 0% 100%;
+    --card: 240 3% 11%;
+    --card-foreground: 0 0% 100%;
+    --popover: 240 2% 18%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 210 100% 52%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 2% 23%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 240 2% 18%;
+    --muted-foreground: 240 3% 61%;
+    --accent: 240 1% 29%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 3 100% 61%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 135 64% 50%;
+    --success-foreground: 0 0% 0%;
+    --warning: 37 100% 52%;
+    --warning-foreground: 0 0% 0%;
+    --border: 240 2% 22%;
+    --input: 240 2% 22%;
+    --ring: 210 100% 52%;
+  }
+  * {
+    @apply border-border;
+  }
+  /* macOS-style scrollbars: no arrows, no track chrome, just a translucent
+     pill floating in a transparent gutter. The thumb is derived from
+     `--foreground` rather than a colour of its own, so it is dark-on-light
+     and light-on-dark automatically — the same neutral overlay macOS draws in
+     either appearance. `scrollbar-width` does not inherit, hence `*`. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--foreground) / 0.22) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    min-height: 28px;
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background-color: hsl(var(--foreground) / 0.22);
+    /* Clip to the padding box so the transparent border insets the pill,
+       leaving a 6px thumb centred in a 12px gutter. */
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--foreground) / 0.38);
+  }
+  ::-webkit-scrollbar-thumb:active {
+    background-color: hsl(var(--foreground) / 0.55);
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family:
+      -apple-system,
+      BlinkMacSystemFont,
+      "SF Pro Text",
+      Inter,
+      ui-sans-serif,
+      system-ui,
+      "Segoe UI",
+      sans-serif;
+  }
+}

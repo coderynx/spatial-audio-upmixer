@@ -1,0 +1,189 @@
+import math
+
+import numpy as np
+import upmixer_dsp
+
+ITU_CENTER_COEFF: float = 1.0 / math.sqrt(2)
+
+# Public so the web engine-constants endpoint (apps/api system slice) can
+# serve the exact default — see docs/contracts/preview_export_parity.md.
+DIFFUSE_SEND_BLEND: float = 0.55
+
+
+def db_to_linear(db: float) -> float:
+    return 10.0 ** (db / 20.0)
+
+
+def linear_to_db(linear: float, floor_db: float = -120.0) -> float:
+    if linear <= 0:
+        return floor_db
+    return max(20.0 * np.log10(linear), floor_db)
+
+
+def rms(signal: np.ndarray) -> float:
+    return float(np.sqrt(np.mean(signal**2)))
+
+
+def soft_limit(signal: np.ndarray, threshold: float = 0.95) -> np.ndarray:
+    """Soft limiter using tanh saturation above threshold."""
+    return upmixer_dsp.soft_limit(
+        np.ascontiguousarray(signal, dtype=np.float64), threshold
+    )
+
+
+def elevation_eq(
+    signal: np.ndarray,
+    sr: int,
+    low_rolloff_hz: float = 150.0,
+    low_rolloff_gain: float = 0.15,
+    high_shelf_hz: float = 3000.0,
+    high_shelf_gain: float = 1.5,
+) -> np.ndarray:
+    """Elevation EQ: sub-bass rolloff + HF presence lift.
+
+    Mirrors the HRTF elevation cue: attenuate below low_rolloff_hz,
+    boost above high_shelf_hz. Used for height channel signals.
+
+    Moved from upmixer.upmix.multichannel so the stem pipeline can
+    reuse it without a circular import.
+    """
+    return upmixer_dsp.elevation_eq(
+        np.ascontiguousarray(signal, dtype=np.float64),
+        sr,
+        low_rolloff_hz,
+        low_rolloff_gain,
+        high_shelf_hz,
+        high_shelf_gain,
+    )
+
+
+def haas_decorrelate(signal: np.ndarray, delay_samples: int) -> np.ndarray:
+    """Return a copy of signal delayed by delay_samples (zero-padded at head).
+
+    Used for Haas-effect L/R decorrelation on surround and height channel
+    pairs. The left channel is undelayed; the right channel receives this
+    delay. Varying delays per channel pair (13–23 ms) prevents comb filtering
+    while creating perceived spatial width.
+    """
+    return upmixer_dsp.haas_decorrelate(
+        np.ascontiguousarray(signal, dtype=np.float64), max(0, delay_samples)
+    )
+
+
+def diffuse_send(
+    signal: np.ndarray,
+    sr: int,
+    delay_ms: float = 35.0,
+    blend: float = DIFFUSE_SEND_BLEND,
+) -> np.ndarray:
+    """Early-reflection diffusion for surround/height sends.
+
+    Blends the original signal with a delayed copy to simulate room
+    diffusion without convolving a full IR. Applied post-separation so
+    separation artifacts remain in their source channel and do not multiply.
+
+    Args:
+        signal:   1D audio signal.
+        sr:       Sample rate.
+        delay_ms: Early reflection delay in ms (default 35 ms).
+        blend:    Wet mix level (1 - blend = dry).  Range [0, 1].
+    """
+    return upmixer_dsp.diffuse_send(
+        np.ascontiguousarray(signal, dtype=np.float64), sr, delay_ms, blend
+    )
+
+
+def preview_slice(
+    audio: np.ndarray,
+    sr: int,
+    duration_s: float = 30.0,
+    start_s: float | None = None,
+) -> tuple[np.ndarray, float, float]:
+    """Slice audio to a preview window.
+
+    Args:
+        audio:      2D array (n_samples, n_channels).
+        sr:         Sample rate.
+        duration_s: Desired preview length in seconds.
+        start_s:    Explicit start time. None = auto-center (middle of track).
+
+    Returns:
+        (sliced_audio, actual_start_s, actual_end_s)
+    """
+    n_total = audio.shape[0]
+    clip_len = min(int(duration_s * sr), n_total)
+
+    if start_s is None:
+        center = n_total // 2
+        start = max(0, center - clip_len // 2)
+    else:
+        start = max(0, min(int(start_s * sr), n_total - clip_len))
+
+    end = start + clip_len
+    return audio[start:end], start / sr, end / sr
+
+
+_DOWNMIX_SOURCES = ("FL", "FR", "C", "SL", "SR", "BL", "BR")
+
+
+def _downmix_sources(
+    channels: dict[str, np.ndarray],
+) -> tuple[list[str], list[np.ndarray]]:
+    """Select the channels a BS.775 downmix draws from, in a fixed order.
+
+    LFE and height channels are excluded by the standard.
+    """
+    present = [name for name in _DOWNMIX_SOURCES if name in channels]
+    return present, [
+        np.ascontiguousarray(channels[name], dtype=np.float64) for name in present
+    ]
+
+
+def itu_downmix_stereo(
+    channels: dict[str, np.ndarray],
+    surround_coeff: float = ITU_CENTER_COEFF,
+) -> tuple[np.ndarray, np.ndarray]:
+    """ITU-R BS.775-4 Annex 4 Table 2 — multichannel to 2/0 stereo downmix.
+
+    L' = FL + (1/√2)·C + k_s·SL  [+ k_s·(1/√2)·BL if present]
+    R' = FR + (1/√2)·C + k_s·SR  [+ k_s·(1/√2)·BR if present]
+
+    LFE and height channels excluded per standard.
+    Back surrounds fold into side surrounds attenuated by (1/√2) so total
+    surround energy matches a 3/2 source.
+
+    Args:
+        channels:       Multichannel dict — any subset of FL, FR, C, SL, SR, BL, BR.
+        surround_coeff: k_s per Annex 8.  Valid values: 0.7071 (default), 0.5, 0.0.
+
+    Returns:
+        (L_out, R_out) 1D float64 arrays.
+    """
+    names, audio = _downmix_sources(channels)
+    if not names:
+        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
+    return upmixer_dsp.itu_downmix_stereo(names, audio, surround_coeff)
+
+
+def itu_downmix_mono(
+    channels: dict[str, np.ndarray],
+    surround_coeff: float = 0.5,
+) -> np.ndarray:
+    """ITU-R BS.775-4 Annex 4 Table 2 — multichannel to 1/0 mono downmix.
+
+    M = (1/√2)·(FL + FR) + C + k_s·(SL + SR)
+
+    LFE and height channels excluded per standard.
+    Default surround_coeff = 0.5 per Table 2 mono row.
+
+    Args:
+        channels:       Multichannel dict — any subset of FL, FR, C, SL, SR, BL, BR.
+        surround_coeff: Surround mixing coefficient (default: 0.5 per Table 2 mono).
+
+    Returns:
+        M 1D float64 array.
+    """
+    names, audio = _downmix_sources(channels)
+    if not names:
+        return np.zeros(0, dtype=np.float64)
+    return upmixer_dsp.itu_downmix_mono(names, audio, surround_coeff)

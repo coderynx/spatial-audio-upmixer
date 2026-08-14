@@ -1,0 +1,18 @@
+{
+  "name": "minfilter_centered_3",
+  "params": {
+    "size": 3,
+    "mode": "reflect"
+  },
+  "tolerance": 1e-15,
+  "arrays": {
+    "input": {
+      "file": "minfilter_centered_3.input.f64",
+      "len": 2048
+    },
+    "output": {
+      "file": "minfilter_centered_3.output.f64",
+      "len": 2048
+    }
+  }
+}

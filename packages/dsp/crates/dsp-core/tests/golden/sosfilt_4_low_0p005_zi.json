@@ -1,0 +1,19 @@
+{
+  "name": "sosfilt_4_low_0p005_zi",
+  "params": {
+    "order": 4,
+    "wn": 0.005,
+    "btype": "low"
+  },
+  "tolerance": 1e-13,
+  "arrays": {
+    "sos": {
+      "file": "sosfilt_4_low_0p005_zi.sos.f64",
+      "len": 12
+    },
+    "zi": {
+      "file": "sosfilt_4_low_0p005_zi.zi.f64",
+      "len": 4
+    }
+  }
+}

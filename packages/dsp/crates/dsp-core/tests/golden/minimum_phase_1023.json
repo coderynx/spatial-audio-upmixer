@@ -1,0 +1,17 @@
+{
+  "name": "minimum_phase_1023",
+  "params": {
+    "ntaps": 1023
+  },
+  "tolerance": 1e-10,
+  "arrays": {
+    "linear": {
+      "file": "minimum_phase_1023.linear.f64",
+      "len": 1023
+    },
+    "minphase": {
+      "file": "minimum_phase_1023.minphase.f64",
+      "len": 1023
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "binaural_decode",
+  "params": {
+    "n": 12000,
+    "sample_rate": 48000,
+    "n_acn": 16,
+    "n_taps": 6128
+  },
+  "tolerance": 1e-09,
+  "arrays": {
+    "taps": {
+      "file": "binaural_decode.taps.f64",
+      "len": 196096
+    },
+    "left": {
+      "file": "binaural_decode.left.f64",
+      "len": 12000
+    },
+    "right": {
+      "file": "binaural_decode.right.f64",
+      "len": 12000
+    }
+  }
+}

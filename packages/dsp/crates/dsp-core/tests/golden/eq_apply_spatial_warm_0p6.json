@@ -1,0 +1,35 @@
+{
+  "name": "eq_apply_spatial_warm_0p6",
+  "params": {
+    "profile": "spatial-warm",
+    "strength": 0.6,
+    "channels": [
+      "FL",
+      "FR",
+      "C",
+      "LFE"
+    ],
+    "n": 12000,
+    "sample_rate": 48000,
+    "hot": false
+  },
+  "tolerance": 1e-09,
+  "arrays": {
+    "ch_FL": {
+      "file": "eq_apply_spatial_warm_0p6.ch_FL.f64",
+      "len": 12000
+    },
+    "ch_FR": {
+      "file": "eq_apply_spatial_warm_0p6.ch_FR.f64",
+      "len": 12000
+    },
+    "ch_C": {
+      "file": "eq_apply_spatial_warm_0p6.ch_C.f64",
+      "len": 12000
+    },
+    "ch_LFE": {
+      "file": "eq_apply_spatial_warm_0p6.ch_LFE.f64",
+      "len": 12000
+    }
+  }
+}

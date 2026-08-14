@@ -1,0 +1,16 @@
+services:
+  upmixer:
+    build: .
+    image: upmixer-web:local
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - upmixer-data:/data
+    environment:
+      UPMIXER_WORKERS: "1"
+      UPMIXER_FORWARDED_ALLOW_IPS: "*"
+    gpus: all
+
+volumes:
+  upmixer-data:

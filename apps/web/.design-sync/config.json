@@ -1,0 +1,15 @@
+{
+  "pkg": "upmixer-web",
+  "globalName": "UpmixerWeb",
+  "shape": "package",
+  "projectId": "cad14bca-20c2-4b93-9226-f5d9f078467d",
+  "srcDir": "src/components",
+  "tsconfig": "tsconfig.app.json",
+  "buildCmd": "npx tailwindcss -c ./.design-sync/tailwind.previews.ts -i ./src/index.css -o ./.design-sync/compiled.css --minify",
+  "cssEntry": ".design-sync/compiled.css",
+  "runtimeFontPrefixes": ["SF Pro", "Inter"],
+  "readmeHeader": ".design-sync/conventions.md",
+  "overrides": {
+    "Dialog": { "cardMode": "single", "viewport": "620x420", "primaryStory": "ExportDialog" }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "voicing_listening",
+  "params": {
+    "n": 12000,
+    "sample_rate": 48000,
+    "seed_phases": [
+      1.0,
+      4.0
+    ],
+    "scale": 0.5,
+    "crossfeed_amount": 0.1,
+    "crossfeed_cutoff_hz": 700.0,
+    "bass_shelf_hz": 100.0,
+    "bass_shelf_gain_db": 1.0,
+    "air_shelf_hz": 10000.0,
+    "air_shelf_gain_db": 4.0,
+    "presence_hz": 3000.0,
+    "presence_gain_db": 2.0,
+    "presence_q": 0.9,
+    "stereo_widen": 0.15
+  },
+  "tolerance": 1e-11,
+  "arrays": {
+    "left": {
+      "file": "voicing_listening.left.f64",
+      "len": 12000
+    },
+    "right": {
+      "file": "voicing_listening.right.f64",
+      "len": 12000
+    }
+  }
+}

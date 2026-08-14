@@ -1,0 +1,58 @@
+# Binaural headphone export — Listening profile
+#
+# Renders a flattering "hi-fi system" consumer preview: a 7.1.4 bed
+# virtualized through the Spatial Audio Engine's Listening decode filters
+# (reference cinema room BRIR — same room amount as Studio, RT60 ~120 ms, with
+# a warmer tail) plus a deliberately obvious hi-fi enhance voicing chain: a
+# Harman-style tilt (+2 dB bass, +3 dB air, +1.5 dB presence), a
+# cinema-width soundstage (+15%), and light crossfeed for externalization.
+# Loudness-matched to the neutral profiles (no lift). Tone-colored, not
+# neutral — use the Studio profile for reference monitoring. See
+# docs/standards/spatial_audio_engine.md.
+#
+# Usage:
+#   upmixer --manifest examples/binaural_listening.yaml
+
+version: "1.0"
+
+metadata:
+  name: "Binaural Listening (Hi-Fi Enhance)"
+  description: "Flattering headphone preview voiced to sound like an impressive hi-fi system"
+
+engine:
+  mode: stem
+  stems: [vocals, bass, drums, guitar, piano, other]
+  stem_silence_skip: true
+
+mixing:
+  channel_layout: 7.1.4
+  stem_source_anchor_strength: 0.5
+  spatial:
+    profile: spacious
+    intensity: 0.8
+
+# ── Output format — binaural delivery is always 2ch WAV; not compatible with adm-bwf ──
+format:
+  type: binaural
+  binaural:
+    profile: listening
+  subtype: PCM_24
+  sample_rate: 48000
+
+mastering:
+  eq:
+    profile: atmos-streaming
+    strength: 0.8
+  compressor:
+    profile: glue
+  loudness:
+    normalize: true
+    # Governs both the discrete bed's mastering pass and the final binaural
+    # render: the Listening profile is loudness-matched (no target override of
+    # its own — VOICING_PARAMS.loudness_target_lkfs is None).
+    target: -18.0
+    max_tp: -1.0
+
+assets:
+  - input:  stereo.flac
+    output: binaural_listening.wav

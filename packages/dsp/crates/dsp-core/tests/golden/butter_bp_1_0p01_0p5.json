@@ -1,0 +1,15 @@
+{
+  "name": "butter_bp_1_0p01_0p5",
+  "params": {
+    "order": 1,
+    "low": 0.01,
+    "high": 0.5
+  },
+  "tolerance": 1e-14,
+  "arrays": {
+    "sos": {
+      "file": "butter_bp_1_0p01_0p5.sos.f64",
+      "len": 6
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "loudness_514",
+  "params": {
+    "sample_rate": 48000,
+    "n": 144000,
+    "format": "5.1.4",
+    "channels": [
+      "FL",
+      "FR",
+      "C",
+      "LFE",
+      "SL",
+      "SR",
+      "TFL",
+      "TFR",
+      "TBL",
+      "TBR"
+    ],
+    "weights": [
+      1.0,
+      1.0,
+      1.0,
+      0.0,
+      1.41,
+      1.41,
+      1.0,
+      1.0,
+      1.0,
+      1.0
+    ],
+    "lkfs": -4.9472917665647484,
+    "true_peak_dbtp": 1.566981640640386
+  },
+  "tolerance": 1e-10,
+  "arrays": {}
+}

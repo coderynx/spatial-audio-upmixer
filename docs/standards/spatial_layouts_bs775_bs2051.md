@@ -222,6 +222,62 @@ SP Labels encode layer + azimuth: `M` = middle layer (ear level), `U` = upper la
 
 ---
 
+## System A (0+2+0) as an output layout
+
+`FORMAT_MAP["stereo"]` (`packages/core/src/formats.py`, `STEREO_OUT`) makes
+System A a selectable delivery target alongside the surround beds, so the
+stem-separation, rebalance, EQ and mastering chain can produce a two-channel
+master. `OutputFormat.bs2051_system` returns `"A"` for it.
+
+It is a *layout*, not a rendering pass: unlike `BINAURAL`/`TRANSAURAL` it lives
+in `FORMAT_MAP` and its two channels are the real writer slots. Consequences
+enforced by `formats.validate_delivery`:
+
+- `format.type` must be `wav`. ADM-BWF requires a surround bed (see
+  [ADM metadata](adm_metadata_bs2076.md)), and `binaural`/`transaural` require a
+  height-bearing bed (`BINAURAL_BED_FORMATS`/`TRANSAURAL_BED_FORMATS`).
+- The BS.775 stereo companion (`format.downmix`) is skipped: the companion of a
+  stereo master is the master.
+
+### Input folding
+
+`can_upmix` accepts any input for a two-channel output. Mono duplicates to
+FL/FR, stereo passes through, and anything wider folds through
+`itu_downmix_stereo` (BS.775-4 Annex 4 Table 2, above) before processing —
+`pipeline._stereo_delivery_channels` for the realtime path, and at the front of
+`StemUpmixPipeline`'s separation for the stem path, so a folded run separates a
+single `front` zone. The fold marks the stem cache identity (`|stereo`), since
+the same file otherwise yields `@zone`-keyed stems.
+
+### Stem-route folding is a pan law, not a level law
+
+`stem_router.fold_route_to_stereo` collapses a speaker map onto FL/FR: `C`
+splits at 1/√2 into both sides, `LFE` is dropped, and every other left/right
+channel sums at unity into its own side — deliberately *not* BS.775's `k_s`.
+`StemRouter.route` renormalizes each stem to its own input energy afterwards
+(`route_scale = sqrt(input_energy / routed_energy)`), so only the resulting L/R
+ratio survives; the surround/height coefficients would be discarded anyway.
+
+Without the fold a 2-channel format silently drops audio: the `surround`,
+`back` and `height_*` zone routes carry no FL/FR entries at all, and
+`DEFAULT_ROUTING["Crowd"]` has no FL/FR/C either.
+
+### Pan law
+
+`stem_router.apply_stem_pan` positions a stem between its two speakers with a
+constant-power law, preserving the FL/FR pair's combined magnitude:
+
+```
+FL = m·cos(pan·π/2),  FR = m·sin(pan·π/2),  m = hypot(FL, FR)
+pan = atan2(FR, FL) / (π/2)
+```
+
+Pan is derived from `mixing.stem_routing`, not stored separately. The web
+mirror is `stemPan`/`panWeights` in `apps/web/src/lib/spatial.ts`; the CLI
+surface is `--stem-pan STEM=VALUE`.
+
+---
+
 ## Validation Checklist
 
 - [ ] BS.775-4: L/R nominal ±30° (tolerance ±10°); deviation stored in metadata

@@ -1,0 +1,126 @@
+import * as React from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { AppShell } from "@/app/AppShell";
+import { JobComposer } from "@/features/composer/JobComposer";
+import { JobsPage } from "@/features/jobs/JobsPage";
+import { useJobs } from "@/features/jobs/useJobs";
+import type { Job } from "@/api";
+import { StemCachePage } from "@/features/cache/StemCachePage";
+import { CreateProjectDialog } from "@/features/projects/CreateProjectDialog";
+import { ProjectDetailPage } from "@/features/projects/ProjectDetailPage";
+import { ProjectsPage } from "@/features/projects/ProjectsPage";
+import { useProjects } from "@/features/projects/useProjects";
+import { SettingsPage } from "@/features/settings/SettingsPage";
+import { StoragePage } from "@/features/storage/StoragePage";
+
+export default function App() {
+  const location = useLocation();
+  const projectRoute = location.pathname.startsWith("/projects");
+  // The project view (an individual project's workspace) carries its own
+  // stage tabs and Save/Export actions in the top bar — the list page's
+  // Refresh/New project buttons would be redundant chrome there.
+  const projectDetailRoute = /^\/projects\/[^/]+/.test(location.pathname);
+  const jobsRoute = location.pathname.startsWith("/jobs");
+  const storageRoute = location.pathname.startsWith("/storage");
+  const { jobs, configuration, loading, error, refresh, action } = useJobs(jobsRoute || storageRoute);
+  const projectsState = useProjects();
+  const navigate = useNavigate();
+  const [composerOpen, setComposerOpen] = React.useState(false);
+  const [createProjectOpen, setCreateProjectOpen] = React.useState(false);
+  const [remix, setRemix] = React.useState<Job | null>(null);
+  const createJob = () => {
+    setRemix(null);
+    setComposerOpen(true);
+  };
+  const remixJob = (job: Job) => {
+    setRemix(job);
+    setComposerOpen(true);
+  };
+  const effectiveConfiguration = projectsState.configuration || configuration;
+  // Projects and jobs are fetched independently; the cache and storage views
+  // read both, so a refresh from those routes has to reload each of them.
+  const refreshAll = () => {
+    void projectsState.refresh();
+    void refresh();
+  };
+  return (
+    <AppShell
+      onRefresh={
+        projectDetailRoute ? undefined
+        : projectRoute ? () => void projectsState.refresh()
+        : jobsRoute ? () => void refresh()
+        : refreshAll
+      }
+      onCreate={projectDetailRoute ? undefined : projectRoute ? () => setCreateProjectOpen(true) : jobsRoute ? createJob : undefined}
+      createLabel={projectDetailRoute ? undefined : projectRoute ? "New project" : jobsRoute ? "New job" : undefined}
+    >
+      <Routes>
+        <Route path="/" element={<Navigate to="/projects" replace />} />
+        <Route
+          path="/projects"
+          element={
+            <ProjectsPage
+              projects={projectsState.projects}
+              loading={projectsState.loading}
+              error={projectsState.error}
+              onDelete={(project) => void projectsState.deleteProject(project)}
+              onCreate={() => setCreateProjectOpen(true)}
+              onImported={() => void projectsState.refresh(true)}
+            />
+          }
+        />
+        <Route path="/projects/:projectId" element={<ProjectDetailPage configuration={effectiveConfiguration} />} />
+        <Route
+          path="/jobs"
+          element={
+            <JobsPage
+              jobs={jobs}
+              loading={loading}
+              error={error}
+              onAction={action}
+              onRemix={remixJob}
+              onCreate={createJob}
+            />
+          }
+        />
+        <Route
+          path="/stem-cache"
+          element={
+            <StemCachePage
+              projects={projectsState.projects}
+              loading={projectsState.loading}
+              error={projectsState.error}
+            />
+          }
+        />
+        <Route
+          path="/storage"
+          element={
+            <StoragePage
+              projects={projectsState.projects}
+              jobs={jobs}
+              loading={projectsState.loading || loading}
+              error={projectsState.error || error}
+            />
+          }
+        />
+        <Route path="/settings" element={<SettingsPage configuration={effectiveConfiguration} />} />
+      </Routes>
+      <JobComposer
+        open={composerOpen}
+        onOpenChange={setComposerOpen}
+        remix={remix}
+        configuration={configuration}
+        onCreated={() => void refresh(true)}
+      />
+      <CreateProjectDialog
+        open={createProjectOpen}
+        onOpenChange={setCreateProjectOpen}
+        onCreated={(project) => {
+          void projectsState.refresh(true);
+          navigate(`/projects/${project.id}`);
+        }}
+      />
+    </AppShell>
+  );
+}

@@ -1,48 +1,11 @@
-[project]
-name = "upmixer"
-version = "0.1.0"
-description = "Stereo to multichannel audio upmixer"
-readme = "README.md"
-license = { file = "LICENSE" }
-requires-python = ">=3.11"
-keywords = ["audio", "upmix", "dolby-atmos", "surround-sound", "stem-separation"]
-classifiers = [
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Multimedia :: Sound/Audio :: Conversion",
-]
-dependencies = [
-    "numpy>=1.24",
-    "scipy>=1.12",
-    "soundfile>=0.12",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "matplotlib>=3.7",
-    "pyyaml>=6.0",
-]
-manifest = [
-    "pyyaml>=6.0",
-]
-separation-cpu = [
-    "audio-separator[cpu]>=0.44.5",
-]
-separation-gpu = [
-    "audio-separator[gpu]>=0.44.5",
-]
-
-[project.scripts]
-upmixer = "upmixer.__main__:main"
-
-[build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
+# Virtual workspace root — this repository has no installable code of its
+# own. Each real package lives under packages/ or apps/ with its own
+# pyproject.toml; see AGENTS.md for the monorepo layout.
+[tool.uv.workspace]
+members = ["packages/*", "apps/api", "apps/cli"]
 
 [tool.pytest.ini_options]
+addopts = "-m 'not perf'"
 markers = [
     "perf: performance benchmarks (run with -m perf; skipped in CI by default)",
 ]

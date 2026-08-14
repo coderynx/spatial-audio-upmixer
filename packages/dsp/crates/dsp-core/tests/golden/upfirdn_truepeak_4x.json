@@ -1,0 +1,21 @@
+{
+  "name": "upfirdn_truepeak_4x",
+  "params": {
+    "up": 4
+  },
+  "tolerance": 1e-12,
+  "arrays": {
+    "fir": {
+      "file": "upfirdn_truepeak_4x.fir.f64",
+      "len": 48
+    },
+    "input": {
+      "file": "upfirdn_truepeak_4x.input.f64",
+      "len": 1024
+    },
+    "output": {
+      "file": "upfirdn_truepeak_4x.output.f64",
+      "len": 4140
+    }
+  }
+}

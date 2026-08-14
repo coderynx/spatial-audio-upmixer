@@ -1,0 +1,15 @@
+{
+  "name": "butter_1_low_0p00625",
+  "params": {
+    "order": 1,
+    "wn": 0.00625,
+    "btype": "low"
+  },
+  "tolerance": 1e-14,
+  "arrays": {
+    "sos": {
+      "file": "butter_1_low_0p00625.sos.f64",
+      "len": 6
+    }
+  }
+}

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 354 80" role="img" aria-labelledby="title desc">
+  <title id="title">Upmixer Pro reverse logo</title>
+  <desc id="desc">White Upmixer Pro vector wordmark with a luminous spatial soundfield icon for dark surfaces.</desc>
+  <defs>
+    <radialGradient id="field" cx="50%" cy="43%" r="70%">
+      <stop offset="0" stop-color="#14294A"/><stop offset=".56" stop-color="#0A1628"/><stop offset="1" stop-color="#050A13"/>
+    </radialGradient>
+    <linearGradient id="outer" x1="10" y1="51" x2="54" y2="13" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#64D2FF"/><stop offset=".48" stop-color="#0A84FF"/><stop offset="1" stop-color="#BF5AF2"/>
+    </linearGradient>
+    <linearGradient id="inner" x1="20" y1="45" x2="45" y2="19" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#64D2FF"/><stop offset="1" stop-color="#5E5CE6"/>
+    </linearGradient>
+    <radialGradient id="listener">
+      <stop offset="0" stop-color="#FFFFFF"/><stop offset=".7" stop-color="#D9F5FF"/><stop offset="1" stop-color="#64D2FF"/>
+    </radialGradient>
+  </defs>
+  <g transform="translate(8 8)">
+    <rect width="64" height="64" rx="14" fill="url(#field)"/>
+    <circle cx="32" cy="32" r="23" fill="none" stroke="url(#outer)" stroke-opacity=".18" stroke-width="7"/>
+    <g fill="none" stroke="url(#outer)" stroke-width="3.25" stroke-linecap="round">
+      <path d="M32 9a23 23 0 0 1 23 23"/><path d="M55 32a23 23 0 0 1-23 23"/>
+      <path d="M32 55A23 23 0 0 1 9 32"/><path d="M9 32A23 23 0 0 1 32 9"/>
+    </g>
+    <circle cx="32" cy="32" r="13" fill="none" stroke="url(#inner)" stroke-opacity=".16" stroke-width="7"/>
+    <path d="M32 19a13 13 0 1 1-9.2 3.8" fill="none" stroke="url(#inner)" stroke-width="3.5" stroke-linecap="round"/>
+    <g>
+      <circle cx="32" cy="9" r="2.6" fill="#BF5AF2"/><circle cx="48.3" cy="15.7" r="2.6" fill="#8E6CFA"/>
+      <circle cx="55" cy="32" r="2.6" fill="#4F9DFF"/><circle cx="48.3" cy="48.3" r="2.6" fill="#2FB6FF"/>
+      <circle cx="32" cy="55" r="2.6" fill="#64D2FF"/><circle cx="15.7" cy="48.3" r="2.6" fill="#64D2FF"/>
+      <circle cx="9" cy="32" r="2.6" fill="#40B7FF"/><circle cx="15.7" cy="15.7" r="2.6" fill="#5B94FF"/>
+      <circle cx="32" cy="32" r="5" fill="#64D2FF" opacity=".16"/><circle cx="32" cy="32" r="3.5" fill="url(#listener)"/>
+    </g>
+  </g>
+  <g fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M92 24v23c0 9 6 15 14 15s14-6 14-15V24"/>
+    <path d="M130 62V24h15c10 0 15 5 15 13s-5 13-15 13h-15"/>
+    <path d="M170 62V24l15 22 15-22v38"/>
+    <path d="M211 24v38"/>
+    <path d="m223 24 27 38M250 24l-27 38"/>
+    <path d="M260 24v38h25M260 24h25M260 43h20"/>
+    <path d="M295 62V24h15c10 0 15 5 15 13s-5 13-15 13h-15M310 50l18 12"/>
+  </g>
+  <g fill="none" stroke="#98989E" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M94 79V65h6c4 0 6 2 6 5s-2 5-6 5h-6"/>
+    <path d="M113 79V65h6c4 0 6 2 6 5s-2 5-6 5h-6M119 75l7 4"/>
+    <path d="M133 72c0-5 3-7 8-7s8 2 8 7-3 7-8 7-8-2-8-7Z"/>
+  </g>
+</svg>

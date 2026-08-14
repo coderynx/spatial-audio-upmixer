@@ -394,6 +394,17 @@ Zero UID (`ATU_00000000`) = track absent or silent — use when a bed channel po
 
 ---
 
+## Not an ADM delivery target: the `stereo` layout
+
+`FORMAT_MAP["stereo"]` (BS.2051 System A) is a selectable output layout but not
+an ADM-BWF one. `AdmBwfWriter`'s `_DOLBY_ENGINE_ALLOWED_FORMATS` never admitted
+it, and `formats.validate_delivery` now rejects the combination up front so a
+stereo project fails in preflight rather than at write time. A stereo layout
+delivers a plain WAV; see
+[Spatial layouts](spatial_layouts_bs775_bs2051.md)'s System A section.
+
+---
+
 ## Known Compatibility Issues
 
 *(BS.2076-3 Annex 3 — changes from BS.2076-2)*
