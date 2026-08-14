@@ -3,7 +3,7 @@
 Covers:
   - find_active_spans  (silence.py)
   - stitch_with_crossfade  (silence.py)
-  - StemUpmixPipeline._execute_plan_with_silence_skip  (stem_pipeline.py)
+  - execute_plan_with_silence_skip  (stem_pipeline_exec.py)
   - _cache_key  invalidation on silence-skip parameter changes  (stem_cache.py)
 """
 from __future__ import annotations
@@ -17,6 +17,9 @@ from upmixer.separation.silence import (
     find_active_spans,
     stitch_with_crossfade,
 )
+from upmixer.separation.stem_pipeline_exec import execute_plan_with_silence_skip
+
+_EXEC_PLAN = "upmixer.separation.stem_pipeline_exec.execute_plan"
 
 
 SR = 48_000
@@ -31,10 +34,6 @@ def _sine(n: int, amp: float = 0.5, freq: float = 440.0) -> np.ndarray:
     ch = (amp * np.sin(2 * np.pi * freq * t)).astype(np.float64)
     return np.column_stack([ch, ch])
 
-
-# ---------------------------------------------------------------------------
-# find_active_spans
-# ---------------------------------------------------------------------------
 
 class TestFindActiveSpans:
     def test_all_silence_returns_empty(self):
@@ -165,10 +164,6 @@ class TestFindActiveSpans:
             assert spans[i][1] <= spans[i + 1][0]
 
 
-# ---------------------------------------------------------------------------
-# stitch_with_crossfade
-# ---------------------------------------------------------------------------
-
 class TestStitchWithCrossfade:
     def test_output_shape_matches_total_length(self):
         audio = _sine(SR).astype(np.float32)
@@ -237,13 +232,8 @@ class TestStitchWithCrossfade:
         assert np.all(out == 0.0)
 
 
-# ---------------------------------------------------------------------------
-# _execute_plan_with_silence_skip
-# ---------------------------------------------------------------------------
-
 class TestExecutePlanWithSilenceSkip:
-    """Uses a mock _execute_plan so no real separator is needed."""
-
+    """Uses a mock execute_plan so no real separator is needed."""
     def _make_plan(self):
         from upmixer.separation.stem_plan import (
             SeparationPlan,
@@ -262,8 +252,7 @@ class TestExecutePlanWithSilenceSkip:
         h = hashlib.sha256(",".join(sorted(stems)).encode()).hexdigest()[:20]
         return SeparationPlan(tasks=[task], requested_stems=stems, stems_hash=h)
 
-    def _make_pipeline(self):
-        from upmixer.separation.stem_pipeline import StemUpmixPipeline
+    def _make_cfg(self):
         from upmixer.config import UpmixConfig
         cfg = UpmixConfig()
         cfg.stem_silence_skip = True
@@ -271,7 +260,7 @@ class TestExecutePlanWithSilenceSkip:
         cfg.stem_silence_min_duration_s = 2.0
         cfg.stem_silence_crossfade_ms = 10.0
         cfg.stem_silence_pad_ms = 0.0
-        return StemUpmixPipeline(cfg), cfg
+        return cfg
 
     def _fake_execute_plan(self, plan, sep_path, sep_sr):
         """Return constant float32 arrays shaped (n, 2) based on WAV duration."""
@@ -281,18 +270,18 @@ class TestExecutePlanWithSilenceSkip:
         return {name: np.full((n, 2), 0.25, dtype=np.float32) for name in plan.requested_stems}
 
     def test_all_silent_returns_zeros_skips_plan(self):
-        pipeline, cfg = self._make_pipeline()
+        cfg = self._make_cfg()
         plan = self._make_plan()
         n = SR * 5
         zone_audio = _silence(n)
         call_count = {"n": 0}
 
-        def mock_execute(p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
             call_count["n"] += 1
             return self._fake_execute_plan(p, path, sr_val)
 
-        with patch.object(pipeline, "_execute_plan", side_effect=mock_execute):
-            result = pipeline._execute_plan_with_silence_skip(plan, zone_audio, SR, SR, cfg)
+        with patch(_EXEC_PLAN, side_effect=mock_execute):
+            result = execute_plan_with_silence_skip(None, plan, zone_audio, SR, SR, cfg)
 
         assert call_count["n"] == 0
         for arr in result.values():
@@ -300,25 +289,25 @@ class TestExecutePlanWithSilenceSkip:
             assert arr.dtype == np.float32
 
     def test_all_active_fast_path_calls_plan_once(self):
-        pipeline, cfg = self._make_pipeline()
+        cfg = self._make_cfg()
         plan = self._make_plan()
         n = SR * 5
         zone_audio = _sine(n)
         call_count = {"n": 0}
 
-        def mock_execute(p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
             call_count["n"] += 1
             return self._fake_execute_plan(p, path, sr_val)
 
-        with patch.object(pipeline, "_execute_plan", side_effect=mock_execute):
-            result = pipeline._execute_plan_with_silence_skip(plan, zone_audio, SR, SR, cfg)
+        with patch(_EXEC_PLAN, side_effect=mock_execute):
+            result = execute_plan_with_silence_skip(None, plan, zone_audio, SR, SR, cfg)
 
         assert call_count["n"] == 1
         for arr in result.values():
             assert arr.shape[0] == n
 
     def test_all_active_uses_original_source_path(self, tmp_path):
-        pipeline, cfg = self._make_pipeline()
+        cfg = self._make_cfg()
         plan = self._make_plan()
         zone_audio = _sine(SR * 5)
         source = str(tmp_path / "source.wav")
@@ -326,47 +315,47 @@ class TestExecutePlanWithSilenceSkip:
         sf_mod.write(source, zone_audio, SR, subtype="FLOAT")
         seen = []
 
-        def mock_execute(p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
             seen.append(path)
             return self._fake_execute_plan(p, path, sr_val)
 
-        with patch.object(pipeline, "_execute_plan", side_effect=mock_execute):
-            pipeline._execute_plan_with_silence_skip(
-                plan, zone_audio, SR, SR, cfg, original_path=source,
+        with patch(_EXEC_PLAN, side_effect=mock_execute):
+            execute_plan_with_silence_skip(
+                None, plan, zone_audio, SR, SR, cfg, original_path=source,
             )
 
         assert seen == [source]
 
     def test_generated_full_active_wav_preserves_float_samples(self):
-        pipeline, cfg = self._make_pipeline()
+        cfg = self._make_cfg()
         plan = self._make_plan()
         zone_audio = _sine(SR * 5)
         subtypes = []
 
-        def mock_execute(p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
             import soundfile as sf_mod
             subtypes.append(sf_mod.info(path).subtype)
             return self._fake_execute_plan(p, path, sr_val)
 
-        with patch.object(pipeline, "_execute_plan", side_effect=mock_execute):
-            pipeline._execute_plan_with_silence_skip(
-                plan, zone_audio, SR, SR, cfg,
+        with patch(_EXEC_PLAN, side_effect=mock_execute):
+            execute_plan_with_silence_skip(
+                None, plan, zone_audio, SR, SR, cfg,
             )
 
         assert subtypes == ["FLOAT"]
 
     def test_silent_head_zeros_in_silent_region(self):
-        pipeline, cfg = self._make_pipeline()
+        cfg = self._make_cfg()
         plan = self._make_plan()
         n_sil = int(4.0 * SR)
         n_act = int(6.0 * SR)
         zone_audio = np.vstack([_silence(n_sil), _sine(n_act)])
 
-        def mock_execute(p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
             return self._fake_execute_plan(p, path, sr_val)
 
-        with patch.object(pipeline, "_execute_plan", side_effect=mock_execute):
-            result = pipeline._execute_plan_with_silence_skip(plan, zone_audio, SR, SR, cfg)
+        with patch(_EXEC_PLAN, side_effect=mock_execute):
+            result = execute_plan_with_silence_skip(None, plan, zone_audio, SR, SR, cfg)
 
         hop_len = max(1, int(0.010 * SR))
         for arr in result.values():
@@ -374,16 +363,16 @@ class TestExecutePlanWithSilenceSkip:
             assert np.all(arr[:n_sil - hop_len] == 0.0), "head should be zero"
 
     def test_silence_skip_equivalent_when_no_silence(self):
-        pipeline, cfg = self._make_pipeline()
+        cfg = self._make_cfg()
         plan = self._make_plan()
         n = SR * 5
         zone_audio = _sine(n)
 
-        def mock_execute(p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
             return self._fake_execute_plan(p, path, sr_val)
 
-        with patch.object(pipeline, "_execute_plan", side_effect=mock_execute):
-            result_skip = pipeline._execute_plan_with_silence_skip(plan, zone_audio, SR, SR, cfg)
+        with patch(_EXEC_PLAN, side_effect=mock_execute):
+            result_skip = execute_plan_with_silence_skip(None, plan, zone_audio, SR, SR, cfg)
 
         cfg_no_skip = cfg.__class__()
         cfg_no_skip.stem_silence_skip = False
@@ -391,7 +380,7 @@ class TestExecutePlanWithSilenceSkip:
         import tempfile, soundfile as sf_mod
         tmp = tempfile.mktemp(suffix=".wav")
         sf_mod.write(tmp, zone_audio, SR, subtype="PCM_24")
-        result_full = mock_execute(plan, tmp, SR)
+        result_full = mock_execute(None, plan, tmp, SR)
         import os
         os.unlink(tmp)
 
@@ -399,39 +388,35 @@ class TestExecutePlanWithSilenceSkip:
             assert result_skip[name].shape == result_full[name].shape
 
     def test_multiple_active_spans_correct_length(self):
-        pipeline, cfg = self._make_pipeline()
+        cfg = self._make_cfg()
         plan = self._make_plan()
         n_act = int(3.0 * SR)
         n_sil = int(4.0 * SR)
         n_total = n_act + n_sil + n_act
         zone_audio = np.vstack([_sine(n_act), _silence(n_sil), _sine(n_act)])
 
-        def mock_execute(p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
             return self._fake_execute_plan(p, path, sr_val)
 
-        with patch.object(pipeline, "_execute_plan", side_effect=mock_execute):
-            result = pipeline._execute_plan_with_silence_skip(plan, zone_audio, SR, SR, cfg)
+        with patch(_EXEC_PLAN, side_effect=mock_execute):
+            result = execute_plan_with_silence_skip(None, plan, zone_audio, SR, SR, cfg)
 
         for arr in result.values():
             assert arr.shape[0] == n_total
 
     def test_stems_all_present_in_output(self):
-        pipeline, cfg = self._make_pipeline()
+        cfg = self._make_cfg()
         plan = self._make_plan()
         zone_audio = _sine(SR * 5)
 
-        def mock_execute(p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
             return self._fake_execute_plan(p, path, sr_val)
 
-        with patch.object(pipeline, "_execute_plan", side_effect=mock_execute):
-            result = pipeline._execute_plan_with_silence_skip(plan, zone_audio, SR, SR, cfg)
+        with patch(_EXEC_PLAN, side_effect=mock_execute):
+            result = execute_plan_with_silence_skip(None, plan, zone_audio, SR, SR, cfg)
 
         assert set(result.keys()) == plan.requested_stems
 
-
-# ---------------------------------------------------------------------------
-# _cache_key  invalidation on silence params
-# ---------------------------------------------------------------------------
 
 class TestCacheKeyInvalidation:
     def test_different_threshold_different_key(self, tmp_path):

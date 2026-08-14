@@ -13,10 +13,6 @@ import {
 /** Haze/Elevation/Meters row sizing for `ProjectDetailPage`: live row
  * measurement plus each column's user-dragged extra, persisted per project. */
 export function useColumnLayout(projectId: string | undefined) {
-  // Haze/Meters are "natural size + user delta" (hazeExtra/elevationExtra), the
-  // same pattern StripResizeHandle uses for mixer strips. Elevation stays flex-1
-  // with no stored width, so the row can't develop an unfilled gap.
-  //
   // Callback ref, not useRef + useEffect([]): the row only enters the DOM once
   // `ready` flips true, so a mount-only effect would find rowRef.current still
   // null and never retry.

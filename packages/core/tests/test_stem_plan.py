@@ -21,8 +21,6 @@ from upmixer.separation.stem_plan import (
 )
 
 
-# ── normalize_stems ────────────────────────────────────────────────────────────
-
 class TestNormalizeStems:
     def test_lowercase_to_canonical(self):
         assert normalize_stems(["vocals"]) == ["Vocals"]
@@ -65,8 +63,6 @@ class TestNormalizeStems:
             normalize_stems(["vocals", "theremin"])
 
 
-# ── resolve_separation_plan ────────────────────────────────────────────────────
-
 class TestResolveSeparationPlan:
     def test_bass_subset_shares_inference_cache_identity_with_full(self):
         """A subset that still needs the primary stage shares its cascade shape."""
@@ -105,7 +101,7 @@ class TestResolveSeparationPlan:
 
         Both deux and primary produce a stem tagged "Vocals" (primary's is a
         vocals-free residual, since its input is already deux's instrumental).
-        If primary's output_stems included "Vocals" too, _execute_plan's
+        If primary's output_stems included "Vocals" too, execute_plan's
         later_inputs/keep_on_disk logic would write both to the same
         "Vocals" key in its on-disk intermediate dict, and primary — running
         second — would silently clobber deux's real Vocals before karaoke
@@ -305,11 +301,8 @@ class TestResolveSeparationPlan:
         assert plan.tasks[0].input_source == "original"
 
 
-# ── cache key contract (stem_cache) ───────────────────────────────────────────
-
 class TestStemCacheKeyContract:
     """Verify that the cache key function accepts stems_hash instead of model."""
-
     def _make_dummy_file(self, tmp_path):
         """Write a tiny dummy WAV so getmtime() works."""
         import numpy as np
@@ -341,11 +334,11 @@ class TestStemCacheKeyContract:
 
 def test_stem_cache_identity_changes_for_inference_overrides():
     from upmixer.config import UpmixConfig
-    from upmixer.separation.stem_pipeline import _stem_cache_identity
+    from upmixer.separation.stem_identity import stem_cache_identity
 
     plan = resolve_separation_plan(["Vocals", "Bass"])
-    default_identity = _stem_cache_identity(plan, UpmixConfig())
-    tuned_identity = _stem_cache_identity(
+    default_identity = stem_cache_identity(plan, UpmixConfig())
+    tuned_identity = stem_cache_identity(
         plan,
         UpmixConfig(
             stem_batch_size=1,
@@ -353,13 +346,13 @@ def test_stem_cache_identity_changes_for_inference_overrides():
             stem_chunk_duration_s=300.0,
         ),
     )
-    overlap_identity = _stem_cache_identity(
+    overlap_identity = stem_cache_identity(
         plan, UpmixConfig(stem_overlap=8)
     )
-    tta_identity = _stem_cache_identity(
+    tta_identity = stem_cache_identity(
         plan, UpmixConfig(stem_tta=True)
     )
-    pitch_identity = _stem_cache_identity(
+    pitch_identity = stem_cache_identity(
         plan, UpmixConfig(stem_pitch_shift=0.75)
     )
 
@@ -373,27 +366,27 @@ def test_stem_cache_identity_changes_for_inference_overrides():
 
 def test_stem_cache_identity_changes_for_bleed_reduction():
     from upmixer.config import UpmixConfig
-    from upmixer.separation.stem_pipeline import _stem_cache_identity
+    from upmixer.separation.stem_identity import stem_cache_identity
 
     plan = resolve_separation_plan(["Vocals", "Bass"])
-    default_identity = _stem_cache_identity(plan, UpmixConfig())
-    gate_identity = _stem_cache_identity(
+    default_identity = stem_cache_identity(plan, UpmixConfig())
+    gate_identity = stem_cache_identity(
         plan, UpmixConfig(stem_bleed_reduction=True)
     )
-    low_identity = _stem_cache_identity(
+    low_identity = stem_cache_identity(
         plan, UpmixConfig(stem_bleed_reduction=True, stem_phase_fix_low_hz=200.0)
     )
-    scale_identity = _stem_cache_identity(
+    scale_identity = stem_cache_identity(
         plan, UpmixConfig(stem_bleed_reduction=True, stem_phase_fix_scale=0.5)
     )
-    debleed_identity = _stem_cache_identity(
+    debleed_identity = stem_cache_identity(
         plan,
         UpmixConfig(
             stem_bleed_reduction=True,
             stem_debleed_model="mel_band_roformer_denoise_debleed_gabox.ckpt",
         ),
     )
-    override_identity = _stem_cache_identity(
+    override_identity = stem_cache_identity(
         plan, UpmixConfig(stem_bleed_reduction=True, stem_phase_fix={"Other": False})
     )
 

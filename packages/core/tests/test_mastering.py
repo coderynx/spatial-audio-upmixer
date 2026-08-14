@@ -11,10 +11,6 @@ from upmixer.formats import FORMAT_MAP
 from upmixer.mastering import MasteringChain, MasteringResult
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _mono_channels(n: int = 44100, amplitude: float = 0.1) -> dict[str, np.ndarray]:
     """Return a minimal {FL, FR} channel dict with a pure sine."""
     t = np.linspace(0, 1, n, endpoint=False)
@@ -28,10 +24,6 @@ def _51_channels(n: int = 44100, amplitude: float = 0.1) -> dict[str, np.ndarray
     sig = amplitude * np.sin(2 * np.pi * 440 * t).astype(np.float64)
     return {k: sig.copy() for k in ["FL", "FR", "C", "LFE", "SL", "SR"]}
 
-
-# ---------------------------------------------------------------------------
-# MasteringResult dataclass
-# ---------------------------------------------------------------------------
 
 class TestMasteringResult:
     def test_defaults_are_none(self):
@@ -53,13 +45,8 @@ class TestMasteringResult:
         assert r.applied_gain_db == pytest.approx(4.5)
 
 
-# ---------------------------------------------------------------------------
-# MasteringChain — loudness_normalize disabled
-# ---------------------------------------------------------------------------
-
 class TestMasteringChainNoLoudness:
     """With loudness_normalize=False, only tanh soft-limit is applied."""
-
     @pytest.fixture
     def chain(self):
         cfg = UpmixConfig(loudness_normalize=False)
@@ -105,13 +92,8 @@ class TestMasteringChainNoLoudness:
             assert np.all(np.isfinite(arr))
 
 
-# ---------------------------------------------------------------------------
-# MasteringChain — loudness_normalize enabled
-# ---------------------------------------------------------------------------
-
 class TestMasteringChainWithLoudness:
     """With loudness_normalize=True, LN + TP ceiling + soft-limit applied."""
-
     @pytest.fixture
     def chain(self):
         cfg = UpmixConfig(
@@ -216,13 +198,8 @@ class TestMasteringChainWithLoudness:
         assert thd < 0.01, f"THD {thd:.4f} indicates the limiter ran before loudness gain"
 
 
-# ---------------------------------------------------------------------------
-# MasteringChain — EQ shaping integration
-# ---------------------------------------------------------------------------
-
 class TestMasteringChainWithEq:
     """MasteringChain integrates SpectralShaper when mastering_eq_profile is set."""
-
     def _51_channels(self, n: int = 44100, amplitude: float = 0.2):
         t = np.linspace(0, 1, n, endpoint=False)
         sig = amplitude * np.sin(2 * np.pi * 440 * t).astype(np.float64)
@@ -266,13 +243,8 @@ class TestMasteringChainWithEq:
                 assert np.all(np.isfinite(arr)), f"Non-finite in profile {profile}"
 
 
-# ---------------------------------------------------------------------------
-# MasteringChain — bus compressor integration
-# ---------------------------------------------------------------------------
-
 class TestMasteringChainWithComp:
     """MasteringChain integrates BusCompressor when mastering_comp_profile is set."""
-
     def _51_channels(self, n: int = 44100, amplitude: float = 0.5):
         t = np.linspace(0, 1, n, endpoint=False)
         sig = amplitude * np.sin(2 * np.pi * 440 * t).astype(np.float64)
@@ -310,10 +282,6 @@ class TestMasteringChainWithComp:
         out, _ = MasteringChain(cfg).process(chs, 44100, FORMAT_MAP["5.1"])
         np.testing.assert_array_equal(out["LFE"], chs["LFE"])
 
-
-# ---------------------------------------------------------------------------
-# MasteringChain — EQ + compressor + loudness together
-# ---------------------------------------------------------------------------
 
 class TestMasteringChainFullPipeline:
     def test_eq_comp_loudness_together(self):

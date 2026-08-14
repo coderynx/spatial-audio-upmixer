@@ -51,10 +51,6 @@ def _sine_channels(
     return {lbl.value: wave.copy() for lbl in labels}
 
 
-# ---------------------------------------------------------------------------
-# K-weighting coefficients — BS.1770-4 Annex 1 Tables 1-2
-# ---------------------------------------------------------------------------
-
 class TestKWeighting48k:
     def setup_method(self):
         self.sos = _k_weighting_sos(SR48)
@@ -118,10 +114,6 @@ def test_k_weighting_cached():
     assert _k_weighting_sos(SR48) is _k_weighting_sos(SR48)
 
 
-# ---------------------------------------------------------------------------
-# Channel weights — BS.1770-4 §2.2 Table 1 + Annex 1 Table 3
-# ---------------------------------------------------------------------------
-
 def test_surround_weight_literal_value():
     assert _SURROUND_WEIGHT == 1.41
 
@@ -144,10 +136,6 @@ def test_rear_and_height_weights_are_unity():
     for label in _UNITY_IMMERSIVE_LABELS:
         assert CHANNEL_WEIGHT[label] == 1.0, f"{label} weight != 1.0"
 
-
-# ---------------------------------------------------------------------------
-# Integrated loudness — BS.1770-4 §2
-# ---------------------------------------------------------------------------
 
 def test_silence_returns_floor():
     channels = {"FL": np.zeros(SR48 * 3), "FR": np.zeros(SR48 * 3)}
@@ -196,10 +184,6 @@ def test_surround_channel_louder_than_front_due_to_weight():
     )
 
 
-# ---------------------------------------------------------------------------
-# True peak — BS.1770-4 Annex 2
-# ---------------------------------------------------------------------------
-
 def test_true_peak_silence_returns_floor():
     channels = {"FL": np.zeros(SR48)}
     result = measure_true_peak(channels, SR48)
@@ -222,10 +206,6 @@ def test_true_peak_uses_bs1770_fir_at_48k_and_96k():
     assert measure_true_peak({"FL": audio}, SR48) > -0.1
     assert measure_true_peak({"FL": audio}, SR96) > -0.1
 
-
-# ---------------------------------------------------------------------------
-# normalize_loudness
-# ---------------------------------------------------------------------------
 
 def test_normalize_info_dict_keys():
     channels = _sine_channels(997.0, 0.1, 3.0, SR48, [ChannelLabel.FL, ChannelLabel.FR])

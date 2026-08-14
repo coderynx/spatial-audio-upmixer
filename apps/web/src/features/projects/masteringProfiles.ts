@@ -135,15 +135,6 @@ export function estimateRouteScale(route: Record<string, number>, gains: Channel
   return sumSquares > 1e-10 ? 1 / Math.sqrt(sumSquares) : 1;
 }
 
-// --- Backend-served engine constants ------------------------------------
-//
-// The web preview engine holds no hardcoded copy of the tunable DSP values;
-// it fetches them from GET /api/v1/configuration's `constants` block (see
-// apps/api system slice `engine_constants()`). `ServedEngineConstants` is the
-// wire shape (snake_case, matching the backend); `EngineConstants` is the
-// normalized shape the graph builders consume. resolveEngineConstants maps
-// between them — the only place voicing params get their snake->camel rename.
-
 /** Wire shape of one voicing profile (backend snake_case). */
 export type ServedVoicingParams = {
   crossfeed_amount: number;

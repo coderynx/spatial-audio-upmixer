@@ -11,14 +11,9 @@ import {
 } from "@/lib/meterScale";
 import { cn } from "@/lib/utils";
 
-// The meter that sits beside a channel strip's fader, drawn the way Logic Pro
-// draws one: a numeral column printing the dB scale, then one narrow bar per
-// source channel — two for a stereo stem, one for a mono stem, so a one-sided
-// image reads as one-sided instead of being summed away.
-//
-// Canvas rather than DOM because the bars repaint every frame from the audio
-// hook's level refs; the whole strip rack is driven by one shared rAF loop in
-// MixerView, so this component only exposes the geometry and the draw call.
+// Canvas rather than DOM: the bars repaint every frame from the audio hook's
+// level refs, driven by one shared rAF loop in MixerView, so this component
+// only exposes the geometry and the draw call. Appearance: web_ui_design §6.4.
 
 export const SCALE_WIDTH = 17;
 export const BAR_WIDTH = 5;

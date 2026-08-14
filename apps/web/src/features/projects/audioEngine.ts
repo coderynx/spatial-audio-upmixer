@@ -12,91 +12,43 @@
 // method from the appropriate effect.
 
 import type { ProjectStem, StemScene } from "@/api";
-import { speakerCoordinates } from "@/lib/spatial";
-import { routingFromAzimuthElevation } from "@/lib/spatial";
 import { applyTruePeakCeiling, loudnessGainFor } from "./audioAnalysis";
 import type {
   BassProfileName,
   CompProfileName,
   EngineConstants,
-  EqProfileName,
   SpatialProfile,
-  StemEqProfileName,
   TransauralProfile,
 } from "./masteringProfiles";
-import { estimateRouteScale } from "./masteringProfiles";
 import type { MasterPreview } from "./masterPreview";
-import { loadBuffer } from "./audioLoaders";
 import { DspEngineClient } from "./wasmEngine/engineClient";
-import { buildEngineParams, type StemMix } from "./wasmEngine/engineParams";
-import { loadDecodeTaps, loadFirTaps, loadXtcTaps } from "./wasmEngine/filterAssets";
-
-/**
- * Stems decode concurrently but must reach the engine in `this.stems` order
- * (its stem index is push order — see `push_stem` in stream/engine.rs), so a
- * stem that finishes decoding out of turn has to be held in memory until its
- * turn comes. Bounding the batch caps that retained set: a 5-minute 48 kHz
- * stereo stem is ~115 MB decoded, so unbounded parallelism risks holding
- * every stem of a long project at once.
- */
-const STEM_DECODE_CONCURRENCY = 3;
+import { buildEngineParams } from "./wasmEngine/engineParams";
+import { FilterTapCache } from "./wasmEngine/filterTaps";
+import { SILENT_METER_LEVEL, decodeMeterFrame, type MeterFrame, type MeterLevel } from "./wasmEngine/meters";
+import { loadStemsInto } from "./wasmEngine/stemLoader";
+import { resolveStemMixes } from "./wasmEngine/stemMix";
+import {
+  POSITIONAL_CHANNELS,
+  engineRef,
+  type EngineCallbacks,
+  type EngineRef,
+  type MixPreview,
+  type OutputMode,
+} from "./wasmEngine/engineTypes";
 
 export { applyTruePeakCeiling } from "./audioAnalysis";
+export {
+  POSITIONAL_CHANNELS,
+  engineRef,
+  type EngineCallbacks,
+  type EngineRef,
+  type MixPreview,
+  type OutputMode,
+} from "./wasmEngine/engineTypes";
+export { withReferenceMatchParams } from "./wasmEngine/filterTaps";
+export type { MeterLevel } from "./wasmEngine/meters";
 
-export type EngineRef<T> = { current: T };
-function engineRef<T>(value: T): EngineRef<T> {
-  return { current: value };
-}
-
-export type OutputMode = "binaural" | "transaural" | "stereo" | "native";
-
-export const POSITIONAL_CHANNELS = Object.keys(speakerCoordinates);
-
-export type MeterLevel = { rms: number; peak: number; clipped: boolean };
-
-const SILENT_METER_LEVEL: MeterLevel = { rms: 0, peak: 0, clipped: false };
-
-// A sample clearing unity by a hairline still counts as clipped.
-const CLIP_TOLERANCE = 1.0;
-
-export type MixPreview = {
-  stem_routing?: Record<string, Record<string, number>>;
-  stem_rebalance?: Record<string, number>;
-  stem_eq?: Record<string, string>;
-  stem_enabled?: Record<string, boolean>;
-  stem_solo?: string[];
-  stem_source_anchor_strength?: number;
-};
-
-export type EngineCallbacks = {
-  onReady(ready: boolean): void;
-  onLoadProgress(progress: number): void;
-  onError(message: string | null): void;
-  onPlaying(playing: boolean): void;
-  onCurrentTime(time: number): void;
-  onDuration(duration: number): void;
-  onMeasuring(measuring: boolean): void;
-  /** Fraction of the current measurement stage measured, for a progress bar. */
-  onMeasureProgress(progress: number): void;
-  onMaxChannels(maxChannels: number): void;
-  onVolume(volume: number): void;
-  onMuted(muted: boolean): void;
-  onLoop(loop: boolean): void;
-};
-
-/** The core's FIR assets are designed at 48 kHz; run the graph there too. */
 const CONTEXT_SAMPLE_RATE = 48000;
-
-function level(rms: number, peak: number): MeterLevel {
-  return { rms, peak, clipped: peak > CLIP_TOLERANCE };
-}
-
-/** Appends the live `strength`/`max_db` knobs to a reference-match `fir_url`
- * base, so the FIR endpoint designs the filter for exactly this config. */
-export function withReferenceMatchParams(firUrl: string, strength: number, maxDb: number): string {
-  const separator = firUrl.includes("?") ? "&" : "?";
-  return `${firUrl}${separator}strength=${strength}&max_db=${maxDb}`;
-}
 
 export class PreviewAudioEngine {
   readonly supported = Boolean(
@@ -104,7 +56,6 @@ export class PreviewAudioEngine {
       (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext,
   );
 
-  // ---- Inputs, synced from the hook every render ----
   stems: ProjectStem[] = [];
   scene: { stems?: StemScene } = {};
   mix?: MixPreview;
@@ -118,7 +69,6 @@ export class PreviewAudioEngine {
   positionalChannels: string[] = [];
   speakerEnabled: Record<string, boolean> = {};
 
-  // ---- State the engine owns, mirrored out via callbacks ----
   volume = 1;
   muted = false;
   loop = false;
@@ -132,15 +82,7 @@ export class PreviewAudioEngine {
   private scrubbing = false;
   private loadToken = 0;
 
-  private decodeTaps: Float64Array | null = null;
-  private xtcTaps: Float64Array | null = null;
-  private loadedDecodeProfile: SpatialProfile | null = null;
-  private loadedXtcProfile: TransauralProfile | null = null;
-  private stemEqTaps: Map<string, Float64Array> = new Map();
-  private masterEqAsset: string | null = null;
-  private masterEqTaps: Float64Array | null = null;
-  private referenceFirUrl: string | null = null;
-  private referenceTaps: Float64Array | null = null;
+  private readonly taps = new FilterTapCache();
   private measuredLkfs = -70;
   private measuredTpDbtp = -70;
   private measuredForMode: string | null = null;
@@ -168,8 +110,6 @@ export class PreviewAudioEngine {
   readonly currentTimeRef: EngineRef<number> = engineRef(0);
 
   constructor(private readonly callbacks: EngineCallbacks) {}
-
-  // ---- Transport ----
 
   setVolume(volume: number) {
     this.volume = volume;
@@ -285,12 +225,6 @@ export class PreviewAudioEngine {
     }
   }
 
-  // ---- Parameter application ----
-  //
-  // Every "the mix changed" path funnels into `apply()`: the core takes a
-  // whole parameter block and keeps its stems and playhead, so there is no
-  // per-control rewiring left to do.
-
   buildMasteringTopology() {
     void Promise.all([this.loadMasteringFirs(), this.loadReferenceMatchFir()]).then(() => this.apply());
   }
@@ -333,144 +267,41 @@ export class PreviewAudioEngine {
 
   async loadDecodeFilterSet(profile: SpatialProfile): Promise<boolean> {
     if (!this.context || !this.constants) return false;
-    if (this.loadedDecodeProfile === profile && this.decodeTaps) return true;
-    try {
-      const taps = await loadDecodeTaps(this.context, this.constants.decodeFilterSet[profile]);
-      // Two switches in quick succession race here: the slower fetch must not
-      // be the one that lands in the engine.
-      if (profile !== this.spatialProfile) return false;
-      this.decodeTaps = taps;
-      this.loadedDecodeProfile = profile;
-      // A slice, not the cached field itself: `setDecodeTaps` transfers its
-      // argument's buffer, which would detach `this.decodeTaps` and break
-      // the cache-hit path above the next time this profile is requested.
-      this.client?.setDecodeTaps(this.decodeTaps.slice());
-      return true;
-    } catch {
-      return false;
-    }
+    const ok = await this.taps.loadDecode(
+      this.context, this.constants, profile, () => profile === this.spatialProfile,
+    );
+    // A slice, not the cached field itself: `setDecodeTaps` transfers its
+    // argument's buffer, which would detach the cache entry.
+    if (ok && this.taps.decodeTaps) this.client?.setDecodeTaps(this.taps.decodeTaps.slice());
+    return ok;
   }
 
   async loadXtcFilterSet(profile: TransauralProfile): Promise<boolean> {
     if (!this.context || !this.constants) return false;
-    if (this.loadedXtcProfile === profile && this.xtcTaps) return true;
-    try {
-      const taps = await loadXtcTaps(this.context, this.constants.xtcFilterSet[profile]);
-      if (profile !== this.transauralProfile) return false;
-      this.xtcTaps = taps;
-      this.loadedXtcProfile = profile;
-      this.client?.setXtcTaps(this.xtcTaps.slice());
-      return true;
-    } catch {
-      return false;
-    }
+    const ok = await this.taps.loadXtc(
+      this.context, this.constants, profile, () => profile === this.transauralProfile,
+    );
+    if (ok && this.taps.xtcTaps) this.client?.setXtcTaps(this.taps.xtcTaps.slice());
+    return ok;
   }
 
-  /**
-   * Cached by asset name, like `loadStemEqFirs`'s per-stem cache: mastering
-   * changes unrelated to the EQ profile (a compressor threshold, a loudness
-   * target) still bump `masteringKey` and re-run this, so without a cache
-   * every one of them would re-fetch and re-decode the same WAV.
-   */
   private async loadMasteringFirs() {
     if (!this.context || !this.constants) return;
-    const profile = this.mastering?.eq?.profile as EqProfileName | null | undefined;
-    const asset = profile ? this.constants.eqFirAssets[profile] : null;
-    if (asset === this.masterEqAsset && (asset === null || this.masterEqTaps)) return;
-    this.masterEqAsset = asset ?? null;
-    this.masterEqTaps = asset
-      ? await loadFirTaps(`/eq_fir/${asset}.wav`, this.context).catch(() => null)
-      : null;
+    await this.taps.loadMastering(this.context, this.constants, this.mastering);
   }
 
-  /**
-   * The server serves one correction curve per project as a base `fir_url`
-   * and designs the actual filter on demand from the live `strength`/
-   * `max_db` query params (see `MasterPreview.match_reference`'s doc
-   * comment) — so unlike `loadMasteringFirs`'s fixed asset names, the URL
-   * itself changes with the sliders and is the cache key.
-   */
   private async loadReferenceMatchFir() {
     if (!this.context) return;
-    const refCfg = this.mastering?.match_reference;
-    const strength = refCfg?.strength ?? 1;
-    const maxDb = refCfg?.max_db ?? 6;
-    const active = Boolean(refCfg?.spectrum && refCfg.fir_url && strength > 0);
-    const url = active ? withReferenceMatchParams(refCfg!.fir_url as string, strength, maxDb) : null;
-    if (url === this.referenceFirUrl && (url === null || this.referenceTaps)) return;
-    this.referenceFirUrl = url;
-    this.referenceTaps = url ? await loadFirTaps(url, this.context).catch(() => null) : null;
+    await this.taps.loadReferenceMatch(this.context, this.mastering);
   }
 
   private async loadStemEqFirs() {
     if (!this.context || !this.constants) return;
-    const wanted = this.mix?.stem_eq ?? {};
-    const entries = await Promise.all(
-      Object.entries(wanted).map(async ([stemKey, profile]) => {
-        const asset = this.constants.stemEqFirAssets[profile as StemEqProfileName];
-        if (!asset) return null;
-        const taps =
-          this.stemEqTaps.get(stemKey) ??
-          (await loadFirTaps(`/eq_fir/${asset}.wav`, this.context!).catch(() => null));
-        return taps ? ([stemKey, taps] as const) : null;
-      }),
-    );
-    this.stemEqTaps = new Map(entries.filter((entry): entry is readonly [string, Float64Array] => entry !== null));
+    await this.taps.loadStemEq(this.context, this.constants, this.mix?.stem_eq ?? {});
   }
 
-  /**
-   * Stems the engine actually loads. `resolveStems`, `stemOrder` and
-   * `loadStems` must all iterate this same filtered list — the engine's stem
-   * index is push order, so a stem dropped by one of them but not the others
-   * shifts every later index and desyncs routing, rebalance and meters.
-   */
   private previewableStems(): ProjectStem[] {
     return this.stems.filter((stem) => stem.preview_url || stem.audio_url);
-  }
-
-  /** Resolve the project's mix into the core's per-stem parameters. */
-  private resolveStems(): StemMix[] {
-    const anchor = this.mix?.stem_source_anchor_strength || 0;
-    return this.previewableStems().map((stem) => {
-      const base = stem.stem_key.split("@", 1)[0];
-      const scene = this.scene.stems?.[stem.stem_key] || this.scene.stems?.[base] || {};
-      let routing = this.mix?.stem_routing?.[stem.stem_key] || this.mix?.stem_routing?.[base];
-      // No resolved routing yet (a freshly dropped stem, say) — fall back to
-      // the same nearest-3-speakers weighting `routing_for_scene` uses.
-      if (!routing || Object.keys(routing).length === 0) {
-        routing =
-          scene.azimuth_deg != null || scene.elevation_deg != null
-            ? routingFromAzimuthElevation(scene.azimuth_deg || 0, scene.elevation_deg || 0)
-            : {};
-      }
-
-      let total = 0;
-      let frontWeight = 0;
-      for (const [channel, weight] of Object.entries(routing)) {
-        if (weight <= 0) continue;
-        total += weight;
-        if (channel === "FL" || channel === "FR") frontWeight += weight;
-      }
-      // Only the FL/FR portion crossfades toward the dry source, matching
-      // source_anchor.py's front-zone-only blend.
-      const frontFraction = total > 0 ? frontWeight / total : 0;
-
-      const soloed = this.mix?.stem_solo?.length
-        ? this.mix.stem_solo.includes(stem.stem_key) || this.mix.stem_solo.includes(base)
-        : true;
-      const enabled =
-        soloed && this.mix?.stem_enabled?.[base] !== false && scene.enabled !== false;
-
-      const anchorDb = 20 * Math.log10(Math.max(1 - anchor * frontFraction, 1e-6));
-      return {
-        id: stem.id,
-        routing,
-        rebalanceDb: (this.mix?.stem_rebalance?.[base] || 0) + anchorDb,
-        enabled,
-        eqFir: this.stemEqTaps.get(stem.stem_key),
-        routeScale: estimateRouteScale(routing, this.constants.channelGains),
-      };
-    });
   }
 
   apply() {
@@ -482,12 +313,9 @@ export class PreviewAudioEngine {
     const bass = (this.mastering?.bass?.profile ?? null) as BassProfileName | null;
     const target = this.mastering?.loudness?.target ?? -18;
     const normalize = this.mastering?.loudness?.normalize ?? true;
-    // Unlike the offline export chain, this engine has no first-stage
-    // normalize on the discrete bed before the spatial collapse — one gain
-    // stage does the whole job for every mode, so every mode needs the same
-    // full budget. A collapse-only cap here (correct for the *second* of the
-    // offline chain's two stages) would leave binaural/transaural under-
-    // corrected relative to native whenever the raw mix sits far from target.
+    // One gain stage covers the whole job here, unlike the export chain's two,
+    // so every mode gets the full budget — see
+    // docs/contracts/preview_export_parity.md.
     const loudnessGain = normalize
       ? loudnessGainFor(this.measuredLkfs, target, this.constants.loudnessMaxGainDb)
       : 1;
@@ -507,13 +335,19 @@ export class PreviewAudioEngine {
       constants: this.constants,
       layoutChannels: this.layoutChannels,
       speakerEnabled: this.speakerEnabled,
-      stems: this.resolveStems(),
+      stems: resolveStemMixes({
+        stems: this.previewableStems(),
+        scene: this.scene,
+        mix: this.mix,
+        stemEqTaps: this.taps.stemEqTaps,
+        constants: this.constants,
+      }),
       master: {
         compProfile: (this.mastering?.compressor?.profile ?? null) as CompProfileName | null,
         bassProfile: bass,
-        eqFir: this.masterEqTaps ?? undefined,
+        eqFir: this.taps.masterEqTaps ?? undefined,
         eqStrength: this.mastering?.eq?.strength ?? 1,
-        referenceFir: this.referenceTaps ?? undefined,
+        referenceFir: this.taps.referenceTaps ?? undefined,
         referenceGain: this.mastering?.match_reference?.rms
           ? 10 ** ((this.mastering.match_reference.rms_gain_db ?? 0) / 20)
           : 1,
@@ -527,14 +361,11 @@ export class PreviewAudioEngine {
   }
 
   /**
-   * Measure the programme once per output mode/profile combination, so a
-   * mode switch re-measures rather than reusing a stale correction.
-   *
-   * The pass walks the whole programme in slices taken from the render
-   * callback, so this resolves minutes later on a long track. Playback is
-   * mandatory-calibrated (see `playFrom`): a mode/profile switch that
-   * invalidates the current measurement pauses transport here rather than
-   * leaving it running uncorrected until the user notices.
+   * Measure the programme once per output mode/profile combination, so a mode
+   * switch re-measures rather than reusing a stale correction. The pass walks
+   * the whole programme, so it resolves minutes later on a long track and
+   * pauses transport meanwhile (playback is mandatory-calibrated, see
+   * `playFrom`).
    */
   private measureKey(): string {
     return `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}`;
@@ -578,8 +409,6 @@ export class PreviewAudioEngine {
       void this.playFrom(this.currentTimeRef.current);
     }
   }
-
-  // ---- Lifecycle ----
 
   async initialize(): Promise<void> {
     if (!this.supported || !this.constants) return;
@@ -633,21 +462,15 @@ export class PreviewAudioEngine {
       this.monitorGain.gain.value = this.muted ? 0 : this.volume;
       client.node.connect(this.monitorGain).connect(context.destination);
 
-      // The engine is created before its convolvers have taps — they render
-      // silence until `apply()` lands, same as the old graph's `void`-fired
-      // filter loads — so stems can start fetching immediately instead of
-      // waiting behind ~800 KB of HRIR/XTC/EQ WAV. `setParams` always builds
-      // a fresh engine with no taps of its own (they ride their own binary
-      // channel, not the JSON block), so a profile already cached from a
-      // prior init has to be re-pushed onto it explicitly here — otherwise
-      // `loadDecodeFilterSet`'s cache-hit path finds nothing to fetch and
-      // never sends the taps this new engine actually needs.
+      // `setParams` always builds a fresh engine with no taps of its own, so a
+      // profile already cached from a prior init has to be re-pushed here —
+      // the loaders' cache-hit path would otherwise find nothing to fetch.
       client.setParams(this.buildParams());
-      if (this.loadedDecodeProfile === this.spatialProfile && this.decodeTaps) {
-        client.setDecodeTaps(this.decodeTaps.slice());
+      if (this.taps.loadedDecodeProfile === this.spatialProfile && this.taps.decodeTaps) {
+        client.setDecodeTaps(this.taps.decodeTaps.slice());
       }
-      if (this.loadedXtcProfile === this.transauralProfile && this.xtcTaps) {
-        client.setXtcTaps(this.xtcTaps.slice());
+      if (this.taps.loadedXtcProfile === this.transauralProfile && this.taps.xtcTaps) {
+        client.setXtcTaps(this.taps.xtcTaps.slice());
       }
       await Promise.all([
         this.loadDecodeFilterSet(this.spatialProfile),
@@ -667,94 +490,27 @@ export class PreviewAudioEngine {
     }
   }
 
-  /**
-   * Fetch and decode the stems concurrently, but hand them to the engine
-   * strictly in `previewableStems()` order — the engine's stem index is push
-   * order (`push_stem` appends), and `stemOrder`/`buildEngineParams` both
-   * address stems by position, so the network is not allowed to decide it.
-   */
   private async loadStems(token: number, context: AudioContext, client: DspEngineClient) {
-    const sources = this.previewableStems();
-    if (!sources.length) {
-      this.callbacks.onLoadProgress(1);
-      return;
-    }
-
-    // Stems finish decoding in tight clusters, not evenly spaced — flushing
-    // progress straight from each completion would fire a full page
-    // re-render per stem in that cluster, right when the main thread is
-    // busiest with decode work. Coalesce same-frame completions instead.
-    let decoded = 0;
-    let progressFlushScheduled = false;
-    const scheduleProgressFlush = () => {
-      if (progressFlushScheduled) return;
-      progressFlushScheduled = true;
-      window.requestAnimationFrame(() => {
-        progressFlushScheduled = false;
-        if (token !== this.loadToken) return;
-        this.callbacks.onLoadProgress(decoded / sources.length);
-      });
-    };
-
-    for (let start = 0; start < sources.length; start += STEM_DECODE_CONCURRENCY) {
-      const chunk = sources.slice(start, start + STEM_DECODE_CONCURRENCY);
-      const buffers = await Promise.all(
-        chunk.map((stem) => loadBuffer(context, (stem.preview_url || stem.audio_url)!)),
-      );
-      if (token !== this.loadToken) return;
-
-      for (const buffer of buffers) {
-        // `.slice()` is a memcpy of the channel view; `Float32Array.from`
-        // takes V8's generic per-element iterator path over the same bytes.
-        // The copies are transferred, so they leave the main thread with the
-        // call below rather than sitting alongside the AudioBuffer.
-        const left = buffer.getChannelData(0).slice();
-        const right = buffer.getChannelData(Math.min(1, buffer.numberOfChannels - 1)).slice();
-        client.addStem(left, right);
-        this.duration = Math.max(this.duration, buffer.duration);
-        this.callbacks.onDuration(this.duration);
-      }
-
-      decoded += chunk.length;
-      scheduleProgressFlush();
-    }
-    this.callbacks.onLoadProgress(1);
+    this.duration = await loadStemsInto(context, client, this.previewableStems(), {
+      isCurrent: () => token === this.loadToken,
+      onProgress: (fraction) => this.callbacks.onLoadProgress(fraction),
+      onDuration: (seconds) => {
+        this.duration = seconds;
+        this.callbacks.onDuration(seconds);
+      },
+    });
   }
 
-  private onFrame(frame: { position: number; meters: number[]; spectrum: number[] }) {
+  private onFrame(frame: MeterFrame) {
     if (!this.scrubbing) {
       this.currentTimeRef.current = frame.position / CONTEXT_SAMPLE_RATE;
       this.callbacks.onCurrentTime(this.currentTimeRef.current);
     }
-
-    const meters = frame.meters;
-    const stemCount = this.stemOrder.length;
-    const channels = this.layoutChannels;
-    const stemLevels = new Map<string, MeterLevel[]>();
-    const stemSpectrum = new Map<string, { level: number; centroid: number }>();
-    for (let i = 0; i < stemCount; i += 1) {
-      const o = i * 4;
-      const bars = [level(meters[o] ?? 0, meters[o + 1] ?? 0)];
-      if ((this.stemChannelCounts[i] ?? 1) >= 2) bars.push(level(meters[o + 2] ?? 0, meters[o + 3] ?? 0));
-      stemLevels.set(this.stemOrder[i], bars);
-      const s = i * 2;
-      stemSpectrum.set(this.stemOrder[i], { level: frame.spectrum[s] ?? 0, centroid: frame.spectrum[s + 1] ?? 0 });
-    }
-    this.stemLevels.current = stemLevels;
-    this.stemSpectrum.current = stemSpectrum;
-
-    const channelLevels = new Map<string, MeterLevel>();
-    const base = stemCount * 4;
-    for (let i = 0; i < channels.length; i += 1) {
-      channelLevels.set(channels[i], level(meters[base + i * 2] ?? 0, meters[base + i * 2 + 1] ?? 0));
-    }
-    this.channelLevels.current = channelLevels;
-
-    const outBase = base + channels.length * 2;
-    this.headphoneLevels.current = {
-      left: level(meters[outBase] ?? 0, meters[outBase + 1] ?? 0),
-      right: level(meters[outBase + 2] ?? 0, meters[outBase + 3] ?? 0),
-    };
+    const decoded = decodeMeterFrame(frame, this.stemOrder, this.stemChannelCounts, this.layoutChannels);
+    this.stemLevels.current = decoded.stemLevels;
+    this.stemSpectrum.current = decoded.stemSpectrum;
+    this.channelLevels.current = decoded.channelLevels;
+    this.headphoneLevels.current = decoded.headphoneLevels;
   }
 
   /**
@@ -795,9 +551,7 @@ export class PreviewAudioEngine {
     this.exactMeasureKey = null;
     this.measureToken += 1;
     this.measuringRaw = false;
-    this.stemEqTaps = new Map();
-    this.referenceFirUrl = null;
-    this.referenceTaps = null;
+    this.taps.resetPerProject();
     this.client?.dispose();
     this.client = null;
     this.monitorGain?.disconnect();

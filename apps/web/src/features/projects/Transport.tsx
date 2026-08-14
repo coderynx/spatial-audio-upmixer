@@ -135,19 +135,7 @@ function TransportImpl({
   }, [playing, currentTimeRef]);
   const displayTime = playing ? liveTime : currentTime;
   return (
-    // Three-column grid, not a flex row with a single spacer: a flex-1 gap
-    // between two small clusters in a full-width bar becomes one oversized
-    // void wherever the container happens to be wide (the same "content
-    // stranded across a black gap" shape as the Haze view's dead bands).
-    // Col 1 and col 3 are `minmax(0,1fr)`, not a bare `1fr` — a bare `1fr`
-    // track floors at its own content's min-content width, so col 3 growing
-    // (the native-mode device <select> appearing, the output-mode trigger's
-    // profile label) would widen that track and shove the centred col 2 pod
-    // off-centre. `minmax(0,_)` removes that floor, so both flanking tracks
-    // always split the remaining space equally regardless of how much each
-    // holds, which is what keeps the transport pod in col 2 pinned to the
-    // row's true centre — the page's stage tabs/settings (`leading`) sit in
-    // col 1, the monitor cluster in col 3, Apple-transport-shaped either way.
+    // Three-column true centring, see docs/web_ui_design.md §6.6.
     <div className="grid h-18 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b bg-card px-2 py-4">
       <div className="flex min-w-0 items-center gap-2 justify-self-start overflow-hidden">{leading}</div>
       <div className="flex items-center gap-2 justify-self-center">

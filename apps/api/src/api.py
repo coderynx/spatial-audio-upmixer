@@ -50,14 +50,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         manager.start()
         # Sweep every project with a reference attached through the normal
-        # signature-checked scheduling path. Covers both a server restart
-        # after downtime (a settings save's own `schedule_reference_match`
-        # call never ran) and a deploy that changes what the signature or
-        # the curve algorithm covers (e.g. this reference-match rebuild) —
-        # every existing sidecar mismatches its new-shape signature and
-        # regenerates here, in the background, with no user action and no
-        # re-upload. Cheap when nothing has changed: `_reference_match_needs_
-        # work` reads one row and returns immediately.
+        # signature-checked scheduling path, so a restart or a curve-algorithm
+        # change regenerates stale sidecars without user action.
         with sessions() as session:
             stale_ids = [
                 row[0] for row in

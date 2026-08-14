@@ -29,7 +29,6 @@ from upmixer.mastering.match_reference.spectrum import (
 )
 from upmixer.utils import itu_downmix_stereo
 
-# ── helpers ──────────────────────────────────────────────────────────────────
 
 SR = 44100
 N = SR * 2  # 2 s
@@ -82,8 +81,6 @@ def _fir_response_db(fir: np.ndarray, sr: int, freq_hz: float) -> float:
     return float(20.0 * np.log10(np.abs(h[idx]) + 1e-12))
 
 
-# ── init ─────────────────────────────────────────────────────────────────────
-
 class TestReferenceMatchProcessorInit:
     def test_constructs_with_defaults(self):
         proc = _make_proc()
@@ -101,8 +98,6 @@ class TestReferenceMatchProcessorInit:
         proc = _make_proc()
         assert proc._ref_data is None
 
-
-# ── bypass ───────────────────────────────────────────────────────────────────
 
 class TestBypass:
     def test_both_disabled_returns_original_dict(self):
@@ -127,8 +122,6 @@ class TestBypass:
         for name in channels:
             np.testing.assert_array_almost_equal(result[name], channels[name])
 
-
-# ── smoothing — regression guard for the pre-fix near-identity kernel ────────
 
 class TestSmoothing:
     def test_attenuates_narrow_spike(self):
@@ -157,8 +150,6 @@ class TestSmoothing:
         smoothed = _smooth_log_grid(values, 1.0 / 3.0, 1.0 / 24.0)
         np.testing.assert_allclose(smoothed[10:-10], 3.5, atol=1e-6)
 
-
-# ── single shared curve — the core spatial-correctness property ─────────────
 
 class TestSingleSharedCurve:
     def test_identical_inputs_produce_identical_outputs(self):
@@ -223,8 +214,6 @@ class TestSingleSharedCurve:
         np.testing.assert_array_almost_equal(matched_r, expected_r, decimal=6)
 
 
-# ── level matching ───────────────────────────────────────────────────────────
-
 class TestLevelMatching:
     def test_runs_with_stereo_ref(self):
         proc = _make_proc(match_spectrum=False)
@@ -277,13 +266,10 @@ class TestLevelMatching:
         assert abs(ratio_before - ratio_after) < 1e-6
 
 
-# ── compute_curve (web reference-match precompute) ───────────────────────────
-
 class TestComputeCurve:
     """compute_curve must return exactly what process() builds and applies
     internally — the web preview's server-side precompute persists the curve
     as-is instead of re-deriving the algorithm in JS."""
-
     def test_matches_what_process_applies(self):
         proc = _make_proc(match_rms=True, match_spectrum=True, strength=1.0)
         channels = _51_channels()
@@ -329,8 +315,6 @@ class TestComputeCurve:
             np.testing.assert_array_equal(arr, before[name])
 
 
-# ── reference channel canonicalization ───────────────────────────────────────
-
 class TestReferenceChannelCanonicalization:
     def test_supported_counts(self):
         assert set(_REFERENCE_CHANNEL_ORDER.keys()) == {6, 8, 10, 12}
@@ -356,8 +340,6 @@ class TestReferenceChannelCanonicalization:
         assert data.shape[1] == 12
 
 
-# ── compute_reference_curve unit tests ───────────────────────────────────────
-
 class TestComputeReferenceCurve:
     def test_breakpoints_count(self):
         target = {"FL": _sine(440.0), "FR": _sine(550.0)}
@@ -375,8 +357,6 @@ class TestComputeReferenceCurve:
         curve = compute_reference_curve(target, _stereo_ref(), SR, 8192)
         assert all(np.isfinite(g) for _, g in curve)
 
-
-# ── gating ────────────────────────────────────────────────────────────────────
 
 class TestGating:
     def test_ignores_silent_lead_in(self):
@@ -398,8 +378,6 @@ class TestGating:
             idx = int(np.argmin(np.abs(freqs1 - target_hz)))
             assert abs(db1[idx] - db2[idx]) < 1.0
 
-
-# ── clamp / taper primitives ─────────────────────────────────────────────────
 
 class TestSoftClamp:
     def test_within_knee_unaffected(self):
@@ -443,8 +421,6 @@ class TestConfidenceTaper:
         assert abs(out[0] - 10.0) < 1e-6
 
 
-# ── build_curve_fir ───────────────────────────────────────────────────────────
-
 class TestBuildCurveFir:
     def test_bass_clamped_regardless_of_max_db(self):
         curve = [(f, 20.0) for f in np.logspace(np.log10(20), np.log10(20000), 64)]
@@ -477,8 +453,6 @@ class TestBuildCurveFir:
         assert abs(np.sqrt(np.mean(out ** 2)) - np.sqrt(np.mean(sig ** 2))) < 0.05
 
 
-# ── config fields ─────────────────────────────────────────────────────────────
-
 class TestConfigFields:
     def test_default_reference_is_none(self):
         assert UpmixConfig().mastering_match_ref_path is None
@@ -501,8 +475,6 @@ class TestConfigFields:
     def test_old_eq_match_strength_gone(self):
         assert not hasattr(UpmixConfig(), "mastering_eq_match_strength")
 
-
-# ── manifest integration ──────────────────────────────────────────────────────
 
 class TestManifestMatchReferenceIntegration:
     def test_match_reference_in_registry(self):

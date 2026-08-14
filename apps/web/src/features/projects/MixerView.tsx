@@ -19,21 +19,7 @@ import { StripMeter } from "./StripMeter";
 import { useStripMeterLoop } from "./useStripMeterLoop";
 import type { MeterLevel } from "./useStemPreview";
 
-// Logic's mixer: one channel strip per stem (`StemChannelStrip`, shared with
-// the inspector's always-accessible copy — see ChannelStrip.tsx), a source
-// anchor strip, then the master strip. Stem strips are deliberately shallow
-// — nameplate, fader, meter, mute/solo — because position and stem EQ
-// already have one home in the inspector, and the design spec's "one control
-// per idea" rule makes duplicating them a defect rather than a convenience.
-//
-// The strip's instrument parts (fader cap, travel slot, meter, readouts) are
-// fixed dark like Logic's own, which keeps them identical in both app
-// appearances; the rack around them is ordinary themed chrome.
-//
-// Every strip resizes independently — a resize handle on its own trailing
-// edge (`StripResizeHandle`, ChannelStrip.tsx) widens or narrows only that
-// strip, the way dragging a column border in a spreadsheet only moves that
-// column. Widths persist under one localStorage map keyed by strip id.
+// Rack layout, strip anatomy and resize behavior: docs/web_ui_design.md §6.4.
 
 const MONITOR_TICKS = [0, -6, -12, -18, -24, -36, -48, -60];
 const ANCHOR_TICKS = [100, 75, 50, 25, 0];

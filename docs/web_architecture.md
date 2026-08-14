@@ -70,6 +70,23 @@ EQ, mastering, speaker mute, output mode, spatial and transaural profile —
 resolves to one parameter block and one message. There is no per-control
 rewiring, because there is no graph to rewire.
 
+**Engine constants.** The client holds no hardcoded copy of the tunable DSP
+values; it fetches them from `GET /api/v1/configuration`'s `constants` block
+(the `apps/api` system slice's `engine_constants()`).
+`masteringProfiles.ts` carries both shapes: `ServedEngineConstants` is the
+wire shape (snake_case, matching the backend) and `EngineConstants` the
+normalized shape the parameter builders consume. `resolveEngineConstants`
+maps between them, and is the only place voicing params get their
+snake_case → camelCase rename.
+
+**Preview module layout.** `audioEngine.ts` keeps the context, transport and
+monitor path; the pieces it delegates to live under
+`src/features/projects/wasmEngine/` — `engineClient.ts` (worklet messaging),
+`engineParams.ts` + `stemMix.ts` (mix → parameter block), `filterAssets.ts` +
+`filterTaps.ts` (FIR fetch and per-profile tap cache), `stemLoader.ts`
+(ordered concurrent stem decode), `meters.ts` (meter-frame unpacking), and
+`engineTypes.ts` (the shared callback/param types).
+
 **Sample rate.** The context is pinned to 48 kHz. Every shipped FIR (HRIR,
 XTC, EQ) is designed at that rate, and the previous graph reinterpreted those
 taps at whatever rate the device happened to run.

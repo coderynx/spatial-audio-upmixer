@@ -1,0 +1,143 @@
+//! Live parameter edits and the rebuilds a topology change forces.
+
+use super::{PreviewEngine, GAIN_RAMP_MS};
+use crate::stream::master::{MonoMaker, StreamingLimiter};
+use crate::stream::params::EngineParams;
+use crate::stream::routing::StemRouteState;
+use crate::stream::state::{OnePole, StreamingCompressor};
+
+impl PreviewEngine {
+    /// Replace the parameter block, keeping the loaded stems, the playhead,
+    /// and — outside a channel-layout change — every filter's carried state
+    /// and both look-ahead queues.
+    ///
+    /// Mute, solo, rebalance, routing, mastering and output-mode changes all
+    /// arrive this way, so there is one path for "the mix changed" rather
+    /// than a special case per control. Each stage only re-derives the parts
+    /// of itself that actually moved: nothing here re-renders a preroll or
+    /// discards `pre`/`post`, so playback never gaps. The new mix reaches
+    /// the speakers once the look-ahead already rendered under the old
+    /// params has drained — audible lag on the order of the mono-maker's
+    /// horizon plus the limiter's lookahead, not audible silence.
+    pub fn update_params(&mut self, params: EngineParams) {
+        let old = std::mem::replace(&mut self.params, params);
+
+        let topology_changed =
+            old.speakers.len() != self.params.speakers.len() || old.lfe_index != self.params.lfe_index;
+        if topology_changed {
+            // Rare — the web client tears the whole worklet down for a
+            // speaker-layout change before this can even fire in practice —
+            // so it keeps the old full-rebuild-then-seek behavior rather
+            // than earning its own diff logic.
+            let position = self.emitted;
+            self.rebuild_for_new_topology();
+            self.seek(position);
+            return;
+        }
+
+        if self.routes.len() != self.params.stems.len() {
+            self.rebuild_routes();
+        }
+
+        let sends_changed = old.sends != self.params.sends;
+        if sends_changed {
+            self.lfe_bus.retune(self.sample_rate, &self.params.sends);
+        }
+        for (i, route) in self.routes.iter_mut().enumerate() {
+            let new_eq = self.params.stems.get(i).map(|s| s.eq_fir.as_slice()).unwrap_or(&[]);
+            let old_eq = old.stems.get(i).map(|s| s.eq_fir.as_slice()).unwrap_or(&[]);
+            let eq_changed = new_eq != old_eq;
+            if sends_changed || eq_changed {
+                route.retune(self.sample_rate, &self.params.sends, new_eq, sends_changed, eq_changed);
+            }
+        }
+
+        match self.params.master.compressor {
+            None => self.compressor = None,
+            Some(c) => match &mut self.compressor {
+                Some(existing) => existing.retune(c, self.sample_rate),
+                None => self.compressor = Some(StreamingCompressor::new(c, self.sample_rate)),
+            },
+        }
+
+        let old_mono_cutoff = old.master.bass.and_then(|b| b.mono_cutoff_hz);
+        let new_mono_cutoff = self.params.master.bass.and_then(|b| b.mono_cutoff_hz);
+        if old_mono_cutoff != new_mono_cutoff || old.master.stereo_pairs != self.params.master.stereo_pairs {
+            // Stateless across calls (see `MonoMaker::process`), so a plain
+            // rebuild is already the cheap path here.
+            self.mono = new_mono_cutoff
+                .map(|hz| MonoMaker::new(self.sample_rate, hz, self.params.master.stereo_pairs.clone()));
+        }
+
+        if old.master != self.params.master {
+            for chain in &mut self.causal {
+                chain.retune(self.sample_rate, &old.master, &self.params.master);
+            }
+        }
+
+        match self.params.master.limiter {
+            None => self.limiter = None,
+            Some(l) if self.limiter.is_none() || old.master.limiter != Some(l) => {
+                self.limiter = Some(StreamingLimiter::new(l, self.sample_rate, self.params.speakers.len()));
+            }
+            Some(_) => {}
+        }
+
+        if old.speakers != self.params.speakers
+            || old.output_mode != self.params.output_mode
+            || old.voicing != self.params.voicing
+            || old.soft_limit_threshold != self.params.soft_limit_threshold
+        {
+            self.output.retune(self.sample_rate, &self.params);
+        }
+    }
+
+    /// Full rebuild for a channel-count/LFE-position change — every stage
+    /// keyed by `n_channels` has to move, so there is nothing cheaper to do
+    /// than what [`Self::new`] would build fresh. `pre`/`post`/`causal`/
+    /// `output`/`limiter`/`emitted` are left to the `seek` call the caller
+    /// makes right after this, whose `rewind` already rebuilds them at the
+    /// new topology.
+    fn rebuild_for_new_topology(&mut self) {
+        let n_channels = self.params.speakers.len();
+        self.collapsed = vec![Vec::new(); n_channels.max(2)];
+        self.rebuild_routes();
+        self.lfe_bus.retune(self.sample_rate, &self.params.sends);
+        self.compressor = self
+            .params
+            .master
+            .compressor
+            .map(|c| StreamingCompressor::new(c, self.sample_rate));
+        self.mono = self
+            .params
+            .master
+            .bass
+            .and_then(|b| b.mono_cutoff_hz)
+            .map(|hz| MonoMaker::new(self.sample_rate, hz, self.params.master.stereo_pairs.clone()));
+    }
+
+    /// Rebuild the per-stem routing state and gain smoothers to match
+    /// `self.params.stems` — used when a stem was added or removed, where
+    /// there is no previous per-index state to retune.
+    fn rebuild_routes(&mut self) {
+        self.routes = self
+            .params
+            .stems
+            .iter()
+            .map(|s| StemRouteState::new(self.sample_rate, &self.params.sends, &s.eq_fir))
+            .collect();
+        self.stem_gain = self
+            .params
+            .stems
+            .iter()
+            .map(|s| {
+                let target = if s.enabled {
+                    10.0_f64.powf(s.rebalance_db / 20.0) * s.route_scale
+                } else {
+                    0.0
+                };
+                OnePole::new_at(GAIN_RAMP_MS, self.sample_rate as f64, target)
+            })
+            .collect();
+    }
+}

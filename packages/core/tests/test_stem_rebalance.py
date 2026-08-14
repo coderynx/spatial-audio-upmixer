@@ -11,10 +11,6 @@ from upmixer.separation.stem_rebalance import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _stems(n: int = 44100, amplitude: float = 0.3) -> dict[str, np.ndarray]:
     """4-stem dict with (n, 2) stereo arrays."""
     t = np.linspace(0, 1, n, endpoint=False)
@@ -32,10 +28,6 @@ def _stems_zoned(n: int = 44100, amplitude: float = 0.3) -> dict[str, np.ndarray
     base = _stems(n, amplitude)
     return {f"{k}@front": v for k, v in base.items()}
 
-
-# ---------------------------------------------------------------------------
-# REBALANCE_PROFILES sanity
-# ---------------------------------------------------------------------------
 
 class TestRebalanceProfiles:
     def test_all_profiles_are_dicts(self):
@@ -56,10 +48,6 @@ class TestRebalanceProfiles:
         assert REBALANCE_PROFILES["instrumental"]["Vocals"] < 0
 
 
-# ---------------------------------------------------------------------------
-# StemRebalancer construction
-# ---------------------------------------------------------------------------
-
 class TestStemRebalancerInit:
     def test_constructs_with_empty_gains(self):
         r = StemRebalancer({}, 44100)
@@ -69,10 +57,6 @@ class TestStemRebalancerInit:
         r = StemRebalancer({"Vocals": 2.0, "Drums": -1.0}, 44100)
         assert r is not None
 
-
-# ---------------------------------------------------------------------------
-# StemRebalancer.process — identity / pass-through
-# ---------------------------------------------------------------------------
 
 class TestStemRebalancerIdentity:
     def test_zero_gain_returns_original_arrays(self):
@@ -108,10 +92,6 @@ class TestStemRebalancerIdentity:
         out = r.process(stems)
         assert set(out.keys()) == set(stems.keys())
 
-
-# ---------------------------------------------------------------------------
-# StemRebalancer.process — gain application
-# ---------------------------------------------------------------------------
 
 class TestStemRebalancerGain:
     def test_positive_gain_increases_rms(self):
@@ -154,10 +134,6 @@ class TestStemRebalancerGain:
         assert np.max(np.abs(out["Vocals"])) <= 1.0, "Soft-clip did not limit output"
 
 
-# ---------------------------------------------------------------------------
-# StemRebalancer.process — zone-tagged stems
-# ---------------------------------------------------------------------------
-
 class TestStemRebalancerZone:
     def test_zone_suffix_stripped(self):
         """@zone suffix should be stripped; canonical name used for lookup."""
@@ -174,10 +150,6 @@ class TestStemRebalancerZone:
         out = r.process(stems)
         np.testing.assert_array_equal(out["Bass@front"], stems["Bass@front"])
 
-
-# ---------------------------------------------------------------------------
-# All REBALANCE_PROFILES run without error
-# ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("profile_name", list(REBALANCE_PROFILES.keys()))
 def test_all_profiles_run(profile_name):

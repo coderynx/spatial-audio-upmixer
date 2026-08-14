@@ -12,10 +12,6 @@ from upmixer.separation.stem_eq import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _stems(n: int = 44100, amplitude: float = 0.3) -> dict[str, np.ndarray]:
     t = np.linspace(0, 1, n, endpoint=False)
     sig = amplitude * np.sin(2 * np.pi * 440 * t).astype(np.float64)
@@ -31,10 +27,6 @@ def _stems_zoned(n: int = 44100) -> dict[str, np.ndarray]:
     base = _stems(n)
     return {f"{k}@front": v for k, v in base.items()}
 
-
-# ---------------------------------------------------------------------------
-# STEM_EQ_PROFILES sanity
-# ---------------------------------------------------------------------------
 
 class TestStemEqProfiles:
     def test_all_profiles_have_at_least_two_breakpoints(self):
@@ -59,10 +51,6 @@ class TestStemEqProfiles:
         for f, g in STEM_EQ_PROFILES["flat"]:
             assert g == pytest.approx(0.0), "flat profile has non-zero gain"
 
-
-# ---------------------------------------------------------------------------
-# _build_fir
-# ---------------------------------------------------------------------------
 
 class TestBuildFirStem:
     def test_returns_ndarray(self):
@@ -104,10 +92,6 @@ class TestBuildFirStem:
         assert gain_db == pytest.approx(2.0, abs=0.2)
 
 
-# ---------------------------------------------------------------------------
-# StemEQ construction
-# ---------------------------------------------------------------------------
-
 class TestStemEqInit:
     def test_constructs_with_valid_profiles(self):
         eq = StemEQ({"Vocals": "vocal-presence"}, 44100)
@@ -121,10 +105,6 @@ class TestStemEqInit:
         eq = StemEQ({}, 44100)
         assert eq is not None
 
-
-# ---------------------------------------------------------------------------
-# StemEQ.process — identity / bypass
-# ---------------------------------------------------------------------------
 
 class TestStemEqIdentity:
     def test_unaddressed_stem_returns_original(self):
@@ -147,10 +127,6 @@ class TestStemEqIdentity:
         out = eq.process(stems)
         assert set(out.keys()) == set(stems.keys())
 
-
-# ---------------------------------------------------------------------------
-# StemEQ.process — filtering
-# ---------------------------------------------------------------------------
 
 class TestStemEqFiltering:
     def test_output_shape_preserved(self):
@@ -197,10 +173,6 @@ class TestStemEqFiltering:
         assert not np.allclose(out["Vocals"][:, 1], stems["Vocals"][:, 1])
 
 
-# ---------------------------------------------------------------------------
-# Zone-tagged stems
-# ---------------------------------------------------------------------------
-
 class TestStemEqZone:
     def test_zone_suffix_stripped(self):
         stems = _stems_zoned()
@@ -214,10 +186,6 @@ class TestStemEqZone:
         out = eq.process(stems)
         assert out["Bass@front"] is stems["Bass@front"]
 
-
-# ---------------------------------------------------------------------------
-# All profiles run without error
-# ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("profile_name", list(STEM_EQ_PROFILES.keys()))
 def test_all_profiles_run(profile_name):

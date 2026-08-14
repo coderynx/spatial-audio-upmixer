@@ -11,10 +11,6 @@ import pytest
 from upmixer.separation.stem_cache import StemCache, _cache_key, _preview_tag, _stem_filename
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _make_stems(n: int = 4096) -> dict[str, np.ndarray]:
     t = np.linspace(0, 1, n, endpoint=False)
     sig = 0.3 * np.sin(2 * np.pi * 440 * t).astype(np.float64)
@@ -41,10 +37,6 @@ def _write_dummy_wav(path: str, n: int = 4096, sr: int = 44100) -> None:
     arr = np.zeros((n, 2), dtype=np.float32)
     sf.write(path, arr, sr, subtype="PCM_24")
 
-
-# ---------------------------------------------------------------------------
-# _cache_key
-# ---------------------------------------------------------------------------
 
 class TestCacheKey:
     def test_same_params_same_key(self, tmp_path):
@@ -138,10 +130,6 @@ class TestCacheKey:
         assert k1 != k2
 
 
-# ---------------------------------------------------------------------------
-# _stem_filename
-# ---------------------------------------------------------------------------
-
 class TestStemFilename:
     def test_simple(self):
         assert _stem_filename("Vocals") == "Vocals.wav"
@@ -155,10 +143,6 @@ class TestStemFilename:
         assert name.endswith(".wav")
 
 
-# ---------------------------------------------------------------------------
-# StemCache construction
-# ---------------------------------------------------------------------------
-
 class TestStemCacheInit:
     def test_creates_dir(self, tmp_path):
         cache_dir = str(tmp_path / "nested" / "cache")
@@ -169,10 +153,6 @@ class TestStemCacheInit:
         cache = StemCache(str(tmp_path))
         assert cache is not None
 
-
-# ---------------------------------------------------------------------------
-# StemCache.save / load round-trip
-# ---------------------------------------------------------------------------
 
 class TestStemCacheSaveLoad:
     def test_legacy_entry_remains_readable(self, tmp_path):
@@ -389,10 +369,6 @@ class TestStemCacheSaveLoad:
         assert set(loaded_stems.keys()) == set(stems.keys())
 
 
-# ---------------------------------------------------------------------------
-# StemCache.load — cache miss cases
-# ---------------------------------------------------------------------------
-
 class TestStemCacheMiss:
     def test_empty_cache_returns_none(self, tmp_path):
         pytest.importorskip("soundfile")
@@ -452,10 +428,6 @@ class TestStemCacheMiss:
 
         assert cache.load(wav, "model", 44100) is None
 
-
-# ---------------------------------------------------------------------------
-# StemCache preview isolation
-# ---------------------------------------------------------------------------
 
 class TestStemCachePreview:
     def test_preview_key_differs_from_full(self, tmp_path):

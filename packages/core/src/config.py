@@ -177,16 +177,10 @@ class UpmixConfig:
 
     stem_source_anchor_strength: float = 0.5
 
-    # Bleed-reduction post-pass, off overall by default. Runs at separation time
-    # (baked into the cached stems), so the default gate keys on a stem's default
-    # spatial role — whether ZONE_ROUTING/DEFAULT_ROUTING sends it to
-    # surround/height — not on any later user 3D placement, which happens after
-    # separation and does not re-run inference. When the master gate is on the
-    # phase-fixer defaults enabled for those diffuse stems (bleed decorrelates
-    # the residue's phantom image there); the debleed pass is opt-in because it
-    # costs one full model inference per stem. The per-stem dicts override each
-    # per canonical stem name (or "*"). See knowledge base
-    # techniques/phase_and_bleed.md.
+    # Baked into the cached stems at separation time, so the default gate keys
+    # on a stem's default spatial role, not on any later user 3D placement.
+    # Per-stem dicts override per canonical stem name (or "*"). See the
+    # knowledge base's techniques/phase_and_bleed.md.
     stem_bleed_reduction: bool = False
     stem_phase_fix: dict | None = None
     stem_phase_fix_low_hz: float = 500.0

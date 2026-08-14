@@ -15,6 +15,8 @@ from unittest.mock import patch
 from upmixer.config import UpmixConfig
 from upmixer.separation.stem_pipeline import StemUpmixPipeline
 
+_EXEC_PLAN = "upmixer.separation.stem_pipeline_separate.execute_plan"
+
 SR = 48_000
 
 
@@ -24,7 +26,7 @@ def _sine(n: int, freq: float = 440.0, amp: float = 0.3) -> np.ndarray:
     return np.column_stack([ch, ch])
 
 
-def _fake_execute_plan(plan, sep_path, sep_sr, stage_callback=None):
+def _fake_execute_plan(get_separator, plan, sep_path, sep_sr, stage_callback=None):
     audio, _ = sf.read(sep_path, dtype="float32", always_2d=True)
     n = len(audio)
     return {name: np.full((n, 2), 0.2, dtype=np.float32) for name in plan.requested_stems}
@@ -37,7 +39,7 @@ def test_prepare_stems_skips_routing_and_mastering(tmp_path):
     sf.write(source, _sine(SR), SR, subtype="FLOAT")
     messages: list[str] = []
 
-    with patch.object(pipeline, "_execute_plan", side_effect=_fake_execute_plan):
+    with patch(_EXEC_PLAN, side_effect=_fake_execute_plan):
         result = pipeline.prepare_stems(
             source, progress_callback=lambda m, f: messages.append(m)
         )
@@ -65,7 +67,7 @@ def test_prepare_stems_runs_bleed_reduction(tmp_path):
     sf.write(source, _sine(SR), SR, subtype="FLOAT")
     models: list[str] = []
 
-    def _fake_separate_array(model, audio, in_sr, sep_sr):
+    def _fake_separate_array(get_separator, model, audio, in_sr, sep_sr):
         models.append(model)
         n = len(audio)
         return {
@@ -73,8 +75,9 @@ def test_prepare_stems_runs_bleed_reduction(tmp_path):
             "Vocals": np.zeros((n, 2), dtype=np.float32),
         }
 
-    with patch.object(pipeline, "_execute_plan", side_effect=_fake_execute_plan), patch.object(
-        pipeline, "_separate_array", side_effect=_fake_separate_array
+    with patch(_EXEC_PLAN, side_effect=_fake_execute_plan), patch(
+        "upmixer.separation.stem_pipeline_separate._separate_array",
+        side_effect=_fake_separate_array,
     ):
         result = pipeline.prepare_stems(source)
     pipeline.close()
@@ -93,7 +96,7 @@ def test_prepare_stems_writes_cache(tmp_path):
     source = str(tmp_path / "in.wav")
     sf.write(source, _sine(SR), SR, subtype="FLOAT")
 
-    with patch.object(pipeline, "_execute_plan", side_effect=_fake_execute_plan):
+    with patch(_EXEC_PLAN, side_effect=_fake_execute_plan):
         pipeline.prepare_stems(source)
     pipeline.close()
 

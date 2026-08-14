@@ -37,15 +37,16 @@ export type MasteringReference = {
   channels: number | null
 }
 
-// A project's server-precomputed reference-match correction curve — see
-// docs/contracts/preview_export_parity.md Ledgers D12/D20 and
-// upmixer_web/features/projects/worker_reference_match.py. `fir_url` is a
-// base URL the browser appends live `strength`/`max_db` query params to (the
-// FIR endpoint designs the filter from the curve on demand); it is null when
-// no curve is persisted yet. `strength`/`spectrum`/`rms`/`max_db` are NOT
-// server state — read them from the project's manifest
-// (`Manifest.mastering.match_reference`) instead. `rms_gain_db` still
-// applies when spectral matching is off.
+/**
+ * A project's server-precomputed reference-match correction curve — see
+ * docs/contracts/preview_export_parity.md Ledgers D12/D20.
+ *
+ * `fir_url` is a base URL the browser appends live `strength`/`max_db` query
+ * params to, and is null when no curve is persisted yet.
+ * `strength`/`spectrum`/`rms`/`max_db` are not server state — read them from
+ * `Manifest.mastering.match_reference`. `rms_gain_db` still applies when
+ * spectral matching is off.
+ */
 export type ReferenceMatchAsset = {
   fir_url: string | null
   channels: string[]

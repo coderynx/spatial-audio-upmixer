@@ -158,13 +158,9 @@ def _cache_key(
         f"|xfade={silence_crossfade_ms:.1f}"
         f"|pad={silence_pad_ms:.1f}"
     )
-    # A path_key caller owns a stable logical identity, so the source's
-    # mtime/size — which change whenever it is re-materialized (data-dir
-    # relocation, copy, object-store download) — are excluded from the key.
-    # This keeps a project's prepared stems reusable at export time even
-    # though the file was materialized afresh; load() still validates size
-    # (and mtime within tolerance) from stored metadata to catch a genuinely
-    # changed source.
+    # A path_key caller owns a stable logical identity, so mtime/size — which
+    # change whenever the source is re-materialized — are excluded from the key.
+    # load() still validates them from stored metadata to catch a real change.
     if path_key is not None:
         raw = (
             f"v{_CACHE_SCHEMA}|{abs_path}|{stems_hash}|"

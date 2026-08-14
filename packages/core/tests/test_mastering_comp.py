@@ -11,10 +11,6 @@ from upmixer.mastering.compressor import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _channels_51(n: int = 44100, amplitude: float = 0.3) -> dict[str, np.ndarray]:
     """5.1 channel dict with a 440 Hz sine."""
     t = np.linspace(0, 1, n, endpoint=False)
@@ -50,10 +46,6 @@ def _make_comp(**kwargs) -> BusCompressor:
     return BusCompressor(**defaults)
 
 
-# ---------------------------------------------------------------------------
-# COMP_PROFILES sanity
-# ---------------------------------------------------------------------------
-
 class TestCompProfiles:
     def test_all_profiles_have_required_keys(self):
         required = {"threshold_db", "ratio", "attack_ms", "release_ms", "knee_db", "makeup_db"}
@@ -69,10 +61,6 @@ class TestCompProfiles:
         assert set(COMP_PROFILE_NAMES) == set(COMP_PROFILES.keys())
 
 
-# ---------------------------------------------------------------------------
-# BusCompressor construction
-# ---------------------------------------------------------------------------
-
 class TestBusCompressorInit:
     def test_constructs_with_valid_params(self):
         c = _make_comp()
@@ -86,10 +74,6 @@ class TestBusCompressorInit:
         c = _make_comp(knee_db=-5.0)
         assert c._knee == 0.0
 
-
-# ---------------------------------------------------------------------------
-# BusCompressor.process — pass-through / bypass conditions
-# ---------------------------------------------------------------------------
 
 class TestBusCompressorBypass:
     def test_ratio_one_returns_original(self):
@@ -119,10 +103,6 @@ class TestBusCompressorBypass:
         max_diff = float(np.max(np.abs(out["FL"] - fl_orig)))
         assert max_diff < 1e-3, f"Too much gain reduction on quiet signal: {max_diff}"
 
-
-# ---------------------------------------------------------------------------
-# BusCompressor.process — compression behavior
-# ---------------------------------------------------------------------------
 
 class TestBusCompressorCompression:
     def test_loud_input_reduced(self):

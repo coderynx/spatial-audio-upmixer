@@ -8,20 +8,12 @@ from scipy.signal import freqz
 from upmixer.mastering.eq import EQ_PROFILES, EQ_PROFILE_NAMES, SpectralShaper, _build_fir
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _channels(n: int = 44100, amplitude: float = 0.2) -> dict[str, np.ndarray]:
     """Return a minimal 5.1 channel dict with a 440 Hz sine."""
     t = np.linspace(0, 1, n, endpoint=False)
     sig = amplitude * np.sin(2 * np.pi * 440 * t).astype(np.float64)
     return {k: sig.copy() for k in ["FL", "FR", "C", "LFE", "SL", "SR"]}
 
-
-# ---------------------------------------------------------------------------
-# EQ_PROFILES sanity checks
-# ---------------------------------------------------------------------------
 
 class TestEqProfiles:
     def test_all_profiles_have_entries(self):
@@ -42,10 +34,6 @@ class TestEqProfiles:
         assert isinstance(EQ_PROFILE_NAMES, tuple)
         assert set(EQ_PROFILE_NAMES) == set(EQ_PROFILES.keys())
 
-
-# ---------------------------------------------------------------------------
-# _build_fir
-# ---------------------------------------------------------------------------
 
 class TestBuildFir:
     def test_returns_ndarray(self):
@@ -80,10 +68,6 @@ class TestBuildFir:
         assert gain == pytest.approx(2.5, abs=0.1)
 
 
-# ---------------------------------------------------------------------------
-# SpectralShaper construction
-# ---------------------------------------------------------------------------
-
 class TestSpectralShaperInit:
     def test_valid_profile_constructs(self):
         s = SpectralShaper("spatial-air", 1.0, 44100)
@@ -101,10 +85,6 @@ class TestSpectralShaperInit:
         s = SpectralShaper("spatial-warm", 1.5, 44100)
         assert s._strength == 1.0
 
-
-# ---------------------------------------------------------------------------
-# SpectralShaper.process — bypass / identity
-# ---------------------------------------------------------------------------
 
 class TestSpectralShaperBypass:
     def test_strength_zero_returns_original(self):
@@ -125,10 +105,6 @@ class TestSpectralShaperBypass:
         out = SpectralShaper("spatial-air", 1.0, 44100).process(chs, lfe_key="SUB")
         np.testing.assert_array_equal(out["SUB"], sub_orig)
 
-
-# ---------------------------------------------------------------------------
-# SpectralShaper.process — filtering
-# ---------------------------------------------------------------------------
 
 class TestSpectralShaperProcess:
     @pytest.fixture(params=list(EQ_PROFILES.keys()))

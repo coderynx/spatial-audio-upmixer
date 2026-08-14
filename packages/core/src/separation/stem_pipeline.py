@@ -32,13 +32,9 @@ Usage:
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import math
-import os
-import tempfile
 import time
-from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
@@ -48,97 +44,19 @@ from scipy.signal import resample_poly
 from upmixer.binaural.renderer import render_binaural_delivery
 from upmixer.config import UpmixConfig
 from upmixer.crosstalk.renderer import render_crosstalk_delivery
-from upmixer.formats import BINAURAL, FORMAT_MAP, INPUT_FORMAT_MAP, TRANSAURAL, InputFormat, OutputFormat, detect_input_format, validate_delivery
+from upmixer.formats import BINAURAL, TRANSAURAL, OutputFormat, validate_delivery
 from upmixer.io.adm_writer import AdmBwfWriter
-from upmixer.io.reader import AudioReader
 from upmixer.io.writer import AudioWriter
-from upmixer.mastering import MasteringChain
+from upmixer.mastering import MasteringChain, MasteringResult
 from upmixer.result import UpmixResult
-from upmixer.separation.bleed_reduction import apply_bleed_reduction
 from upmixer.separation.separator import StemSeparator
 from upmixer.separation.source_anchor import apply_source_anchor
-from upmixer.separation.stem_plan import (
-    DEFAULT_STEMS,
-    SeparationPlan,
-    normalize_stems,
-    resolve_separation_plan,
-)
+from upmixer.separation.stem_pipeline_separate import SeparationResult, separate
 from upmixer.separation.stem_router import StemRouter, build_stem_routing
-from upmixer.separation.stem_zones import _as_stereo_pair, _extract_zones, _resample_zones
-from upmixer.utils import preview_slice, itu_downmix_stereo
+from upmixer.separation.stem_zones import _resample_zones
+from upmixer.utils import itu_downmix_stereo
 
 _log = logging.getLogger("upmixer")
-
-
-def _temporary_wav_path(prefix: str) -> str:
-    handle = tempfile.NamedTemporaryFile(suffix=".wav", prefix=prefix, delete=False)
-    path = handle.name
-    handle.close()
-    return path
-
-
-def _cacheable_plan_stems(plan: SeparationPlan) -> frozenset[str]:
-    """All public outputs produced by a plan at no extra inference cost."""
-    return frozenset(
-        stem
-        for task in plan.tasks
-        for stem in task.output_stems
-        if not stem.startswith("_")
-    )
-
-
-def _bleed_cache_component(config: UpmixConfig) -> str:
-    """Serialize the bleed-reduction settings that change stored stem audio."""
-    if not config.stem_bleed_reduction:
-        return ""
-
-    def _dict(value: dict | None) -> str:
-        return "" if not value else "&".join(f"{k}={value[k]}" for k in sorted(value))
-
-    return (
-        f"bleed|pf={_dict(config.stem_phase_fix)}"
-        f"|low={config.stem_phase_fix_low_hz}|high={config.stem_phase_fix_high_hz}"
-        f"|scale={config.stem_phase_fix_scale}|ref={config.stem_phase_fix_reference_model}"
-        f"|db={_dict(config.stem_debleed)}|dbmodel={config.stem_debleed_model}"
-    )
-
-
-def _stem_cache_identity(plan: SeparationPlan, config: UpmixConfig) -> str:
-    """Return model-plan identity including output-affecting inference overrides."""
-    base = plan.inference_hash or plan.stems_hash
-    options = (
-        config.stem_batch_size,
-        config.stem_segment_size,
-        config.stem_chunk_duration_s,
-        config.stem_overlap,
-        config.stem_tta,
-        config.stem_pitch_shift,
-    )
-    bleed = _bleed_cache_component(config)
-    if all(value in (None, False) for value in options) and not bleed:
-        return base
-    raw = (
-        f"{base}|batch={options[0]}|segment={options[1]}|chunk={options[2]}"
-        f"|overlap={options[3]}|tta={options[4]}|pitch={options[5]}"
-    )
-    if bleed:
-        raw += f"|{bleed}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:20]
-
-
-def _validate_bleed_config(config: UpmixConfig) -> None:
-    """Validate bleed-reduction settings before any inference runs."""
-    if not 0.0 < config.stem_phase_fix_scale <= 1.0:
-        raise ValueError("stem_phase_fix_scale must be in (0.0, 1.0]")
-    if not 0.0 < config.stem_phase_fix_low_hz < config.stem_phase_fix_high_hz:
-        raise ValueError("stem_phase_fix requires 0 < low_hz < high_hz")
-    from upmixer.separation.inference.registry import get_model_spec
-
-    for model in (
-        config.stem_phase_fix_reference_model,
-        config.stem_debleed_model,
-    ):
-        get_model_spec(model)
 
 
 class PreMasterAbort(Exception):
@@ -148,24 +66,6 @@ class PreMasterAbort(Exception):
     Safe to raise unconditionally from the hook: nothing has been written to
     ``output_path`` yet at that point, so aborting leaves no partial output.
     """
-
-
-@dataclass
-class _SeparationResult:
-    """Separated (and cached) stems plus the context downstream routing needs."""
-
-    all_stems: dict[str, np.ndarray]
-    plan: SeparationPlan
-    input_fmt: InputFormat
-    output_fmt: OutputFormat
-    input_sr: int
-    sep_sr: int
-    out_sr: int
-    audio_full: np.ndarray
-    passthrough: dict[str, np.ndarray]
-    source_zones: dict[str, np.ndarray]
-    n_samples: int
-    stem_summary: list[str]
 
 
 class StemUpmixPipeline:
@@ -205,6 +105,30 @@ class StemUpmixPipeline:
         self._separator_batch_size: int | None = None
         self._separator_settings: tuple[object, ...] | None = None
 
+    def _validated_separator_settings(self) -> tuple[object, ...]:
+        cfg = self.config
+        if cfg.stem_batch_size is not None and cfg.stem_batch_size < 1:
+            raise ValueError("stem_batch_size must be at least 1")
+        if cfg.stem_segment_size is not None and cfg.stem_segment_size < 1:
+            raise ValueError("stem_segment_size must be at least 1")
+        if cfg.stem_chunk_duration_s is not None and cfg.stem_chunk_duration_s <= 0:
+            raise ValueError("stem_chunk_duration_s must be greater than 0")
+        if cfg.stem_model_cache_size is not None and cfg.stem_model_cache_size < 1:
+            raise ValueError("stem_model_cache_size must be at least 1")
+        if cfg.stem_overlap is not None and cfg.stem_overlap < 1:
+            raise ValueError("stem_overlap must be at least 1")
+        if cfg.stem_pitch_shift is not None and cfg.stem_pitch_shift <= 0:
+            raise ValueError("stem_pitch_shift must be greater than 0")
+        return (
+            cfg.stem_batch_size,
+            cfg.stem_segment_size,
+            cfg.stem_chunk_duration_s,
+            cfg.stem_model_cache_size,
+            cfg.stem_overlap,
+            cfg.stem_tta,
+            cfg.stem_pitch_shift,
+        )
+
     def _get_or_create_separator(self, model: str, sep_sr: int) -> StemSeparator:
         """Return a ready StemSeparator for the given model and sample rate.
 
@@ -212,37 +136,11 @@ class StemUpmixPipeline:
         sample rate changes between calls all cached separators are recreated
         (in practice all stages of a single plan run at the same sep_sr).
         """
+        cfg = self.config
         sep_log_level = (
             logging.DEBUG if _log.isEnabledFor(logging.DEBUG) else logging.WARNING
         )
-        requested_batch = self.config.stem_batch_size
-        if requested_batch is not None and requested_batch < 1:
-            raise ValueError("stem_batch_size must be at least 1")
-        requested_segment = self.config.stem_segment_size
-        if requested_segment is not None and requested_segment < 1:
-            raise ValueError("stem_segment_size must be at least 1")
-        requested_chunk = self.config.stem_chunk_duration_s
-        if requested_chunk is not None and requested_chunk <= 0:
-            raise ValueError("stem_chunk_duration_s must be greater than 0")
-        requested_cache_size = self.config.stem_model_cache_size
-        if requested_cache_size is not None and requested_cache_size < 1:
-            raise ValueError("stem_model_cache_size must be at least 1")
-        requested_overlap = self.config.stem_overlap
-        if requested_overlap is not None and requested_overlap < 1:
-            raise ValueError("stem_overlap must be at least 1")
-        requested_tta = self.config.stem_tta
-        requested_pitch_shift = self.config.stem_pitch_shift
-        if requested_pitch_shift is not None and requested_pitch_shift <= 0:
-            raise ValueError("stem_pitch_shift must be greater than 0")
-        requested_settings = (
-            requested_batch,
-            requested_segment,
-            requested_chunk,
-            requested_cache_size,
-            requested_overlap,
-            requested_tta,
-            requested_pitch_shift,
-        )
+        requested_settings = self._validated_separator_settings()
         if (
             self._separator_sr != sep_sr
             or self._separator_settings != requested_settings
@@ -255,7 +153,7 @@ class StemUpmixPipeline:
                 s.close()
             self._separators = {}
             self._separator_sr = sep_sr
-            self._separator_batch_size = requested_batch
+            self._separator_batch_size = cfg.stem_batch_size
             self._separator_settings = requested_settings
         if model not in self._separators:
             separator = StemSeparator(
@@ -263,14 +161,14 @@ class StemUpmixPipeline:
                 model_dir=self._model_dir,
                 sample_rate=sep_sr,
                 log_level=sep_log_level,
-                batch_size=requested_batch,
-                segment_size=requested_segment,
-                chunk_duration_s=requested_chunk,
-                overlap=requested_overlap,
-                tta=requested_tta,
-                pitch_shift=requested_pitch_shift,
+                batch_size=cfg.stem_batch_size,
+                segment_size=cfg.stem_segment_size,
+                chunk_duration_s=cfg.stem_chunk_duration_s,
+                overlap=cfg.stem_overlap,
+                tta=cfg.stem_tta,
+                pitch_shift=cfg.stem_pitch_shift,
             )
-            cache_size = requested_cache_size
+            cache_size = cfg.stem_model_cache_size
             if cache_size is None and separator.backend == "cpu":
                 cache_size = 1
             while cache_size is not None and len(self._separators) >= cache_size:
@@ -283,18 +181,6 @@ class StemUpmixPipeline:
             separator = self._separators.pop(model)
             self._separators[model] = separator
         return separator
-
-    def _separate_array(
-        self, model: str, audio: np.ndarray, in_sr: int, sep_sr: int
-    ) -> dict[str, np.ndarray]:
-        """Run one model on an in-memory array via a temp-WAV round-trip."""
-        tmp = _temporary_wav_path("upmixer_bleed_")
-        try:
-            sf.write(tmp, audio, in_sr, subtype="FLOAT")
-            return self._get_or_create_separator(model, sep_sr).separate(tmp)
-        finally:
-            if os.path.exists(tmp):
-                os.unlink(tmp)
 
     def close(self) -> None:
         """Release all separators and unload neural network models."""
@@ -311,520 +197,93 @@ class StemUpmixPipeline:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def _execute_plan(
-        self,
-        plan: SeparationPlan,
-        sep_path: str,
-        sep_sr: int,
-        stage_callback: Callable[[int, int, str, frozenset[str]], None] | None = None,
-    ) -> dict[str, np.ndarray]:
-        """Execute all tasks in the plan against one audio zone (sep_path).
-
-        Manages intermediate on-disk files between stages: whichever stems a
-        later task's ``input_source`` names (``_crowd_other``, ``_deux_inst``,
-        ``Drums``, ``Vocals``) are kept on disk until consumed. Intermediate
-        files not in the final requested stems are deleted after all stages
-        complete.
-
-        Args:
-            stage_callback: Optional callable ``(stage_idx, n_tasks, model,
-                output_stems)`` invoked before each model stage runs.
-
-        Returns a dict of canonical_name → ndarray for all requested stems.
-        """
-        all_loaded: dict[str, np.ndarray] = {}
-        all_disk: dict[str, str] = {}
-
-        later_inputs: frozenset[str] = frozenset(
-            t.input_source for t in plan.tasks if t.input_source != "original"
-        )
-
-        n_tasks = len(plan.tasks)
-        for stage_idx, task in enumerate(plan.tasks):
-            if stage_callback is not None:
-                stage_callback(stage_idx, n_tasks, task.model, task.output_stems)
-            _log.info(
-                "  [stage %d/%d] model=%s  input=%s  keep_on_disk=%s",
-                stage_idx + 1,
-                n_tasks,
-                task.model,
-                task.input_source,
-                sorted(task.output_stems & later_inputs) or "(none)",
-            )
-
-            if task.input_source != "original" and task.input_source not in all_disk:
-                available = sorted(all_disk.keys()) or ["(none)"]
-                raise RuntimeError(
-                    f"Stage {stage_idx + 1} needs intermediate stem "
-                    f"'{task.input_source}' on disk, but it was not produced by "
-                    f"any previous stage.\n"
-                    f"Available on-disk stems: {available}\n"
-                    f"Likely cause: the model that should produce "
-                    f"'{task.input_source}' outputs a different filename tag — "
-                    f"run with --verbose (-v) to see raw output filenames and "
-                    f"update STEM_NAME_MAP in separator.py if needed."
-                )
-
-            input_path_for_task = (
-                sep_path if task.input_source == "original"
-                else all_disk[task.input_source]
-            )
-
-            keep_on_disk = task.output_stems & later_inputs
-
-            sep = self._get_or_create_separator(task.model, sep_sr)
-            loaded, on_disk = sep.separate_to_file(input_path_for_task, keep_on_disk)
-
-            for name, path in on_disk.items():
-                stable_path = _temporary_wav_path("upmixer_intermediate_")
-                try:
-                    os.replace(path, stable_path)
-                except OSError:
-                    if os.path.exists(stable_path):
-                        os.unlink(stable_path)
-                    raise
-                on_disk[name] = stable_path
-
-            _log.info(
-                "  [stage %d/%d] produced: loaded=%s  on_disk=%s",
-                stage_idx + 1,
-                n_tasks,
-                sorted(loaded.keys()) or "(none)",
-                sorted(on_disk.keys()) or "(none)",
-            )
-
-            for name, audio in loaded.items():
-                if not name.startswith("_"):
-                    all_loaded[name] = audio
-
-            all_disk.update(on_disk)
-
-        for name, path in all_disk.items():
-            if not name.startswith("_") and name not in all_loaded:
-                audio, _ = sf.read(path, dtype="float32", always_2d=True)
-                if audio.shape[1] == 1:
-                    audio = np.concatenate([audio, audio], axis=1)
-                all_loaded[name] = audio
-
-        for name, path in all_disk.items():
-            if name not in plan.requested_stems:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
-
-        _log.info("  All stages complete. Produced stems: %s", sorted(all_loaded.keys()))
-        return all_loaded
-
-    def _execute_plan_with_silence_skip(
-        self,
-        plan: SeparationPlan,
-        zone_audio: np.ndarray,
-        sr: int,
-        sep_sr: int,
-        cfg: UpmixConfig,
-        original_path: str | None = None,
-        stage_callback: Callable[[int, int, str, frozenset[str]], None] | None = None,
-    ) -> dict[str, np.ndarray]:
-        """Run stem separation on active spans only, skipping silent regions.
-
-        Detects contiguous silent runs in *zone_audio*, separates only the
-        active portions, and stitches the per-stem outputs back into
-        full-length arrays with a linear crossfade at each boundary.
-
-        Returns the same dict shape as :meth:`_execute_plan`:
-        ``{stem_name: (n_sep_samples, 2) float32}``.
-        """
-        from upmixer.separation.silence import (
-            find_active_spans,
-            write_crossfaded_span,
-        )
-
-        n_sr = len(zone_audio)
-        silence_started = time.monotonic()
-        spans = find_active_spans(
-            zone_audio,
-            sr,
-            threshold_db=cfg.stem_silence_threshold_db,
-            min_silence_s=cfg.stem_silence_min_duration_s,
-            pad_ms=cfg.stem_silence_pad_ms,
-        )
-        _log.debug(
-            "  Timing silence-detection=%.3fs",
-            time.monotonic() - silence_started,
-        )
-
-        n_sep = int(round(n_sr * sep_sr / sr)) if sep_sr != sr else n_sr
-
-        if not spans:
-            _log.info("  Silence-skip: zone is entirely silent — skipping separator")
-            return {
-                name: np.zeros((n_sep, 2), dtype=np.float32)
-                for name in _cacheable_plan_stems(plan)
-            }
-
-        if len(spans) == 1 and spans[0] == (0, n_sr):
-            if original_path is not None:
-                _log.debug("  Silence-skip: full-active fast path uses source file")
-                return self._execute_plan(plan, original_path, sep_sr, stage_callback)
-            tmp = _temporary_wav_path("upmixer_full_")
-            try:
-                sf.write(tmp, zone_audio, sr, subtype="FLOAT")
-                return self._execute_plan(plan, tmp, sep_sr, stage_callback)
-            finally:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
-
-        _log.info("  Silence-skip: %d active span(s)", len(spans))
-        fade_samples = max(0, int(cfg.stem_silence_crossfade_ms / 1000.0 * sep_sr))
-        stem_names = _cacheable_plan_stems(plan)
-        result = {
-            stem_name: np.zeros((n_sep, 2), dtype=np.float32)
-            for stem_name in stem_names
-        }
-
-        for s_start, s_end in spans:
-            span_audio = zone_audio[s_start:s_end]
-            tmp = _temporary_wav_path("upmixer_span_")
-            try:
-                sf.write(tmp, span_audio, sr, subtype="FLOAT")
-                outputs = self._execute_plan(plan, tmp, sep_sr, stage_callback)
-                sep_start = (
-                    int(round(s_start * sep_sr / sr))
-                    if sep_sr != sr else s_start
-                )
-                out_len = max((len(v) for v in outputs.values()), default=0)
-            finally:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
-
-            required_length = sep_start + out_len
-            if required_length > n_sep:
-                for stem_name in stem_names:
-                    result[stem_name].resize((required_length, 2), refcheck=False)
-                    result[stem_name][n_sep:] = 0.0
-                n_sep = required_length
-            for stem_name, output in outputs.items():
-                if stem_name in result:
-                    write_crossfaded_span(
-                        result[stem_name], sep_start, sep_start + out_len,
-                        output, fade_samples,
-                    )
-            del outputs
-            output = None
-
-        return result
-
     def _separate(
         self,
         input_path: str,
         input_format_override: str | None,
         _progress: Callable[[str, float], None],
-    ) -> _SeparationResult:
+    ) -> SeparationResult:
         """Read, zone-split, separate, and cache stems — no routing or mastering."""
+        return separate(
+            self._get_or_create_separator,
+            self.config,
+            input_path,
+            input_format_override,
+            _progress,
+        )
+
+    def _post_process_stems(
+        self, sep: SeparationResult, _progress: Callable[[str, float], None]
+    ) -> tuple[dict[str, np.ndarray], int]:
+        """Apply rebalance and per-stem EQ, returning stems and new length."""
         cfg = self.config
-        if cfg.stem_bleed_reduction:
-            _validate_bleed_config(cfg)
+        all_stems = sep.all_stems
+        n_samples = sep.n_samples
 
-        reader = AudioReader(input_path)
-        read_started = time.monotonic()
-        audio_full, sr = reader.read(dtype="float32")
-        _log.debug("  Timing input-read=%.3fs", time.monotonic() - read_started)
+        if cfg.stem_rebalance:
+            from upmixer.separation.stem_rebalance import StemRebalancer
+            _progress("  Rebalancing stems...", 0.76)
+            _log.info("  Applying stem rebalance: %s", cfg.stem_rebalance)
+            all_stems = StemRebalancer(cfg.stem_rebalance, sep.sep_sr).process(all_stems)
+            n_samples = max(len(s) for s in all_stems.values())
 
-        if input_format_override is not None:
-            if input_format_override not in INPUT_FORMAT_MAP:
-                raise ValueError(
-                    f"Unknown input format '{input_format_override}'. "
-                    f"Valid: {sorted(INPUT_FORMAT_MAP.keys())}"
-                )
-            input_fmt = INPUT_FORMAT_MAP[input_format_override]
-            if input_fmt.n_channels != reader.n_channels:
-                raise ValueError(
-                    f"Input format '{input_format_override}' expects "
-                    f"{input_fmt.n_channels} channels but file has {reader.n_channels}"
-                )
+        if cfg.stem_eq_profiles:
+            from upmixer.separation.stem_eq import StemEQ
+            _progress("  Applying per-stem EQ...", 0.77)
+            _log.info("  Applying per-stem EQ: %s", cfg.stem_eq_profiles)
+            all_stems = StemEQ(cfg.stem_eq_profiles, sep.sep_sr).process(all_stems)
+
+        return all_stems, n_samples
+
+    def _write_delivery(
+        self,
+        channels: dict[str, np.ndarray],
+        output_path: str,
+        output_fmt: OutputFormat,
+        out_sr: int,
+        mastering_result: MasteringResult,
+    ) -> tuple[dict[str, np.ndarray], OutputFormat, MasteringResult]:
+        """Render the requested delivery type and write the output file."""
+        cfg = self.config
+        if cfg.output_type == "binaural":
+            channels, mastering_result = render_binaural_delivery(
+                channels, output_fmt, out_sr, cfg
+            )
+            output_fmt = BINAURAL
+            AudioWriter(output_path, out_sr, cfg, output_format=BINAURAL).write(channels)
+        elif cfg.output_type == "transaural":
+            channels, mastering_result = render_crosstalk_delivery(
+                channels, output_fmt, out_sr, cfg
+            )
+            output_fmt = TRANSAURAL
+            AudioWriter(output_path, out_sr, cfg, output_format=TRANSAURAL).write(channels)
+        elif cfg.output_type == "adm-bwf":
+            AdmBwfWriter(output_path, out_sr, cfg).write(
+                channels,
+                measured_lkfs=mastering_result.measured_lkfs,
+                measured_tp_dbtp=mastering_result.measured_tp_dbtp,
+            )
         else:
-            input_fmt = detect_input_format(reader.n_channels)
+            AudioWriter(output_path, out_sr, cfg).write(channels)
 
-        output_fmt = FORMAT_MAP[cfg.output_format]
+        if cfg.downmix_output_path and output_fmt.n_channels > 2:
+            self._write_downmix(channels, out_sr)
 
-        _log.info("Input:  %s", input_path)
-        _log.info("  Format:        %s (%dch)", input_fmt.name, input_fmt.n_channels)
-        _log.info("  Sample rate:   %d Hz", sr)
-        _log.info("  Duration:      %.2fs", audio_full.shape[0] / sr)
-        _log.info("  Output format: %s (%dch)", output_fmt.name, output_fmt.n_channels)
-        _raw_stems = cfg.stems or []
-        _canonical = normalize_stems(_raw_stems) if _raw_stems else list(DEFAULT_STEMS)
-        plan = resolve_separation_plan(_canonical)
-        _log.info("  Stems:         %s", sorted(plan.requested_stems))
-        _log.info("  Models:        %s", [t.model for t in plan.tasks])
+        return channels, output_fmt, mastering_result
 
-        _forced_stereo_array: bool = False
-        if cfg.preview:
-            audio_full, t0_preview, t1_preview = preview_slice(
-                audio_full, sr, cfg.preview_duration_s, cfg.preview_start_s
-            )
-            _log.info(
-                "  Preview:       %.2fs–%.2fs (%.2fs window)",
-                t0_preview, t1_preview, audio_full.shape[0] / sr,
-            )
-            _forced_stereo_array = True
+    def _write_downmix(self, channels: dict[str, np.ndarray], out_sr: int) -> None:
+        from upmixer.loudness import measure_true_peak
 
-        _stereo_folded_input = output_fmt.n_channels == 2 and input_fmt.n_channels > 2
-        if _stereo_folded_input:
-            left, right = itu_downmix_stereo(
-                {label.value: audio_full[:, i] for i, label in enumerate(input_fmt.channels)},
-                surround_coeff=cfg.surround_downmix_coeff,
-            )
-            audio_full = np.column_stack([left, right]).astype(np.float32, copy=False)
-            _forced_stereo_array = True
-            _log.info("  Folded %s input to stereo for stereo delivery", input_fmt.name)
-
-        # Resolved early (before separation) so a 192kHz input bound for 48kHz
-        # ADM-BWF output runs every post-separation step at 48kHz instead of
-        # carrying ~7.5GB of float64 192kHz channel data through the pipeline.
-        out_sr: int = cfg.output_sample_rate or sr
-        if cfg.output_type == "adm-bwf":
-            if cfg.output_sample_rate is None:
-                out_sr = 48_000
-            if out_sr not in (48_000, 96_000):
-                raise ValueError("Dolby ADM-BWF requires a 48 kHz or 96 kHz output sample rate")
-            if cfg.output_subtype != "PCM_24":
-                raise ValueError("Dolby ADM-BWF requires output_subtype='PCM_24'")
-        sep_sr = out_sr
-
-        _stem_cache = None
-        _cache_hit_stems: dict[str, np.ndarray] | None = None
-        if cfg.stem_input_dir:
-            from upmixer.separation.stem_store import PlainStemStore
-            _stem_input_result = PlainStemStore(cfg.stem_input_dir).load()
-            if _stem_input_result is not None:
-                _cache_hit_stems, _ = _stem_input_result
-        elif cfg.stem_cache_dir:
-            from upmixer.separation.stem_cache import StemCache
-            _stem_cache = StemCache(cfg.stem_cache_dir)
-            # A folded run separates one "front" zone where the same file
-            # unfolded yields "@zone"-keyed stems, so the two must not share
-            # a cache entry.
-            cache_identity = _stem_cache_identity(plan, cfg) + (
-                "|stereo" if _stereo_folded_input else ""
-            )
-            custom_inference_tuning = any(
-                value not in (None, False) for value in (
-                    cfg.stem_batch_size,
-                    cfg.stem_segment_size,
-                    cfg.stem_chunk_duration_s,
-                    cfg.stem_overlap,
-                    cfg.stem_tta,
-                    cfg.stem_pitch_shift,
-                    cfg.stem_bleed_reduction,
-                )
-            )
-            cache_started = time.monotonic()
-            _cache_result = _stem_cache.load(
-                input_path, cache_identity, sep_sr,
-                is_preview=cfg.preview,
-                preview_duration=cfg.preview_duration_s,
-                preview_start=cfg.preview_start_s,
-                silence_skip=cfg.stem_silence_skip,
-                silence_threshold_db=cfg.stem_silence_threshold_db,
-                silence_min_duration_s=cfg.stem_silence_min_duration_s,
-                silence_crossfade_ms=cfg.stem_silence_crossfade_ms,
-                silence_pad_ms=cfg.stem_silence_pad_ms,
-                path_key=cfg.stem_cache_key,
-            )
-            # Read caches created before model-plan keys were introduced.
-            if (
-                _cache_result is None
-                and not custom_inference_tuning
-                and cache_identity != plan.stems_hash
-            ):
-                _cache_result = _stem_cache.load(
-                    input_path, plan.stems_hash, sep_sr,
-                    is_preview=cfg.preview,
-                    preview_duration=cfg.preview_duration_s,
-                    preview_start=cfg.preview_start_s,
-                    silence_skip=cfg.stem_silence_skip,
-                    silence_threshold_db=cfg.stem_silence_threshold_db,
-                    silence_min_duration_s=cfg.stem_silence_min_duration_s,
-                    silence_crossfade_ms=cfg.stem_silence_crossfade_ms,
-                    silence_pad_ms=cfg.stem_silence_pad_ms,
-                    path_key=cfg.stem_cache_key,
-                )
-            _log.debug("  Timing cache-read=%.3fs", time.monotonic() - cache_started)
-            if _cache_result is not None:
-                _cache_hit_stems, _ = _cache_result
-                _cache_result = None
-
-        if (audio_full.shape[1] if audio_full.ndim > 1 else 1) <= 2:
-            if _forced_stereo_array:
-                n_ch = audio_full.shape[1] if audio_full.ndim > 1 else 1
-                front_arr = (
-                    np.column_stack([audio_full[:, 0], audio_full[:, 0]])
-                    if n_ch == 1
-                    else audio_full[:, :2]
-                )
-                sep_zones: dict[str, str | np.ndarray] = {"front": front_arr}
-            else:
-                sep_zones = {"front": input_path}
-            passthrough: dict[str, np.ndarray] = {}
-            stereo_mode = True
-            source_zones = {"front": _as_stereo_pair(audio_full)}
-            _log.info("  Mode: stereo — single zone, full-3D routing")
-        else:
-            sep_zones, passthrough = _extract_zones(audio_full, input_fmt)
-            stereo_mode = False
-            source_zones = {
-                name: audio for name, audio in sep_zones.items()
-                if isinstance(audio, np.ndarray)
-            }
-            _log.info("  Mode: multichannel — zones: %s", sorted(sep_zones.keys()))
-            if passthrough:
-                _log.info("  Passthrough: %s", sorted(passthrough.keys()))
-
-        _progress("  Separating stems...", 0.1)
-
-        all_stems: dict[str, np.ndarray] = {}
-
-        if _cache_hit_stems is not None:
-            all_stems = _cache_hit_stems
-            _cache_hit_stems = None
-            _log.info("  Stem cache: using cached stems (separation skipped)")
-            _progress("  Using cached stems...", 0.75)
-        else:
-            tmp_files: list[str] = []
-            zone_names = list(sep_zones.keys())
-            n_zones = len(zone_names)
-
-            try:
-                for zone_idx, zone_name in enumerate(zone_names):
-                    pair_src = sep_zones[zone_name]
-                    zone_frac = 0.15 + 0.60 * (zone_idx / n_zones)
-                    next_zone_frac = 0.15 + 0.60 * ((zone_idx + 1) / n_zones)
-                    _progress(f"    Separating zone: {zone_name}...", zone_frac)
-
-                    def _stage_callback(
-                        stage_idx: int,
-                        n_tasks: int,
-                        model: str,
-                        output_stems: frozenset[str],
-                        zone_name: str = zone_name,
-                        zone_frac: float = zone_frac,
-                        next_zone_frac: float = next_zone_frac,
-                    ) -> None:
-                        stage_frac = zone_frac + (next_zone_frac - zone_frac) * (stage_idx / n_tasks)
-                        stems_desc = ", ".join(sorted(output_stems)) or model
-                        _progress(
-                            f"    Extracting {stems_desc} (zone {zone_name}, model {model})...",
-                            stage_frac,
-                        )
-
-                    if cfg.stem_silence_skip:
-                        if isinstance(pair_src, str):
-                            _zone_audio = audio_full
-                            original_path = pair_src
-                        else:
-                            _zone_audio = pair_src
-                            original_path = None
-                        zone_stems = self._execute_plan_with_silence_skip(
-                            plan, _zone_audio, sr, sep_sr, cfg,
-                            original_path=original_path,
-                            stage_callback=_stage_callback,
-                        )
-                    else:
-                        if isinstance(pair_src, str):
-                            sep_path = pair_src
-                        else:
-                            tmp = _temporary_wav_path(f"upmixer_{zone_name}_")
-                            sf.write(tmp, pair_src, sr, subtype="FLOAT")
-                            sep_path = tmp
-                            tmp_files.append(tmp)
-                        zone_stems = self._execute_plan(plan, sep_path, sep_sr, _stage_callback)
-
-                    for stem_name, stem_audio in zone_stems.items():
-                        key = stem_name if stereo_mode else f"{stem_name}@{zone_name}"
-                        all_stems[key] = stem_audio
-                    del zone_stems
-
-            finally:
-                for tmp in tmp_files:
-                    if os.path.exists(tmp):
-                        os.unlink(tmp)
-
-            if cfg.stem_bleed_reduction and all_stems:
-                _progress("  Reducing stem bleed...", 0.72)
-                all_stems = apply_bleed_reduction(
-                    all_stems,
-                    source_zones,
-                    sr,
-                    sep_sr,
-                    cfg,
-                    output_fmt,
-                    lambda model, audio, in_sr: self._separate_array(
-                        model, audio, in_sr, sep_sr
-                    ),
-                    progress=lambda msg: _progress(msg, 0.72),
-                )
-
-            if _stem_cache is not None and all_stems:
-                cache_started = time.monotonic()
-                _stem_cache.save(
-                    input_path, cache_identity,
-                    sep_sr, all_stems, sep_sr,
-                    is_preview=cfg.preview,
-                    preview_duration=cfg.preview_duration_s,
-                    preview_start=cfg.preview_start_s,
-                    silence_skip=cfg.stem_silence_skip,
-                    silence_threshold_db=cfg.stem_silence_threshold_db,
-                    silence_min_duration_s=cfg.stem_silence_min_duration_s,
-                    silence_crossfade_ms=cfg.stem_silence_crossfade_ms,
-                    silence_pad_ms=cfg.stem_silence_pad_ms,
-                    path_key=cfg.stem_cache_key,
-                )
-                _log.debug("  Timing cache-write=%.3fs", time.monotonic() - cache_started)
-
-            if cfg.stem_output_dir and all_stems:
-                from upmixer.separation.stem_store import PlainStemStore
-                PlainStemStore(cfg.stem_output_dir).write(all_stems, sep_sr)
-
-        pair_src = None
-        _zone_audio = None
-        stem_audio = None
-        front_arr = None
-
-        # Models often emit more stems than requested. Cache those free outputs,
-        # then keep only requested stems out of routing and mixing.
-        all_stems = {
-            key: audio for key, audio in all_stems.items()
-            if key.split("@", 1)[0] in plan.requested_stems
-        }
-
-        if not all_stems:
-            raise RuntimeError(
-                "Stem separation produced no output. Check model and input file."
-            )
-
-        n_samples = max(len(s) for s in all_stems.values())
-        stem_summary = sorted({k.split("@")[0] for k in all_stems})
-        _log.info(
-            "  Stems: %s  (%.2fs at %d Hz)",
-            stem_summary, n_samples / sep_sr, sep_sr,
+        cfg = self.config
+        left, right = itu_downmix_stereo(
+            channels, surround_coeff=cfg.surround_downmix_coeff
         )
-
-        return _SeparationResult(
-            all_stems=all_stems,
-            plan=plan,
-            input_fmt=input_fmt,
-            output_fmt=output_fmt,
-            input_sr=sr,
-            sep_sr=sep_sr,
-            out_sr=out_sr,
-            audio_full=audio_full,
-            passthrough=passthrough,
-            source_zones=source_zones,
-            n_samples=n_samples,
-            stem_summary=stem_summary,
-        )
+        stereo = np.column_stack([left, right])
+        tp = measure_true_peak({"FL": left, "FR": right}, out_sr)
+        if tp > cfg.loudness_max_tp:
+            stereo *= 10.0 ** ((cfg.loudness_max_tp - tp) / 20.0)
+        sf.write(cfg.downmix_output_path, stereo, out_sr, subtype=cfg.output_subtype)
+        _log.info("  Downmix: %s", cfg.downmix_output_path)
 
     def process_file(
         self,
@@ -856,10 +315,8 @@ class StemUpmixPipeline:
             :class:`~upmixer.result.UpmixResult` with processing metadata.
         """
         t0 = time.monotonic()
-        validate_delivery(self.config.output_format, self.config.output_type)
-        is_binaural = self.config.output_type == "binaural"
-        is_transaural = self.config.output_type == "transaural"
         cfg = self.config
+        validate_delivery(cfg.output_format, cfg.output_type)
         if not 0.0 <= cfg.stem_source_anchor_strength <= 1.0:
             raise ValueError("stem_source_anchor_strength must be between 0.0 and 1.0")
 
@@ -869,47 +326,26 @@ class StemUpmixPipeline:
                 progress_callback(msg, frac)
 
         sep = self._separate(input_path, input_format_override, _progress)
-        all_stems = sep.all_stems
-        plan = sep.plan
-        input_fmt = sep.input_fmt
         output_fmt = sep.output_fmt
         sr = sep.input_sr
         sep_sr = sep.sep_sr
         out_sr = sep.out_sr
         audio_full = sep.audio_full
-        passthrough = sep.passthrough
-        source_zones = sep.source_zones
-        n_samples = sep.n_samples
-        stem_summary = sep.stem_summary
 
         passthrough_resampled: dict[str, np.ndarray] = {}
-        if passthrough:
+        if sep.passthrough:
             if sr != sep_sr:
                 g = math.gcd(sr, sep_sr)
                 up, down = sep_sr // g, sr // g
-                for ch_name, ch_audio in passthrough.items():
+                for ch_name, ch_audio in sep.passthrough.items():
                     passthrough_resampled[ch_name] = resample_poly(
                         ch_audio, up, down
                     ).astype(np.float32, copy=False)
             else:
-                passthrough_resampled = passthrough
+                passthrough_resampled = sep.passthrough
 
-        source_zones = _resample_zones(source_zones, sr, sep_sr)
-
-        if cfg.stem_rebalance:
-            from upmixer.separation.stem_rebalance import StemRebalancer
-            _progress("  Rebalancing stems...", 0.76)
-            _log.info("  Applying stem rebalance: %s", cfg.stem_rebalance)
-            rebalancer = StemRebalancer(cfg.stem_rebalance, sep_sr)
-            all_stems = rebalancer.process(all_stems)
-            n_samples = max(len(s) for s in all_stems.values())
-
-        if cfg.stem_eq_profiles:
-            from upmixer.separation.stem_eq import StemEQ
-            _progress("  Applying per-stem EQ...", 0.77)
-            _log.info("  Applying per-stem EQ: %s", cfg.stem_eq_profiles)
-            stem_eq = StemEQ(cfg.stem_eq_profiles, sep_sr)
-            all_stems = stem_eq.process(all_stems)
+        source_zones = _resample_zones(sep.source_zones, sr, sep_sr)
+        all_stems, n_samples = self._post_process_stems(sep, _progress)
 
         if cfg.stem_routing is None and cfg.spatial_profile not in {"auto", "balanced"}:
             _log.warning(
@@ -918,7 +354,7 @@ class StemUpmixPipeline:
                 cfg.spatial_profile,
             )
             cfg.stem_routing = build_stem_routing(
-                list(plan.requested_stems), output_fmt, cfg.spatial_profile,
+                list(sep.plan.requested_stems), output_fmt, cfg.spatial_profile,
                 cfg.spatial_intensity,
             )
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
@@ -944,27 +380,17 @@ class StemUpmixPipeline:
 
         if cfg.normalize_output:
             _progress("  Normalizing output...", 0.86)
-            if sr != sep_sr:
-                g = math.gcd(sr, sep_sr)
-                source_audio = resample_poly(audio_full, sep_sr // g, sr // g, axis=0)
-            else:
-                source_audio = audio_full
-            source_energy = float(np.vdot(source_audio, source_audio).real)
-            output_energy = sum(float(np.vdot(ch, ch).real) for ch in channels.values())
-            if source_energy > 1e-20 and output_energy > 1e-20:
-                scale = np.sqrt(source_energy / output_energy)
-                channels = {name: ch * scale for name, ch in channels.items()}
-            del source_audio
+            channels = _normalize_to_source(channels, audio_full, sr, sep_sr)
 
-        del all_stems, audio_full, source_zones, passthrough
-        del passthrough_resampled
+        del all_stems, audio_full, source_zones, passthrough_resampled
 
         if pre_master_hook is not None:
             pre_master_hook(channels, sep_sr, output_fmt)
 
         _progress("  Mastering...", 0.90)
-        mastering = MasteringChain(cfg)
-        channels, mastering_result = mastering.process(channels, sep_sr, output_fmt)
+        channels, mastering_result = MasteringChain(cfg).process(
+            channels, sep_sr, output_fmt
+        )
 
         if out_sr != sep_sr:
             g = math.gcd(out_sr, sep_sr)
@@ -975,59 +401,27 @@ class StemUpmixPipeline:
             }
             _log.info("  Resampled: %d Hz → %d Hz", sep_sr, out_sr)
 
-        if is_binaural:
-            channels, mastering_result = render_binaural_delivery(
-                channels, output_fmt, out_sr, self.config
-            )
-            output_fmt = BINAURAL
-            writer = AudioWriter(output_path, out_sr, self.config, output_format=BINAURAL)
-            writer.write(channels)
-        elif is_transaural:
-            channels, mastering_result = render_crosstalk_delivery(
-                channels, output_fmt, out_sr, self.config
-            )
-            output_fmt = TRANSAURAL
-            writer = AudioWriter(output_path, out_sr, self.config, output_format=TRANSAURAL)
-            writer.write(channels)
-        elif cfg.output_type == "adm-bwf":
-            writer = AdmBwfWriter(output_path, out_sr, cfg)
-            writer.write(
-                channels,
-                measured_lkfs=mastering_result.measured_lkfs,
-                measured_tp_dbtp=mastering_result.measured_tp_dbtp,
-            )
-        else:
-            writer = AudioWriter(output_path, out_sr, cfg)
-            writer.write(channels)
-
-        if cfg.downmix_output_path and output_fmt.n_channels > 2:
-            from upmixer.loudness import measure_true_peak
-
-            L, R = itu_downmix_stereo(channels, surround_coeff=cfg.surround_downmix_coeff)
-            stereo = np.column_stack([L, R])
-            tp = measure_true_peak({"FL": L, "FR": R}, out_sr)
-            if tp > cfg.loudness_max_tp:
-                stereo *= 10.0 ** ((cfg.loudness_max_tp - tp) / 20.0)
-            sf.write(cfg.downmix_output_path, stereo, out_sr, subtype=cfg.output_subtype)
-            _log.info("  Downmix: %s", cfg.downmix_output_path)
+        channels, output_fmt, mastering_result = self._write_delivery(
+            channels, output_path, output_fmt, out_sr, mastering_result
+        )
 
         _progress(f"Output: {output_path}", 1.0)
 
         return UpmixResult(
             input_path=input_path,
             output_path=output_path,
-            input_format=input_fmt.name,
+            input_format=sep.input_fmt.name,
             output_format=output_fmt.name,
             input_sample_rate=sr,
             output_sample_rate=out_sr,
             duration_seconds=n_samples / sep_sr,
-            n_channels_in=input_fmt.n_channels,
+            n_channels_in=sep.input_fmt.n_channels,
             n_channels_out=output_fmt.n_channels,
             mode="stem",
             measured_lkfs=mastering_result.measured_lkfs,
             measured_tp_dbtp=mastering_result.measured_tp_dbtp,
             applied_gain_db=mastering_result.applied_gain_db,
-            stems=stem_summary,
+            stems=sep.stem_summary,
             processing_time_seconds=time.monotonic() - t0,
         )
 
@@ -1074,3 +468,20 @@ class StemUpmixPipeline:
             stems=sep.stem_summary,
             processing_time_seconds=time.monotonic() - t0,
         )
+
+
+def _normalize_to_source(
+    channels: dict[str, np.ndarray], audio_full: np.ndarray, sr: int, sep_sr: int
+) -> dict[str, np.ndarray]:
+    """Rescale output channels to match the source's total energy."""
+    if sr != sep_sr:
+        g = math.gcd(sr, sep_sr)
+        source_audio = resample_poly(audio_full, sep_sr // g, sr // g, axis=0)
+    else:
+        source_audio = audio_full
+    source_energy = float(np.vdot(source_audio, source_audio).real)
+    output_energy = sum(float(np.vdot(ch, ch).real) for ch in channels.values())
+    if source_energy > 1e-20 and output_energy > 1e-20:
+        scale = np.sqrt(source_energy / output_energy)
+        return {name: ch * scale for name, ch in channels.items()}
+    return channels

@@ -128,12 +128,8 @@ function TimelineViewImpl({
   const [width, setWidth] = React.useState(0);
   const scrubbing = React.useRef(false);
   // Native HTML5 drag fires `dragstart` with `event.target` set to the
-  // draggable node itself (the row), never the descendant actually under the
-  // pointer — so gating the drag source on `dragstart`'s own target can never
-  // see which part of the row a mousedown landed on. `mousedown` fires with
-  // the real hit-tested target first, so it — not `dragstart` — is where
-  // "did this gesture start on the grip handle" has to be decided; only one
-  // row can be mid-gesture at a time, so a single ref is enough.
+  // draggable row, never the descendant under the pointer, so "did this
+  // gesture start on the grip handle" has to be decided on `mousedown`.
   const dragFromHandle = React.useRef(false);
   const tokens = useThemeTokens();
 

@@ -251,13 +251,9 @@ function HazeViewImpl({
         }
       }
 
-      // Two-pass render: resolve smoothed voice state + hit targets first,
-      // then paint oversized soft blobs into an offscreen buffer that gets
-      // blurred and screen-composited back onto the main canvas. That blur
-      // is what turns separate circular halos into one continuous, melted
-      // field — additive blending in the buffer makes overlapping stems
-      // brighten into shared "hot" cores instead of just stacking flat
-      // discs.
+      // Two-pass render: resolve voice state and hit targets, then paint soft
+      // blobs into an offscreen buffer that is blurred and screen-composited
+      // back — additive blending is what melts overlapping halos into one field.
       const nextHits: HitTarget[] = [];
       type Resolved = { voice: Voice; point: { x: number; y: number }; blobRadius: number; emphasis: number; level: number; r: number; g: number; b: number };
       const resolved: Resolved[] = [];

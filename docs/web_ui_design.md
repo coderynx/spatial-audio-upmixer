@@ -616,20 +616,30 @@ own breadcrumb and name — the project's identity and its workflow read as
 one unit, and the top bar is the one region that's *always* on screen
 regardless of stage. `ProjectDetailPage` builds this combined element itself
 and hands it to `useHeaderTitle`, since `HeaderSlot` only exposes a single
-slot — see the memo's own comment for why folding frequently-changing state
-(`activeTab`/`settingsView`) into that memo's deps is safe here (a bounded
-state change per click, not a fresh element every render).
+slot. That element must stay referentially stable — `useHeaderTitle`'s effect
+keys on it, so a fresh element every render would re-fire the effect forever.
+Folding `activeTab`/`settingsView` into the memo's deps is still safe: those
+are bounded state changes (one per tab click), not a new element per render.
 
-- **True centring, not leftover-space centring.** The header content is a
-  three-column grid, the same `minmax(0,1fr)_auto_minmax(0,1fr)` trick
-  `Transport` uses (see its own `leading` prop comment) — breadcrumb in col
-  1, stage tabs in col 2 (`justify-self-center`), Project settings in col 3
-  (`justify-self-end`). Equal flanking tracks are what keep col 2 pinned to
-  the bar's true centre regardless of how long the project name or the
-  settings segment gets; a flex row with a `flex-1` spacer would only centre
-  within whatever space happened to be left over. `AppShell`'s own header
-  gives the slot holding this content `flex-1` (see its own comment) so
-  there's a full bar width to centre against in the first place.
+- **True centring, not leftover-space centring.** Both the header content and
+  `Transport`'s own bar are three-column grids,
+  `minmax(0,1fr)_auto_minmax(0,1fr)` — breadcrumb in col 1, stage tabs in col
+  2 (`justify-self-center`), Project settings in col 3 (`justify-self-end`);
+  in `Transport`, `leading` in col 1, the transport pod in col 2, the monitor
+  cluster in col 3. Equal flanking tracks are what keep col 2 pinned to the
+  bar's true centre regardless of how long the project name or the settings
+  segment gets; a flex row with a `flex-1` spacer would only centre within
+  whatever space happened to be left over, and in a wide bar that leftover
+  becomes one oversized void between two small clusters — the same "content
+  stranded across a black gap" shape as the Haze view's dead bands.
+
+  The flanking tracks are `minmax(0,1fr)`, not a bare `1fr`, because a bare
+  `1fr` track floors at its own content's min-content width: col 3 growing
+  (the native-mode device `<select>` appearing, the output-mode trigger's
+  profile label) would widen that track and shove the centred col 2 pod
+  off-centre. `minmax(0,_)` removes that floor. `AppShell`'s own header gives
+  the slot holding this content `flex-1` so there is a full bar width to
+  centre against in the first place.
 - **The stage tabs are the workflow; Project settings is not one of its
   steps.** The four stages stay condensed into one `SegmentedControl` —
   that grouping *is* the point, it reads as "the sequence you follow."

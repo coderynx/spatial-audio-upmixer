@@ -11,10 +11,6 @@ from upmixer.mastering.bass import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _channels_51(n: int = 44100, amplitude: float = 0.3) -> dict[str, np.ndarray]:
     t = np.linspace(0, 1, n, endpoint=False)
     sig = amplitude * np.sin(2 * np.pi * 440 * t).astype(np.float64)
@@ -38,10 +34,6 @@ def _make_bc(**kwargs) -> BassController:
     return BassController(**defaults)
 
 
-# ---------------------------------------------------------------------------
-# BASS_PROFILES sanity
-# ---------------------------------------------------------------------------
-
 class TestBassProfiles:
     def test_all_profiles_have_required_keys(self):
         required = {"sub_gain_db", "mid_gain_db", "mono_cutoff_hz",
@@ -60,10 +52,6 @@ class TestBassProfiles:
         assert BASS_PROFILES["mono"]["mono_cutoff_hz"] is not None
 
 
-# ---------------------------------------------------------------------------
-# BassController construction
-# ---------------------------------------------------------------------------
-
 class TestBassControllerInit:
     def test_constructs_with_defaults(self):
         bc = _make_bc()
@@ -75,10 +63,6 @@ class TestBassControllerInit:
         for arr in out.values():
             assert np.all(np.isfinite(arr))
 
-
-# ---------------------------------------------------------------------------
-# BassController.process — identity / bypass
-# ---------------------------------------------------------------------------
 
 class TestBassControllerBypass:
     def test_all_zero_passes_through(self):
@@ -100,10 +84,6 @@ class TestBassControllerBypass:
         for name in chs:
             assert out[name].shape == chs[name].shape
 
-
-# ---------------------------------------------------------------------------
-# BassController.process — LFE handling
-# ---------------------------------------------------------------------------
 
 class TestBassControllerLFE:
     def test_sub_eq_bypasses_lfe(self):
@@ -140,10 +120,6 @@ class TestBassControllerLFE:
         np.testing.assert_array_equal(out["SUB"], sub_orig)
 
 
-# ---------------------------------------------------------------------------
-# BassController.process — EQ stages
-# ---------------------------------------------------------------------------
-
 class TestBassControllerEQ:
     def test_sub_boost_increases_rms(self):
         chs = _channels_51()
@@ -165,10 +141,6 @@ class TestBassControllerEQ:
         for name, arr in out.items():
             assert np.all(np.isfinite(arr)), f"Non-finite in {name}"
 
-
-# ---------------------------------------------------------------------------
-# BassController.process — bass mono-maker
-# ---------------------------------------------------------------------------
 
 class TestBassMonoMaker:
     def test_mono_content_is_preserved_at_crossover(self):
@@ -212,10 +184,6 @@ class TestBassMonoMaker:
             assert np.all(np.isfinite(arr))
 
 
-# ---------------------------------------------------------------------------
-# BassController.process — harmonic exciter
-# ---------------------------------------------------------------------------
-
 class TestBassExciter:
     def test_exciter_output_finite(self):
         chs = _channels_51()
@@ -237,10 +205,6 @@ class TestBassExciter:
         out = bc.process(chs)
         np.testing.assert_array_equal(out["LFE"], lfe_orig)
 
-
-# ---------------------------------------------------------------------------
-# All profiles run without error
-# ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("profile_name", list(BASS_PROFILES.keys()))
 def test_all_profiles_run(profile_name):

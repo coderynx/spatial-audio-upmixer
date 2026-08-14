@@ -16,6 +16,8 @@ from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_pipeline import PreMasterAbort, StemUpmixPipeline
 
+_EXEC_PLAN = "upmixer.separation.stem_pipeline_separate.execute_plan"
+
 SR = 48_000
 
 
@@ -29,7 +31,7 @@ def _write_source(path: str, n: int = SR * 2) -> None:
     sf.write(path, _sine(n), SR, subtype="FLOAT")
 
 
-def _fake_execute_plan(plan, sep_path, sep_sr, stage_callback=None):
+def _fake_execute_plan(get_separator, plan, sep_path, sep_sr, stage_callback=None):
     """Constant stems shaped like the real separator's output, no model needed."""
     audio, _ = sf.read(sep_path, dtype="float32", always_2d=True)
     n = len(audio)
@@ -54,7 +56,7 @@ class TestPreMasterHook:
             captured["sr"] = sr
             captured["output_fmt"] = output_fmt
 
-        with patch.object(pipeline, "_execute_plan", side_effect=_fake_execute_plan):
+        with patch(_EXEC_PLAN, side_effect=_fake_execute_plan):
             result = pipeline.process_file(source, output, pre_master_hook=hook)
         pipeline.close()
 
@@ -76,7 +78,7 @@ class TestPreMasterHook:
         def hook(channels, sr, output_fmt):
             raise PreMasterAbort()
 
-        with patch.object(pipeline, "_execute_plan", side_effect=_fake_execute_plan):
+        with patch(_EXEC_PLAN, side_effect=_fake_execute_plan):
             try:
                 pipeline.process_file(source, output, pre_master_hook=hook)
                 raised = False
@@ -94,7 +96,7 @@ class TestPreMasterHook:
         _write_source(source)
         output = str(tmp_path / "out.wav")
 
-        with patch.object(pipeline, "_execute_plan", side_effect=_fake_execute_plan):
+        with patch(_EXEC_PLAN, side_effect=_fake_execute_plan):
             result = pipeline.process_file(source, output)
         pipeline.close()
 

@@ -58,7 +58,7 @@ that overruns starves the callback, and because the worklet is the audio
 *source* the result is silence, not a glitch. `cargo test` cannot see this.
 
 So any change to `stream/conv.rs`, `stream/master.rs`, `stream/output.rs`, or
-`stream/engine.rs` gets checked with `npm run bench:engine` from `apps/web`
+`stream/engine/` gets checked with `npm run bench:engine` from `apps/web`
 (after `npm run build:wasm`). Budget and rationale:
 `docs/contracts/preview_export_parity.md` §4.
 
