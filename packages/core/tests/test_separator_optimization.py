@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from upmixer.separation.inference.registry import ModelSpec
 from upmixer.separation.separator import (
     MODEL_STEM_OVERRIDES,
@@ -150,6 +152,7 @@ def test_explicit_batch_does_not_replace_learned_auto_value():
 
 
 def test_separator_receives_full_precision_batch_options(tmp_path):
+    pytest.importorskip("torch", reason="patches the Torch-importing inference loader")
     fake_model = object()
     fake_config = object()
     captured = {}

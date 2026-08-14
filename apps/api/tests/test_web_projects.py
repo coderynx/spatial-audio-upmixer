@@ -71,7 +71,6 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
     )
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
-    monkeypatch.setattr("upmixer_web.features.projects.routes.ensure_stem_separation_available", lambda *_args: None)
     with TestClient(create_app(settings)) as client:
         imported = client.post(
             "/api/v1/imports",
@@ -346,7 +345,6 @@ def test_project_seeds_stem_routing_when_client_sends_empty_dict(tmp_path, monke
     )
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
-    monkeypatch.setattr("upmixer_web.features.projects.routes.ensure_stem_separation_available", lambda *_args: None)
     with TestClient(create_app(settings)) as client:
         imported = client.post(
             "/api/v1/imports",

@@ -15,7 +15,7 @@ from unittest.mock import patch
 from upmixer.config import UpmixConfig
 from upmixer.separation.stem_pipeline import StemUpmixPipeline
 
-_EXEC_PLAN = "upmixer.separation.stem_pipeline_separate.execute_plan"
+_EXEC_PLAN = "upmixer.separation.stem_pipeline_exec.execute_plan"
 
 SR = 48_000
 

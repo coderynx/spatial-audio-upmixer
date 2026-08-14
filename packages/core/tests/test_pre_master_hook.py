@@ -16,7 +16,7 @@ from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_pipeline import PreMasterAbort, StemUpmixPipeline
 
-_EXEC_PLAN = "upmixer.separation.stem_pipeline_separate.execute_plan"
+_EXEC_PLAN = "upmixer.separation.stem_pipeline_exec.execute_plan"
 
 SR = 48_000
 

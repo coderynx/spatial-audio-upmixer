@@ -120,7 +120,6 @@ def test_archive_export_and_import_routes_round_trip(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
-    monkeypatch.setattr("upmixer_web.features.projects.routes.ensure_stem_separation_available", lambda *_args: None)
     with TestClient(create_app(settings)) as client:
         imported = client.post(
             "/api/v1/imports",

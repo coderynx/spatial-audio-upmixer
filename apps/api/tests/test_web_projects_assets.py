@@ -404,7 +404,6 @@ def test_add_project_assets_stores_per_file_overrides_and_unions_stems(tmp_path,
     )
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
-    monkeypatch.setattr("upmixer_web.features.projects.routes.ensure_stem_separation_available", lambda *_args: None)
     with TestClient(create_app(settings)) as client:
         created = client.post("/api/v1/projects", json={
             "name": "Per-file settings",

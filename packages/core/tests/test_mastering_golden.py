@@ -3,14 +3,14 @@
 Lock current output before performance refactoring. Any change that alters
 these values changes the audio output and must be treated as a regression.
 
-`test_channel_rms_golden`/`test_mastering_result_lkfs` pin per-channel RMS
-and the LKFS/true-peak/gain metrics with a tolerance (`pytest.approx`)
-rather than bit-exact hashes: the mastering chain's spectral EQ stage
-drifts at ULP level across numpy/scipy FFT implementations (observed going
-from numpy<2.4/scipy<1.18 to numpy 2.4.6/scipy 1.18.0), which flips a
-bit-exact hash on every such library bump without any audible change.
-`TestLoudnessMeasurementGolden` stays bit-exact — the time-domain
-K-weighting/true-peak FIR path has not shown this drift.
+Every golden is pinned with a tolerance (`pytest.approx`) rather than a
+bit-exact hash. The mastering chain's spectral EQ stage drifts at ULP level
+across numpy/scipy FFT implementations (observed going from
+numpy<2.4/scipy<1.18 to numpy 2.4.6/scipy 1.18.0), and the time-domain
+K-weighting path drifts by ~2 ULP across CPU architectures (observed between
+arm64 and CI's x86-64) — either flips a bit-exact hash without any audible
+change. The hex constants stay the storage format so the regeneration block
+below keeps printing paste-ready values.
 
 To regenerate after an intentional behaviour change, run:
     REGENERATE_GOLDEN=1 uv run python packages/core/tests/test_mastering_golden.py
@@ -132,19 +132,19 @@ class TestMasteringChainGolden:
 
 
 class TestLoudnessMeasurementGolden:
-    """Loudness measurement functions must be bit-exact."""
+    """Loudness measurement functions must not drift audibly."""
 
     def test_integrated_loudness(self):
         channels = _make_channels()
         lkfs = measure_integrated_loudness(channels, _SR, _FMT)
-        assert struct.pack("<d", lkfs).hex() == _GOLDEN_RAW_LKFS_HEX, (
+        assert lkfs == pytest.approx(_unhex(_GOLDEN_RAW_LKFS_HEX), abs=1e-9), (
             f"measure_integrated_loudness changed: {lkfs:.9f}"
         )
 
     def test_true_peak(self):
         channels = _make_channels()
         tp = measure_true_peak(channels, _SR)
-        assert struct.pack("<d", tp).hex() == _GOLDEN_RAW_TP_HEX, (
+        assert tp == pytest.approx(_unhex(_GOLDEN_RAW_TP_HEX), abs=1e-9), (
             f"measure_true_peak changed: {tp:.9f}"
         )
 

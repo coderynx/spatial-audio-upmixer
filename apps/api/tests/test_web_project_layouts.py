@@ -45,9 +45,6 @@ def layouts_client(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
-    monkeypatch.setattr(
-        "upmixer_web.features.projects.routes.ensure_stem_separation_available", lambda *_args: None
-    )
     with TestClient(create_app(settings)) as client:
         yield client
 
