@@ -125,7 +125,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     from upmixer.separation.bleed_reduction import DEBLEED_MODELS, PHASE_FIX_REFERENCE_MODELS
     from upmixer.separation.stem_eq import STEM_EQ_PROFILES
     from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
-    from upmixer.separation.stem_router import STEM_ROUTING_PRESET_NAMES
+    from upmixer.separation.stem_placement import STEM_ROUTING_PRESET_NAMES
     from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS
 
     stems = list(dict.fromkeys(MANIFEST_TO_CANONICAL.values()))

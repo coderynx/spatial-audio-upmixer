@@ -52,7 +52,7 @@ from upmixer.result import UpmixResult
 from upmixer.separation.separator import StemSeparator
 from upmixer.separation.source_anchor import apply_source_anchor
 from upmixer.separation.stem_pipeline_separate import SeparationResult, separate
-from upmixer.separation.stem_router import StemRouter, build_stem_routing
+from upmixer.separation.stem_router import StemRouter
 from upmixer.separation.stem_zones import _resample_zones
 from upmixer.utils import itu_downmix_stereo
 
@@ -347,15 +347,11 @@ class StemUpmixPipeline:
         source_zones = _resample_zones(sep.source_zones, sr, sep_sr)
         all_stems, n_samples = self._post_process_stems(sep, _progress)
 
-        if cfg.stem_routing is None and cfg.spatial_profile not in {"auto", "balanced"}:
+        if cfg.spatial_profile not in {"auto", "balanced"}:
             _log.warning(
-                "Stem mode no longer applies dynamic spatial profiles. "
-                "Converting legacy profile '%s' to static stem routing.",
+                "Stem mode does not apply dynamic spatial profiles; ignoring '%s'. "
+                "Use mixing.stem_routing (or a routing preset) instead.",
                 cfg.spatial_profile,
-            )
-            cfg.stem_routing = build_stem_routing(
-                list(sep.plan.requested_stems), output_fmt, cfg.spatial_profile,
-                cfg.spatial_intensity,
             )
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
 

@@ -12,6 +12,8 @@ from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_analyzer import analyze_stem
 from upmixer.separation.stem_router import (
     DEFAULT_ROUTING,
+    DEFAULT_ROUTING_LAYOUT,
+    DEFAULT_ROUTING_PRESET,
     ZONE_ROUTING,
     StemRouter,
     apply_stem_pan,
@@ -105,13 +107,17 @@ def test_bass_and_kick_reach_height_zones():
 def test_routing_preset_is_explicit_and_layout_aware():
     fmt = FORMAT_MAP["7.1.4"]
     balanced = build_stem_routing(["Other"], fmt)
-    spacious = build_stem_routing(["Other"], fmt, "spacious")
-    neutral = build_stem_routing(["Other"], fmt, "spacious", intensity=0.0)
+    wide = build_stem_routing(["Other"], fmt, "wide")
 
-    assert spacious["Other"]["SL"] > balanced["Other"]["SL"]
-    assert spacious["Other"]["TFL"] > balanced["Other"]["TFL"]
-    assert neutral == balanced
+    assert wide["Other"]["SL"] > balanced["Other"]["SL"]
+    assert wide["Other"]["TFL"] > balanced["Other"]["TFL"]
     assert "TFL" not in build_stem_routing(["Other"], FORMAT_MAP["5.1"])["Other"]
+    assert set(build_stem_routing(["Other"], FORMAT_MAP["stereo"])["Other"]) == {"FL", "FR"}
+
+
+def test_unknown_routing_preset_is_rejected():
+    with pytest.raises(ValueError, match="Unknown stem routing preset"):
+        build_stem_routing(["Other"], FORMAT_MAP["7.1.4"], "spacious")
 
 
 def test_stem_enabled_mutes_stem():
@@ -151,9 +157,12 @@ def test_default_lfe_gain_is_applied_once():
     np.testing.assert_allclose(channels["LFE"], expected)
 
 
-def test_every_default_stem_has_an_explicit_lfe_send():
-    for stem, route in DEFAULT_ROUTING.items():
-        assert "LFE" in route, f"{stem} is missing an explicit LFE weight"
+def test_default_routing_is_the_default_preset_on_the_widest_layout():
+    assert DEFAULT_ROUTING == build_stem_routing(
+        list(DEFAULT_ROUTING), FORMAT_MAP[DEFAULT_ROUTING_LAYOUT], DEFAULT_ROUTING_PRESET
+    )
+    for stem in ("Bass", "Kick", "Drums", "Toms", "Instrumental", "Other"):
+        assert DEFAULT_ROUTING[stem]["LFE"] > 0.0, f"{stem} lost its LFE send"
 
 
 def test_stem_lfe_send_scales_the_lfe_bus():
@@ -175,6 +184,7 @@ def test_default_lfe_send_resolves_zone_before_stem_name():
     assert default_lfe_send("Bass@height_front") == ZONE_ROUTING["height_front"]["Bass"]["LFE"]
     assert default_lfe_send("Bass") == DEFAULT_ROUTING["Bass"]["LFE"]
     assert default_lfe_send("Bass@unknown_zone") == DEFAULT_ROUTING["Bass"]["LFE"]
+    assert default_lfe_send("Snare") == 0.0
     assert default_lfe_send("Nonexistent") == 0.0
 
 
@@ -184,9 +194,9 @@ def test_generic_and_percussion_defaults_start_conservative():
     hi_hat = router.get_routing("Hi-Hat")
     crash = router.get_routing("Crash")
 
-    assert other is not None and other["FL"] > other["SL"] > other["TFL"]
-    assert hi_hat is not None and hi_hat["TFL"] == 0.40
-    assert crash is not None and crash["TFL"] == 0.50
+    assert other is not None and other["FL"] > other["TFL"] > other["SL"]
+    assert hi_hat is not None and hi_hat["TFL"] < hi_hat["FL"]
+    assert crash is not None and crash["TFL"] > crash["FL"]
 
 
 def test_analyzer_treats_antiphase_and_hard_pan_as_wide():

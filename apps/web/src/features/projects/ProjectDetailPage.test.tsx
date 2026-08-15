@@ -82,6 +82,8 @@ describe("ProjectDetailPage tabs", () => {
 
     expect(screen.getByRole("button", { name: /Mixing/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Routing preset")).toBeInTheDocument();
+    // The preset carries the whole placement; there is no intensity blend.
+    expect(screen.queryByText("Intensity")).not.toBeInTheDocument();
     // Preview transport and speaker graph render regardless of tab.
     expect(screen.getByRole("button", { name: /^(Play|Pause)$/i })).toBeInTheDocument();
   });

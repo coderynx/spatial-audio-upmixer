@@ -88,9 +88,10 @@ export function stemPositionStereo(route: Record<string, number>): { left: Vec3;
 
 /** Fixed azimuth/elevation (degrees) of the 11 positional speakers, in the
  * same JSAmbisonics/ambisonic convention used by `positionToAzimuthElevation`
- * — matches `apps/api/src/features/projects/routing.py` `_POSITIONS` (positive
- * azimuth = left). Computed once from `speakerCoordinates` rather than
- * duplicated, so the two stay in sync automatically. */
+ * (positive azimuth = left) — the browser twin of the core's
+ * `binaural/geometry.py` `SPEAKER_AZIMUTH_ELEVATION`, which the backend panner
+ * reads. Computed once from `speakerCoordinates` rather than duplicated, so
+ * the two stay in sync automatically. */
 export const speakerAzimuthElevation: Record<string, { azim: number; elev: number }> =
   Object.fromEntries(
     Object.entries(speakerCoordinates).map(([channel, position]) => [channel, positionToAzimuthElevation(position)]),
@@ -108,34 +109,40 @@ export function positionToAzimuthElevation(position: Vec3): { azim: number; elev
   return { azim, elev };
 }
 
+// Mirrors `packages/core/src/separation/stem_placement.py`'s panner constants;
+// the preview and the export must weight a position identically.
+const SCENE_SPREAD_DEG = 60;
+const ELEVATION_DISTANCE_WEIGHT = 1.6;
+const MINIMUM_SEND = 1e-3;
+
 /** Degree-space distance with azimuth wrapped to ±180° — BL/TBL sit at +135°
  * and BR/TBR at −135°, so an unwrapped difference puts the far rear pair
- * ~315° away and drops one whole side from the nearest-3 selection. */
+ * ~315° away and drops one whole side. Elevation counts heavier than azimuth:
+ * the height layer sits only ~35° up, so without it every wide floor-level
+ * position spills overhead. */
 function angularDistance(azimuth: number, elevation: number, position: { azim: number; elev: number }): number {
   const deltaAzimuth = ((((position.azim - azimuth + 180) % 360) + 360) % 360) - 180;
-  return Math.hypot(deltaAzimuth, position.elev - elevation);
+  return Math.hypot(deltaAzimuth, ELEVATION_DISTANCE_WEIGHT * (position.elev - elevation));
 }
 
-/** Port of `apps/api/src/features/projects/routing.py` `routing_for_scene`'s
- * per-stem mapping: nearest 3 positional speakers to (azimuth, elevation) by
- * Euclidean distance in degree-space (azimuth wrapped), inverse-distance
- * weighted, constant-power normalized. Used as a fallback when a stem has a
- * scene position but no resolved `stem_routing` entry yet. */
+/** Port of `stem_placement.py`'s `placement_route` for a zero-width placement,
+ * which is what `routing_for_scene` builds from a dragged scene position: a
+ * raised-cosine falloff over angular distance, constant-power normalized. Used
+ * as a fallback when a stem has a scene position but no resolved
+ * `stem_routing` entry yet. */
 export function routingFromAzimuthElevation(azimuth: number, elevation: number): Record<string, number> {
-  const available = Object.entries(speakerAzimuthElevation);
-  const ranked = available
-    .map(([channel, position]) => ({
-      channel,
-      distance: angularDistance(azimuth, elevation, position),
-    }))
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, Math.min(3, available.length));
-  const weights = ranked.map((entry) => 1 / Math.max(1, entry.distance));
-  const norm = Math.sqrt(weights.reduce((sum, weight) => sum + weight * weight, 0)) || 1;
+  const distances = Object.entries(speakerAzimuthElevation).map(
+    ([channel, position]) => [channel, angularDistance(azimuth, elevation, position)] as const,
+  );
+  const span = Math.max(SCENE_SPREAD_DEG, Math.min(...distances.map(([, distance]) => distance)));
+  const weights = distances.map(
+    ([channel, distance]) => [channel, Math.cos(0.5 * Math.PI * Math.min(1, distance / span))] as const,
+  );
+  const norm = Math.sqrt(weights.reduce((sum, [, weight]) => sum + weight * weight, 0)) || 1;
   const mapping: Record<string, number> = {};
-  ranked.forEach((entry, index) => {
-    mapping[entry.channel] = weights[index] / norm;
-  });
+  for (const [channel, weight] of weights) {
+    if (weight / norm > MINIMUM_SEND) mapping[channel] = weight / norm;
+  }
   return mapping;
 }
 

@@ -1,7 +1,7 @@
 """Public stem-separation and static routing helpers."""
 
+from upmixer.separation.stem_placement import STEM_ROUTING_PRESET_NAMES
 from upmixer.separation.stem_router import (
-    STEM_ROUTING_PRESET_NAMES,
     apply_stem_pan,
     build_stem_routing,
     default_lfe_send,

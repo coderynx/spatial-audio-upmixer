@@ -65,7 +65,6 @@ def register_system_routes(
             stems = normalize_stems(request.stems)
             return build_stem_routing(
                 stems, FORMAT_MAP[request.channel_layout], request.preset,
-                request.intensity,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

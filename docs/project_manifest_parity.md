@@ -16,7 +16,7 @@ same dotted paths.
 Project input is import, name, requested stems, project manifest, project
 scene, optional mastering reference, each track's speaker-layout set, and
 per-(track, layout) manifest overrides plus per-track scene overrides. Editor
-controls cover routing preset/intensity, explicit stem speaker matrix through
+controls cover the routing preset, explicit stem speaker matrix through
 front/back and floor/height sliders, stem mute/solo/gain/EQ, source anchor,
 mastering, delivery, and Advanced JSON.
 
@@ -26,7 +26,12 @@ track `scene_overrides`. Derived state is `prepared_stems`, stem generation,
 revision, status/progress/error, tracks, previews, stems, and export history.
 
 Routing presets are a UI-only authoring control. They serialize their
-resulting `mixing.stem_routing`; they are not runtime job parameters.
+resulting `mixing.stem_routing`; they are not runtime job parameters. A preset
+is a table of per-stem *placements* (azimuth, elevation, image width, LFE send)
+in `packages/core/src/separation/stem_placement.py`, resolved for the selected
+speaker layout and panned into that layout's speakers — so the same preset name
+serializes a different matrix on `7.1.4` than on `5.1`. Applying one writes only
+the (track, layout) pair on screen; a track's other layouts keep their own.
 
 ### Speaker layout is per track, and a track has several
 

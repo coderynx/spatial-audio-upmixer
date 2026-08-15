@@ -19,7 +19,6 @@ import { InspectorGroup } from "@/app/InspectorRow";
 import { SegmentedControl } from "@/app/SegmentedControl";
 import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
 import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { isStereoLayout, outputModeForLayoutSwitch } from "@/lib/layouts";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
@@ -71,7 +70,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const [activeTab, setActiveTab] = React.useState<Stage>("mixing");
   const [settingsView, setSettingsView] = React.useState(false);
   const [preset, setPreset] = React.useState("balanced");
-  const [presetIntensity, setPresetIntensity] = React.useState(1);
   const [exporting, setExporting] = React.useState(false);
   const {
     project, manifest, error, setError, applyProject,
@@ -227,7 +225,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const applyPreset = async () => {
     if (!trackManifest || !stemNames.length) return;
     try {
-      const next = await api.resolveStemRouting({ stems: stemNames, channel_layout: trackManifest.mixing.channel_layout, preset, intensity: presetIntensity });
+      const next = await api.resolveStemRouting({ stems: stemNames, channel_layout: trackManifest.mixing.channel_layout, preset });
       updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_routing: next } });
     } catch (reason) { setError((reason as Error).message); }
   };
@@ -455,7 +453,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           <InspectorGroup title="Routing preset">
             <p className="mb-2 truncate text-[11px] text-muted-foreground">{`${selected?.asset.title || selected?.asset.filename} · ${selectedLayout}`}</p>
             <select className="flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px]" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets ?? []).map((name) => <option key={name}>{name}</option>)}</select>
-            <label className="mt-2.5 block text-[11px] text-muted-foreground">Intensity <span className="float-right tabular-nums">{presetIntensity.toFixed(2)}</span><Slider className="mt-2" min={0} max={1} step={0.01} value={[presetIntensity]} onValueChange={([value]) => setPresetIntensity(value)} /></label>
             <Button className="mt-2.5 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 />Apply preset</Button>
           </InspectorGroup>
           <InspectorGroup title="Stem">

@@ -178,3 +178,28 @@ def test_configuration_offers_stereo_as_a_selectable_layout(web_client):
     assert choices["layout_channels"]["stereo"] == ["FL", "FR"]
     assert "stereo" not in choices["binaural_beds"]
     assert "stereo" not in choices["transaural_beds"]
+
+
+def test_stem_routing_resolve_returns_the_layout_own_channels(web_client):
+    payload = {"stems": ["Vocals", "Drums"], "channel_layout": "5.1", "preset": "wide"}
+
+    routing = web_client.post("/api/v1/stem-routing/resolve", json=payload).json()
+
+    assert set(routing) == {"Vocals", "Drums"}
+    assert set(routing["Vocals"]) <= {"FL", "FR", "C", "LFE", "SL", "SR"}
+    assert routing["Vocals"]["C"] > 0.0
+
+
+def test_stem_routing_resolve_rejects_unknown_preset_and_layout(web_client):
+    unknown_preset = web_client.post(
+        "/api/v1/stem-routing/resolve",
+        json={"stems": ["Vocals"], "channel_layout": "7.1.4", "preset": "spacious"},
+    )
+    unknown_layout = web_client.post(
+        "/api/v1/stem-routing/resolve",
+        json={"stems": ["Vocals"], "channel_layout": "9.1.6", "preset": "balanced"},
+    )
+
+    assert unknown_preset.status_code == 422
+    assert "Unknown stem routing preset" in unknown_preset.json()["detail"]
+    assert unknown_layout.status_code == 422

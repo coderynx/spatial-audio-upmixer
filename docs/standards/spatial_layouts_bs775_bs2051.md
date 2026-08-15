@@ -465,6 +465,36 @@ surface is `--stem-pan STEM=VALUE`.
 
 ---
 
+## Stem placement and the routing presets
+
+Routing presets are not per-layout gain tables. Each preset in
+`packages/core/src/separation/stem_placement.py` holds one canonical
+`StemPlacement` per stem — image centre `azimuth_deg`/`elevation_deg` in the
+geometry convention above (0° = front, positive azimuth = left, positive
+elevation = up), an image `width_deg`, a falloff radius `spread_deg`, and an
+LFE send. `preset_routing` realizes that table on one `FORMAT_MAP` layout.
+
+### Realization rules
+
+| stage | rule |
+|---|---|
+| projection | A layout with no height pair cannot carry an elevated placement. Zeroing the elevation alone would pull the stem *inward* onto the front wall, so the lost elevation is spent on image width instead (`HEIGHT_FLATTEN_WIDTH_FACTOR`) and overhead content wraps to the sides and rear. Azimuth is never clamped — the falloff span already widens to the rearmost pair a layout has. |
+| panning | The image renders as two points at `azimuth ± width/2` (one point when `width` is 0). Each contributes `cos(pi/2 · min(1, d/span))` per speaker, where `span = max(spread_deg, nearest distance)`; the two windows sum and the map is L2-normalized (constant power). Sends below `MINIMUM_SEND` are dropped. |
+| distance | `hypot(wrapped azimuth delta, ELEVATION_DISTANCE_WEIGHT · elevation delta)`. Elevation counts 1.6x: the height layer sits only ~35° up, so an unweighted metric spills every wide floor placement overhead. |
+| two-channel | `stereo` resolves against `7.1.4` and is folded by `fold_route_to_stereo` — see "Stem-route folding is a pan law, not a level law" above. |
+| LFE | Positional math never sees it: the send is copied from the placement, unscaled. |
+
+The same panner serves a dragged scene position
+(`apps/api/.../projects/routing.py`, a zero-width placement at
+`SCENE_PLACEMENT_SPREAD_DEG`) and its browser twin
+`routingFromAzimuthElevation` in `apps/web/src/lib/spatial.ts`, so a
+hand-placed stem and a preset-placed one are positioned by identical maths.
+
+`DEFAULT_ROUTING` — the fallback route when nothing else supplies one — is the
+default preset realized on `7.1.4`, not a separate table.
+
+---
+
 ## Validation Checklist
 
 - [ ] BS.775-4: L/R nominal ±30° (tolerance ±10°); deviation stored in metadata

@@ -27,6 +27,28 @@ describe("routingFromAzimuthElevation", () => {
     }
   });
 
+  // Values produced by `placement_route(StemPlacement(az, el, 0, 60), 7.1.4)` in
+  // packages/core/src/separation/stem_placement.py — the preview must weight a
+  // scene position exactly as the export does.
+  it("matches the core panner", () => {
+    expect(routingFromAzimuthElevation(0, 0)).toEqual({
+      C: expect.closeTo(0.706059, 6),
+      FL: expect.closeTo(0.50074, 6),
+      FR: expect.closeTo(0.50074, 6),
+    });
+    expect(routingFromAzimuthElevation(30, 0)).toEqual({
+      C: expect.closeTo(0.575368, 6),
+      FL: expect.closeTo(0.813689, 6),
+      FR: expect.closeTo(0.002417, 6),
+      TFL: expect.closeTo(0.082801, 6),
+    });
+    expect(routingFromAzimuthElevation(0, 35)).toEqual({
+      C: expect.closeTo(0.122762, 6),
+      TFL: expect.closeTo(0.701758, 6),
+      TFR: expect.closeTo(0.701758, 6),
+    });
+  });
+
   it("wraps an out-of-range azimuth the same as its normalized form", () => {
     const wrapped = routingFromAzimuthElevation(225, 0);
     const reference = routingFromAzimuthElevation(-135, 0);
