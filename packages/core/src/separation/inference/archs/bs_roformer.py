@@ -18,7 +18,8 @@ from beartype.typing import Tuple, Optional, List, Callable
 from beartype import beartype
 
 from rotary_embedding_torch import RotaryEmbedding
-from rotary_embedding_torch.rotary_embedding_torch import rotate_half as _rotate_half_no_cat
+
+from .rope import rotate_queries_or_keys as _rotate_queries_or_keys
 
 from einops import rearrange, pack, unpack
 from einops.layers.torch import Rearrange
@@ -35,26 +36,6 @@ def _is_dml_device(device) -> bool:
     """
     return device.type == "privateuseone"
 
-
-def _rotate_queries_or_keys(rotary_embed, t):
-    """Apply rotary position embedding, avoiding zero-width tensor ops on DML.
-
-    rotary_embedding_torch's apply_rotary_emb concatenates (possibly empty)
-    unrotated edge slices around the rotated block; torch-directml rejects
-    zero-sized tensor ops with 'The parameter is incorrect.'. These models
-    always rotate the full head dimension, so the edge slices are empty and
-    the concat is a no-op — compute the rotation directly instead. Verified
-    equivalent to the library implementation by unit test. (Issue #292)
-    """
-    if not _is_dml_device(t.device):
-        return rotary_embed.rotate_queries_or_keys(t)
-    seq_len = t.shape[-2]
-    freqs = rotary_embed.forward(rotary_embed.get_seq_pos(seq_len, device=t.device, dtype=t.dtype), seq_len=seq_len)
-    if freqs.shape[-1] != t.shape[-1]:
-        # Partial-dim rotation would need the edge concat — unreachable here
-        # (RotaryEmbedding(dim=dim_head) rotates the full head dim).
-        return rotary_embed.rotate_queries_or_keys(t)
-    return t * freqs.cos() + _rotate_half_no_cat(t) * freqs.sin()
 
 def exists(val):
     return val is not None
