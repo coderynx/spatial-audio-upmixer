@@ -183,14 +183,56 @@ already voided are not coming back. If step 2 shows inductor fusing most of
 the transformer stack, the case for a six-phase manual port of ~1400 vendored
 lines is weak.
 
+## 7. Memory footprint of the phase 0 changes
+
+Checked because an earlier engine change (Roformer batch 2) hard-froze a real
+M3 Pro through unified-memory pressure. Machine: M3 Pro, 18 GiB shared,
+MPS recommended max 13.32 GiB. Batch stayed at 1 throughout — the batch
+restriction was not touched. A watchdog set to kill the process at 12 GiB of
+driver allocation never fired.
+
+60 s track, before (`ab70709`) vs after (`25338f1`):
+
+| Model | peak MPS driver | peak MPS allocated | peak process RSS |
+|---|---|---|---|
+| `BS-Roformer-SW.ckpt` | 4.54 → 4.70 GiB (+3.5%) | 1.55 → 1.71 GiB | 2.08 → 2.21 GiB |
+| `kimmel_unwa_ft2_bleedless.ckpt` | 3.19 → 3.33 GiB (+4.4%) | 1.02 → 1.83 GiB | 3.05 → 2.88 GiB |
+| `MDX23C-DrumSep-aufr33-jarredou.ckpt` | 2.28 → 2.33 GiB (+2.2%) | 0.81 → 0.87 GiB | 3.05 → 2.88 GiB |
+
+Peak GPU allocation is ~35% of the MPS budget. Moving STFT off the CPU (§2)
+costs ~0.16 GiB, far less than expected. Runtime dropped ~30%, so the window
+of memory pressure is shorter as well as shallower.
+
+5-minute track, BS-Roformer-SW (6 stems), post-change: 179.8 s (1.67x
+realtime), peak MPS driver **4.70 GiB — identical to the 60 s run**. GPU
+footprint is per-chunk and independent of track length. Process RSS rose to
+4.13 GiB; that part does scale, through `demix.py`'s full-length `result` and
+`counter` CPU accumulators (~2.5 GiB combined for a 10-minute 6-stem job).
+That scaling is pre-existing, not introduced here;
+`StemSeparator(chunk_duration_s=...)` bounds it and is off by default on MPS.
+
+`torch.compile` worker check, with the inductor cache cleared:
+`compile_threads` defaults to 11 with `worker_start_method = subprocess`,
+which would be a real first-run spike vector. Measured system-wide, it does
+not materialize for kernels this small — **max 3 python processes, peak total
+python RSS 2.72 GiB**. One-time compile cost 1.6-3.7 s, two shapes per model.
+Beyond 8 distinct shapes `torch._dynamo.config.cache_size_limit` stops
+recompiling and falls back to eager: slower, not larger.
+
+Caveat: this machine carried 5.4-6.7 GiB of swap in use throughout, before
+and during the runs, independent of this work. System-wide `free` and `swap`
+samples are therefore noisy — the process-scoped MPS and RSS columns are the
+trustworthy ones.
+
 ## Reproducing
 
 Probe, bench harnesses, profilers, and stem comparator were written to the
 session scratchpad, not the repo: `mps_probe.py`, `bench_separation.py`
 (`RUNS=n python bench_separation.py <tag>`), `compare_stems.py <dir_a>
 <dir_b>`, `profile_demix.py`, `profile_modules.py`, `profile_attention.py`,
-`bench_rope.py`, `bench_rope_compile.py`, `bench_rope_e2e.py [--patch]`.
-The gate removals are commit `e714f66`.
+`bench_rope.py`, `bench_rope_compile.py`, `bench_rope_e2e.py [--patch]`,
+`bench_memory.py <tag>`, `bench_longfile.py`, `watch_system.sh <outfile>`.
+The gate removals are commit `e714f66`, the fused rope `25338f1`.
 
 Caveats on the §5 numbers: every hook and stage timer forces an MPS sync, so
 absolute per-stage times are inflated a few percent — the proportions are the
