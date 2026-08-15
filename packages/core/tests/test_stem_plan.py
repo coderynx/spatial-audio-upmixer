@@ -402,3 +402,20 @@ def test_stem_cache_identity_changes_for_bleed_reduction():
             override_identity,
         }
     ) == 5
+
+
+def test_stem_cache_identity_changes_for_drum_remask():
+    from upmixer.config import UpmixConfig
+    from upmixer.separation.stem_identity import stem_cache_identity
+
+    drum_plan = resolve_separation_plan(["Kick", "Snare"])
+    other_plan = resolve_separation_plan(["Vocals", "Bass"])
+
+    enabled = stem_cache_identity(drum_plan, UpmixConfig())
+    disabled = stem_cache_identity(drum_plan, UpmixConfig(stem_drum_remask=False))
+    alpha = stem_cache_identity(drum_plan, UpmixConfig(stem_drum_remask_alpha=0.7))
+
+    assert disabled == drum_plan.inference_hash
+    assert len({enabled, disabled, alpha}) == 3
+    # Plans without the drumsep stage are unaffected by the setting.
+    assert stem_cache_identity(other_plan, UpmixConfig()) == other_plan.inference_hash

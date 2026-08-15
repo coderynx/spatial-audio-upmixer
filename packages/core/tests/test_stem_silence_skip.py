@@ -276,7 +276,7 @@ class TestExecutePlanWithSilenceSkip:
         zone_audio = _silence(n)
         call_count = {"n": 0}
 
-        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None, cfg=None):
             call_count["n"] += 1
             return self._fake_execute_plan(p, path, sr_val)
 
@@ -295,7 +295,7 @@ class TestExecutePlanWithSilenceSkip:
         zone_audio = _sine(n)
         call_count = {"n": 0}
 
-        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None, cfg=None):
             call_count["n"] += 1
             return self._fake_execute_plan(p, path, sr_val)
 
@@ -315,7 +315,7 @@ class TestExecutePlanWithSilenceSkip:
         sf_mod.write(source, zone_audio, SR, subtype="FLOAT")
         seen = []
 
-        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None, cfg=None):
             seen.append(path)
             return self._fake_execute_plan(p, path, sr_val)
 
@@ -332,7 +332,7 @@ class TestExecutePlanWithSilenceSkip:
         zone_audio = _sine(SR * 5)
         subtypes = []
 
-        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None, cfg=None):
             import soundfile as sf_mod
             subtypes.append(sf_mod.info(path).subtype)
             return self._fake_execute_plan(p, path, sr_val)
@@ -351,7 +351,7 @@ class TestExecutePlanWithSilenceSkip:
         n_act = int(6.0 * SR)
         zone_audio = np.vstack([_silence(n_sil), _sine(n_act)])
 
-        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None, cfg=None):
             return self._fake_execute_plan(p, path, sr_val)
 
         with patch(_EXEC_PLAN, side_effect=mock_execute):
@@ -368,7 +368,7 @@ class TestExecutePlanWithSilenceSkip:
         n = SR * 5
         zone_audio = _sine(n)
 
-        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None, cfg=None):
             return self._fake_execute_plan(p, path, sr_val)
 
         with patch(_EXEC_PLAN, side_effect=mock_execute):
@@ -395,7 +395,7 @@ class TestExecutePlanWithSilenceSkip:
         n_total = n_act + n_sil + n_act
         zone_audio = np.vstack([_sine(n_act), _silence(n_sil), _sine(n_act)])
 
-        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None, cfg=None):
             return self._fake_execute_plan(p, path, sr_val)
 
         with patch(_EXEC_PLAN, side_effect=mock_execute):
@@ -409,7 +409,7 @@ class TestExecutePlanWithSilenceSkip:
         plan = self._make_plan()
         zone_audio = _sine(SR * 5)
 
-        def mock_execute(get_sep, p, path, sr_val, stage_callback=None):
+        def mock_execute(get_sep, p, path, sr_val, stage_callback=None, cfg=None):
             return self._fake_execute_plan(p, path, sr_val)
 
         with patch(_EXEC_PLAN, side_effect=mock_execute):

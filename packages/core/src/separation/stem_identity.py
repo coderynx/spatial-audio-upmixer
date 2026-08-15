@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 
 from upmixer.config import UpmixConfig
-from upmixer.separation.stem_plan import SeparationPlan
+from upmixer.separation.stem_plan import MODEL_DRUMS, SeparationPlan
 
 
 def bleed_cache_component(config: UpmixConfig) -> str:
@@ -23,6 +23,19 @@ def bleed_cache_component(config: UpmixConfig) -> str:
     )
 
 
+def drum_remask_cache_component(plan: SeparationPlan, config: UpmixConfig) -> str:
+    """Serialize the drum re-mask settings that change stored stem audio.
+
+    Only plans that run the drumsep model are affected, so every other plan
+    keeps the cache identity it had before this pass existed.
+    """
+    if not config.stem_drum_remask:
+        return ""
+    if not any(task.model == MODEL_DRUMS for task in plan.tasks):
+        return ""
+    return f"drumremask|alpha={config.stem_drum_remask_alpha}"
+
+
 def stem_cache_identity(plan: SeparationPlan, config: UpmixConfig) -> str:
     """Return model-plan identity including output-affecting inference overrides."""
     base = plan.inference_hash or plan.stems_hash
@@ -35,7 +48,8 @@ def stem_cache_identity(plan: SeparationPlan, config: UpmixConfig) -> str:
         config.stem_pitch_shift,
     )
     bleed = bleed_cache_component(config)
-    if all(value in (None, False) for value in options) and not bleed:
+    remask = drum_remask_cache_component(plan, config)
+    if all(value in (None, False) for value in options) and not bleed and not remask:
         return base
     raw = (
         f"{base}|batch={options[0]}|segment={options[1]}|chunk={options[2]}"
@@ -43,6 +57,8 @@ def stem_cache_identity(plan: SeparationPlan, config: UpmixConfig) -> str:
     )
     if bleed:
         raw += f"|{bleed}"
+    if remask:
+        raw += f"|{remask}"
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 

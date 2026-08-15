@@ -49,6 +49,7 @@ _SEPARATION_ENGINE_KEYS = (
     "stem_bleed_reduction", "stem_phase_fix", "stem_phase_fix_low_hz",
     "stem_phase_fix_high_hz", "stem_phase_fix_scale", "stem_phase_fix_reference_model",
     "stem_debleed", "stem_debleed_model",
+    "stem_drum_remask", "stem_drum_remask_alpha",
 )
 
 # Engine keys a per-file extraction override may set (bleed reduction is chosen

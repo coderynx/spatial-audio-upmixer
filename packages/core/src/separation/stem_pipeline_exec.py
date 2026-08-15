@@ -11,8 +11,9 @@ import numpy as np
 import soundfile as sf
 
 from upmixer.config import UpmixConfig
+from upmixer.separation.drum_remask import reproject_drum_pieces
 from upmixer.separation.separator import StemSeparator
-from upmixer.separation.stem_plan import SeparationPlan
+from upmixer.separation.stem_plan import DRUM_SUB_STEMS, MODEL_DRUMS, SeparationPlan
 
 _log = logging.getLogger("upmixer")
 
@@ -37,12 +38,26 @@ def cacheable_plan_stems(plan: SeparationPlan) -> frozenset[str]:
     )
 
 
+def _remask_drum_pieces(
+    loaded: dict[str, np.ndarray], parent_path: str, alpha: float
+) -> None:
+    """Re-derive the kit pieces in *loaded* from the parent Drums file, in place."""
+    pieces = {
+        name: audio for name, audio in loaded.items() if name in DRUM_SUB_STEMS
+    }
+    if not pieces:
+        return
+    parent, parent_sr = sf.read(parent_path, dtype="float32", always_2d=True)
+    loaded.update(reproject_drum_pieces(parent, pieces, parent_sr, alpha))
+
+
 def execute_plan(
     get_separator: GetSeparator,
     plan: SeparationPlan,
     sep_path: str,
     sep_sr: int,
     stage_callback: StageCallback | None = None,
+    cfg: UpmixConfig | None = None,
 ) -> dict[str, np.ndarray]:
     """Execute all tasks in the plan against one audio zone (sep_path).
 
@@ -55,6 +70,8 @@ def execute_plan(
     Args:
         stage_callback: Optional callable ``(stage_idx, n_tasks, model,
             output_stems)`` invoked before each model stage runs.
+        cfg: Configuration for the post-separation passes run here (drum
+            kit-piece re-masking). ``None`` runs none of them.
 
     Returns a dict of canonical_name → ndarray for all requested stems.
     """
@@ -110,6 +127,23 @@ def execute_plan(
                     os.unlink(stable_path)
                 raise
             on_disk[name] = stable_path
+
+        if (
+            cfg is not None
+            and cfg.stem_drum_remask
+            and task.model == MODEL_DRUMS
+            and task.input_source in all_disk
+        ):
+            _log.info(
+                "  [stage %d/%d] drum re-mask alpha=%.2f onto parent %s",
+                stage_idx + 1,
+                n_tasks,
+                cfg.stem_drum_remask_alpha,
+                task.input_source,
+            )
+            _remask_drum_pieces(
+                loaded, all_disk[task.input_source], cfg.stem_drum_remask_alpha
+            )
 
         _log.info(
             "  [stage %d/%d] produced: loaded=%s  on_disk=%s",
@@ -193,11 +227,13 @@ def execute_plan_with_silence_skip(
     if len(spans) == 1 and spans[0] == (0, n_sr):
         if original_path is not None:
             _log.debug("  Silence-skip: full-active fast path uses source file")
-            return execute_plan(get_separator, plan, original_path, sep_sr, stage_callback)
+            return execute_plan(
+                get_separator, plan, original_path, sep_sr, stage_callback, cfg
+            )
         tmp = temporary_wav_path("upmixer_full_")
         try:
             sf.write(tmp, zone_audio, sr, subtype="FLOAT")
-            return execute_plan(get_separator, plan, tmp, sep_sr, stage_callback)
+            return execute_plan(get_separator, plan, tmp, sep_sr, stage_callback, cfg)
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
@@ -215,7 +251,9 @@ def execute_plan_with_silence_skip(
         tmp = temporary_wav_path("upmixer_span_")
         try:
             sf.write(tmp, span_audio, sr, subtype="FLOAT")
-            outputs = execute_plan(get_separator, plan, tmp, sep_sr, stage_callback)
+            outputs = execute_plan(
+                get_separator, plan, tmp, sep_sr, stage_callback, cfg
+            )
             sep_start = (
                 int(round(s_start * sep_sr / sr))
                 if sep_sr != sr else s_start

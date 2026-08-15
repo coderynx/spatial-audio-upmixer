@@ -246,3 +246,25 @@ def add_stem_args(parser: argparse.ArgumentParser) -> None:
             "Default: mel_band_roformer_bleed_suppressor_v1.ckpt."
         ),
     )
+
+    parser.add_argument(
+        "--stem-drum-remask",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="stem_drum_remask",
+        help=(
+            "Re-derive drum kit pieces as soft masks on the parent Drums stem "
+            "so they sum back to it (stem mode only). Default: enabled."
+        ),
+    )
+
+    parser.add_argument(
+        "--stem-drum-remask-alpha",
+        type=float,
+        default=None,
+        metavar="FLOAT",
+        help=(
+            "Drum re-mask exponent; below 1.0 shares overlapping bins more "
+            "evenly between kit pieces. Default: 1.0."
+        ),
+    )

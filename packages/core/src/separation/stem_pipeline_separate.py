@@ -228,7 +228,9 @@ def _run_zone_separation(
                     sf.write(tmp, pair_src, sr, subtype="FLOAT")
                     sep_path = tmp
                     tmp_files.append(tmp)
-                zone_stems = execute_plan(get_separator, plan, sep_path, sep_sr, _stage_callback)
+                zone_stems = execute_plan(
+                    get_separator, plan, sep_path, sep_sr, _stage_callback, cfg
+                )
 
             for stem_name, stem_audio in zone_stems.items():
                 key = stem_name if stereo_mode else f"{stem_name}@{zone_name}"
