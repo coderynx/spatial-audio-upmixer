@@ -165,9 +165,11 @@ few-line change with bit-identical output.
 
 Do this before any MLX work:
 
-1. **Land the compiled rope** in both roformer archs (~1.4-1.5x, bit-exact).
-   Needs backend gating and a CPU/CUDA correctness pass; verify first-call
-   compile cost is acceptable for short jobs.
+1. ~~**Land the compiled rope** in both roformer archs.~~ Done in commit
+   `25338f1` (`archs/rope.py`): 1.42x on BS-Roformer-SW, 1.28x on
+   kimmel_unwa_ft2_bleedless, bit-identical stems, MDX23C unchanged as
+   expected. MPS only; DML keeps the eager no-concat path, CUDA/CPU the
+   library path.
 2. **Then re-profile.** With rope fused, the remaining hot spots shift —
    `FeedForward`, `to_qkv`, and the gates are all elementwise-adjacent and
    may fuse the same way. Compiling the whole `Attention.forward`, or the
