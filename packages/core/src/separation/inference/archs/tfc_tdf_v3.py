@@ -18,9 +18,9 @@ class STFT:
         self.device = device
 
     def __call__(self, x):
-        
-        x_is_mps = not x.device.type in ["cuda", "cpu"]
-        if x_is_mps:
+
+        x_is_dml = x.device.type == "privateuseone"
+        if x_is_dml:
             x = x.cpu()
 
         window = self.window.to(x.device)
@@ -31,15 +31,15 @@ class STFT:
         x = x.permute([0, 3, 1, 2])
         x = x.reshape([*batch_dims, c, 2, -1, x.shape[-1]]).reshape([*batch_dims, c * 2, -1, x.shape[-1]])
 
-        if x_is_mps:
+        if x_is_dml:
             x = x.to(self.device)
 
         return x[..., :self.dim_f, :]
 
     def inverse(self, x):
-        
-        x_is_mps = not x.device.type in ["cuda", "cpu"]
-        if x_is_mps:
+
+        x_is_dml = x.device.type == "privateuseone"
+        if x_is_dml:
             x = x.cpu()
 
         window = self.window.to(x.device)
@@ -54,7 +54,7 @@ class STFT:
         x = torch.istft(x, n_fft=self.n_fft, hop_length=self.hop_length, window=window, center=True)
         x = x.reshape([*batch_dims, 2, -1])
 
-        if x_is_mps:
+        if x_is_dml:
             x = x.to(self.device)
 
         return x

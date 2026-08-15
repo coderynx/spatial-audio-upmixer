@@ -377,16 +377,12 @@ class MelBandRoformer(Module):
         """
 
         original_device = raw_audio.device
-        x_is_mps = True if original_device.type == "mps" else False
         # torch-directml (privateuseone) has no complex tensor support, so all
         # complex ops (stft, view_as_complex, scatter over complex, complex
         # multiply, istft) hop to CPU; the transformer stack — the heavy
         # compute — stays on the DML device. Gated so cuda/mps/cpu behavior
         # is unchanged. (Issue #292)
         x_is_dml = _is_dml_device(original_device)
-
-        if x_is_mps:
-            raw_audio = raw_audio.cpu()
 
         device = raw_audio.device
 
@@ -417,7 +413,7 @@ class MelBandRoformer(Module):
 
         batch_arange = torch.arange(batch, device=device)[..., None]
 
-        x = stft_repr[batch_arange, self.freq_indices.cpu()] if x_is_mps else stft_repr[batch_arange, self.freq_indices]
+        x = stft_repr[batch_arange, self.freq_indices]
 
         x = rearrange(x, "b f t c -> b t (f c)")
 
@@ -440,9 +436,6 @@ class MelBandRoformer(Module):
         masks = torch.stack([fn(x) for fn in self.mask_estimators], dim=1)
         masks = rearrange(masks, "b n t (f c) -> b n f t c", c=2)
 
-        if x_is_mps:
-            masks = masks.cpu()
-
         # Everything from view_as_complex through istft is complex-dtype work;
         # DML tensors must hop to CPU for it.
         if x_is_dml:
@@ -456,15 +449,15 @@ class MelBandRoformer(Module):
 
         masks = masks.type(stft_repr.dtype)
 
-        if x_is_mps or x_is_dml:
+        if x_is_dml:
             scatter_indices = repeat(self.freq_indices.cpu(), "f -> b n f t", b=batch, n=self.num_stems, t=stft_repr.shape[-1])
         else:
             scatter_indices = repeat(self.freq_indices, "f -> b n f t", b=batch, n=self.num_stems, t=stft_repr.shape[-1])
 
         stft_repr_expanded_stems = repeat(stft_repr, "b 1 ... -> b n ...", n=self.num_stems)
         masks_summed = (
-            torch.zeros_like(stft_repr_expanded_stems.cpu() if x_is_mps else stft_repr_expanded_stems)
-            .scatter_add_(2, scatter_indices.cpu() if x_is_mps else scatter_indices, masks.cpu() if x_is_mps else masks)
+            torch.zeros_like(stft_repr_expanded_stems)
+            .scatter_add_(2, scatter_indices, masks)
         )
         if not x_is_dml:
             # complex tensors cannot live on a DML device; keep them on CPU
@@ -473,7 +466,7 @@ class MelBandRoformer(Module):
 
         denom = repeat(self.num_bands_per_freq, "f -> (f r) 1", r=channels)
 
-        if x_is_mps or x_is_dml:
+        if x_is_dml:
             denom = denom.cpu()
 
         masks_averaged = masks_summed / denom.clamp(min=1e-8)
@@ -482,7 +475,7 @@ class MelBandRoformer(Module):
 
         stft_repr = rearrange(stft_repr, "b n (f s) t -> (b n s) f t", s=self.audio_channels)
 
-        recon_audio = torch.istft(stft_repr.cpu() if x_is_mps else stft_repr, **self.stft_kwargs, window=stft_window.cpu() if (x_is_mps or x_is_dml) else stft_window, return_complex=False, length=istft_length)
+        recon_audio = torch.istft(stft_repr, **self.stft_kwargs, window=stft_window.cpu() if x_is_dml else stft_window, return_complex=False, length=istft_length)
 
         if x_is_dml:
             recon_audio = recon_audio.to(original_device)
@@ -521,12 +514,7 @@ class MelBandRoformer(Module):
 
         total_loss = loss + weighted_multi_resolution_loss
 
-        # Move the total loss back to the original device if necessary
-        if x_is_mps:
-            total_loss = total_loss.to(original_device)
-
         if not return_loss_breakdown:
             return total_loss
 
-        # If detailed loss breakdown is requested, ensure all components are on the original device
-        return total_loss, (loss.to(original_device) if x_is_mps else loss, multi_stft_resolution_loss.to(original_device) if x_is_mps else multi_stft_resolution_loss)
+        return total_loss, (loss, multi_stft_resolution_loss)

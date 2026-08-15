@@ -468,7 +468,6 @@ class BSRoformer(Module):
         """
 
         original_device = raw_audio.device
-        x_is_mps = True if original_device.type == "mps" else False
         # torch-directml (privateuseone) has no complex tensor support, so all
         # complex ops (stft, view_as_complex, complex multiply, istft) hop to
         # CPU; the transformer stack — the heavy compute — stays on the DML
@@ -561,7 +560,7 @@ class BSRoformer(Module):
 
         stft_repr = rearrange(stft_repr, "b n (f s) t -> (b n s) f t", s=self.audio_channels)
 
-        recon_audio = torch.istft(stft_repr.cpu() if x_is_mps else stft_repr, **self.stft_kwargs, window=stft_window.cpu() if (x_is_mps or x_is_dml) else stft_window, return_complex=False).to(device)
+        recon_audio = torch.istft(stft_repr, **self.stft_kwargs, window=stft_window.cpu() if x_is_dml else stft_window, return_complex=False).to(device)
 
         recon_audio = rearrange(recon_audio, "(b n s) t -> b n s t", s=self.audio_channels, n=self.num_stems)
 
