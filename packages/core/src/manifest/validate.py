@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import re
 
+from upmixer.codecs import CODECS, WAV_SUBTYPES, validate_codec
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel, validate_delivery
 from upmixer.manifest.schema import _BLOCK_REGISTRY, BlockMapping, ManifestError, _leaf_type
@@ -88,8 +89,9 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
     choices = {
         "engine.mode": {"realtime", "stem"},
         "mixing.channel_layout": set(FORMAT_MAP),
-        "format.type": {"wav", "adm-bwf", "binaural", "transaural"},
-        "format.subtype": {"PCM_16", "PCM_24", "PCM_32", "FLOAT"},
+        "format.type": {"multichannel", "adm-bwf", "binaural", "transaural"},
+        "format.codec": set(CODECS),
+        "format.subtype": set(WAV_SUBTYPES),
         "format.downmix.surround_coeff": {0.7071, 0.5, 0.0},
         "mixing.spatial.profile": {"auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"},
         "format.binaural.profile": set(_binaural_profile_choices()),
@@ -182,10 +184,17 @@ def validate_manifest(data: dict) -> None:
     for scope in (data, *assets):
         mixing = {**root_mixing, **(scope.get("mixing") or {})}
         fmt = {**root_format, **(scope.get("format") or {})}
+        layout = str(mixing.get("channel_layout", defaults.output_format))
+        output_type = str(fmt.get("type", defaults.output_type))
+        sample_rate = fmt.get("sample_rate")
         try:
-            validate_delivery(
-                str(mixing.get("channel_layout", defaults.output_format)),
-                str(fmt.get("type", defaults.output_type)),
+            validate_delivery(layout, output_type)
+            validate_codec(
+                layout,
+                output_type,
+                str(fmt.get("codec", defaults.output_codec)),
+                str(fmt.get("subtype", defaults.output_subtype)),
+                int(sample_rate) if sample_rate is not None else None,
             )
         except ValueError as exc:
             raise ManifestError(str(exc)) from exc

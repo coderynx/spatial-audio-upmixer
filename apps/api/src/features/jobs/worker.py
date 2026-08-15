@@ -8,6 +8,7 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 
+from upmixer.codecs import get_codec
 from upmixer.config import UpmixConfig
 from upmixer.manifest import apply_asset_job, parse_manifest
 from upmixer_web.features.jobs.service import get_job
@@ -139,6 +140,7 @@ class JobRunnerMixin:
                                 _, track_id, result_dict = event
                                 item = items_by_track[track_id]
                                 output_path = Path(item.output_path)
+                                media_type = get_codec(item.config.output_codec).media_type
                                 output_key = f"jobs/{job_id}/outputs/{output_path.name}"
                                 _, size = self.sink.store(output_key, output_path)
                                 with self.sessions() as session:
@@ -154,7 +156,7 @@ class JobRunnerMixin:
                                         track_id=track_id,
                                         kind="upmix",
                                         filename=output_path.name,
-                                        content_type="audio/wav",
+                                        content_type=media_type,
                                         storage_key=output_key,
                                         size_bytes=size,
                                     ))
@@ -168,7 +170,7 @@ class JobRunnerMixin:
                                             track_id=track_id,
                                             kind="downmix",
                                             filename=downmix_output.name,
-                                            content_type="audio/wav",
+                                            content_type=media_type,
                                             storage_key=downmix_key,
                                             size_bytes=downmix_size,
                                         ))

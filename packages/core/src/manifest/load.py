@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from upmixer.codecs import DEFAULT_CODEC, codec_extension
 from upmixer.config import UpmixConfig
 from upmixer.manifest.schema import AssetJob, BlockMapping, ManifestMeta, _BLOCK_REGISTRY, _FIELD_MAP
 
@@ -61,6 +62,38 @@ def _expand_blocks(blocks: dict) -> tuple[dict, dict]:
             continue
         _expand_mapping(block_data, mapping, config_out, engine_out)
     return config_out, engine_out
+
+
+def _migrate_format(block: Any) -> Any:
+    if not isinstance(block, dict):
+        return block
+    migrated = dict(block)
+    # ``wav`` used to mean both "a multichannel bed" and "a WAV container";
+    # those are now format.type and format.codec.
+    if migrated.get("type") == "wav":
+        migrated["type"] = "multichannel"
+    migrated.setdefault("codec", DEFAULT_CODEC)
+    return migrated
+
+
+def migrate_format_block(data: dict) -> dict:
+    """Fold the pre-codec ``format`` shape into the current one.
+
+    Applied to the root and to every asset override before validation, so
+    manifests and stored projects written before codecs existed keep loading.
+    """
+    migrated = dict(data)
+    if "format" in migrated:
+        migrated["format"] = _migrate_format(migrated["format"])
+    assets = migrated.get("assets")
+    if isinstance(assets, list):
+        migrated["assets"] = [
+            {**asset, "format": _migrate_format(asset["format"])}
+            if isinstance(asset, dict) and "format" in asset
+            else asset
+            for asset in assets
+        ]
+    return migrated
 
 
 def _with_downmix_path(config: dict, output: str) -> dict:
@@ -124,6 +157,7 @@ def parse_manifest(data: dict) -> tuple[ManifestMeta | None, list[AssetJob]]:
         config_flat, engine_params = _expand_blocks(effective)
 
         if asset.get("input_dir"):
+            extension = codec_extension(config_flat.get("output_codec") or DEFAULT_CODEC)
             input_dir = asset["input_dir"]
             output_dir = asset["output_dir"]
             glob_pat = asset.get("glob")
@@ -138,7 +172,7 @@ def parse_manifest(data: dict) -> tuple[ManifestMeta | None, list[AssetJob]]:
                 _log.warning("assets input_dir=%r matched no .wav/.flac files", input_dir)
             for f in files:
                 stem = os.path.splitext(os.path.basename(f))[0]
-                out = os.path.join(output_dir, stem + ".wav")
+                out = os.path.join(output_dir, stem + extension)
                 jobs.append(AssetJob(
                     input=f,
                     output=out,

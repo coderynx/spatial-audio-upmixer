@@ -26,9 +26,10 @@ mixing:
     profile: balanced
     intensity: 0.6
 
-# ── Output format — binaural delivery is always 2ch WAV; not compatible with adm-bwf ──
+# ── Output format — binaural delivery is always 2ch; not compatible with adm-bwf ──
 format:
   type: binaural
+  codec: flac
   binaural:
     profile: studio
   subtype: PCM_24
@@ -47,4 +48,4 @@ mastering:
 
 assets:
   - input:  stereo.flac
-    output: binaural_studio.wav
+    output: binaural_studio.flac

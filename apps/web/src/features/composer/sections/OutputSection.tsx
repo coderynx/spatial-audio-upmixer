@@ -1,5 +1,7 @@
 import { SelectField, ToggleField } from "@/components/forms/fields";
+import { OUTPUT_CODECS, codecUnavailableReason, resolveCodec, subtypesFor } from "@/lib/codecs";
 import { CHANNEL_LAYOUTS, OUTPUT_TYPES, deliveryTypeForLayout, isStereoLayout } from "@/lib/layouts";
+import type { Manifest } from "@/lib/manifest";
 import type { ManifestSectionProps } from "./types";
 
 export function OutputSection({
@@ -10,6 +12,21 @@ export function OutputSection({
   const choices = configuration?.choices;
   const separation = configuration?.capabilities.stem_separation;
   const stereo = isStereoLayout(manifest.mixing.channel_layout);
+  const codecs = choices?.output_codecs || OUTPUT_CODECS;
+  const bitDepths = subtypesFor(codecs, manifest.format.codec);
+
+  // Layout, format and sample rate all constrain the codec, so every edit to
+  // one retargets it rather than leaving a combination the server rejects.
+  const withFormat = (
+    next: Partial<Manifest["format"]>,
+    layout = manifest.mixing.channel_layout,
+  ): Manifest["format"] => {
+    const merged = { ...manifest.format, ...next };
+    return {
+      ...merged,
+      codec: resolveCodec(codecs, merged.codec, layout, merged.type, merged.sample_rate),
+    };
+  };
   return (
     <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
       <SelectField
@@ -61,10 +78,10 @@ export function OutputSection({
           setManifest({
             ...manifest,
             mixing: { ...manifest.mixing, channel_layout },
-            format: {
-              ...manifest.format,
-              type: deliveryTypeForLayout(channel_layout, manifest.format.type),
-            },
+            format: withFormat(
+              { type: deliveryTypeForLayout(channel_layout, manifest.format.type) },
+              channel_layout,
+            ),
           })
         }
         options={(choices?.channel_layouts || CHANNEL_LAYOUTS).map((value) => ({
@@ -82,23 +99,21 @@ export function OutputSection({
             <SelectField
               label="Format"
               value={manifest.format.type}
-              onChange={(type) =>
-                setManifest({ ...manifest, format: { ...manifest.format, type } })
-              }
+              onChange={(type) => setManifest({ ...manifest, format: withFormat({ type }) })}
               options={(choices?.output_types || OUTPUT_TYPES)
-                .filter((value) => !stereo || value === "wav")
+                .filter((value) => !stereo || value === "multichannel")
                 .map((value) => ({
                   value,
                   label:
                     value === "adm-bwf"
-                      ? "ADM-BWF"
+                      ? "ADM Broadcast Wave Format"
                       : value === "binaural"
                         ? "Binaural (headphone stereo)"
                         : value === "transaural"
                           ? "Transaural (crosstalk-cancelled speakers)"
                           : stereo
-                            ? "Stereo WAV"
-                            : "Multichannel WAV",
+                            ? "Stereo audio"
+                            : "Multichannel audio",
                   disabled:
                     (value === "binaural" && !bedSupported) ||
                     (value === "transaural" && !transauralBedSupported),
@@ -154,13 +169,34 @@ export function OutputSection({
         );
       })()}
       <SelectField
+        label="Codec"
+        value={manifest.format.codec}
+        disabled={manifest.format.type === "adm-bwf"}
+        onChange={(codec) => setManifest({ ...manifest, format: withFormat({ codec }) })}
+        options={codecs.map((entry) => {
+          const reason = codecUnavailableReason(
+            entry,
+            manifest.mixing.channel_layout,
+            manifest.format.type,
+            manifest.format.sample_rate,
+          );
+          return {
+            value: entry.name,
+            label: reason ? `${entry.label} — ${reason}` : entry.label,
+            disabled: Boolean(reason),
+          };
+        })}
+        hint={
+          manifest.format.type === "adm-bwf"
+            ? "ADM-BWF is a WAV container."
+            : "FLAC is lossless but caps at 8 channels; OGG is lossy."
+        }
+      />
+      <SelectField
         label="Sample rate"
         value={String(manifest.format.sample_rate)}
         onChange={(sample_rate) =>
-          setManifest({
-            ...manifest,
-            format: { ...manifest.format, sample_rate: Number(sample_rate) },
-          })
+          setManifest({ ...manifest, format: withFormat({ sample_rate: Number(sample_rate) }) })
         }
         options={(
           choices?.sample_rates || [44100, 48000, 88200, 96000, 192000]
@@ -171,17 +207,20 @@ export function OutputSection({
       />
       <SelectField
         label="Bit depth"
-        value={manifest.format.subtype}
-        onChange={(subtype) =>
-          setManifest({ ...manifest, format: { ...manifest.format, subtype } })
+        value={bitDepths.length ? manifest.format.subtype : ""}
+        disabled={bitDepths.length === 0}
+        onChange={(subtype) => setManifest({ ...manifest, format: withFormat({ subtype }) })}
+        options={
+          bitDepths.length
+            ? bitDepths.map((value) => ({ value, label: value }))
+            : [{ value: "", label: "—" }]
         }
-        options={(
-          choices?.output_subtypes || ["PCM_16", "PCM_24", "PCM_32", "FLOAT"]
-        ).map((value) => ({ value, label: value }))}
         hint={
           manifest.format.type === "adm-bwf"
             ? "ADM-BWF requires PCM_24 at 48 or 96 kHz."
-            : undefined
+            : bitDepths.length === 0
+              ? "Lossy codec — no bit depth."
+              : undefined
         }
       />
     </div>

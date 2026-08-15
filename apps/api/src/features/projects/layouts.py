@@ -11,6 +11,8 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from upmixer.codecs import DEFAULT_CODEC, validate_codec
+from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, validate_delivery
 from upmixer.separation.stem_router import build_stem_routing, fold_route_to_stereo
 from upmixer_web.shared.models import Project, ProjectTrack
@@ -75,7 +77,7 @@ def migrate_legacy_binaural_shape(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def delivery_type_for_layout(channel_layout: str, output_type: str) -> str:
-    """Fall back to WAV when a stored delivery type cannot carry the layout.
+    """Fall back to a multichannel bed when a delivery type cannot carry the layout.
 
     A track's speaker layout is its primary control — it drives routing, the
     spatial views and the preview engine — so narrowing it (7.1.4 to 5.1, or to
@@ -87,8 +89,23 @@ def delivery_type_for_layout(channel_layout: str, output_type: str) -> str:
     try:
         validate_delivery(channel_layout, output_type)
     except ValueError:
-        return "wav"
+        return "multichannel"
     return output_type
+
+
+def delivery_codec_for_layout(
+    channel_layout: str, output_type: str, output_codec: str, output_subtype: str
+) -> str:
+    """Fall back to WAV when a stored codec cannot carry the layout.
+
+    Same reasoning as :func:`delivery_type_for_layout`: widening a layout past
+    FLAC's 8-channel cap retargets the codec rather than rejecting the edit.
+    """
+    try:
+        validate_codec(channel_layout, output_type, output_codec, output_subtype)
+    except ValueError:
+        return DEFAULT_CODEC
+    return output_codec
 
 
 def normalize_layout_mix(block: dict[str, Any], layout: str, stems: list[str]) -> dict[str, Any]:
@@ -107,7 +124,16 @@ def normalize_layout_mix(block: dict[str, Any], layout: str, stems: list[str]) -
     mixing = block.setdefault("mixing", {})
     mixing["channel_layout"] = layout
     format_block = block.setdefault("format", {})
-    format_block["type"] = delivery_type_for_layout(layout, str(format_block.get("type", "wav")))
+    output_type = delivery_type_for_layout(
+        layout, str(format_block.get("type", "multichannel"))
+    )
+    format_block["type"] = output_type
+    format_block["codec"] = delivery_codec_for_layout(
+        layout,
+        output_type,
+        str(format_block.get("codec", DEFAULT_CODEC)),
+        str(format_block.get("subtype", UpmixConfig.output_subtype)),
+    )
     routing_fmt = FORMAT_MAP[layout]
     if not mixing.get("stem_routing"):
         mixing["stem_routing"] = build_stem_routing(stems, routing_fmt)

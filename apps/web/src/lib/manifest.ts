@@ -84,16 +84,17 @@ export type Manifest = {
   };
   format: {
     type: string;
+    codec: string;
     subtype: string;
     sample_rate: number;
     downmix?: { enabled: boolean; output?: string | null; surround_coeff: number };
     // Spatial Audio Engine binaural render — see docs/standards/
     // spatial_audio_engine.md. Only meaningful when type is "binaural";
-    // a delivery format alongside "wav"/"adm-bwf", not a channel layout.
+    // a delivery format alongside "multichannel"/"adm-bwf", not a channel layout.
     binaural: { profile: string };
     // Spatial Audio Engine crosstalk-cancellation (transaural) render — see
     // docs/standards/transaural_speakers.md. Only meaningful when type is
-    // "transaural"; a delivery format alongside "wav"/"adm-bwf"/"binaural".
+    // "transaural"; a delivery format alongside "multichannel"/"adm-bwf"/"binaural".
     transaural: { profile: string };
   };
 };
@@ -196,7 +197,7 @@ export const defaultManifest: Manifest = {
     normalize_output: true,
   },
   format: {
-    type: "wav", subtype: "PCM_24", sample_rate: 48000,
+    type: "multichannel", codec: "wav_pcm", subtype: "PCM_24", sample_rate: 48000,
     downmix: { enabled: false, output: null, surround_coeff: 0.7071 },
     binaural: { profile: "studio" },
     transaural: { profile: "stereo" },
@@ -246,6 +247,9 @@ export function normalizeManifest(source: Record<string, unknown>): Manifest {
     format: {
       ...defaultManifest.format,
       ...value.format,
+      // "wav" used to mean both "a multichannel bed" and "a WAV container";
+      // those are now format.type and format.codec.
+      type: value.format?.type === "wav" ? "multichannel" : value.format?.type ?? defaultManifest.format.type,
       downmix: {
         enabled: false,
         surround_coeff: 0.7071,

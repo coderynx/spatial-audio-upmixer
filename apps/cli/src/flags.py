@@ -71,7 +71,9 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
     if args.output_type is not None:
         config.output_type = args.output_type
     elif not args.manifest:
-        config.output_type = "wav"
+        config.output_type = "multichannel"
+    if args.output_codec is not None:
+        config.output_codec = args.output_codec
     if args.output_subtype is not None:
         config.output_subtype = args.output_subtype
     if sample_rate_set:

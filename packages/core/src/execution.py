@@ -9,6 +9,7 @@ from typing import Any
 
 import soundfile as sf
 
+from upmixer.codecs import LOSSY_CODECS, codec_extension, validate_codec
 from upmixer.config import UpmixConfig
 from upmixer.formats import (
     BINAURAL,
@@ -97,13 +98,27 @@ def preflight_job(
     )
 
     output_sr = expected_output_sample_rate(config, info.samplerate)
+    try:
+        validate_codec(
+            config.output_format,
+            config.output_type,
+            config.output_codec,
+            config.output_subtype,
+            output_sr,
+        )
+    except ValueError as exc:
+        raise PreflightError(str(exc)) from exc
+    extension = codec_extension(config.output_codec)
+    if destination.suffix.lower() != extension:
+        raise PreflightError(
+            f"Output path for codec '{config.output_codec}' must use a "
+            f"{extension} extension, got '{destination.suffix}'"
+        )
     if config.output_type == "adm-bwf":
         if output_sr not in (48_000, 96_000):
             raise PreflightError("Dolby ADM-BWF requires a 48 kHz or 96 kHz output sample rate")
         if config.output_subtype != "PCM_24":
             raise PreflightError("Dolby ADM-BWF requires PCM_24 output")
-        if destination.suffix.lower() != ".wav":
-            raise PreflightError("Dolby ADM-BWF output path must use a .wav extension")
 
     return {
         "input": str(source),
@@ -111,6 +126,7 @@ def preflight_job(
         "input_format": input_fmt.name,
         "input_sample_rate": info.samplerate,
         "output_sample_rate": output_sr,
+        "output_codec": config.output_codec,
         "output_channels": output_fmt.n_channels,
         "input_identity": input_identity(str(source)),
         "config_fingerprint": config_fingerprint(config, input_format_override),
@@ -147,7 +163,12 @@ class RunState:
             actual = inspect_output(plan["output"])
         except RuntimeError:
             return False
-        expected = entry.get("output_metadata", {})
+        expected = dict(entry.get("output_metadata", {}))
+        # Lossy encoders pad, so a re-encode of identical audio need not report
+        # the frame count that was handed to them.
+        if plan.get("output_codec") in LOSSY_CODECS:
+            actual = {k: v for k, v in actual.items() if k != "frames"}
+            expected.pop("frames", None)
         return actual == expected and actual["sample_rate"] == plan["output_sample_rate"] and actual["channels"] == plan["output_channels"]
 
     def record(self, plan: dict[str, Any], result: UpmixResult) -> None:

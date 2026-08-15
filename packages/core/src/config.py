@@ -57,7 +57,8 @@ class UpmixConfig:
 
     output_format: str = "5.1"
     output_subtype: str = "PCM_24"
-    output_type: str = "wav"
+    output_type: str = "multichannel"
+    output_codec: str = "wav_pcm"
     sample_rate: int | None = None
     output_sample_rate: int | None = None
 

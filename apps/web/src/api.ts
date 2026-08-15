@@ -1,4 +1,5 @@
 import type { ServedEngineConstants } from "@/features/projects/masteringProfiles"
+import type { CodecChoice } from "@/lib/codecs"
 
 export type Asset = {
   id: string
@@ -184,6 +185,7 @@ export type Configuration = {
   choices: {
     channel_layouts: string[]
     output_types: string[]
+    output_codecs?: CodecChoice[]
     output_subtypes: string[]
     sample_rates: number[]
     modes: string[]

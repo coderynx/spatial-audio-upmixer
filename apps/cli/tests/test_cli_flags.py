@@ -86,3 +86,28 @@ def test_format_accepts_the_stereo_layout():
     _apply_cli_flags(config, args, sample_rate_set=False)
 
     assert config.output_format == "stereo"
+
+
+@pytest.mark.parametrize("codec", ["wav_pcm", "flac", "ogg_vorbis", "ogg_opus"])
+def test_output_codec_reaches_the_config(codec):
+    config = UpmixConfig()
+    args = _parsed(["--output-codec", codec])
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    assert config.output_codec == codec
+
+
+def test_output_codec_defaults_to_wav_when_unset():
+    config = UpmixConfig()
+    args = _parsed(["--output-type", "multichannel"])
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    assert config.output_type == "multichannel"
+    assert config.output_codec == "wav_pcm"
+
+
+def test_output_codec_rejects_an_unknown_container():
+    with pytest.raises(SystemExit):
+        _parsed(["--output-codec", "mp3"])

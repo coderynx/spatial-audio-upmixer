@@ -9,13 +9,15 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from upmixer.codecs import DEFAULT_CODEC
 from upmixer.config import UpmixConfig
-from upmixer.manifest import apply_asset_job, parse_manifest
+from upmixer.manifest import apply_asset_job, migrate_format_block, parse_manifest
 from upmixer.separation.stem_plan import normalize_stems
 from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_router import build_stem_routing
 from upmixer_web.features.jobs.service import create_job
 from upmixer_web.features.projects.layouts import (
+    delivery_codec_for_layout,
     delivery_type_for_layout,
     migrate_legacy_binaural_shape,
     normalize_layout_mix,
@@ -163,13 +165,19 @@ def list_projects(session: Session, limit: int = 100, offset: int = 0) -> list[P
 
 
 def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    migrated = migrate_legacy_binaural_shape(manifest)
+    migrated = migrate_format_block(migrate_legacy_binaural_shape(manifest))
     migrated_mixing = migrated.setdefault("mixing", {})
     migrated_format = migrated.setdefault("format", {})
     if isinstance(migrated_mixing, dict) and isinstance(migrated_format, dict):
+        layout = str(migrated_mixing.setdefault("channel_layout", "7.1.4"))
         migrated_format["type"] = delivery_type_for_layout(
-            str(migrated_mixing.setdefault("channel_layout", "7.1.4")),
-            str(migrated_format.get("type", "wav")),
+            layout, str(migrated_format.get("type", "multichannel"))
+        )
+        migrated_format["codec"] = delivery_codec_for_layout(
+            layout,
+            migrated_format["type"],
+            str(migrated_format.get("codec", DEFAULT_CODEC)),
+            str(migrated_format.get("subtype", UpmixConfig.output_subtype)),
         )
     normalized = normalize_job_manifest(migrated)
     engine = normalized.setdefault("engine", {})
@@ -182,7 +190,8 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
     mixing["spatial"] = {"profile": "balanced", "intensity": 0.0, "preanalyze": False}
     mixing["stem_source_anchor_strength"] = mixing.get("stem_source_anchor_strength", 0.0)
     format_block = normalized.setdefault("format", {})
-    format_block.setdefault("type", "wav")
+    format_block.setdefault("type", "multichannel")
+    format_block.setdefault("codec", DEFAULT_CODEC)
     binaural = format_block.setdefault("binaural", {})
     binaural.setdefault("profile", "studio")
     transaural = format_block.setdefault("transaural", {})

@@ -18,6 +18,7 @@ from upmixer.manifest import (
     ManifestError,
     apply_asset_job,
     list_manifest_keys,
+    migrate_format_block,
     parse_manifest,
     manifest_parameter_schema,
     validate_manifest,
@@ -346,9 +347,82 @@ class TestBlockRegistry:
         del _BLOCK_REGISTRY["_test_section2"]  # clean up
 
 
+class TestValidateCodecDelivery:
+    def test_accepts_a_wide_bed_as_ogg_vorbis(self):
+        validate_manifest(
+            _minimal(mixing={"channel_layout": "7.1.4"}, format={"codec": "ogg_vorbis"})
+        )
+
+    def test_rejects_flac_for_a_bed_wider_than_eight_channels(self):
+        with pytest.raises(ManifestError, match="at most 8 channels"):
+            validate_manifest(
+                _minimal(mixing={"channel_layout": "7.1.4"}, format={"codec": "flac"})
+            )
+
+    def test_rejects_a_bit_depth_flac_cannot_carry(self):
+        with pytest.raises(ManifestError, match="does not support subtype"):
+            validate_manifest(
+                _minimal(
+                    mixing={"channel_layout": "5.1"},
+                    format={"codec": "flac", "subtype": "PCM_32"},
+                )
+            )
+
+    def test_rejects_opus_off_its_supported_rates(self):
+        with pytest.raises(ManifestError, match="supports only"):
+            validate_manifest(
+                _minimal(format={"codec": "ogg_opus", "sample_rate": 44100})
+            )
+
+    def test_rejects_a_non_wav_codec_for_adm_bwf(self):
+        with pytest.raises(ManifestError, match="WAV container only"):
+            validate_manifest(
+                _minimal(
+                    mixing={"channel_layout": "7.1.4"},
+                    format={"type": "adm-bwf", "codec": "flac"},
+                )
+            )
+
+    def test_rejects_an_unknown_codec(self):
+        with pytest.raises(ManifestError):
+            validate_manifest(_minimal(format={"codec": "mp3"}))
+
+
+class TestMigrateFormatBlock:
+    def test_rewrites_the_legacy_wav_type_and_seeds_a_codec(self):
+        migrated = migrate_format_block({"format": {"type": "wav", "subtype": "PCM_24"}})
+        assert migrated["format"] == {
+            "type": "multichannel", "codec": "wav_pcm", "subtype": "PCM_24",
+        }
+
+    def test_migrates_per_asset_format_overrides(self):
+        migrated = migrate_format_block({
+            "assets": [{"input": "a.flac", "output": "a.wav", "format": {"type": "wav"}}],
+        })
+        assert migrated["assets"][0]["format"] == {"type": "multichannel", "codec": "wav_pcm"}
+
+    def test_leaves_an_explicit_codec_alone(self):
+        migrated = migrate_format_block({"format": {"type": "binaural", "codec": "flac"}})
+        assert migrated["format"]["codec"] == "flac"
+
+    def test_does_not_mutate_its_input(self):
+        original = {"format": {"type": "wav"}}
+        migrate_format_block(original)
+        assert original == {"format": {"type": "wav"}}
+
+    def test_a_migrated_legacy_manifest_validates_and_parses(self):
+        migrated = migrate_format_block(_minimal(format={"type": "wav"}))
+        validate_manifest(migrated)
+        _meta, jobs = parse_manifest(migrated)
+        config = UpmixConfig()
+        apply_asset_job(config, jobs[0])
+        assert config.output_type == "multichannel"
+        assert config.output_codec == "wav_pcm"
+
+
 class TestValidateStereoDelivery:
     def test_accepts_stereo_with_wav(self):
-        validate_manifest(_minimal(mixing={"channel_layout": "stereo"}, format={"type": "wav"}))
+        validate_manifest(_minimal(mixing={"channel_layout": "stereo"}, format={"type": "multichannel"}))
 
     @pytest.mark.parametrize("output_type", ["adm-bwf", "binaural", "transaural"])
     def test_rejects_stereo_with_a_multichannel_only_delivery(self, output_type):

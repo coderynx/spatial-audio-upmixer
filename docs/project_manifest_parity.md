@@ -68,7 +68,7 @@ The full, current list of canonical processing paths is whatever
 `upmixer --manifest-keys`) — that response, not this document, is the
 source of truth, so it is not re-enumerated here. Representative paths per
 group: `engine.stems`/`engine.stem_silence_skip` (stem separation),
-`format.type`/`format.binaural.profile`/`format.transaural.profile`
+`format.type`/`format.codec`/`format.binaural.profile`/`format.transaural.profile`
 (delivery), `mixing.channel_layout`/`mixing.stem_routing` (spatial mix),
 `routing.center_gain`/`routing.lfe_gain` (channel-group gains),
 `processing.preview`/`processing.fft_size` (analysis), and
@@ -84,11 +84,12 @@ group: `engine.stems`/`engine.stem_silence_skip` (stem separation),
 | Separation tuning | Advanced JSON; rebuild on change | Rebuilds the project's stem store before export | High before change | Manifest behavior |
 | `mixing.stem_*` | Stem controls and Advanced JSON | Direct manifest mapping | None | Manifest behavior |
 | `mixing.spatial` / `routing.content_mix_strength` | Derived explicit-routing profile | Forced deterministic project values | Medium | Project behavior |
-| `mixing.channel_layout` | Per track, several per track: the layout set is chosen in the Prepare tab and per-asset staging, and selected in the tracks panel tree; drives the routing graph, spatial views, meters and the preview engine | `FORMAT_MAP` name; `stereo` (System A) is a delivery target like any bed, but restricts `format.type` to `wav` | None | Unified |
+| `mixing.channel_layout` | Per track, several per track: the layout set is chosen in the Prepare tab and per-asset staging, and selected in the tracks panel tree; drives the routing graph, spatial views, meters and the preview engine | `FORMAT_MAP` name; `stereo` (System A) is a delivery target like any bed, but restricts `format.type` to `multichannel` | None | Unified |
 | `mixing.stem_routing` | Position sliders, per-stem LFE send slider, presets, Advanced matrix; a single Left→Right pan slider replaces all three on a `stereo` layout | Exact speaker matrix, per layout, stored already folded to FL/FR for a `stereo` layout | None | Project behavior for UX |
 | `routing.*` | Advanced JSON | Direct manifest mapping | High before change | Manifest behavior |
 | `mastering.*` | Mastering tab and reference upload | Exported job receives trusted reference | High before change | Unified |
 | `format.*` | Delivery controls and Advanced JSON | Direct mapping | None | Manifest behavior |
+| `format.codec` | "Codec" select on the Delivery tab, beside sample rate and bit depth; options the current layout/format/rate cannot carry are disabled with the reason | Container and encoding for the delivery (`wav_pcm`, `flac`, `ogg_vorbis`, `ogg_opus`), orthogonal to `format.type` and driving the output file extension and artifact content type. FLAC caps at 8 delivered channels and PCM_16/24; Opus is 48 kHz only; `adm-bwf` is pinned to `wav_pcm`. Widening a layout past a codec's limit retargets the codec rather than rejecting the edit, same as `format.type` | None | Unified |
 | `format.binaural.*` | "Container" select on the Delivery tab gains a `binaural` option (disabled unless `channel_layout` is one of the binaural bed layouts) + profile select; in-preview Spatial Audio Engine picker mirrors the project value but is session-only | `type: binaural` renders `channel_layout`'s own bed through the profile's decode+voicing chain to stereo, in place of the plain multichannel bed (see [Spatial Audio Engine](standards/spatial_audio_engine.md)); routing/preview UI always keys off `channel_layout` directly | Medium | Unified |
 | `format.transaural.*` | "Container" select gains a `transaural` option (disabled unless `channel_layout` is one of the transaural bed layouts) + profile select; in-preview picker (Speakers row) mirrors the project value but is session-only, same pattern as `format.binaural.*` | `type: transaural` renders `channel_layout`'s own bed through the profile's crosstalk-cancellation+voicing chain to stereo (see [Transaural Speaker Rendering](standards/transaural_speakers.md)); mutually exclusive with `format.binaural.*` (one `type` field) | Medium | Unified |
 | `format.downmix` | Delivery toggle/coefficient, suppressed for any two-channel delivery (binaural, transaural, or a `stereo` layout) | Server-managed companion artifact | High before change | Unified |

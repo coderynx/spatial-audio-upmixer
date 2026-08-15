@@ -88,6 +88,7 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
 
     "format": {
         "type":        ("config", "output_type"),
+        "codec":       ("config", "output_codec"),
         "subtype":     ("config", "output_subtype"),
         "sample_rate": ("config", "output_sample_rate"),
         "downmix": {
@@ -183,6 +184,7 @@ def register_block_keys(section: str, keys: BlockMapping) -> None:
 _FIELD_MAP: dict[str, tuple[str, type]] = {
     "format":                     ("output_format",            str),
     "output_type":                ("output_type",              str),
+    "output_codec":               ("output_codec",             str),
     "output_subtype":             ("output_subtype",           str),
     "output_sample_rate":         ("output_sample_rate",       int),
     "center_gain":                ("center_gain",              float),

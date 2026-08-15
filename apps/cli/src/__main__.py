@@ -25,6 +25,7 @@ _log = logging.getLogger("upmixer")
 from upmixer_cli.args import build_parser
 from upmixer_cli.flags import _apply_cli_flags, _apply_resource_limits, _parse_key_value_pairs  # noqa: F401
 from upmixer_cli.manifest_run import _run_manifest_assets
+from upmixer.codecs import codec_extension
 from upmixer.config import UpmixConfig
 from upmixer.pipeline import UpmixPipeline
 
@@ -66,10 +67,11 @@ def main() -> None:
 
     if args.manifest is not None:
         from upmixer.manifest import (
-            load_manifest, validate_manifest, parse_manifest, ManifestError,
+            load_manifest, migrate_format_block, validate_manifest, parse_manifest,
+            ManifestError,
         )
         try:
-            _raw = load_manifest(args.manifest)
+            _raw = migrate_format_block(load_manifest(args.manifest))
             validate_manifest(_raw)
         except ManifestError as exc:
             parser.error(str(exc))
@@ -95,7 +97,7 @@ def main() -> None:
         if not output_dir:
             parser.error("Batch mode requires --output-dir.")
 
-        output_ext = ".wav"  # ADM-BWF uses WAV container; always .wav
+        output_ext = codec_extension(config.output_codec)
         try:
             jobs = resolve_batch_jobs(
                 input_paths=None,

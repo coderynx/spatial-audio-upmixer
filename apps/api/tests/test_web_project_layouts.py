@@ -137,7 +137,7 @@ def test_a_layout_block_retargets_a_delivery_it_cannot_carry(layouts_client):
     })
     assert response.status_code == 200
     overrides = response.json()["tracks"][0]["layout_overrides"]
-    assert overrides["stereo"]["format"]["type"] == "wav"
+    assert overrides["stereo"]["format"]["type"] == "multichannel"
 
 
 def test_removing_a_layout_discards_only_that_layouts_mix(layouts_client):

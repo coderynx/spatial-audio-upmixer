@@ -10,6 +10,7 @@ from upmixer.analysis.coherence import CoherenceEstimator
 from upmixer.analysis.spatial import SpatialPlan, analyze_spatial_plan
 from upmixer.analysis.stft import StreamingSTFT
 from upmixer.binaural.renderer import render_binaural_delivery
+from upmixer.codecs import validate_codec
 from upmixer.config import UpmixConfig
 from upmixer.crosstalk.renderer import render_crosstalk_delivery
 from upmixer.decomposition.direct_ambient import SoftMatrixDecomposer
@@ -25,7 +26,7 @@ from upmixer.formats import (
 )
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
-from upmixer.io.writer import AudioWriter
+from upmixer.io.writer import AudioWriter, write_audio
 from upmixer.mastering import MasteringChain
 from upmixer.result import UpmixResult
 from upmixer.routing.channel_router import ChannelRouter
@@ -288,6 +289,12 @@ class UpmixPipeline:
         """
         t0 = time.monotonic()
         validate_delivery(self.config.output_format, self.config.output_type)
+        validate_codec(
+            self.config.output_format,
+            self.config.output_type,
+            self.config.output_codec,
+            self.config.output_subtype,
+        )
         is_binaural = self.config.output_type == "binaural"
         is_transaural = self.config.output_type == "transaural"
         cfg = self.config
@@ -562,7 +569,6 @@ class UpmixPipeline:
         channels: dict[str, np.ndarray], sample_rate: int, cfg: UpmixConfig
     ) -> None:
         """Write ITU-R BS.775-4 Table 2 stereo downmix to cfg.downmix_output_path."""
-        import soundfile as sf
         from upmixer.loudness import measure_true_peak
 
         L, R = itu_downmix_stereo(channels, surround_coeff=cfg.surround_downmix_coeff)
@@ -571,5 +577,7 @@ class UpmixPipeline:
         if tp > cfg.loudness_max_tp:
             stereo *= 10.0 ** ((cfg.loudness_max_tp - tp) / 20.0)
             _log.warning("  Downmix gain reduced %.2f dB to protect true peak", cfg.loudness_max_tp - tp)
-        sf.write(cfg.downmix_output_path, stereo, sample_rate, subtype=cfg.output_subtype)
+        write_audio(
+            cfg.downmix_output_path, stereo, sample_rate, cfg.output_codec, cfg.output_subtype
+        )
         _log.info("  Downmix: %s", cfg.downmix_output_path)

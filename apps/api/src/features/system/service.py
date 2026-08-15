@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from upmixer.codecs import CODECS, WAV_SUBTYPES
 from upmixer.config import UpmixConfig
 
 
@@ -136,8 +137,19 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
         "manifest_parameters": manifest_parameter_schema(),
         "choices": {
             "channel_layouts": list(FORMAT_MAP),
-            "output_types": ["wav", "adm-bwf", "binaural", "transaural"],
-            "output_subtypes": ["PCM_16", "PCM_24", "PCM_32", "FLOAT"],
+            "output_types": ["multichannel", "adm-bwf", "binaural", "transaural"],
+            "output_codecs": [
+                {
+                    "name": codec.name,
+                    "label": codec.label,
+                    "extension": codec.extension,
+                    "subtypes": list(codec.subtypes),
+                    "max_channels": codec.max_channels,
+                    "sample_rates": list(codec.sample_rates) if codec.sample_rates else None,
+                }
+                for codec in CODECS.values()
+            ],
+            "output_subtypes": list(WAV_SUBTYPES),
             "sample_rates": [44100, 48000, 88200, 96000, 192000],
             "modes": ["realtime", "stem"],
             "spatial_profiles": ["auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"],

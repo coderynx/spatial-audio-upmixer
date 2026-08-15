@@ -38,15 +38,15 @@ import time
 from typing import Callable
 
 import numpy as np
-import soundfile as sf
 from scipy.signal import resample_poly
 
 from upmixer.binaural.renderer import render_binaural_delivery
 from upmixer.config import UpmixConfig
 from upmixer.crosstalk.renderer import render_crosstalk_delivery
+from upmixer.codecs import validate_codec
 from upmixer.formats import BINAURAL, TRANSAURAL, OutputFormat, validate_delivery
 from upmixer.io.adm_writer import AdmBwfWriter
-from upmixer.io.writer import AudioWriter
+from upmixer.io.writer import AudioWriter, write_audio
 from upmixer.mastering import MasteringChain, MasteringResult
 from upmixer.result import UpmixResult
 from upmixer.separation.separator import StemSeparator
@@ -282,7 +282,9 @@ class StemUpmixPipeline:
         tp = measure_true_peak({"FL": left, "FR": right}, out_sr)
         if tp > cfg.loudness_max_tp:
             stereo *= 10.0 ** ((cfg.loudness_max_tp - tp) / 20.0)
-        sf.write(cfg.downmix_output_path, stereo, out_sr, subtype=cfg.output_subtype)
+        write_audio(
+            cfg.downmix_output_path, stereo, out_sr, cfg.output_codec, cfg.output_subtype
+        )
         _log.info("  Downmix: %s", cfg.downmix_output_path)
 
     def process_file(
@@ -317,6 +319,7 @@ class StemUpmixPipeline:
         t0 = time.monotonic()
         cfg = self.config
         validate_delivery(cfg.output_format, cfg.output_type)
+        validate_codec(cfg.output_format, cfg.output_type, cfg.output_codec, cfg.output_subtype)
         if not 0.0 <= cfg.stem_source_anchor_strength <= 1.0:
             raise ValueError("stem_source_anchor_strength must be between 0.0 and 1.0")
 

@@ -58,6 +58,7 @@ export function SelectField({
       <Label>{label}</Label>
       <select
         value={value}
+        aria-label={label}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         className="flex h-7 w-full rounded-md border border-input bg-secondary px-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-ring/60 disabled:opacity-40"

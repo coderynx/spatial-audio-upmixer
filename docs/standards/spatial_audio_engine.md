@@ -266,7 +266,7 @@ Implementation: `packages/core/src/binaural/voicing.py` +
 ## 6. Delivery format
 
 Exposed as `UpmixConfig.output_type == "binaural"` (`upmixer.formats.BINAURAL`,
-2 channels: `FL`, `FR`) — a delivery format alongside `"wav"` and `"adm-bwf"`,
+2 channels: `FL`, `FR`) — a delivery format alongside `"multichannel"` and `"adm-bwf"`,
 selected the same way they are (`format.type` in the manifest, `--output-type`
 on the CLI), not a channel layout. Selecting it does not change what layout is
 upmixed — the pipeline upmixes/masters `UpmixConfig.output_format` as normal

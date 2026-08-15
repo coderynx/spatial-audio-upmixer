@@ -2,6 +2,7 @@
 
 import argparse
 
+from upmixer.codecs import CODECS
 from upmixer.formats import FORMAT_MAP, INPUT_FORMAT_MAP
 
 from .args_mastering import add_mastering_args
@@ -244,18 +245,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-type",
-        choices=["wav", "adm-bwf", "binaural", "transaural"],
+        choices=["multichannel", "adm-bwf", "binaural", "transaural"],
         default=None,
         help=(
-            "'wav' = standard multichannel WAV. "
+            "'multichannel' = discrete channels on --format's layout. "
             "'adm-bwf' = Dolby ADM-BWF (Logic Pro, DaVinci Resolve, Pro Tools). "
             "'binaural' = Spatial Audio Engine headphone-stereo render of --format's "
             "bed (--format must be 5.1.4, 7.1.2, or 7.1.4; see --binaural-profile). "
             "'transaural' = Spatial Audio Engine crosstalk-cancelled speaker-stereo "
             "render of --format's bed (same bed requirement; see "
             "--transaural-profile). "
-            "'--format stereo' delivers WAV only. "
-            "Default: 'wav' (or as set by manifest)."
+            "'--format stereo' delivers multichannel only. "
+            "Default: 'multichannel' (or as set by manifest)."
+        ),
+    )
+    parser.add_argument(
+        "--output-codec",
+        choices=sorted(CODECS),
+        default=None,
+        help=(
+            "Container/codec for the delivery. 'wav_pcm' = WAV (default). "
+            "'flac' = lossless FLAC, PCM_16/PCM_24 only and at most 8 channels "
+            "(so not 5.1.4 or 7.1.4 beds). 'ogg_vorbis' = lossy Vorbis, any "
+            "layout or rate. 'ogg_opus' = lossy Opus, 48 kHz only. "
+            "'adm-bwf' output is always 'wav_pcm'."
         ),
     )
     parser.add_argument("--output-subtype", choices=["PCM_16", "PCM_24", "PCM_32"], default=None, help="Output bit depth (default: PCM_24)")

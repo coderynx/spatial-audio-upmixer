@@ -420,7 +420,7 @@ It is a *layout*, not a rendering pass: unlike `BINAURAL`/`TRANSAURAL` it lives
 in `FORMAT_MAP` and its two channels are the real writer slots. Consequences
 enforced by `formats.validate_delivery`:
 
-- `format.type` must be `wav`. ADM-BWF requires a surround bed (see
+- `format.type` must be `multichannel`. ADM-BWF requires a surround bed (see
   [ADM metadata](adm_metadata_bs2076.md)), and `binaural`/`transaural` require a
   height-bearing bed (`BINAURAL_BED_FORMATS`/`TRANSAURAL_BED_FORMATS`).
 - The BS.775 stereo companion (`format.downmix`) is skipped: the companion of a

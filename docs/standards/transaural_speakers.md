@@ -319,7 +319,7 @@ Source of truth: `packages/core/src/crosstalk/profiles.py::VOICING_PARAMS`.
 
 Exposed as `UpmixConfig.output_type == "transaural"`
 (`upmixer.formats.TRANSAURAL`, 2 channels: `FL`, `FR`) — a delivery format
-alongside `"wav"`, `"adm-bwf"`, and `"binaural"`, mutually exclusive with
+alongside `"multichannel"`, `"adm-bwf"`, and `"binaural"`, mutually exclusive with
 all three (one `output_type` field). Manifest keys: `format.type:
 transaural`, `format.transaural.profile`. CLI: `--format {5.1.4,7.1.2,7.1.4}
 --output-type transaural --transaural-profile

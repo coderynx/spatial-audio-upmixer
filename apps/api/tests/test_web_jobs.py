@@ -97,3 +97,83 @@ def test_realtime_job_completes_and_downloads(web_client):
     assert download.status_code == 200
     assert download.headers["content-type"].startswith("audio/wav")
     assert len(download.content) > 44
+
+
+@pytest.mark.parametrize(
+    ("codec", "extension", "media_type"),
+    [
+        ("flac", ".flac", "audio/flac"),
+        ("ogg_vorbis", ".ogg", "audio/ogg"),
+        ("ogg_opus", ".opus", "audio/ogg"),
+    ],
+)
+def test_a_job_delivers_its_codec_extension_and_content_type(
+    web_client, codec, extension, media_type
+):
+    imported = web_client.post(
+        "/api/v1/imports",
+        files=[
+            ("files", ("tone.wav", _wav_bytes(), "audio/wav")),
+            ("relative_paths", (None, "tone.wav")),
+        ],
+    ).json()
+    response = web_client.post("/api/v1/jobs", json={
+        "import_id": imported["id"],
+        "name": f"Tone {codec}",
+        "manifest": {
+            "version": "1.0.0",
+            "engine": {"mode": "realtime"},
+            "mixing": {
+                "channel_layout": "5.1",
+                "spatial": {"profile": "balanced", "intensity": 0.5, "preanalyze": False},
+            },
+            "mastering": {"loudness": {"normalize": False}},
+            "format": {
+                "type": "multichannel", "codec": codec,
+                "subtype": "PCM_24", "sample_rate": 48000,
+            },
+        },
+        "start": True,
+    })
+    assert response.status_code == 201
+    job_id = response.json()["id"]
+
+    deadline = time.monotonic() + 10
+    job = None
+    while time.monotonic() < deadline:
+        job = web_client.get(f"/api/v1/jobs/{job_id}").json()
+        if job["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.05)
+
+    assert job is not None
+    assert job["status"] == "completed", job.get("error")
+    artifact = job["artifacts"][0]
+    assert artifact["filename"].endswith(extension)
+    assert artifact["content_type"] == media_type
+    download = web_client.get(artifact["download_url"])
+    assert download.status_code == 200
+    assert download.headers["content-type"].startswith(media_type)
+
+
+def test_a_job_rejects_a_codec_the_layout_cannot_carry(web_client):
+    imported = web_client.post(
+        "/api/v1/imports",
+        files=[
+            ("files", ("tone.wav", _wav_bytes(), "audio/wav")),
+            ("relative_paths", (None, "tone.wav")),
+        ],
+    ).json()
+    response = web_client.post("/api/v1/jobs", json={
+        "import_id": imported["id"],
+        "name": "Too many channels for FLAC",
+        "manifest": {
+            "version": "1.0.0",
+            "engine": {"mode": "realtime"},
+            "mixing": {"channel_layout": "7.1.4"},
+            "format": {"type": "multichannel", "codec": "flac", "subtype": "PCM_24"},
+        },
+        "start": True,
+    })
+    assert response.status_code == 422
+    assert "8 channels" in response.json()["detail"]

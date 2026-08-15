@@ -28,6 +28,7 @@ Every manifest must declare a ``version`` and an ``assets`` list::
       center_gain: 0.85
     format:
       type: adm-bwf
+      codec: wav_pcm
       subtype: PCM_24
       sample_rate: 48000
 
@@ -80,6 +81,7 @@ from __future__ import annotations
 from upmixer.manifest.load import (  # noqa: F401
     apply_asset_job,
     load_manifest,
+    migrate_format_block,
     parse_manifest,
 )
 from upmixer.manifest.schema import (  # noqa: F401

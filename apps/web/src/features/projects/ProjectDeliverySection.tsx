@@ -5,6 +5,7 @@ import { FIELD_GRID, SelectField, SwitchRow } from "@/components/forms/fields";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import type { Configuration } from "@/api";
+import { OUTPUT_CODECS, codecUnavailableReason, resolveCodec, subtypesFor } from "@/lib/codecs";
 import { OUTPUT_TYPES, isStereoLayout } from "@/lib/layouts";
 import type { Manifest } from "@/lib/manifest";
 
@@ -17,14 +18,14 @@ import type { Manifest } from "@/lib/manifest";
 // Neutral icons, not vendor marks: "ADM-BWF" is an ITU/EBU container and
 // Atmos is Dolby's trademark, so nothing here impersonates a brand logo.
 const FORMATS: Record<string, { label: string; note: string; icon: LucideIcon }> = {
-  wav: { label: "Multichannel WAV", note: "Discrete channels", icon: AudioLines },
-  "adm-bwf": { label: "ADM-BWF", note: "Object master", icon: Boxes },
+  multichannel: { label: "Multichannel audio", note: "Discrete channels", icon: AudioLines },
+  "adm-bwf": { label: "ADM Broadcast Wave Format", note: "Object master", icon: Boxes },
   binaural: { label: "Binaural", note: "Headphone stereo", icon: Headphones },
   transaural: { label: "Transaural", note: "Crosstalk-cancelled speaker stereo", icon: Speaker },
 };
 
 function formatMeta(value: string, stereo = false) {
-  if (value === "wav" && stereo) return { label: "Stereo WAV", note: "FL/FR", icon: AudioLines };
+  if (value === "multichannel" && stereo) return { label: "Stereo audio", note: "FL/FR", icon: AudioLines };
   return FORMATS[value] || { label: value, note: "", icon: AudioLines };
 }
 
@@ -72,6 +73,23 @@ export function ProjectDeliverySection({
   // layout — has no use for a separate BS.775 stereo companion file.
   const isTwoChannelDelivery = isBinaural || isTransaural || stereo;
   const downmixEnabled = manifest.format.downmix?.enabled ?? false;
+  const layout = manifest.mixing.channel_layout;
+  const codecs = choices?.output_codecs || OUTPUT_CODECS;
+  const codec = manifest.format.codec;
+  const bitDepths = subtypesFor(codecs, codec);
+
+  // Layout, format and sample rate all constrain the codec, so every edit to
+  // one retargets it rather than leaving a combination the server rejects.
+  const withFormat = (next: Partial<Manifest["format"]>): Manifest => {
+    const merged = { ...manifest.format, ...next };
+    return {
+      ...manifest,
+      format: {
+        ...merged,
+        codec: resolveCodec(codecs, merged.codec, layout, merged.type, merged.sample_rate),
+      },
+    };
+  };
 
   // A disabled option has to say why it is disabled, but that belongs on the
   // option itself rather than as prose under the picker.
@@ -87,7 +105,7 @@ export function ProjectDeliverySection({
         <Label>Format</Label>
         <Select
           value={type}
-          onValueChange={(next) => onChange({ ...manifest, format: { ...manifest.format, type: next } })}
+          onValueChange={(next) => onChange(withFormat({ type: next }))}
         >
           <SelectTrigger aria-label="Format" className="h-11 px-2">
             <span className="flex min-w-0 flex-1 items-center gap-2">
@@ -96,7 +114,7 @@ export function ProjectDeliverySection({
           </SelectTrigger>
           <SelectContent>
             {(choices?.output_types || OUTPUT_TYPES)
-              .filter((value) => !stereo || value === "wav")
+              .filter((value) => !stereo || value === "multichannel")
               .map((value) => (
               <SelectItem
                 key={value}
@@ -116,28 +134,45 @@ export function ProjectDeliverySection({
         <PanelBody className="space-y-2.5 overflow-visible">
           <div className={FIELD_GRID}>
             <SelectField
+              label="Codec"
+              value={codec}
+              disabled={type === "adm-bwf"}
+              onChange={(next) => onChange(withFormat({ codec: next }))}
+              options={codecs.map((entry) => {
+                const reason = codecUnavailableReason(entry, layout, type, manifest.format.sample_rate);
+                return {
+                  value: entry.name,
+                  label: reason ? `${entry.label} — ${reason}` : entry.label,
+                  disabled: Boolean(reason),
+                };
+              })}
+              hint={type === "adm-bwf" ? "ADM-BWF is a WAV container." : undefined}
+            />
+            <SelectField
               label="Sample rate"
               value={String(manifest.format.sample_rate)}
-              onChange={(sample_rate) =>
-                onChange({
-                  ...manifest,
-                  format: { ...manifest.format, sample_rate: Number(sample_rate) },
-                })
-              }
+              onChange={(sample_rate) => onChange(withFormat({ sample_rate: Number(sample_rate) }))}
               options={(choices?.sample_rates || [44100, 48000, 88200, 96000, 192000]).map(
                 (value) => ({ value: String(value), label: `${value / 1000} kHz` }),
               )}
             />
             <SelectField
               label="Bit depth"
-              value={manifest.format.subtype}
-              onChange={(subtype) =>
-                onChange({ ...manifest, format: { ...manifest.format, subtype } })
+              value={bitDepths.length ? manifest.format.subtype : ""}
+              disabled={bitDepths.length === 0}
+              onChange={(subtype) => onChange(withFormat({ subtype }))}
+              options={
+                bitDepths.length
+                  ? bitDepths.map((value) => ({ value, label: value }))
+                  : [{ value: "", label: "—" }]
               }
-              options={(choices?.output_subtypes || ["PCM_16", "PCM_24", "PCM_32", "FLOAT"]).map(
-                (value) => ({ value, label: value }),
-              )}
-              hint={type === "adm-bwf" ? "Requires PCM_24 at 48 or 96 kHz." : undefined}
+              hint={
+                type === "adm-bwf"
+                  ? "Requires PCM_24 at 48 or 96 kHz."
+                  : bitDepths.length === 0
+                    ? "Lossy codec — no bit depth."
+                    : undefined
+              }
             />
           </div>
 

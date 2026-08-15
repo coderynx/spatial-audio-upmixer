@@ -10,8 +10,8 @@ describe("isStereoLayout", () => {
 });
 
 describe("deliveryTypeForLayout", () => {
-  it("retargets a non-wav delivery type back to wav for a stereo layout", () => {
-    expect(deliveryTypeForLayout("stereo", "binaural")).toBe("wav");
+  it("retargets a bed-collapsing delivery type back to multichannel for a stereo layout", () => {
+    expect(deliveryTypeForLayout("stereo", "binaural")).toBe("multichannel");
   });
 
   it("leaves the delivery type alone for a multichannel layout", () => {

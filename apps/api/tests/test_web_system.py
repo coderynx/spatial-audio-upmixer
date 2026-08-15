@@ -180,6 +180,21 @@ def test_configuration_offers_stereo_as_a_selectable_layout(web_client):
     assert "stereo" not in choices["transaural_beds"]
 
 
+def test_configuration_serves_the_delivery_codec_capabilities(web_client):
+    choices = web_client.get("/api/v1/configuration").json()["choices"]
+
+    assert choices["output_types"] == ["multichannel", "adm-bwf", "binaural", "transaural"]
+    codecs = {entry["name"]: entry for entry in choices["output_codecs"]}
+    assert set(codecs) == {"wav_pcm", "flac", "ogg_vorbis", "ogg_opus"}
+    assert codecs["wav_pcm"]["extension"] == ".wav"
+    assert codecs["wav_pcm"]["max_channels"] is None
+    # The two limits the client has to gate on.
+    assert codecs["flac"]["max_channels"] == 8
+    assert codecs["flac"]["subtypes"] == ["PCM_16", "PCM_24"]
+    assert codecs["ogg_opus"]["sample_rates"] == [8000, 12000, 16000, 24000, 48000]
+    assert codecs["ogg_vorbis"]["sample_rates"] is None
+
+
 def test_stem_routing_resolve_returns_the_layout_own_channels(web_client):
     payload = {"stems": ["Vocals", "Drums"], "channel_layout": "5.1", "preset": "wide"}
 

@@ -6,7 +6,8 @@ import copy
 from pathlib import Path
 from typing import Any
 
-from upmixer.manifest import parse_manifest, validate_manifest
+from upmixer.codecs import DEFAULT_CODEC, codec_extension
+from upmixer.manifest import migrate_format_block, parse_manifest, validate_manifest
 from upmixer_web.shared.models import Job
 
 # Import-time side effect: registers manifest block keys. MasteringChain only
@@ -31,7 +32,7 @@ def ensure_stem_separation_available(
 
 def normalize_job_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     """Validate user-configurable blocks without trusting user file paths."""
-    normalized = copy.deepcopy(manifest)
+    normalized = migrate_format_block(copy.deepcopy(manifest))
     normalized.setdefault("version", "1.0.0")
     normalized.pop("assets", None)
     mastering = normalized.get("mastering")
@@ -65,11 +66,8 @@ def materialize_manifest(
     ordinary (non-project) job has no snapshot and uses the shared
     `stem_cache_dir` as before.
     """
-    data = copy.deepcopy(job.manifest)
-    # Every format.type ("wav", "adm-bwf", "binaural") currently delivers a
-    # WAV container; this will need to key off output_type once non-PCM
-    # containers/codecs (ogg/opus, flac) are added.
-    extension = ".wav"
+    data = migrate_format_block(copy.deepcopy(job.manifest))
+    root_codec = (data.get("format") or {}).get("codec", DEFAULT_CODEC)
     track_snapshots = (job.project_snapshot or {}).get("tracks", {})
     assets = []
     # Read each source through the JobTrack's own asset FK rather than a
@@ -78,11 +76,7 @@ def materialize_manifest(
     # incrementally, so the two lists are no longer guaranteed to align.
     for track, input_path in zip(job.tracks, input_paths, strict=True):
         asset = track.asset
-        output = work_dir / f"{track.position + 1:02d}-{Path(asset.filename).stem}{extension}"
-        asset_data: dict[str, Any] = {
-            "input": str(input_path),
-            "output": str(output),
-        }
+        asset_data: dict[str, Any] = {"input": str(input_path)}
         snapshot = track_snapshots.get(track.asset_id)
         if snapshot:
             asset_data["stem_input_dir"] = snapshot["stem_input_dir"]
@@ -91,6 +85,11 @@ def materialize_manifest(
                     asset_data[block] = copy.deepcopy(value)
         else:
             asset_data["stem_cache_dir"] = str(stem_cache_dir)
+        codec = (asset_data.get("format") or {}).get("codec", root_codec)
+        extension = codec_extension(codec)
+        asset_data["output"] = str(
+            work_dir / f"{track.position + 1:02d}-{Path(asset.filename).stem}{extension}"
+        )
         assets.append(asset_data)
     data["assets"] = assets
     if mastering_reference_path is not None:

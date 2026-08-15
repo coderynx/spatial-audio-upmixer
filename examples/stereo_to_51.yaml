@@ -28,7 +28,8 @@ routing:
 
 # ── Output ────────────────────────────────────────────────────────────────────
 format:
-  type: wav
+  type: multichannel
+  codec: wav_pcm
   subtype: PCM_24
   downmix:
     enabled: true
