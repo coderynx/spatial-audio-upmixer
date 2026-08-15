@@ -88,19 +88,110 @@ assumed). What remains genuinely MLX-only is unified-memory batching — and
 the batch=1 restriction that motivates it is a memory-pressure workaround
 that phase 0 was explicitly told not to touch.
 
-Recommendation: **do not start phase 1 yet.** The next cheap step is a
-profile of where the ~48 s actually goes (transformer stack vs STFT vs demix
-accumulation vs the CPU-side overlap-add in `demix.py`), plus a re-test of
-Roformer batch > 1 on torch 2.13 to see whether the M3 Pro freeze still
-reproduces. If the profile shows time concentrated in the transformer stack,
-an MLX port is still the only path to a real speedup and phases 1-6 stand as
-written. If it shows a large share in demix accumulation or batch=1 stalls,
-those are far smaller changes than a six-phase arch port and should be done
-first.
+Recommendation: **do not start phase 1 yet.** Profile first — see §5, which
+was run immediately after and found a 1.4-1.5x speedup available in torch.
+
+## 5. Follow-up profile (where the time actually goes)
+
+Stage timers around the demix loop, with an MPS sync at every boundary. One
+full 60 s separation per model:
+
+| Stage | BS-Roformer-SW | MDX23C-DrumSep |
+|---|---|---|
+| model forward | 43.56 s (99.7%) | 33.03 s (99.5%) |
+| — of which `torch.stft`/`istft` | 0.32 s (0.7%) | 1.02 s (3.1%) |
+| — of which everything else | 43.24 s (99.0%) | 32.01 s (96.4%) |
+| host→device | 0.01 s | 0.05 s |
+| device→host | 0.01 s | 0.06 s |
+| CPU accumulate + normalize | 0.06 s | 0.05 s |
+
+Transfers and the CPU-side overlap-add are noise. Confirms §2 from the other
+direction: the STFT gates never mattered because STFT is ~1-3% of the work.
+
+Per-module hooks inside one forward (BS-Roformer): `Attention` 75.9%,
+`FeedForward` 16.6%, `RMSNorm` 8.7%, `MaskEstimator` 2.8%, `BandSplit` 0.8%
+(RMSNorm nests inside the other two, so these sum over 100%). But the SDPA
+call inside `Attention` is only 11.5% of the forward — the attention cost is
+not the attention kernel.
+
+Splitting `Attention.forward` itself:
+
+| Step | Time | % of forward |
+|---|---|---|
+| **rotary embedding** | **1.29 s** | **38.0%** |
+| `to_qkv` + rearrange | 0.40 s | 11.8% |
+| attend (SDPA) | 0.40 s | 11.7% |
+| `to_out` | 0.25 s | 7.2% |
+| gates | 0.15 s | 4.4% |
+| RMSNorm | 0.14 s | 4.2% |
+
+Rotary position embedding is the single largest cost in the whole pipeline.
+`rotary_embedding_torch`'s `apply_rotary_emb` runs `t * cos + rotate_half(t)
+* sin` plus a `torch.cat` as separate MPS kernels over a 102 MB tensor,
+48 times per chunk — pure memory-bandwidth waste at shapes
+`(62, 8, 801, 64)` and `(801, 8, 62, 64)`.
+
+Fixes measured at those real shapes:
+
+| Variant | Per-chunk rotary | vs library |
+|---|---|---|
+| A: `rotary_embedding_torch` (current) | 1.119 s | — |
+| B: no-cat path (already in-repo for DML) | 0.904 s | 1.28x |
+| C: B + cached cos/sin | 0.909 s | 1.28x |
+| **D: `torch.compile` of B** | **0.163 s** | **6.88x** |
+
+Caching cos/sin buys nothing — `freqs` are already cached upstream, and the
+transcendentals are trivial next to the elementwise passes. Inductor fusing
+the chain into one kernel is the whole win, and it is **bit-exact** (max diff
+0.00e+00 against the library path).
+
+End-to-end, with that compiled rope patched into both roformer archs:
+
+| Model | before | after | speedup |
+|---|---|---|---|
+| `BS-Roformer-SW.ckpt` | 49.39 s | 32.27 s | **1.53x** |
+| `kimmel_unwa_ft2_bleedless.ckpt` | 34.33 s | 24.66 s | **1.39x** |
+
+Stem parity: **max abs diff 0.00e+00** across all 8 stems — bit-identical
+output, not merely within tolerance. First run pays ~3 s of compile time
+(two shapes), amortized across chunks.
+
+## 6. Revised recommendation
+
+The profile inverts the plan's premise. Time is not in complex ops, not in
+STFT, not in transfers, and not in the SDPA kernel — it is 38% in an
+unfused rotary embedding, which `torch.compile` fixes at 6.9x for a
+few-line change with bit-identical output.
+
+Do this before any MLX work:
+
+1. **Land the compiled rope** in both roformer archs (~1.4-1.5x, bit-exact).
+   Needs backend gating and a CPU/CUDA correctness pass; verify first-call
+   compile cost is acceptable for short jobs.
+2. **Then re-profile.** With rope fused, the remaining hot spots shift —
+   `FeedForward`, `to_qkv`, and the gates are all elementwise-adjacent and
+   may fuse the same way. Compiling the whole `Attention.forward`, or the
+   transformer block, is the obvious next experiment.
+3. **Then re-test Roformer batch > 1** on torch 2.13 (see the freeze warning
+   in `engine.py:205-211`).
+
+Only after those should phases 1-6 be re-costed. MLX's remaining advantage
+over a `torch.compile`d MPS path is unproven, and the two motivations §1
+already voided are not coming back. If step 2 shows inductor fusing most of
+the transformer stack, the case for a six-phase manual port of ~1400 vendored
+lines is weak.
 
 ## Reproducing
 
-Probe, bench harness, and stem comparator were written to the session
-scratchpad, not the repo: `mps_probe.py`, `bench_separation.py`
+Probe, bench harnesses, profilers, and stem comparator were written to the
+session scratchpad, not the repo: `mps_probe.py`, `bench_separation.py`
 (`RUNS=n python bench_separation.py <tag>`), `compare_stems.py <dir_a>
-<dir_b>`. The gate removals are commit `e714f66`.
+<dir_b>`, `profile_demix.py`, `profile_modules.py`, `profile_attention.py`,
+`bench_rope.py`, `bench_rope_compile.py`, `bench_rope_e2e.py [--patch]`.
+The gate removals are commit `e714f66`.
+
+Caveats on the §5 numbers: every hook and stage timer forces an MPS sync, so
+absolute per-stage times are inflated a few percent — the proportions are the
+finding, and the end-to-end table is unsynced and unaffected.
+`ProfilerActivity.MPS` does not exist in this torch build, hence hooks rather
+than `torch.profiler`.
