@@ -499,6 +499,12 @@ Phase 2's report lives in `docs/plans/mixing/phase2_report.md`, phase 3's in
 `docs/plans/mixing/phase3_report.md` — the latter re-runs every table above
 and gives the before/after against §1a–§1d and §4.
 
+Phase 5 (`docs/plans/mixing/phase5_report.md`) supersedes §3: the LFE bus lowpass
+is a Linkwitz-Riley, so the crossover coincident sum improves from −2.4/−2.7 dB
+to −1.6/−1.8 dB on Bass/Kick. That report re-measures §3 as a before/after on the
+current tree, because phases 3–4 moved the in-band mains energy for send-heavy
+stems and §3's Other/Instrumental rows are stale by up to ~2 dB.
+
 Phase 4 (`docs/plans/mixing/phase4_report.md`) supersedes §2: heights are folded
 into the stereo downmix at `k_h = 1/√2`, so §2b/§2c's "loss" is now a
 before/after pair in the kit itself. Worst case `wide`/Crash **8.56 → 2.44 dB**,

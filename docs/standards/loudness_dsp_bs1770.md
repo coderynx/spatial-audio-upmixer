@@ -159,6 +159,11 @@ Each phase has 6 coefficients (total: 24 taps per polyphase filter, 48-tap proto
 
 LFE is **excluded** from LUFS measurement but **included** in true-peak scanning. Scan all channels including LFE for true-peak.
 
+So a change to how the LFE bus is built moves a render's measured loudness only
+through inter-channel masking, never directly — but it does move true peak. The
+bus's filter and level calibration are specified in
+`docs/standards/spatial_layouts_bs775_bs2051.md` § "LFE lowpass".
+
 ---
 
 ## Validation Checklist

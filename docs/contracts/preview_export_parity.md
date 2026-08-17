@@ -59,6 +59,16 @@ Every stage below is one function, called from both sides:
 | Crosstalk (transaural) | `spatial::xtc` | `crosstalk/renderer.py` | `stream::output` |
 | BS.775 stereo downmix | `spatial::downmix` | `utils.py` | `stream::output` |
 
+The stem → bed row's LFE bus is one lowpass design in
+`kernels::butter::linkwitz_riley_lowpass_sos`, reached as `upmixer_dsp.lfe_lowpass`
+on the export side and as `stream::routing::LfeBus` in the preview (see
+`docs/standards/spatial_layouts_bs775_bs2051.md` § "LFE lowpass"). Its order is
+the one LFE parameter the browser does *not* receive: `lfe_cutoff_hz` is served,
+while `lfe_filter_order` is hardcoded to `4` on both sides
+(`config.py`, `engineParams.ts`). Nothing user-facing writes it — no CLI flag, no
+manifest key — so the pair cannot drift in the field, but change one and change
+the other.
+
 The downmix row is the one entry whose *matrix* is not shared code: the export
 calls the kernel with the whole bed, while the preview mixes per speaker from a
 per-channel gain pair built in `engineParams.ts::downmixGains` out of the

@@ -41,6 +41,41 @@ Define normative loudspeaker positions (azimuth/elevation), channel labels, LFE 
 
 > The −10 dB offset means 0 dBFS on the LFE channel reproduces at −10 dBFS relative to the main channels. Referenced in BS.2051-3 Table 1 Note 5.
 
+### LFE lowpass
+
+*(Project convention — Annex 7 fixes the 120 Hz bandwidth limit but names no
+filter. Implemented once in
+`packages/dsp/crates/dsp-core/src/kernels/butter.rs::linkwitz_riley_lowpass_sos`
+and reached from every LFE producer: `upmixer_dsp.lfe_lowpass` for
+`StemRouter.route`, `MultichannelUpmixer`, the ADM writer, and the binaural /
+transaural LFE feed; `stream::routing::LfeBus` for the preview;
+`routing/lfe.py::LFEExtractor` for the frequency-domain path.)*
+
+The bus lowpass is a **Linkwitz-Riley** of `lfe_filter_order` (default 4,
+i.e. two cascaded 2nd-order Butterworths), so `|H|` is the Butterworth
+magnitude squared: **−6 dB at `lfe_cutoff_hz`**, same 24 dB/octave asymptote
+as the 4th-order Butterworth it replaced. **The order must be even and ≥ 2**;
+`LFEExtractor` raises and the Rust design asserts.
+
+Two things this does *not* do, both deliberate:
+
+- **The mains keep their bass unfiltered.** No complementary high-pass is
+  applied — bass management belongs to the playback system (Atmos music
+  practice), and BS.775 §Downmix keeps LFE out of the stereo sum, so a
+  redirect here would leak into a path the standard defines without it.
+- **It does not make the LFE phase-coherent with the mains at the crossover.**
+  With the mains full-range, LFE and mains overlap through the transition and
+  a causal lowpass rotates only one of them: LR4 and Butterworth-4 both sit at
+  −180° at `f_c`. The measured coincident sum near 120 Hz improves from
+  −2.4/−2.7 dB (Butterworth-4, Bass/Kick) to −1.6/−1.8 dB purely because LR's
+  −6 dB point puts less correlated energy into the overlap. Closing the rest
+  needs an allpass on the LFE bus, rejected with numbers in
+  `docs/plans/mixing/phase5_report.md` §3.
+
+Level calibration is `UpmixConfig.lfe_gain` = 0.3162 (−10 dB), the complement
+of the Annex 7 monitoring gain above; the preset `lfe` send weights are
+referenced to that, so they are already compensated.
+
 ---
 
 ## Bass management — LF unification and redistribution
