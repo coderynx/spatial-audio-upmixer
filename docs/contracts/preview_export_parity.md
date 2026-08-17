@@ -46,7 +46,7 @@ Every stage below is one function, called from both sides:
 | Stage | Core module | Export entry | Preview entry |
 |---|---|---|---|
 | Per-stem EQ | `spatial`/`kernels::fir_design` | `separation/stem_eq.py` | `stream::routing` |
-| Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate}` | `separation/stem_router.py` | `stream::routing` |
+| Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate,transient}` | `separation/stem_router.py` | `stream::routing` |
 | Scene position → routing | `separation/stem_panner.py` | `apps/api/.../routing.py` | served with the project |
 | Reference match | `match_reference::{spectrum,curve}` | `mastering/match_reference/` | `stream::master` |
 | Spectral EQ | `mastering::eq` | `mastering/eq.py` | `stream::master` |
@@ -150,6 +150,22 @@ approximating any of it — see `docs/plans/mixing/phase7_mask_parity_report.md`
 A band gain of exactly 1.0 skips the section on both sides, so the default
 voicing is bit-identical to the pre-band one.
 
+Phase 11 added one more send scalar, `stem_transient_duck`: the depth of the
+transient/sustain split that both diffuse sends run on their input, before
+the filters and the velvet line. Its time constants and ratio floor are not
+served — `routing::transient`'s `DUCK_ATTACK_MS` / `DUCK_RELEASE_MS` /
+`DUCK_REFERENCE_MS` / `DUCK_THRESHOLD_RATIO` / `DUCK_FULL_RATIO` are
+structural, one detector shared by `transient_duck` offline and
+`StemRouteState`'s ducker in the preview. A depth of exactly 0.0, which is
+the default, returns the send input untouched on both sides.
+
+One ducker serves both send pairs in the streaming path where the offline
+path calls `transient_duck` once per pair. That is not a divergence: the
+detector's state depends only on the stem's input, so a single trajectory is
+what each of the offline calls independently reproduces —
+`stream::routing`'s `ducked_sends_match_the_offline_duck_then_shape_order`
+pins it against the offline order, blocked ragged.
+
 Constants that live in Rust are the ones that were already duplicated and are
 structural rather than tunable: the BS.1770 true-peak FIR, the ACN/N3D
 normalization, the filter-design internals, and the surround/height
@@ -212,7 +228,10 @@ just arrive too late to be heard.
 
 `apps/web/scripts/bench-preview-engine.mjs` (`npm run bench:engine`) renders the
 worst case we ship — full 7.1.4 bed, nine stems, order-3 decode, whole
-mastering chain — one engine per process, and fails the build over budget:
+mastering chain — one engine per process, and fails the build over budget.
+Stages that ship default-off are benched *on* (`decorrelate: 1`,
+`stem_transient_duck: 1`): the budget question is what the stage costs when a
+user reaches for it, not what the default costs:
 
 | Metric | Budget |
 |---|---|
@@ -279,3 +298,4 @@ or that the port itself resolved.
 | D33 | The committed `apps/web/public/wasm/upmixer_dsp.wasm` was last rebuilt at `8da41d5`, two commits before `4548970` added mid-bass decorrelation — so the preview has been running an engine without that stage while the export applies it, the §1 build-provenance risk realized. Rebuilding the artifact also re-opens the §4 budget: with `decorrelate: 1` the current engine benches mean 0.72x / p99 2.6x / worst 2.8x of the deadline against budgets of 0.4x / 1.0x / 1.5x. | Fixed. The artifact was rebuilt in the phase 3 commit; the budget overrun that exposed is closed by `stream::band::RollingBand`, which gives both zero-phase band splits the D25/D26 treatment. The forward pass now carries its state, so each sample is filtered once instead of re-filtered per block, and the anticausal backward pass — the one part that genuinely needs a warm-up — is computed a chunk at a time and sliced across the renders that consume the previous chunk, so no quantum pays for a whole warm-up. With `decorrelate: 1` the same worst case benches **mean 0.28x / p99 0.69x / worst 1.20x** against 0.4x / 1.0x / 1.5x; every `bench:engine` case passes, including the two measurement cases that were over p99 with the stage switched off. |
 | D34 | `apps/web/src/lib/spatial.ts` carried `routingFromAzimuthElevation`, a hand-port of `placement_route` for scene-positioned stems with no resolved routing yet — a second implementation of a panning law, in the layer that is meant to hold no DSP. It tracked the raised-cosine panner; the moment phase 10 replaced that panner it would have previewed a placement the export cannot produce. | Fixed by deleting it, along with the `speakerAzimuthElevation`/`positionToAzimuthElevation` helpers that existed only to feed it. Routing reaches the preview only as maps the core computed (`routing_for_scene` → project payload); a stem with none resolved yet gets an empty map, as one with no scene position already did. |
 | D28 | The whole-programme measurement D27 introduced (§ P3) advanced only while paused and only from a `resume()`d `AudioContext`; a fresh context starts suspended and the worklet never registered its own progress callback, so the "calibrating loudness" UI could hang indefinitely with no feedback, and at best took minutes on an eight-minute track. | Fixed: the context resumes on init (with a pointer-gesture fallback for autoplay policy), the worklet's progress reaches the UI, and measurement runs in two stages — a fast excerpt pass clears the UI in seconds, then the exact whole-programme pass keeps refining the gain in the background (§ P3). |
+| D35 | Phase 11's transient duck reaches the audio thread as a per-sample detector on every stem's send input, and its first cut put two `bench:engine` cases over budget at full depth — `measuring (exact, paused)` at p99 1.00x and `measuring (fast excerpt, playing)` at p99 1.77x against 1.0x/1.5x. The cost was a division on the per-sample dependency chain, evaluated whether or not the sample was an onset. | Fixed before wiring, per D33's lesson. The sub-threshold case is taken before the divide, which is algebraically the same score and skips it for the overwhelming majority of samples; the send buffers also reserve rather than growing. Every case is back inside budget at full depth (binaural mean 0.31x / p99 0.87x / worst 1.37x), and at the shipped default of 0.0 the stage is skipped entirely and the numbers match the phase 8 baseline. Benched on rather than off — see §4. |

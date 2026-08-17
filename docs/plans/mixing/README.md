@@ -60,7 +60,7 @@ deferred improvements are now planned as phases 8–11:
 | 8 | `phase8_d33_rebaseline.md` | Close parity ledger D33 (mid-bass decorrelation over the worklet budget) and re-baseline the measurement kit — phases 3–5 made the phase 0 tables stale. Gate for 9–11. **Done** — see `phase8_report.md` and `phase8_baseline.md`. |
 | 9 | `phase9_loudness_renorm.md` | BS.1770-weighted energy renormalization in `StemRouter.route` and `_normalize_to_source`; measurement-gated, may close as "within tolerance". **Done** — offsets were real (4.66 LU worst spread) and the fix shipped; see `phase9_report.md`. |
 | 10 | `phase10_mdap_panner.md` | MDAP panner replacing the raised-cosine spread panner behind the unchanged `StemPlacement` model — triplet-confined point placements, direction-independent spread. **Done** — width response is 1.7-6x flatter across azimuth and the preview's duplicate panner is gone (ledger D34); the preset A/B listening pass is still outstanding, see `phase10_report.md` §8. |
-| 11 | `phase11_content_aware_routing.md` | Roadmap 4.1: archaeology gate on the dead stem-analyzer modules, then revive (transient/sustain send split, default-off) or delete. |
+| 11 | `phase11_content_aware_routing.md` | Roadmap 4.1: archaeology gate on the dead stem-analyzer modules, then revive (transient/sustain send split, default-off) or delete. **Done** — the gate splits: both modules deleted (their whole-file mechanism is what the removal condemned, and the preview cannot run it), while rung 1 shipped as a causal duck on the diffuse send inputs, default 0.0. Onsets reach surround/height 7.26 dB quieter than sustain at depth 0.7; ledger D35. See `phase11_report.md`. |
 
 ## Ground rules for every phase
 
