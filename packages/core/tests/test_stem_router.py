@@ -65,9 +65,13 @@ def test_main_bed_routing_is_constant_power():
     stems = {"Vocals": _audio()}
     channels = _router().route(stems, len(stems["Vocals"]))
     input_energy = float(np.vdot(stems["Vocals"], stems["Vocals"]).real)
-    bed_energy = sum(float(np.vdot(channels[name], channels[name]).real) for name in ("FL", "FR", "C", "TFL", "TFR"))
+    bed_energy = sum(
+        float(np.vdot(channels[name], channels[name]).real) for name in channels if name != "LFE"
+    )
 
-    np.testing.assert_approx_equal(bed_energy, input_energy, significant=5)
+    # Not exact since phase 9: route_scale matches loudness, so a band-limited
+    # send zone lands a little under its share of raw energy.
+    np.testing.assert_allclose(bed_energy, input_energy, rtol=1e-3)
 
 
 def test_custom_routing_overrides_zone_table():
@@ -190,14 +194,20 @@ def test_default_lfe_send_resolves_zone_before_stem_name():
 
 
 def test_generic_and_percussion_defaults_start_conservative():
+    """The overhead ladder, as zone power: a placement's elevation is realized
+    across the whole front-to-height arc, so no single channel pair states it."""
     router = _router()
-    other = router.get_routing("Other")
-    hi_hat = router.get_routing("Hi-Hat")
-    crash = router.get_routing("Crash")
 
-    assert other is not None and other["FL"] > other["TFL"] > other["SL"]
-    assert hi_hat is not None and hi_hat["TFL"] < hi_hat["FL"]
-    assert crash is not None and crash["TFL"] > crash["FL"]
+    def zone(stem: str, channels: set[str]) -> float:
+        route = router.get_routing(stem) or {}
+        return sum(gain * gain for channel, gain in route.items() if channel in channels)
+
+    front, height = {"FL", "FR", "C"}, {"TFL", "TFR", "TBL", "TBR"}
+
+    assert zone("Other", front) > zone("Other", height) > zone("Other", {"SL", "SR"})
+    assert zone("Hi-Hat", front) > zone("Hi-Hat", height)
+    assert zone("Crash", height) > zone("Crash", front)
+    assert zone("Crash", height) > zone("Hi-Hat", height)
 
 
 def test_analyzer_treats_antiphase_and_hard_pan_as_wide():

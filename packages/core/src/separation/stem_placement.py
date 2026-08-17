@@ -11,10 +11,10 @@ Placement model
   ``azimuth_deg``/``elevation_deg`` is the image centre in the geometry
   convention of ``upmixer.binaural.geometry`` — 0 = front, positive azimuth =
   left, positive elevation = up.  ``width_deg`` is the image's left/right
-  extent: the stem renders as a *pair* of points at ``azimuth ± width/2``, so a
-  stem can be L/R-dominant with only a center fill rather than collapsing onto
-  the nearest speaker.  ``spread_deg`` is each point's falloff radius — the
-  angular distance at which its contribution reaches zero.
+  extent: the stem renders as an arc of virtual sources spanning
+  ``azimuth ± width/2``, so a stem can be L/R-dominant with only a center fill
+  rather than collapsing onto the nearest speaker.  ``spread_deg`` is how far
+  each of those sources is blurred to either side (see ``stem_panner``).
 
 Placement guidance (Dolby Atmos music practice, matching the routing
 philosophy in ``stem_router``'s module docstring): lead vocal, kick, snare and
@@ -29,6 +29,7 @@ from dataclasses import dataclass, replace
 
 from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
 from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
+from upmixer.separation.stem_panner import panning_gains
 
 STEREO_PLACEMENT_LAYOUT = "7.1.4"
 """Two-channel output resolves against the full layout and is folded by the
@@ -40,12 +41,9 @@ SCENE_PLACEMENT_SPREAD_DEG = 60.0
 or spread of its own. Wide enough that dragging a stem crossfades smoothly
 between neighbouring speakers instead of snapping to the nearest one."""
 
-ELEVATION_DISTANCE_WEIGHT = 1.6
-"""How much heavier an elevation offset counts than an azimuth offset."""
-
 MINIMUM_SEND = 1e-3
-"""Sends below this are dropped: the falloff window bottoms out asymptotically,
-so without a floor every route carries dust in channels it does not use."""
+"""Sends below this are dropped: without a floor a wide placement's outermost
+virtual sources leave dust in channels the image does not reach."""
 
 HEIGHT_FLATTEN_WIDTH_FACTOR = 2.0
 """Degrees of image width a layout with no height pair gets back per degree of
@@ -179,26 +177,6 @@ STEM_ROUTING_PRESETS: dict[str, dict[str, StemPlacement]] = {
 STEM_ROUTING_PRESET_NAMES: tuple[str, ...] = tuple(STEM_ROUTING_PRESETS)
 
 
-def _wrapped_azimuth_delta(a: float, b: float) -> float:
-    return (b - a + 180.0) % 360.0 - 180.0
-
-
-def _angular_distance(azimuth: float, elevation: float, label: ChannelLabel) -> float:
-    """Degree-space distance, azimuth wrapped to ±180°, elevation weighted.
-
-    A degree of elevation error is more audible than a degree of azimuth error,
-    and the height layer sits only ~35° up: without the weighting every
-    floor-level placement wide enough to reach the side pair also spills into
-    the heights, which is exactly the lifted-bed sound Atmos music mixing warns
-    against.
-    """
-    position = SPEAKER_AZIMUTH_ELEVATION[label]
-    return math.hypot(
-        _wrapped_azimuth_delta(azimuth, position.azimuth_deg),
-        ELEVATION_DISTANCE_WEIGHT * (position.elevation_deg - elevation),
-    )
-
-
 def _project(placement: StemPlacement, output_format: OutputFormat) -> StemPlacement:
     """Restate a canonical placement as what *output_format* can reproduce.
 
@@ -237,39 +215,25 @@ def resolve_placements(preset: str, layout: str) -> dict[str, StemPlacement]:
 def placement_route(placement: StemPlacement, output_format: OutputFormat) -> dict[str, float]:
     """Pan one placement into *output_format*'s speakers, constant power.
 
-    Each of the image's two edge points contributes a raised-cosine window over
-    angular distance; the windows sum, then the whole map is L2-normalized. A
-    placement narrower than its nearest speaker still reaches that speaker —
-    the window widens to it rather than resolving to silence.
+    The panning itself is MDAP (see ``stem_panner``); this adds the send floor
+    and the LFE passthrough, and renormalizes so dropping the floored sends
+    does not cost the map its constant power.
     """
-    labels = [label for label in output_format.channels if label in SPEAKER_AZIMUTH_ELEVATION]
-    if not labels:
-        return {}
-    half_width = max(0.0, placement.width_deg) / 2.0
-    points = (
-        [placement.azimuth_deg]
-        if half_width == 0.0
-        else [placement.azimuth_deg - half_width, placement.azimuth_deg + half_width]
+    labels = tuple(
+        label for label in output_format.channels if label in SPEAKER_AZIMUTH_ELEVATION
     )
-    weights = {label.value: 0.0 for label in labels}
-    for azimuth in points:
-        distances = {
-            label: _angular_distance(azimuth, placement.elevation_deg, label) for label in labels
-        }
-        span = max(placement.spread_deg, min(distances.values()))
-        for label, distance in distances.items():
-            if span <= 0.0:
-                weights[label.value] += 1.0 if distance <= 0.0 else 0.0
-            else:
-                weights[label.value] += math.cos(0.5 * math.pi * min(1.0, distance / span))
-    norm = math.sqrt(sum(weight * weight for weight in weights.values()))
+    gains = panning_gains(
+        placement.azimuth_deg,
+        placement.elevation_deg,
+        placement.width_deg,
+        placement.spread_deg,
+        labels,
+    )
+    kept = {channel: gain for channel, gain in gains.items() if gain > MINIMUM_SEND}
+    norm = math.sqrt(sum(gain * gain for gain in kept.values()))
     if norm <= 0.0:
         return {}
-    route = {
-        channel: weight / norm
-        for channel, weight in weights.items()
-        if weight / norm > MINIMUM_SEND
-    }
+    route = {channel: gain / norm for channel, gain in kept.items()}
     if ChannelLabel.LFE in output_format.channels and placement.lfe > 0.0:
         route[ChannelLabel.LFE.value] = placement.lfe
     return route
