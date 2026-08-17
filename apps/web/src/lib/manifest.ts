@@ -72,6 +72,7 @@ export type Manifest = {
     center_attenuation: number;
     height_low_rolloff_gain: number;
     height_high_shelf_gain: number;
+    height_directional_band_gain: number;
     content_mix_strength: number;
   };
   processing: {
@@ -186,6 +187,7 @@ export const defaultManifest: Manifest = {
     center_attenuation: 0.5,
     height_low_rolloff_gain: 0.15,
     height_high_shelf_gain: 1.5,
+    height_directional_band_gain: 1,
     content_mix_strength: 1,
   },
   processing: {

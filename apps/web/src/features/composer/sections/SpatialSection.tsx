@@ -182,6 +182,19 @@ export function SpatialSection({
         }
       />
       <SliderField
+        label="Height directional band"
+        value={manifest.routing.height_directional_band_gain}
+        min={1}
+        max={2}
+        step={0.01}
+        onChange={(height_directional_band_gain) =>
+          setManifest({
+            ...manifest,
+            routing: { ...manifest.routing, height_directional_band_gain },
+          })
+        }
+      />
+      <SliderField
         label="Content mix strength"
         value={manifest.routing.content_mix_strength}
         min={0}
