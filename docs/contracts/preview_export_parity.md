@@ -131,6 +131,17 @@ Served alongside the scalars: the FIR/filter asset name maps (`EQ_FIR_ASSETS`,
 core performs the ambisonic encode, `speaker_directions` — read straight from
 `binaural/geometry.py` so the browser never re-derives an angle.
 
+The height send's elevation EQ is served in four parts —
+`height_low_rolloff_hz` / `height_low_rolloff_gain` /
+`height_crossover_hz` / `height_high_shelf_gain` — plus the directional band
+added in phase 7, `height_directional_band_hz` /
+`height_directional_band_gain`. Its Q is not served: `routing::sends`'s
+`DIRECTIONAL_BAND_Q` is structural, one design shared by the offline send,
+the streaming send, and the STFT height mask (which reads the same section's
+magnitude through `upmixer_dsp.elevation_band_response` rather than
+approximating it). A band gain of exactly 1.0 skips the section on both
+sides, so the default voicing is bit-identical to the pre-band one.
+
 Constants that live in Rust are the ones that were already duplicated and are
 structural rather than tunable: the BS.1770 true-peak FIR, the ACN/N3D
 normalization, the filter-design internals, and the surround/height
