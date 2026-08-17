@@ -46,13 +46,12 @@ pub enum SendShape {
     HeightRight,
 }
 
-/// Send shaping constants, all served from core.
+/// Send shaping constants, all served from core. The decorrelator pair the
+/// sends run through is structural rather than tunable and lives in
+/// `routing::decorrelate`, so nothing about it appears here.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 pub struct SendParams {
     pub surround_bass_cutoff_hz: f64,
-    pub surround_haas_ms: (f64, f64),
-    pub height_haas_ms: (f64, f64),
-    pub diffuse_blend: f64,
     pub height_low_rolloff_hz: f64,
     pub height_low_rolloff_gain: f64,
     pub height_crossover_hz: f64,

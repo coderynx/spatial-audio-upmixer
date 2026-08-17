@@ -23,6 +23,7 @@ use crate::stream::master::{
 use crate::stream::meters::{Level, Meters};
 use crate::stream::output::OutputStage;
 use crate::stream::params::EngineParams;
+use crate::stream::params::SendShape;
 use crate::stream::routing::{shape_index, LfeBus, StemRouteState};
 use crate::stream::state::{OnePole, StreamingCompressor};
 
@@ -349,15 +350,38 @@ impl PreviewEngine {
                 right = eq_r.process(&right);
             }
 
+            let mut needs_surround = false;
+            let mut needs_height = false;
+            for (name, weight) in &sp.routing {
+                let Some(channel) = self.params.speaker_index(name).filter(|_| *weight != 0.0)
+                else {
+                    continue;
+                };
+                match self.params.shapes[channel] {
+                    SendShape::SurroundLeft | SendShape::SurroundRight => needs_surround = true,
+                    SendShape::HeightLeft | SendShape::HeightRight => needs_height = true,
+                    _ => {}
+                }
+            }
+            route.process(&left, &right, needs_surround, needs_height);
+
             for i in 0..count {
                 let gain = smoother.tick(target_gain);
-                let shaped = route.tick(left[i], right[i]);
+                let shaped = [
+                    left[i],
+                    right[i],
+                    (left[i] + right[i]) * 0.5,
+                    route.send(0)[i],
+                    route.send(1)[i],
+                    route.send(2)[i],
+                    route.send(3)[i],
+                ];
                 for (name, weight) in &sp.routing {
                     if *weight == 0.0 {
                         continue;
                     }
                     if name == "LFE" {
-                        lfe_sum[i] += shaped[shape_index(super::params::SendShape::Mono)] * weight * gain;
+                        lfe_sum[i] += shaped[shape_index(SendShape::Mono)] * weight * gain;
                         continue;
                     }
                     let Some(channel) = self.params.speaker_index(name) else { continue };

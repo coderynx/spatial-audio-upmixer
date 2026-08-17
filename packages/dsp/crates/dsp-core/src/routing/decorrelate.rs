@@ -37,11 +37,19 @@ pub const VELVET_TAPS_PER_SIDE: usize = 30;
 /// Envelope ratio between successive taps, ~−27 dB by the end of the span.
 pub const VELVET_DECAY: f64 = 0.9;
 
-/// Default tap-set seed. Positions and signs are a random draw, and the draw
-/// matters: over 400k seeds the worst third-octave deviation of the pair
-/// ranges 2.5-16 dB, so this one is the best of that search rather than an
-/// arbitrary constant.
+/// Default tap-set seed, used by the surround sends. Positions and signs are a
+/// random draw, and the draw matters: over 400k seeds the worst third-octave
+/// deviation of the pair ranges 2.5-16 dB, so this one is the best of that
+/// search rather than an arbitrary constant.
 pub const VELVET_SEED: u64 = 260_797;
+
+/// Tap-set seed for the height sends. A second draw is what keeps a stem's
+/// surround and height sends decorrelated from each other, not only within
+/// each pair. Picked from the same 400k-seed search, scored on flatness but
+/// chosen for the cross term: its taps never land on a surround tap, so the
+/// two zone classes are exactly orthogonal (2.68 dB worst third-octave
+/// against the flattest candidate's 2.53 dB at a 0.12 cross product).
+pub const VELVET_SEED_HEIGHT: u64 = 18_861;
 
 /// Default wet fraction. Fully wet, by measurement: a dry component only
 /// re-correlates the pair (its correlation is exactly `1 - wet`) and, at every
@@ -83,10 +91,17 @@ impl VelvetFir {
     }
 }
 
-/// The streaming counterpart: one ring buffer, read once per tap.
+/// How many samples one pass over the ring handles. The ring holds the filter
+/// span plus this much, so a long block is filtered in several passes rather
+/// than from a ring large enough to lose cache locality.
+const CHUNK: usize = 256;
+
+/// The streaming counterpart: one ring buffer, read once per tap per block.
 ///
-/// Carries state across blocks like [`crate::stream::routing::DelayLine`], and
-/// agrees with [`VelvetFir::process`] sample for sample from a cold start.
+/// Carries state across blocks and agrees with [`VelvetFir::process`] sample
+/// for sample from a cold start. Taps are applied a whole block at a time:
+/// per sample, the masked random read into the ring costs more than the
+/// multiply it feeds, which the preview's quantum budget notices.
 pub struct VelvetLine {
     taps: Vec<(usize, f64)>,
     ring: Vec<f64>,
@@ -95,11 +110,10 @@ pub struct VelvetLine {
 
 impl VelvetLine {
     pub fn new(fir: &VelvetFir) -> Self {
-        // Power-of-two ring: the read index masks instead of dividing, which
-        // is 30 integer divisions per sample saved on the audio thread.
+        // Power-of-two ring: the read index masks instead of dividing.
         Self {
             taps: fir.taps.clone(),
-            ring: vec![0.0; (fir.span + 1).next_power_of_two()],
+            ring: vec![0.0; (fir.span + CHUNK + 1).next_power_of_two()],
             write: 0,
         }
     }
@@ -109,16 +123,33 @@ impl VelvetLine {
         self.write = 0;
     }
 
-    #[inline]
-    pub fn tick(&mut self, x: f64) -> f64 {
-        let mask = self.ring.len() - 1;
-        self.ring[self.write] = x;
-        let mut acc = 0.0;
-        for &(delay, gain) in &self.taps {
-            acc += gain * self.ring[(self.write.wrapping_sub(delay)) & mask];
+    /// Filter `signal` in place. Every read comes from the ring, which already
+    /// holds the block, so overwriting the caller's buffer is safe.
+    pub fn process(&mut self, signal: &mut [f64]) {
+        for chunk in signal.chunks_mut(CHUNK) {
+            self.process_chunk(chunk);
         }
-        self.write = (self.write + 1) & mask;
-        acc
+    }
+
+    fn process_chunk(&mut self, signal: &mut [f64]) {
+        let capacity = self.ring.len();
+        let mask = capacity - 1;
+        let n = signal.len();
+        for (i, x) in signal.iter().enumerate() {
+            self.ring[(self.write + i) & mask] = *x;
+        }
+        signal.fill(0.0);
+        for &(delay, gain) in &self.taps {
+            let start = (self.write + capacity - delay) & mask;
+            let head = (capacity - start).min(n);
+            for (o, r) in signal[..head].iter_mut().zip(&self.ring[start..start + head]) {
+                *o += gain * r;
+            }
+            for (o, r) in signal[head..].iter_mut().zip(&self.ring[..n - head]) {
+                *o += gain * r;
+            }
+        }
+        self.write = (self.write + n) & mask;
     }
 }
 
@@ -174,15 +205,20 @@ pub fn velvet_pair(
     (left, right)
 }
 
-/// The default pair, as both bindings and the streaming engine take it.
-pub fn velvet_pair_default(sample_rate: u32) -> (VelvetFir, VelvetFir) {
+/// A pair at the default length, density and wet fraction.
+pub fn velvet_pair_seeded(sample_rate: u32, seed: u64) -> (VelvetFir, VelvetFir) {
     velvet_pair(
         sample_rate,
         VELVET_LENGTH_MS,
         VELVET_TAPS_PER_SIDE,
-        VELVET_SEED,
+        seed,
         VELVET_WET,
     )
+}
+
+/// The surround-send pair, as both bindings and the streaming engine take it.
+pub fn velvet_pair_default(sample_rate: u32) -> (VelvetFir, VelvetFir) {
+    velvet_pair_seeded(sample_rate, VELVET_SEED)
 }
 
 #[cfg(test)]
@@ -368,17 +404,29 @@ mod tests {
         let x = noise(4096, 5);
         let want = left.process(&x);
 
-        let mut line = VelvetLine::new(&left);
-        let mut got = Vec::with_capacity(x.len());
-        for block in x.chunks(128) {
-            got.extend(block.iter().map(|v| line.tick(*v)));
-        }
-        for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
-            assert!((a - b).abs() < 1e-12, "sample {i}: {a} vs {b}");
+        // Ragged block sizes on purpose: one shorter than the internal chunk,
+        // one longer, so neither divides it.
+        for sizes in [[128, 128], [333, 999]] {
+            let mut line = VelvetLine::new(&left);
+            let mut got: Vec<f64> = Vec::with_capacity(x.len());
+            let mut rest = &x[..];
+            let mut size = sizes.iter().cycle();
+            while !rest.is_empty() {
+                let n = (*size.next().expect("size")).min(rest.len());
+                let mut block = rest[..n].to_vec();
+                line.process(&mut block);
+                got.extend(block);
+                rest = &rest[n..];
+            }
+            for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
+                assert!((a - b).abs() < 1e-12, "sample {i}: {a} vs {b}");
+            }
         }
 
-        line.reset();
-        assert_eq!(line.tick(1.0), left.taps()[0].1 * f64::from(left.taps()[0].0 == 0));
+        let mut line = VelvetLine::new(&left);
+        let mut impulse = vec![1.0, 0.0];
+        line.process(&mut impulse);
+        assert_eq!(impulse[0], left.taps()[0].1 * f64::from(left.taps()[0].0 == 0));
     }
 
     #[test]

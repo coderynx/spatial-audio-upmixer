@@ -56,9 +56,6 @@ fn params_json(with_master: bool) -> String {
         "shapes": ["left", "right", "surround_left", "mono"],
         "sends": {{
             "surround_bass_cutoff_hz": 250.0,
-            "surround_haas_ms": [31.0, 37.0],
-            "height_haas_ms": [23.0, 29.0],
-            "diffuse_blend": 0.55,
             "height_low_rolloff_hz": 150.0,
             "height_low_rolloff_gain": 0.15,
             "height_crossover_hz": 3000.0,

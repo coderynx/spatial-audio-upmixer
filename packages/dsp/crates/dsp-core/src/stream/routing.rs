@@ -1,65 +1,22 @@
 //! Streaming stem-to-speaker-bed routing.
 //!
 //! Mirrors `separation/stem_router.py::StemRouter.route` block by block: each
-//! shaped send carries the filter state and delay line its offline
+//! shaped send carries the filter state and decorrelator history its offline
 //! counterpart would have accumulated, so the two agree sample for sample.
 
 use crate::kernels::biquad::SosFilter;
 use crate::kernels::butter::{butter_sos, BandType};
+use crate::routing::decorrelate::{
+    velvet_pair_seeded, VelvetFir, VelvetLine, VELVET_SEED, VELVET_SEED_HEIGHT,
+};
 
 use super::conv::StreamingConvolver;
 use super::params::{SendParams, SendShape};
 
-/// Fixed-delay ring buffer for the Haas/diffusion sends.
-pub struct DelayLine {
-    buffer: Vec<f64>,
-    write: usize,
-}
-
-impl DelayLine {
-    pub fn new(delay_samples: usize) -> Self {
-        Self { buffer: vec![0.0; delay_samples.max(1)], write: 0 }
-    }
-
-    pub fn reset(&mut self) {
-        self.buffer.fill(0.0);
-        self.write = 0;
-    }
-
-    /// Change the delay length in place, preserving as much of the buffered
-    /// signal as still fits — a Haas-delay edit re-times without the silent
-    /// gap a fresh zeroed buffer would leave.
-    pub fn resize(&mut self, delay_samples: usize) {
-        let new_len = delay_samples.max(1);
-        if new_len == self.buffer.len() {
-            return;
-        }
-        let (tail, head) = self.buffer.split_at(self.write);
-        let ordered: Vec<f64> = head.iter().chain(tail.iter()).copied().collect();
-        let mut buffer = vec![0.0; new_len];
-        if new_len >= ordered.len() {
-            buffer[new_len - ordered.len()..].copy_from_slice(&ordered);
-        } else {
-            buffer.copy_from_slice(&ordered[ordered.len() - new_len..]);
-        }
-        self.buffer = buffer;
-        self.write = 0;
-    }
-
-    #[inline]
-    pub fn tick(&mut self, x: f64) -> f64 {
-        let out = self.buffer[self.write];
-        self.buffer[self.write] = x;
-        self.write = (self.write + 1) % self.buffer.len();
-        out
-    }
-}
-
-/// One shaped send: a filter chain, a delay line, and the diffusion blend.
+/// One shaped send: a filter chain and one side of a decorrelator pair.
 struct Send {
     filters: Vec<SosFilter>,
-    delay: DelayLine,
-    blend: f64,
+    velvet: VelvetLine,
     /// Elevation-EQ gains, when this send is a height send.
     elevation: Option<(f64, f64)>,
 }
@@ -69,33 +26,29 @@ impl Send {
         for f in &mut self.filters {
             f.reset();
         }
-        self.delay.reset();
+        self.velvet.reset();
     }
 
-    /// Re-derive a surround send's highpass and delay in place.
-    fn retune_surround(&mut self, sample_rate: u32, p: &SendParams, delay_ms: f64) {
+    /// Re-derive a surround send's highpass in place.
+    fn retune_surround(&mut self, sample_rate: u32, p: &SendParams) {
         let nyq = sample_rate as f64 / 2.0;
         let hp = butter_sos(2, p.surround_bass_cutoff_hz / nyq, BandType::High);
         self.filters[0].retune_flat(&hp);
-        self.delay.resize(delay_samples(sample_rate, delay_ms));
-        self.blend = p.diffuse_blend;
     }
 
-    /// Re-derive a height send's low-rolloff/crossover and delay in place.
-    fn retune_height(&mut self, sample_rate: u32, p: &SendParams, delay_ms: f64) {
+    /// Re-derive a height send's low-rolloff/crossover in place.
+    fn retune_height(&mut self, sample_rate: u32, p: &SendParams) {
         let nyq = sample_rate as f64 / 2.0;
         let lp = butter_sos(1, p.height_low_rolloff_hz / nyq, BandType::Low);
         let hp = butter_sos(2, p.height_crossover_hz / nyq, BandType::High);
         self.filters[0].retune_flat(&lp);
         self.filters[1].retune_flat(&hp);
-        self.delay.resize(delay_samples(sample_rate, delay_ms));
-        self.blend = p.diffuse_blend;
         self.elevation = Some((p.height_low_rolloff_gain, p.height_high_shelf_gain));
     }
 
     #[inline]
-    fn tick(&mut self, x: f64) -> f64 {
-        let shaped = match self.elevation {
+    fn shape(&mut self, x: f64) -> f64 {
+        match self.elevation {
             None => self.filters[0].tick(x),
             Some((low_gain, high_gain)) => {
                 let low = self.filters[0].tick(x);
@@ -103,14 +56,18 @@ impl Send {
                 let high = self.filters[1].tick(bass_shaped);
                 bass_shaped + high * (high_gain - 1.0)
             }
-        };
-        let delayed = self.delay.tick(shaped);
-        shaped * (1.0 - self.blend) + delayed * self.blend
+        }
     }
-}
 
-fn delay_samples(sample_rate: u32, delay_ms: f64) -> usize {
-    (sample_rate as f64 * delay_ms / 1000.0) as usize
+    fn process(&mut self, input: &[f64], out: &mut Vec<f64>) {
+        out.clear();
+        out.reserve(input.len());
+        for x in input {
+            let shaped = self.shape(*x);
+            out.push(shaped);
+        }
+        self.velvet.process(out);
+    }
 }
 
 /// Per-stem shaping state: the four sends plus the optional stem EQ.
@@ -118,6 +75,8 @@ pub struct StemRouteState {
     pub eq: Option<(StreamingConvolver, StreamingConvolver)>,
     surround: [Send; 2],
     height: [Send; 2],
+    /// Last block's shaped sends: surround L/R then height L/R.
+    shaped: [Vec<f64>; 4],
 }
 
 impl StemRouteState {
@@ -127,19 +86,20 @@ impl StemRouteState {
         let height_lp = butter_sos(1, p.height_low_rolloff_hz / nyq, BandType::Low);
         let height_hp = butter_sos(2, p.height_crossover_hz / nyq, BandType::High);
 
-        let surround_send = |delay_ms: f64| Send {
+        let (surround_l, surround_r) = velvet_pair_seeded(sample_rate, VELVET_SEED);
+        let (height_l, height_r) = velvet_pair_seeded(sample_rate, VELVET_SEED_HEIGHT);
+
+        let surround_send = |fir: &VelvetFir| Send {
             filters: vec![SosFilter::from_flat(&surround_hp)],
-            delay: DelayLine::new(delay_samples(sample_rate, delay_ms)),
-            blend: p.diffuse_blend,
+            velvet: VelvetLine::new(fir),
             elevation: None,
         };
-        let height_send = |delay_ms: f64| Send {
+        let height_send = |fir: &VelvetFir| Send {
             filters: vec![
                 SosFilter::from_flat(&height_lp),
                 SosFilter::from_flat(&height_hp),
             ],
-            delay: DelayLine::new(delay_samples(sample_rate, delay_ms)),
-            blend: p.diffuse_blend,
+            velvet: VelvetLine::new(fir),
             elevation: Some((p.height_low_rolloff_gain, p.height_high_shelf_gain)),
         };
 
@@ -150,8 +110,9 @@ impl StemRouteState {
                     StreamingConvolver::new(eq_fir.to_vec()),
                 )
             }),
-            surround: [surround_send(p.surround_haas_ms.0), surround_send(p.surround_haas_ms.1)],
-            height: [height_send(p.height_haas_ms.0), height_send(p.height_haas_ms.1)],
+            surround: [surround_send(&surround_l), surround_send(&surround_r)],
+            height: [height_send(&height_l), height_send(&height_r)],
+            shaped: Default::default(),
         }
     }
 
@@ -179,10 +140,12 @@ impl StemRouteState {
         eq_changed: bool,
     ) {
         if sends_changed {
-            self.surround[0].retune_surround(sample_rate, sends, sends.surround_haas_ms.0);
-            self.surround[1].retune_surround(sample_rate, sends, sends.surround_haas_ms.1);
-            self.height[0].retune_height(sample_rate, sends, sends.height_haas_ms.0);
-            self.height[1].retune_height(sample_rate, sends, sends.height_haas_ms.1);
+            for s in self.surround.iter_mut() {
+                s.retune_surround(sample_rate, sends);
+            }
+            for s in self.height.iter_mut() {
+                s.retune_height(sample_rate, sends);
+            }
         }
         if eq_changed {
             if eq_fir.is_empty() {
@@ -199,23 +162,42 @@ impl StemRouteState {
         }
     }
 
-    /// Shape one stereo sample into the seven signals a speaker can draw on.
+    /// Shape a whole block into the four decorrelated sends, readable through
+    /// [`Self::send`].
+    ///
+    /// A send no speaker draws from is skipped and reads back as the dry
+    /// signal, which is what `StemRouter.route`'s `needs_surround` /
+    /// `needs_height` guards produce offline. Its filters then start cold if
+    /// a later mix edit routes the stem there — the same cold start the
+    /// offline path takes on every render.
+    pub fn process(&mut self, left: &[f64], right: &[f64], surround: bool, height: bool) {
+        let dry = |source: &[f64], out: &mut Vec<f64>| {
+            out.clear();
+            out.extend_from_slice(source);
+        };
+        for (i, source) in [left, right].into_iter().enumerate() {
+            if surround {
+                self.surround[i].process(source, &mut self.shaped[i]);
+            } else {
+                dry(source, &mut self.shaped[i]);
+            }
+            if height {
+                self.height[i].process(source, &mut self.shaped[2 + i]);
+            } else {
+                dry(source, &mut self.shaped[2 + i]);
+            }
+        }
+    }
+
+    /// One shaped send of the block [`Self::process`] just filtered.
     #[inline]
-    pub fn tick(&mut self, left: f64, right: f64) -> [f64; 7] {
-        let mono = (left + right) * 0.5;
-        [
-            left,
-            right,
-            mono,
-            self.surround[0].tick(left),
-            self.surround[1].tick(right),
-            self.height[0].tick(left),
-            self.height[1].tick(right),
-        ]
+    pub fn send(&self, index: usize) -> &[f64] {
+        &self.shaped[index]
     }
 }
 
-/// Index into [`StemRouteState::tick`]'s output for a given shape.
+/// Index into the seven signals a speaker can draw on: the three dry shapes,
+/// then [`StemRouteState::send`]'s four, offset by three.
 pub fn shape_index(shape: SendShape) -> usize {
     match shape {
         SendShape::Left => 0,
@@ -272,9 +254,6 @@ mod tests {
     fn send_params() -> SendParams {
         SendParams {
             surround_bass_cutoff_hz: 250.0,
-            surround_haas_ms: (31.0, 37.0),
-            height_haas_ms: (23.0, 29.0),
-            diffuse_blend: 0.55,
             height_low_rolloff_hz: 150.0,
             height_low_rolloff_gain: 0.15,
             height_crossover_hz: 3000.0,
@@ -285,55 +264,83 @@ mod tests {
         }
     }
 
-    #[test]
-    fn delay_line_holds_a_sample_for_its_whole_length() {
-        let mut d = DelayLine::new(3);
-        assert_eq!(d.tick(1.0), 0.0);
-        assert_eq!(d.tick(0.0), 0.0);
-        assert_eq!(d.tick(0.0), 0.0);
-        assert_eq!(d.tick(0.0), 1.0);
+    /// Run a signal through both channels of a route in uneven blocks and
+    /// return the four shaped sends, concatenated.
+    fn blocked(state: &mut StemRouteState, signal: &[f64]) -> [Vec<f64>; 4] {
+        let mut out: [Vec<f64>; 4] = Default::default();
+        let mut rest = signal;
+        for size in [333usize, 999, 128].iter().cycle() {
+            if rest.is_empty() {
+                break;
+            }
+            let n = (*size).min(rest.len());
+            state.process(&rest[..n], &rest[..n], true, true);
+            for (index, side) in out.iter_mut().enumerate() {
+                side.extend_from_slice(state.send(index));
+            }
+            rest = &rest[n..];
+        }
+        out
     }
 
     #[test]
-    fn surround_send_matches_the_offline_highpass_and_blend() {
+    fn surround_sends_match_the_offline_highpass_and_velvet_pair() {
         use crate::kernels::biquad::sosfilt;
-        use crate::routing::sends::diffuse_send;
 
         let sr = 48_000;
         let signal: Vec<f64> = (0..9600).map(|i| (i as f64 * 0.04).sin()).collect();
         let p = send_params();
 
+        // Blocked in ragged sizes: the shaped sends must not depend on how
+        // the render callback happens to chop the stream up.
         let mut state = StemRouteState::new(sr, &p, &[]);
-        let got: Vec<f64> = signal.iter().map(|v| state.tick(*v, 0.0)[3]).collect();
+        let got = blocked(&mut state, &signal);
 
         let hp = butter_sos(2, p.surround_bass_cutoff_hz / (sr as f64 / 2.0), BandType::High);
-        let want = diffuse_send(&sosfilt(&hp, &signal), sr, p.surround_haas_ms.0, p.diffuse_blend);
+        let shaped = sosfilt(&hp, &signal);
+        let (left, right) = velvet_pair_seeded(sr, VELVET_SEED);
 
-        for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
-            assert!((a - b).abs() < 1e-12, "sample {i}: {a} vs {b}");
+        for (index, fir) in [(3, left), (4, right)] {
+            let want = fir.process(&shaped);
+            for (i, (a, b)) in got[index - 3].iter().zip(want.iter()).enumerate() {
+                assert!((a - b).abs() < 1e-12, "shape {index} sample {i}: {a} vs {b}");
+            }
         }
     }
 
     #[test]
-    fn height_send_matches_the_offline_elevation_eq() {
-        use crate::routing::sends::{diffuse_send, elevation_eq};
+    fn height_sends_match_the_offline_elevation_eq_and_velvet_pair() {
+        use crate::routing::sends::elevation_eq;
 
         let sr = 48_000;
         let signal: Vec<f64> = (0..9600).map(|i| (i as f64 * 0.07).sin()).collect();
         let p = send_params();
 
         let mut state = StemRouteState::new(sr, &p, &[]);
-        let got: Vec<f64> = signal.iter().map(|v| state.tick(*v, 0.0)[5]).collect();
+        let got = blocked(&mut state, &signal);
 
         let shaped = elevation_eq(
             &signal, sr, p.height_low_rolloff_hz, p.height_low_rolloff_gain,
             p.height_crossover_hz, p.height_high_shelf_gain,
         );
-        let want = diffuse_send(&shaped, sr, p.height_haas_ms.0, p.diffuse_blend);
+        let (left, right) = velvet_pair_seeded(sr, VELVET_SEED_HEIGHT);
 
-        for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
-            assert!((a - b).abs() < 1e-12, "sample {i}: {a} vs {b}");
+        for (index, fir) in [(5, left), (6, right)] {
+            let want = fir.process(&shaped);
+            for (i, (a, b)) in got[index - 3].iter().zip(want.iter()).enumerate() {
+                assert!((a - b).abs() < 1e-12, "shape {index} sample {i}: {a} vs {b}");
+            }
         }
+    }
+
+    /// The surround and height sends of one stem must not be copies of each
+    /// other: they run different seeds, so a stem placed both around and
+    /// overhead does not image as one hard phantom between the two.
+    #[test]
+    fn surround_and_height_sends_use_different_tap_sets() {
+        let (surround, _) = velvet_pair_seeded(48_000, VELVET_SEED);
+        let (height, _) = velvet_pair_seeded(48_000, VELVET_SEED_HEIGHT);
+        assert_ne!(surround.taps(), height.taps());
     }
 
     #[test]

@@ -68,33 +68,6 @@ fn soft_limit<'py>(
     PyArray1::from_vec(py, out)
 }
 
-#[pyfunction]
-fn haas_decorrelate<'py>(
-    py: Python<'py>,
-    signal: PyReadonlyArray1<'py, f64>,
-    delay_samples: usize,
-) -> Bound<'py, PyArray1<f64>> {
-    let out = sends::haas_decorrelate(signal.as_array().to_vec().as_slice(), delay_samples);
-    PyArray1::from_vec(py, out)
-}
-
-#[pyfunction]
-fn diffuse_send<'py>(
-    py: Python<'py>,
-    signal: PyReadonlyArray1<'py, f64>,
-    sample_rate: u32,
-    delay_ms: f64,
-    blend: f64,
-) -> Bound<'py, PyArray1<f64>> {
-    let out = sends::diffuse_send(
-        signal.as_array().to_vec().as_slice(),
-        sample_rate,
-        delay_ms,
-        blend,
-    );
-    PyArray1::from_vec(py, out)
-}
-
 /// One side of the velvet-noise decorrelator pair, applied to `signal`.
 ///
 /// `side` is `"left"` or `"right"`; both sides of a channel pair must come
@@ -151,13 +124,12 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(itu_downmix_stereo, m)?)?;
     m.add_function(wrap_pyfunction!(itu_downmix_mono, m)?)?;
     m.add_function(wrap_pyfunction!(soft_limit, m)?)?;
-    m.add_function(wrap_pyfunction!(haas_decorrelate, m)?)?;
-    m.add_function(wrap_pyfunction!(diffuse_send, m)?)?;
     m.add_function(wrap_pyfunction!(velvet_pair_send, m)?)?;
     m.add_function(wrap_pyfunction!(elevation_eq, m)?)?;
     m.add("VELVET_LENGTH_MS", decorrelate::VELVET_LENGTH_MS)?;
     m.add("VELVET_TAPS_PER_SIDE", decorrelate::VELVET_TAPS_PER_SIDE)?;
     m.add("VELVET_SEED", decorrelate::VELVET_SEED)?;
+    m.add("VELVET_SEED_HEIGHT", decorrelate::VELVET_SEED_HEIGHT)?;
     m.add("VELVET_WET", decorrelate::VELVET_WET)?;
     Ok(())
 }
