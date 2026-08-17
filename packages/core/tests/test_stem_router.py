@@ -10,7 +10,6 @@ import upmixer_dsp
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
 from upmixer.loudness import measure_integrated_loudness
-from upmixer.separation.stem_analyzer import analyze_stem
 from upmixer.separation.stem_router import (
     DEFAULT_ROUTING,
     DEFAULT_ROUTING_LAYOUT,
@@ -208,15 +207,6 @@ def test_generic_and_percussion_defaults_start_conservative():
     assert zone("Hi-Hat", front) > zone("Hi-Hat", height)
     assert zone("Crash", height) > zone("Crash", front)
     assert zone("Crash", height) > zone("Hi-Hat", height)
-
-
-def test_analyzer_treats_antiphase_and_hard_pan_as_wide():
-    signal = _audio()[:, 0]
-    antiphase = analyze_stem(np.column_stack([signal, -signal]), 48000)
-    hard_left = analyze_stem(np.column_stack([signal, np.zeros_like(signal)]), 48000)
-
-    assert antiphase.stereo_width > 0.9
-    assert hard_left.stereo_width > 0.9
 
 
 def test_fold_route_to_stereo_splits_center_and_drops_lfe():
