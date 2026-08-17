@@ -5,7 +5,7 @@ Cache structure on disk::
     {cache_dir}/
         {key}/
             metadata.json          # cache-key components for validation
-            Vocals.wav             # per-stem PCM_24 WAV
+            Vocals.wav             # per-stem float32 WAV
             Bass.wav
             Drums.wav
             Other.wav
@@ -37,7 +37,9 @@ Cache invalidation: any change to source metadata, inference plan, engine
 version, sample rate, preview window, or silence-skip parameters produces a
 cold miss.
 
-Stems are stored as PCM_24 WAV and loaded as float32 to bound pipeline RAM.
+Stems are stored as float32 WAV and loaded as float32 to bound pipeline RAM.
+Float, not PCM_24, because stems carry the source's true level: one separated
+from a clipped master exceeds 1.0 and would hard-clip on a fixed-point write.
 """
 from __future__ import annotations
 
@@ -60,7 +62,7 @@ _CACHE_SCHEMA = 3
 # output (architecture code, demix numerics, model registry). This — not a
 # third-party package version — is now what identifies "what produced this
 # cached audio."
-_ENGINE_VERSION = "upmixer-sep-2"
+_ENGINE_VERSION = "upmixer-sep-3"
 
 
 def _engine_version() -> str:
@@ -433,7 +435,7 @@ class StemCache:
             try:
                 sf.write(
                     str(temp_path), arr.astype(np.float32, copy=False), sample_rate,
-                    subtype="PCM_24",
+                    subtype="FLOAT",
                 )
                 os.replace(temp_path, wav_path)
             finally:

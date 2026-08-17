@@ -9,7 +9,7 @@ Directory layout::
 
     {stem_dir}/
         stems.json      # schema, stem_keys, sample_rate, source_size
-        Vocals.wav      # per-stem PCM_24 WAV
+        Vocals.wav      # per-stem float32 WAV
         Bass.wav
         Vocals__front.wav   # zone-tagged: '@' replaced by '__'
         ...
@@ -92,7 +92,7 @@ class PlainStemStore:
             wav_path = self._root / _stem_filename(stem_key)
             arr = audio if audio.ndim == 2 else audio[:, np.newaxis]
             temp_path = self._root / f".{wav_path.stem}.tmp.wav"
-            sf.write(str(temp_path), arr.astype(np.float32, copy=False), sample_rate, subtype="PCM_24")
+            sf.write(str(temp_path), arr.astype(np.float32, copy=False), sample_rate, subtype="FLOAT")
             os.replace(temp_path, wav_path)
 
         manifest = {

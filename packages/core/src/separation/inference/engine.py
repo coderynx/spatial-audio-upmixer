@@ -100,10 +100,14 @@ class SeparationEngine:
     def separate(self, audio_path: str) -> list[str]:
         """Separate ``audio_path``, writing one WAV per stem to output_dir.
 
+        Stems are written in the input file's level domain — the pre-demix
+        peak normalization is divided back out — so they sum to the input
+        rather than to an arbitrary per-stem peak.
+
         Returns the list of written file paths.
         """
         mix = audio_io.load_audio(audio_path, self._sample_rate)
-        mix = audio_io.normalize(mix)
+        mix, input_scale = audio_io.normalize(mix)
 
         started = time.monotonic()
         sources = self._demix_with_chunking(mix)
@@ -118,7 +122,7 @@ class SeparationEngine:
             path = audio_io.stem_output_path(
                 self._output_dir, audio_base, stem_name, self._model_filename
             )
-            audio_io.write_stem(path, stem_audio, self._sample_rate)
+            audio_io.write_stem(path, stem_audio / input_scale, self._sample_rate)
             paths.append(path)
         return paths
 

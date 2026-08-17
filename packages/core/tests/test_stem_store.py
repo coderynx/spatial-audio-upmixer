@@ -42,6 +42,18 @@ def test_load_writes_no_hash_subdirectory(tmp_path):
     assert len(entries) == 3
 
 
+def test_above_unity_stem_is_not_clipped(tmp_path):
+    # Stems carry the source's true level, so one separated from a clipped
+    # master exceeds 1.0 — a fixed-point subtype would hard-clip it here.
+    peaks = np.array([1.4, -1.25], dtype=np.float32)
+    stems = {"Vocals": np.column_stack([peaks, peaks])}
+    store = PlainStemStore(str(tmp_path))
+    store.write(stems, 44100)
+
+    loaded, _ = store.load()
+    np.testing.assert_allclose(loaded["Vocals"], stems["Vocals"], atol=1e-6)
+
+
 def test_write_replaces_previous_contents(tmp_path):
     store = PlainStemStore(str(tmp_path))
     store.write({"Vocals": np.zeros((100, 2), dtype=np.float32)}, 44100)

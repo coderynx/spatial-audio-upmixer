@@ -2,8 +2,9 @@
 
 Loading mirrors the mix-preparation step of MSST-family inference: librosa
 loads and resamples to the target sample rate, mono is duplicated to stereo.
-Writing peak-normalizes before saving, matching the normalization applied
-both before demix and again on each output stem.
+The mix is peak-normalized before demix because the models are trained that
+way; :func:`normalize` reports the scale it applied so the caller can undo it
+on the stems, keeping the written stems in the input's level domain.
 """
 from __future__ import annotations
 
@@ -23,12 +24,17 @@ def load_audio(path: str, sample_rate: int) -> np.ndarray:
     return np.asarray(mix, dtype=np.float32)
 
 
-def normalize(wave: np.ndarray, max_peak: float = 0.9) -> np.ndarray:
-    """Peak down-scale ``wave`` to ``max_peak`` if it exceeds it (no up-scale)."""
+def normalize(wave: np.ndarray, max_peak: float = 0.9) -> tuple[np.ndarray, float]:
+    """Peak down-scale ``wave`` to ``max_peak`` if it exceeds it (no up-scale).
+
+    Returns ``(scaled_wave, scale)``; ``scale`` is 1.0 when no down-scale was
+    needed. Divide by ``scale`` to return audio to the input's level domain.
+    """
     maxv = np.abs(wave).max()
     if maxv > max_peak:
-        return wave * (max_peak / maxv)
-    return wave
+        scale = max_peak / maxv
+        return wave * scale, scale
+    return wave, 1.0
 
 
 def sanitize_filename_part(text: str) -> str:
@@ -58,5 +64,4 @@ def stem_output_path(
 
 def write_stem(path: str, stem: np.ndarray, sample_rate: int) -> None:
     """Write a ``(2, n_samples)`` stem array to ``path`` as a float32 WAV."""
-    normalized = normalize(stem)
-    sf.write(path, normalized.T, sample_rate, subtype="FLOAT")
+    sf.write(path, stem.T, sample_rate, subtype="FLOAT")
