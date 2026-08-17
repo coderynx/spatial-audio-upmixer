@@ -59,7 +59,7 @@ deferred improvements are now planned as phases 8–11:
 |-------|------|-------------|
 | 8 | `phase8_d33_rebaseline.md` | Close parity ledger D33 (mid-bass decorrelation over the worklet budget) and re-baseline the measurement kit — phases 3–5 made the phase 0 tables stale. Gate for 9–11. **Done** — see `phase8_report.md` and `phase8_baseline.md`. |
 | 9 | `phase9_loudness_renorm.md` | BS.1770-weighted energy renormalization in `StemRouter.route` and `_normalize_to_source`; measurement-gated, may close as "within tolerance". **Done** — offsets were real (4.66 LU worst spread) and the fix shipped; see `phase9_report.md`. |
-| 10 | `phase10_mdap_panner.md` | MDAP panner replacing the raised-cosine spread panner behind the unchanged `StemPlacement` model — triplet-confined point placements, direction-independent spread. |
+| 10 | `phase10_mdap_panner.md` | MDAP panner replacing the raised-cosine spread panner behind the unchanged `StemPlacement` model — triplet-confined point placements, direction-independent spread. **Done** — width response is 1.7-6x flatter across azimuth and the preview's duplicate panner is gone (ledger D34); the preset A/B listening pass is still outstanding, see `phase10_report.md` §8. |
 | 11 | `phase11_content_aware_routing.md` | Roadmap 4.1: archaeology gate on the dead stem-analyzer modules, then revive (transient/sustain send split, default-off) or delete. |
 
 ## Ground rules for every phase
@@ -69,8 +69,8 @@ deferred improvements are now planned as phases 8–11:
   boundaries (web/CLI consume only core's public API; no quality logic in
   the web layer) all apply.
 - `uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q`
-  must pass before and after every phase (baseline: 1110 passed /
-  31 deselected as of 2026-08-17, phase 8). Phases touching `apps/web` also run
+  must pass before and after every phase (baseline: 1133 passed /
+  34 deselected as of 2026-08-17, phase 10). Phases touching `apps/web` also run
   `npm test` and `npm run build` there.
 - **Preview/export parity is a hard constraint.** Phase 3 retired the
   surround/height send constants (`SURROUND_HAAS_DELAY_MS_*`,

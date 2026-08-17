@@ -47,7 +47,7 @@ Every stage below is one function, called from both sides:
 |---|---|---|---|
 | Per-stem EQ | `spatial`/`kernels::fir_design` | `separation/stem_eq.py` | `stream::routing` |
 | Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate}` | `separation/stem_router.py` | `stream::routing` |
-| Scene position → routing | `routing::scene` | `apps/api/.../routing.py` | served with the project |
+| Scene position → routing | `separation/stem_panner.py` | `apps/api/.../routing.py` | served with the project |
 | Reference match | `match_reference::{spectrum,curve}` | `mastering/match_reference/` | `stream::master` |
 | Spectral EQ | `mastering::eq` | `mastering/eq.py` | `stream::master` |
 | Bus compression | `mastering::compressor` | `mastering/compressor.py` | `stream::master` |
@@ -58,6 +58,13 @@ Every stage below is one function, called from both sides:
 | Voicing chain | `spatial::voicing` | `binaural/voicing.py` | `stream::output` |
 | Crosstalk (transaural) | `spatial::xtc` | `crosstalk/renderer.py` | `stream::output` |
 | BS.775 stereo downmix | `spatial::downmix` | `utils.py` | `stream::output` |
+
+Placement panning is the one stage with no Rust half, and needs none: it turns
+a placement into a gain map once, per stem, before any audio is touched. Both
+sides consume the same map — the export from `preset_routing`, the preview from
+the project payload — so the panner is shared by *being* the only one, not by
+being ported. Nothing in `packages/dsp` or the worklet knows what a placement
+is (ledger D34).
 
 The stem → bed row's LFE bus is one lowpass design in
 `kernels::butter::linkwitz_riley_lowpass_sos`, reached as `upmixer_dsp.lfe_lowpass`
@@ -270,4 +277,5 @@ or that the port itself resolved.
 | D31 | Mid-bass decorrelation's zero-phase band split truncated at the unifier's 100 ms horizon, making the preview's output depend on render block size at ~1e-8. | Fixed before shipping: the stage carries its own horizon, sized from the band-pass's measured impulse response — 300 ms while both passes were truncated, 200 ms since D33 made the forward pass exact (measured 5e-12 against the offline pass, where 100 ms gives 1.3e-6). Covered by `stream_equivalence.rs`. |
 | D32 | Per-stem rebalance gain was not the same operation on both sides: the export path's `StemRebalancer` applied `tanh(x/0.95)*0.95` to the whole stem whenever a boost exceeded +3 dB, while the preview (`stream::engine`) applied `rebalance_db` as pure smoothed linear gain. Any fader past +3 dB in the mixer previewed clean and exported with odd-harmonic distortion (−48.8 dB THD on a −20 dBFS sine at +6 dB, −10.9 dB at +12 dB on a hot stem). | Fixed by deleting the tanh stage: both sides are now linear gain, and overload protection stays where it already was, on the mastering chain's look-ahead true-peak limiter over the routed bed. `test_stem_rebalance.py::test_large_boost_is_exactly_linear` / `::test_large_boost_thd_at_numerical_floor` pin it. |
 | D33 | The committed `apps/web/public/wasm/upmixer_dsp.wasm` was last rebuilt at `8da41d5`, two commits before `4548970` added mid-bass decorrelation — so the preview has been running an engine without that stage while the export applies it, the §1 build-provenance risk realized. Rebuilding the artifact also re-opens the §4 budget: with `decorrelate: 1` the current engine benches mean 0.72x / p99 2.6x / worst 2.8x of the deadline against budgets of 0.4x / 1.0x / 1.5x. | Fixed. The artifact was rebuilt in the phase 3 commit; the budget overrun that exposed is closed by `stream::band::RollingBand`, which gives both zero-phase band splits the D25/D26 treatment. The forward pass now carries its state, so each sample is filtered once instead of re-filtered per block, and the anticausal backward pass — the one part that genuinely needs a warm-up — is computed a chunk at a time and sliced across the renders that consume the previous chunk, so no quantum pays for a whole warm-up. With `decorrelate: 1` the same worst case benches **mean 0.28x / p99 0.69x / worst 1.20x** against 0.4x / 1.0x / 1.5x; every `bench:engine` case passes, including the two measurement cases that were over p99 with the stage switched off. |
+| D34 | `apps/web/src/lib/spatial.ts` carried `routingFromAzimuthElevation`, a hand-port of `placement_route` for scene-positioned stems with no resolved routing yet — a second implementation of a panning law, in the layer that is meant to hold no DSP. It tracked the raised-cosine panner; the moment phase 10 replaced that panner it would have previewed a placement the export cannot produce. | Fixed by deleting it, along with the `speakerAzimuthElevation`/`positionToAzimuthElevation` helpers that existed only to feed it. Routing reaches the preview only as maps the core computed (`routing_for_scene` → project payload); a stem with none resolved yet gets an empty map, as one with no scene position already did. |
 | D28 | The whole-programme measurement D27 introduced (§ P3) advanced only while paused and only from a `resume()`d `AudioContext`; a fresh context starts suspended and the worklet never registered its own progress callback, so the "calibrating loudness" UI could hang indefinitely with no feedback, and at best took minutes on an eight-minute track. | Fixed: the context resumes on init (with a pointer-gesture fallback for autoplay policy), the worklet's progress reaches the UI, and measurement runs in two stages — a fast excerpt pass clears the UI in seconds, then the exact whole-programme pass keeps refining the gain in the background (§ P3). |
