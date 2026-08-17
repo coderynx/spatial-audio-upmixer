@@ -505,6 +505,16 @@ to −1.6/−1.8 dB on Bass/Kick. That report re-measures §3 as a before/after 
 current tree, because phases 3–4 moved the in-band mains energy for send-heavy
 stems and §3's Other/Instrumental rows are stale by up to ~2 dB.
 
+Phase 6 (`docs/plans/mixing/phase6_report.md`) supersedes §1c's centre rows and
+corrects this report's "buys about 1 dB" verdict in two directions. The +0.97 dB
+here is an *energy* sum on an impulse; on a stereo-ish bed the passive-sum centre
+weighted the reference-position front sum **+2.63 dB** and over-weighted centred
+content in the BS.775 downmix by **+3.41 dB** — bigger than §1c suggested. But the
+branch turned out to be unreachable through `UpmixPipeline` (every input format
+wider than stereo already has C), so the fix protects direct library callers and
+the kit, not shipped files. The kit's build-up row is now measured against the
+input pair, since the derived fronts are a residual.
+
 Phase 4 (`docs/plans/mixing/phase4_report.md`) supersedes §2: heights are folded
 into the stereo downmix at `k_h = 1/√2`, so §2b/§2c's "loss" is now a
 before/after pair in the kit itself. Worst case `wide`/Crash **8.56 → 2.44 dB**,

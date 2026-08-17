@@ -321,6 +321,46 @@ two stereo paths now agree that heights are audible in stereo and differ only
 in the per-stem renormalization the render path applies afterwards. Measured
 residual per stem: `docs/plans/mixing/phase4_report.md`.
 
+### Deriving a missing centre (project convention, inverse of the 2/0 matrix)
+
+*(`MultichannelUpmixer._extract_center`, for a source that has FL/FR but no C.
+BS.775 defines the fold, not its inverse.)*
+
+The centre is extracted **subtractively**: a coherence- and pan-weighted
+fraction `w` of the mid signal `m = (FL + FR)/2` leaves the fronts and is
+carried by C, scaled by the reciprocal of the downmix centre coefficient:
+
+```
+C   = w·m / a₀          (a₀ = 0.707, so C = √2·w·m)
+FL' = FL − w·m
+FR' = FR − w·m
+```
+
+Two properties hold simultaneously, and only at this pairing:
+
+- **Fold-down identity.** `FL' + a₀·C = FL` exactly, so the 2/0 downmix of the
+  result is the input front pair — centred content is not counted twice.
+- **Energy identity.** For fully correlated fronts (`w = 1`), `|C|² =
+  |FL|² + |FR|²`: the front triple carries the input pair's energy.
+
+Requiring both fixes the extraction gain at 1.0 (full extraction). Any partial
+gain `g < 1` splits correlated content across three speakers and loses power —
+`g² + 2(1 − a₀g)² = 2` has `g = 1` as its only solution — which is why
+`center_extraction_gain` / `center_gain`, the stereo pipeline's partial-extraction
+knobs, do not apply on this path.
+
+The consequence to know: centred content now plays from one speaker at `√2·m`
+instead of two at `m` each, so its **coherent sum at the reference position is
+3 dB lower** than the passive-sum derivation gave. That is the
+power-preserving choice BS.775's `a₀ = 0.707` already encodes; the previous
+`C = a₀·m` *added* to unchanged fronts was a +2.6 dB build-up on centred
+content and a +3.4 dB over-weight in the downmix
+(`docs/plans/mixing/phase6_report.md` §2).
+
+A derived LFE takes the **original** `m`, not the extracted C: the residual
+fronts have their centred low end removed, and the LFE feed wants the full
+front content.
+
 ### 3/2 → 3/0 (5.1 to 3.0)
 
 ```
