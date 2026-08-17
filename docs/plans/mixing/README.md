@@ -49,16 +49,16 @@ validation; a phase must be green before the next starts.
 | 6 | `phase6_multichannel_center.md` | Replace the passive-sum derived center in `MultichannelUpmixer` with coherence-based extraction (subtractive). |
 | 7 | `phase7_elevation_eq_band.md` | Optional: retune the elevation EQ toward the ~8 kHz directional band (Blauert) instead of the broad 3 kHz shelf. |
 
-Deferred (not planned as phases; revisit after 0–5 ship and are heard):
+Phases 0–7 are done (see the `phase*_report.md` files; phase 7 shipped
+with the directional band at gain 1.0 pending a listening A/B). The
+formerly deferred improvements are now planned as phases 8–11:
 
-- **MDAP/VBAP panner** replacing the raised-cosine spread panner in
-  `stem_placement.py` — largest redesign, benefits mostly the "stage"
-  preset's point placements.
-- **Content-aware / time-varying routing** — roadmap 4.1 in
-  `~/Projects/upmixer-knowledge/roadmap.md`; do its archaeology step first.
-- **Windowed / BS.1770-weighted energy renormalization** in
-  `StemRouter.route` and `_normalize_to_source` — interacts with the
-  null-test-audit findings; needs its own measurement pass.
+| Phase | File | Deliverable |
+|-------|------|-------------|
+| 8 | `phase8_d33_rebaseline.md` | Close parity ledger D33 (mid-bass decorrelation over the worklet budget) and re-baseline the measurement kit — phases 3–5 made the phase 0 tables stale. Gate for 9–11. |
+| 9 | `phase9_loudness_renorm.md` | BS.1770-weighted energy renormalization in `StemRouter.route` and `_normalize_to_source`; measurement-gated, may close as "within tolerance". |
+| 10 | `phase10_mdap_panner.md` | MDAP panner replacing the raised-cosine spread panner behind the unchanged `StemPlacement` model — triplet-confined point placements, direction-independent spread. |
+| 11 | `phase11_content_aware_routing.md` | Roadmap 4.1: archaeology gate on the dead stem-analyzer modules, then revive (transient/sustain send split, default-off) or delete. |
 
 ## Ground rules for every phase
 
@@ -67,8 +67,9 @@ Deferred (not planned as phases; revisit after 0–5 ship and are heard):
   boundaries (web/CLI consume only core's public API; no quality logic in
   the web layer) all apply.
 - `uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q`
-  must pass before and after every phase (baseline: 846 tests). Phases
-  touching `apps/web` also run `npm test` and `npm run build` there.
+  must pass before and after every phase (baseline: 1107 passed /
+  31 deselected as of 2026-08-17). Phases touching `apps/web` also run
+  `npm test` and `npm run build` there.
 - **Preview/export parity is a hard constraint.** Phase 3 retired the
   surround/height send constants (`SURROUND_HAAS_DELAY_MS_*`,
   `DIFFUSE_SEND_BLEND`) — the decorrelator tap sets that replaced them are
@@ -84,7 +85,13 @@ Deferred (not planned as phases; revisit after 0–5 ship and are heard):
   gate the Rust side.
 - The preview worklet must stay inside its 2.67 ms/quantum budget
   (overrun = silence, not glitch). Any phase touching the streaming path
-  runs `npm run bench:engine` in `apps/web` and reports numbers.
+  runs `npm run bench:engine` in `apps/web` and reports numbers. Known
+  open violation: ledger D33 (mid-bass decorrelation) — phase 8 owns
+  closing it; until then bench failures attributable to D33 are
+  pre-existing, anything else is new.
+- Phases 9–11 cite the phase 8 baseline tables, not the phase 0 report —
+  phases 3–5 moved send energy and LFE level, so the phase 0 numbers are
+  stale for send-heavy stems.
 - Routing quality is not SDR-measurable. Every audible change validates
   with (a) the phase 0 measurement kit re-run, and (b) a short A/B
   listening note in the phase report (protocol:
