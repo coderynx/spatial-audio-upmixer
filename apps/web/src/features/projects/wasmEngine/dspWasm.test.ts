@@ -71,9 +71,6 @@ const PARAMS = {
   shapes: ["left", "right", "mono"],
   sends: {
     surround_bass_cutoff_hz: 250,
-    surround_haas_ms: [31, 37],
-    height_haas_ms: [23, 29],
-    diffuse_blend: 0.55,
     height_low_rolloff_hz: 150,
     height_low_rolloff_gain: 0.15,
     height_crossover_hz: 3000,

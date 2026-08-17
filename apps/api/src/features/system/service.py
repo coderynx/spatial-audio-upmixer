@@ -45,14 +45,8 @@ def engine_constants() -> dict[str, Any]:
     from upmixer.mastering.compressor import COMP_PROFILES
     from upmixer.mastering.limiter import _SAFETY_MARGIN_DB
     from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
-    from upmixer.separation.stem_router import (
-        HEIGHT_HAAS_DELAY_MS_L,
-        HEIGHT_HAAS_DELAY_MS_R,
-        SURROUND_HAAS_DELAY_MS_L,
-        SURROUND_HAAS_DELAY_MS_R,
-    )
     from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
-    from upmixer.utils import DIFFUSE_SEND_BLEND, ITU_CENTER_COEFF
+    from upmixer.utils import ITU_CENTER_COEFF
 
     cfg = UpmixConfig()
     return {
@@ -76,7 +70,6 @@ def engine_constants() -> dict[str, Any]:
         "loudness_max_gain_db": cfg.loudness_max_gain_db,
         "surround_downmix_coeff": cfg.surround_downmix_coeff,
         "itu_center_coeff": ITU_CENTER_COEFF,
-        "diffuse_send_blend": DIFFUSE_SEND_BLEND,
         # The shared DSP core encodes the ambisonic bus, so the browser must
         # not re-derive these angles from its own coordinate table.
         "speaker_directions": {
@@ -86,8 +79,6 @@ def engine_constants() -> dict[str, Any]:
             }
             for label, position in SPEAKER_AZIMUTH_ELEVATION.items()
         },
-        "surround_haas_ms": {"left": SURROUND_HAAS_DELAY_MS_L, "right": SURROUND_HAAS_DELAY_MS_R},
-        "height_haas_ms": {"left": HEIGHT_HAAS_DELAY_MS_L, "right": HEIGHT_HAAS_DELAY_MS_R},
         "comp_profiles": COMP_PROFILES,
         "bass_profiles": BASS_PROFILES,
         "bass_sub_cutoff_hz": SUB_CUTOFF_HZ,

@@ -131,8 +131,8 @@ function params(mode, decodeTaps) {
     lfe_index: CHANNELS.indexOf("LFE"),
     shapes: SHAPES,
     sends: {
-      surround_bass_cutoff_hz: 250, surround_haas_ms: [31, 37], height_haas_ms: [23, 29],
-      diffuse_blend: 0.55, height_low_rolloff_hz: 150, height_low_rolloff_gain: 0.15,
+      surround_bass_cutoff_hz: 250,
+      height_low_rolloff_hz: 150, height_low_rolloff_gain: 0.15,
       height_crossover_hz: 3000, height_high_shelf_gain: 1.5,
       lfe_cutoff_hz: 120, lfe_filter_order: 4, lfe_gain: 0.316,
     },

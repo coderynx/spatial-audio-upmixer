@@ -36,7 +36,6 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
   loudness_max_gain_db: 30.0,
   surround_downmix_coeff: 0.7071,
   itu_center_coeff: 1 / Math.sqrt(2),
-  diffuse_send_blend: 0.55,
   speaker_directions: {
     FL: { azimuth_rad: 0.5216182970963865, elevation_rad: 0.0 },
     FR: { azimuth_rad: -0.5216182970963865, elevation_rad: 0.0 },
@@ -50,8 +49,6 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
     TBL: { azimuth_rad: 2.356194490192345, elevation_rad: 0.6154797086703874 },
     TBR: { azimuth_rad: -2.356194490192345, elevation_rad: 0.6154797086703874 },
   },
-  surround_haas_ms: { left: 31, right: 37 },
-  height_haas_ms: { left: 23, right: 29 },
   comp_profiles: {
     transparent: { threshold_db: -22.0, ratio: 1.5, attack_ms: 30.0, release_ms: 300.0, knee_db: 9.0, makeup_db: 0.0, sidechain_hpf_hz: null },
     glue: { threshold_db: -18.0, ratio: 2.0, attack_ms: 20.0, release_ms: 200.0, knee_db: 6.0, makeup_db: 0.0, sidechain_hpf_hz: null },
