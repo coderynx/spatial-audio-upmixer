@@ -432,3 +432,63 @@ deselected** (`uv run pytest packages/core/tests apps/api/tests
 apps/cli/tests -q`) — the plan's 846 baseline is stale, the suite grew since
 that number was written; the four new tests are perf-marked and deselected by
 default.
+
+---
+
+# Phase 1 — Rebalancer soft clip removed (2026-08-17)
+
+`StemRebalancer.process` no longer soft-clips. The `gain_db > +3 dB` branch
+(`tanh(arr / 0.95) * 0.95`) and both its constants are gone; the 10 ms
+ramp-up and everything else about the stage are unchanged. Overload
+protection was never this stage's job — the mastering chain's look-ahead
+true-peak limiter runs on the routed bed in both pipelines.
+
+## Measured THD, before → after
+
+Third through fifth harmonic of a 441 Hz sine, measured past the ramp over
+whole cycles (no window, so no leakage floor):
+
+| Stem peak | Boost | Old THD | New THD |
+|---|---|---|---|
+| 0.1 (−20 dBFS) | +6 dB | 3.64e-03 (−48.8 dB) | 1.5e-16 |
+| 0.1 (−20 dBFS) | +12 dB | 1.40e-02 (−37.1 dB) | 1.9e-16 |
+| 0.3 | +6 dB | 3.01e-02 (−30.4 dB) | 2.1e-16 |
+| 0.9 | +12 dB | 2.86e-01 (−10.9 dB) | 2.0e-16 |
+
+The −20 dBFS rows are the point: tanh is nonlinear at *every* level, so a
+quiet stem was being distorted by a stage that existed to catch peaks.
+New THD is the float64 floor — the output is now exactly `input × 10^(dB/20)`
+past the ramp (`atol=1e-12`).
+
+## Parity result
+
+The preview never mirrored the clip. `stream::engine` applies
+`10^(rebalance_db/20) * route_scale` through a one-pole smoother
+(`engine/mod.rs`, `engine/analysis.rs`) with no saturator anywhere on the
+stem path; `tanh` in `dsp-core` appears only in `mastering::bass`'s exciter,
+`match_reference::curve`'s knee, and `spatial::downmix`'s soft limit. So this
+was a real, live parity gap for any mixer fader past +3 dB — preview clean,
+export distorted — and removing the export-side clip **closes** it rather
+than opening one. Recorded as **D32** in
+`docs/contracts/preview_export_parity.md`. No contract re-hash: the doc has
+no signature mechanism, and no `packages/dsp` code changed, so the golden and
+`stream_equivalence` suites are untouched (`stream_equivalence.rs` already
+covers `rebalance_db: 24.0`).
+
+## Validation
+
+`uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q` →
+**1085 passed, 31 deselected** (baseline 1083; net +2 from the test swap
+below). No `apps/web` or `packages/dsp` change, so `npm test` /
+`npm run build` / `npm run bench:engine` are not implicated.
+
+`test_stem_rebalance.py::test_large_boost_soft_clips` asserted the old
+behaviour and is replaced by three tests: exact linearity past the ramp at
++6 dB, THD at the numerical floor at +12 dB, and a +12 dB boost on a 0.9-peak
+stem passing through to 3.58 unclamped.
+
+## Note for later
+
+If per-stem overload control is ever wanted, it is a proper look-ahead
+limiter per stem, not a saturator. Not built — nothing currently asks for it,
+and the bed limiter already covers the delivery path.

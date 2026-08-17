@@ -13,9 +13,9 @@ Gain application
 ----------------
 * Gain converted to linear scale.
 * A 10 ms linear ramp-up at the start avoids clicks on high boosts.
-* If the boost exceeds +3 dB, a tanh soft-clipper is applied after gain
-  to catch transient overshoots: ``tanh(ch / threshold) * threshold``
-  with ``threshold = 0.95``.
+* No level ceiling is imposed here — overload protection belongs to the
+  mastering chain's look-ahead true-peak limiter, which runs on the routed
+  bed in both pipelines.
 
 Predefined profiles
 -------------------
@@ -55,9 +55,6 @@ REBALANCE_PROFILES: dict[str, dict[str, float]] = {
 }
 
 REBALANCE_PROFILE_NAMES: tuple[str, ...] = tuple(sorted(REBALANCE_PROFILES.keys()))
-
-_SOFT_CLIP_THRESHOLD: float = 0.95
-_BOOST_DB_CLIP_TRIGGER: float = 3.0
 
 
 class StemRebalancer:
@@ -113,10 +110,6 @@ class StemRebalancer:
             ramp = np.linspace(1.0, gain_lin, ramp_len)
             arr[:ramp_len] *= ramp[:, np.newaxis] if arr.ndim == 2 else ramp
             arr[ramp_len:] *= gain_lin
-
-            if gain_db > _BOOST_DB_CLIP_TRIGGER:
-                thr = _SOFT_CLIP_THRESHOLD
-                arr = np.tanh(arr / thr) * thr
 
             out[key] = arr
             _log.debug("  StemRebalancer: %s  %+.1f dB", key, gain_db)

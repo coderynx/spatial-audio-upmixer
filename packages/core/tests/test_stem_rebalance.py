@@ -124,14 +124,39 @@ class TestStemRebalancerGain:
         for arr in out.values():
             assert np.all(np.isfinite(arr)), "Non-finite values in output"
 
-    def test_large_boost_soft_clips(self):
-        """Boost > 3 dB should soft-clip via tanh — output must not exceed 1.0."""
+    def test_large_boost_is_exactly_linear(self):
+        """Past the ramp, a +6 dB boost is pure gain — no soft clip, no shaping."""
+        t = np.linspace(0, 1, 44100, endpoint=False)
+        sig = 0.1 * np.sin(2 * np.pi * 440 * t).astype(np.float64)
+        stems = {"Vocals": np.stack([sig, sig], axis=1)}
+        r = StemRebalancer({"Vocals": 6.0}, 44100)
+        out = r.process(stems)
+        ramp = 441
+        np.testing.assert_allclose(
+            out["Vocals"][ramp:], stems["Vocals"][ramp:] * 10.0 ** (6.0 / 20.0), atol=1e-12
+        )
+
+    def test_large_boost_thd_at_numerical_floor(self):
+        """A boosted sine gains no harmonics — the ramp is excluded from the FFT."""
+        n, sr = 44100, 44100
+        t = np.linspace(0, 1, n, endpoint=False)
+        sig = 0.1 * np.sin(2 * np.pi * 441 * t).astype(np.float64)
+        stems = {"Vocals": np.stack([sig, sig], axis=1)}
+        out = StemRebalancer({"Vocals": 12.0}, sr).process(stems)
+        tail = out["Vocals"][441:43_600 + 441, 0]  # whole 441 Hz cycles: no leakage
+        spec = np.abs(np.fft.rfft(tail))
+        cycles = 436
+        thd = np.sqrt(sum(spec[cycles * k] ** 2 for k in range(2, 6))) / spec[cycles]
+        assert thd < 1e-9, f"THD {thd:.2e} — boost is not linear"
+
+    def test_boost_past_full_scale_is_not_clamped(self):
+        """Overload protection belongs to the mastering limiter, not this stage."""
         t = np.linspace(0, 1, 44100, endpoint=False)
         sig = 0.9 * np.sin(2 * np.pi * 440 * t).astype(np.float64)
         stems = {"Vocals": np.stack([sig, sig], axis=1)}
-        r = StemRebalancer({"Vocals": 12.0}, 44100)  # big boost
-        out = r.process(stems)
-        assert np.max(np.abs(out["Vocals"])) <= 1.0, "Soft-clip did not limit output"
+        out = StemRebalancer({"Vocals": 12.0}, 44100).process(stems)
+        expected = np.max(np.abs(stems["Vocals"])) * 10.0 ** (12.0 / 20.0)
+        assert np.max(np.abs(out["Vocals"])) == pytest.approx(expected, rel=1e-12)
 
 
 class TestStemRebalancerZone:
