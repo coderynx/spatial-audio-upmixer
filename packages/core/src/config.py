@@ -52,7 +52,6 @@ class UpmixConfig:
     height_low_rolloff_hz: float = 150.0
     height_low_rolloff_gain: float = 0.15
     height_crossover_hz: float = 3000.0
-    height_transition_width_hz: float = 2000.0
     height_high_shelf_gain: float = 1.5
     height_directional_band_hz: float = 8000.0
     height_directional_band_gain: float = 1.0

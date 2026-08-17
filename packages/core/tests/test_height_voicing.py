@@ -74,26 +74,23 @@ def test_band_lifts_only_its_own_octave():
         assert abs(lift_db[np.argmin(np.abs(freqs - hz))]) < 0.5, hz
 
 
-def test_stft_mask_and_time_domain_send_share_the_band():
-    """The STFT height mask and the time-domain send must voice the band the
-    same, or the two routing paths put the elevation cue in different places.
+def test_stft_mask_and_time_domain_send_share_the_whole_curve():
+    """The STFT height mask and the time-domain send must voice heights the
+    same, or the stereo->multichannel path and the stem path disagree.
 
-    Only the band is compared: the mask's other two sections are sigmoid
-    approximations of their biquads and diverge by up to 5.4 dB at 50 Hz,
-    which predates this filter and is not what this test pins.
+    Magnitude only — the mask is a zero-phase per-bin multiply and the send's
+    sections are minimum-phase.
     """
-    cfg = UpmixConfig()
-    cfg.height_directional_band_gain = 1.6
-    flat = UpmixConfig()
-
     freqs = np.fft.rfftfreq(N, 1.0 / SR)
-    mask_lift = 20.0 * np.log10(
-        HeightFilter(cfg, SR, len(freqs)).mask / HeightFilter(flat, SR, len(freqs)).mask
-    )
-    kernel_lift = 20.0 * np.log10(_kernel_response(cfg, 1.6) / _kernel_response(cfg, 1.0))
-
     audible = (freqs >= 20.0) & (freqs <= 20_000.0)
-    error = _third_octave_means(
-        freqs[audible], np.abs(kernel_lift - mask_lift)[audible]
-    )
-    assert error.max() < 0.5, error.max()
+
+    for band_gain in (1.0, 1.6):
+        cfg = UpmixConfig()
+        cfg.height_directional_band_gain = band_gain
+        mask_db = 20.0 * np.log10(HeightFilter(cfg, SR, len(freqs)).mask)
+        kernel_db = 20.0 * np.log10(_kernel_response(cfg, band_gain))
+
+        error = _third_octave_means(
+            freqs[audible], np.abs(kernel_db - mask_db)[audible]
+        )
+        assert error.max() < 0.5, (band_gain, error.max())

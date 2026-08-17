@@ -34,9 +34,9 @@ class HeightFilter:
       3. Directional-band peak at directional_band_hz  (Blauert's "above" band)
     Midrange is preserved at unity — channels have body, not just thin air.
 
-    The first two sections are sigmoid approximations of the time-domain
-    send's biquads; the band is the send's own filter design, evaluated on
-    the bin grid, so the two paths' band voicing cannot drift.
+    The mask is the time-domain send's own three sections evaluated on the bin
+    grid, so the two paths cannot voice heights differently; magnitude only,
+    since a per-bin mask is zero-phase and the sections are minimum-phase.
     """
 
     def __init__(self, config: UpmixConfig, sample_rate: int, n_freq_bins: int):
@@ -48,7 +48,6 @@ class HeightFilter:
             low_rolloff_gain=config.height_low_rolloff_gain,
             high_shelf_hz=config.height_crossover_hz,
             high_shelf_gain=config.height_high_shelf_gain,
-            transition_width_hz=config.height_transition_width_hz,
             directional_band_hz=config.height_directional_band_hz,
             directional_band_gain=config.height_directional_band_gain,
         )
@@ -61,30 +60,21 @@ class HeightFilter:
         low_rolloff_gain: float,
         high_shelf_hz: float,
         high_shelf_gain: float,
-        transition_width_hz: float,
         directional_band_hz: float,
         directional_band_gain: float,
     ) -> np.ndarray:
         freqs = np.arange(n_freq_bins) * sample_rate / ((n_freq_bins - 1) * 2)
 
-        low_scale = low_rolloff_hz / 4.0
-        bass_mask = low_rolloff_gain + (1.0 - low_rolloff_gain) / (
-            1.0 + np.exp(-(freqs - low_rolloff_hz) / low_scale)
-        )
-
-        high_scale = transition_width_hz / 4.0
-        shelf_mask = 1.0 + (high_shelf_gain - 1.0) / (
-            1.0 + np.exp(-(freqs - high_shelf_hz) / high_scale)
-        )
-
-        band_mask = upmixer_dsp.elevation_band_response(
+        return upmixer_dsp.elevation_response(
             np.ascontiguousarray(freqs, dtype=np.float64),
             sample_rate,
+            low_rolloff_hz,
+            low_rolloff_gain,
+            high_shelf_hz,
+            high_shelf_gain,
             directional_band_hz,
             directional_band_gain,
         )
-
-        return bass_mask * shelf_mask * band_mask
 
     @property
     def mask(self) -> np.ndarray:
