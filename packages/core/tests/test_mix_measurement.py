@@ -4,8 +4,9 @@ Skipped by default. Run with:
     uv run pytest packages/core/tests/test_mix_measurement.py -m perf -s
 
 The ``-s`` run prints markdown tables for docs/plans/mixing/phase0_report.md.
-Four measurements: send frequency response, downmix fold-down comb / height
-loss, LFE energy and crossover phase, per-zone channel energy accounting.
+Five measurements: send frequency response, downmix fold-down comb / height
+loss, LFE energy and crossover phase, per-zone channel energy accounting,
+per-stem loudness offset after routing.
 
 Every chain measured here is LTI (no spatial plan, no signal-dependent stage
 except ``StemRouter.route``'s scalar renormalization), so transfer functions
@@ -19,9 +20,11 @@ from functools import lru_cache
 
 import numpy as np
 import pytest
+import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, INPUT_FORMAT_MAP, ChannelLabel
+from upmixer.loudness import CHANNEL_WEIGHT
 from upmixer.separation.stem_placement import BALANCED_PLACEMENTS, STEM_ROUTING_PRESET_NAMES
 from upmixer.separation.stem_router import StemRouter, build_stem_routing
 from upmixer.upmix.multichannel import MultichannelUpmixer
@@ -551,8 +554,11 @@ def test_channel_energy_accounting() -> None:
             ],
         )
         for stem, zones in table.items():
+            # Not 1.0 since phase 9: ``route_scale`` matches loudness, not raw
+            # energy, so a band-limited send zone lands below its input energy.
+            # Measurement 5 pins the level invariant.
             total = zones["front"] + zones["surround"] + zones["height"]
-            assert abs(total - 1.0) < 1e-6, f"{layout} {stem} renormalized to {total}"
+            assert 0.2 < total < 2.0, f"{layout} {stem} renormalized to {total}"
 
     rows = []
     for preset in STEM_ROUTING_PRESET_NAMES:
@@ -595,4 +601,96 @@ def test_channel_energy_accounting() -> None:
         "4c. Channels the preset does not request but the merged route keeps",
         ("Layout", "Preset", "worst stem", "max residual gain", "residual channels"),
         rows,
+    )
+
+
+_LFE_PLAYBACK_WEIGHT = 10.0 ** (10.0 / 10.0)
+
+
+def _routed_lkfs(
+    channels: dict[str, np.ndarray], layout: str, lfe_weight: float
+) -> float:
+    """BS.1770 loudness of a routed contribution, LFE weighted by *lfe_weight*."""
+    weights: list[float] = []
+    audio: list[np.ndarray] = []
+    for label in FORMAT_MAP[layout].channels:
+        weight = (
+            lfe_weight if label == ChannelLabel.LFE else CHANNEL_WEIGHT.get(label, 0.0)
+        )
+        if weight == 0.0 or label.value not in channels:
+            continue
+        weights.append(weight)
+        audio.append(np.ascontiguousarray(channels[label.value], dtype=np.float64))
+    if not weights:
+        return -70.0
+    return upmixer_dsp.integrated_loudness(weights, audio, _SR)
+
+
+@lru_cache(maxsize=None)
+def _loudness_offsets(layout: str, preset: str) -> dict[str, tuple[float, float]]:
+    """Per stem: (LU offset excluding LFE, LU offset with LFE at +10 dB)."""
+    signal = _pink()
+    reference = upmixer_dsp.integrated_loudness([1.0, 1.0], [signal, signal], _SR)
+    offsets: dict[str, tuple[float, float]] = {}
+    for stem in _STEMS:
+        channels = _route_stem(layout, preset, stem, signal)
+        offsets[stem] = (
+            _routed_lkfs(channels, layout, 0.0) - reference,
+            _routed_lkfs(channels, layout, _LFE_PLAYBACK_WEIGHT) - reference,
+        )
+    return offsets
+
+
+def test_routing_loudness_offset() -> None:
+    """Measurement 5 — per-stem loudness offset across ``route_scale``.
+
+    ``route_scale`` equalizes raw routed energy; BS.1770 weights channels and
+    K-weights the band, so a send-shaped stem can land off its input loudness.
+    """
+    rows = []
+    for layout in _LAYOUTS:
+        for preset in STEM_ROUTING_PRESET_NAMES:
+            offsets = _loudness_offsets(layout, preset)
+            plain = [value[0] for value in offsets.values()]
+            perceptual = [value[1] for value in offsets.values()]
+            worst = max(offsets, key=lambda stem: abs(offsets[stem][1]))
+            rows.append(
+                (
+                    layout,
+                    preset,
+                    f"{max(plain) - min(plain):.2f}",
+                    f"{max(perceptual) - min(perceptual):.2f}",
+                    f"{min(plain):+.2f} / {max(plain):+.2f}",
+                    f"{worst} {offsets[worst][1]:+.2f}",
+                )
+            )
+    _print_table(
+        "5a. Per-stem loudness offset after routing, spread within preset",
+        (
+            "Layout",
+            "Preset",
+            "spread, LFE excluded (LU)",
+            "spread, LFE +10 dB (LU)",
+            "min / max, LFE excluded (LU)",
+            "worst stem, LFE +10 dB",
+        ),
+        rows,
+    )
+
+    for layout in ("stereo", "7.1.4"):
+        offsets = _loudness_offsets(layout, "balanced")
+        _print_table(
+            f"5b. Per-stem loudness offset — balanced, {layout}",
+            ("Stem", "offset, LFE excluded (LU)", "offset, LFE +10 dB (LU)"),
+            [
+                (stem, f"{plain:+.2f}", f"{perceptual:+.2f}")
+                for stem, (plain, perceptual) in offsets.items()
+            ],
+        )
+
+    assert all(
+        abs(value[0]) < 12.0
+        for layout in _LAYOUTS
+        for preset in STEM_ROUTING_PRESET_NAMES
+        for value in _loudness_offsets(layout, preset).values()
     )
