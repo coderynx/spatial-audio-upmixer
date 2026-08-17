@@ -10,7 +10,7 @@ use upmixer_dsp_core::spatial::downmix::{self, DownmixRole};
 use crate::to_bed;
 
 /// Downmix roles cross the boundary as the channel names `packages/core`
-/// already uses; anything else is not part of a BS.775 downmix.
+/// already uses; anything else (LFE) has no downmix contribution.
 fn parse_role(name: &str) -> Option<DownmixRole> {
     Some(match name {
         "FL" => DownmixRole::Fl,
@@ -20,6 +20,10 @@ fn parse_role(name: &str) -> Option<DownmixRole> {
         "SR" => DownmixRole::Sr,
         "BL" => DownmixRole::Bl,
         "BR" => DownmixRole::Br,
+        "TFL" => DownmixRole::Tfl,
+        "TFR" => DownmixRole::Tfr,
+        "TBL" => DownmixRole::Tbl,
+        "TBR" => DownmixRole::Tbr,
         _ => return None,
     })
 }
@@ -38,10 +42,11 @@ fn itu_downmix_stereo<'py>(
     names: Vec<String>,
     channels: Vec<PyReadonlyArray1<'py, f64>>,
     surround_coeff: f64,
+    height_coeff: f64,
 ) -> (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>) {
     let bed = to_bed(channels);
     let inputs = downmix_inputs(&names, &bed);
-    let (left, right) = downmix::itu_downmix_stereo(&inputs, surround_coeff);
+    let (left, right) = downmix::itu_downmix_stereo(&inputs, surround_coeff, height_coeff);
     (PyArray1::from_vec(py, left), PyArray1::from_vec(py, right))
 }
 
@@ -51,10 +56,11 @@ fn itu_downmix_mono<'py>(
     names: Vec<String>,
     channels: Vec<PyReadonlyArray1<'py, f64>>,
     surround_coeff: f64,
+    height_coeff: f64,
 ) -> Bound<'py, PyArray1<f64>> {
     let bed = to_bed(channels);
     let inputs = downmix_inputs(&names, &bed);
-    PyArray1::from_vec(py, downmix::itu_downmix_mono(&inputs, surround_coeff))
+    PyArray1::from_vec(py, downmix::itu_downmix_mono(&inputs, surround_coeff, height_coeff))
 }
 
 #[pyfunction]

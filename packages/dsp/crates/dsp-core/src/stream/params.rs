@@ -28,7 +28,7 @@ pub struct SpeakerParams {
     pub elevation_rad: f64,
     /// Gain for the channel's group (centre, surround, back, height).
     pub group_gain: f64,
-    /// BS.775 stereo-downmix contribution; absent for height channels and LFE.
+    /// Stereo-downmix contribution; absent for LFE.
     #[serde(default)]
     pub downmix: Option<(f64, f64)>,
 }

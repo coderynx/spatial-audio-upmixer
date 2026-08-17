@@ -124,15 +124,18 @@ def preview_slice(
     return audio[start:end], start / sr, end / sr
 
 
-_DOWNMIX_SOURCES = ("FL", "FR", "C", "SL", "SR", "BL", "BR")
+_DOWNMIX_SOURCES = (
+    "FL", "FR", "C", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR",
+)
 
 
 def _downmix_sources(
     channels: dict[str, np.ndarray],
 ) -> tuple[list[str], list[np.ndarray]]:
-    """Select the channels a BS.775 downmix draws from, in a fixed order.
+    """Select the channels a stereo/mono downmix draws from, in a fixed order.
 
-    LFE and height channels are excluded by the standard.
+    LFE is excluded; heights fold in by project convention — see
+    docs/standards/spatial_layouts_bs775_bs2051.md.
     """
     present = [name for name in _DOWNMIX_SOURCES if name in channels]
     return present, [
@@ -143,19 +146,24 @@ def _downmix_sources(
 def itu_downmix_stereo(
     channels: dict[str, np.ndarray],
     surround_coeff: float = ITU_CENTER_COEFF,
+    height_coeff: float = ITU_CENTER_COEFF,
 ) -> tuple[np.ndarray, np.ndarray]:
     """ITU-R BS.775-4 Annex 4 Table 2 — multichannel to 2/0 stereo downmix.
 
-    L' = FL + (1/√2)·C + k_s·SL  [+ k_s·(1/√2)·BL if present]
-    R' = FR + (1/√2)·C + k_s·SR  [+ k_s·(1/√2)·BR if present]
+    L' = FL + (1/√2)·C + k_s·SL  [+ k_s·(1/√2)·BL] [+ k_h·(TFL + k_s·TBL)]
+    R' = FR + (1/√2)·C + k_s·SR  [+ k_s·(1/√2)·BR] [+ k_h·(TFR + k_s·TBR)]
 
-    LFE and height channels excluded per standard.
+    LFE is excluded per standard. BS.775 predates height channels; folding
+    them in at k_h is a project convention — see
+    docs/standards/spatial_layouts_bs775_bs2051.md.
     Back surrounds fold into side surrounds attenuated by (1/√2) so total
     surround energy matches a 3/2 source.
 
     Args:
-        channels:       Multichannel dict — any subset of FL, FR, C, SL, SR, BL, BR.
+        channels:       Multichannel dict — any subset of FL, FR, C, SL, SR, BL,
+                        BR, TFL, TFR, TBL, TBR.
         surround_coeff: k_s per Annex 8.  Valid values: 0.7071 (default), 0.5, 0.0.
+        height_coeff:   k_h, the height fold level. 0.0 drops heights.
 
     Returns:
         (L_out, R_out) 1D float64 arrays.
@@ -163,23 +171,29 @@ def itu_downmix_stereo(
     names, audio = _downmix_sources(channels)
     if not names:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
-    return upmixer_dsp.itu_downmix_stereo(names, audio, surround_coeff)
+    return upmixer_dsp.itu_downmix_stereo(names, audio, surround_coeff, height_coeff)
 
 
 def itu_downmix_mono(
     channels: dict[str, np.ndarray],
     surround_coeff: float = 0.5,
+    height_coeff: float = ITU_CENTER_COEFF,
 ) -> np.ndarray:
     """ITU-R BS.775-4 Annex 4 Table 2 — multichannel to 1/0 mono downmix.
 
-    M = (1/√2)·(FL + FR) + C + k_s·(SL + SR)
+    M = (1/√2)·(FL + FR + k_h·(TFL + TFR)) + C
+        + k_s·(SL + SR + (1/√2)·(BL + BR) + k_h·(TBL + TBR))
 
-    LFE and height channels excluded per standard.
+    LFE is excluded per standard; heights fold through the same front/surround
+    routes the stereo downmix uses, by project convention — see
+    docs/standards/spatial_layouts_bs775_bs2051.md.
     Default surround_coeff = 0.5 per Table 2 mono row.
 
     Args:
-        channels:       Multichannel dict — any subset of FL, FR, C, SL, SR, BL, BR.
+        channels:       Multichannel dict — any subset of FL, FR, C, SL, SR, BL,
+                        BR, TFL, TFR, TBL, TBR.
         surround_coeff: Surround mixing coefficient (default: 0.5 per Table 2 mono).
+        height_coeff:   k_h, the height fold level. 0.0 drops heights.
 
     Returns:
         M 1D float64 array.
@@ -187,4 +201,4 @@ def itu_downmix_mono(
     names, audio = _downmix_sources(channels)
     if not names:
         return np.zeros(0, dtype=np.float64)
-    return upmixer_dsp.itu_downmix_mono(names, audio, surround_coeff)
+    return upmixer_dsp.itu_downmix_mono(names, audio, surround_coeff, height_coeff)
