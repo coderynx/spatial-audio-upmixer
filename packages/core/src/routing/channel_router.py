@@ -1,4 +1,5 @@
 import numpy as np
+import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.decomposition.direct_ambient import SoftMatrixBatchResult, SoftMatrixResult
@@ -17,6 +18,8 @@ _rb("routing", {
     "center_attenuation":     ("config", "center_attenuation"),
     "height_low_rolloff_gain":("config", "height_low_rolloff_gain"),
     "height_high_shelf_gain": ("config", "height_high_shelf_gain"),
+    "height_directional_band_hz":   ("config", "height_directional_band_hz"),
+    "height_directional_band_gain": ("config", "height_directional_band_gain"),
     "content_mix_strength":   ("config", "content_mix_strength"),
     "content_hf_analysis_hz": ("config", "content_hf_analysis_hz"),
 })
@@ -26,10 +29,15 @@ del _rb
 class HeightFilter:
     """Psychoacoustic elevation shaping filter.
 
-    Two-section spectral curve:
+    Three-section spectral curve:
       1. Sub-bass rolloff below low_rolloff_hz  (height speakers don't couple to room bass)
       2. High-frequency lift above crossover_hz  (elevation HRTF cues, air, shimmer)
+      3. Directional-band peak at directional_band_hz  (Blauert's "above" band)
     Midrange is preserved at unity — channels have body, not just thin air.
+
+    The first two sections are sigmoid approximations of the time-domain
+    send's biquads; the band is the send's own filter design, evaluated on
+    the bin grid, so the two paths' band voicing cannot drift.
     """
 
     def __init__(self, config: UpmixConfig, sample_rate: int, n_freq_bins: int):
@@ -42,6 +50,8 @@ class HeightFilter:
             high_shelf_hz=config.height_crossover_hz,
             high_shelf_gain=config.height_high_shelf_gain,
             transition_width_hz=config.height_transition_width_hz,
+            directional_band_hz=config.height_directional_band_hz,
+            directional_band_gain=config.height_directional_band_gain,
         )
 
     @staticmethod
@@ -53,6 +63,8 @@ class HeightFilter:
         high_shelf_hz: float,
         high_shelf_gain: float,
         transition_width_hz: float,
+        directional_band_hz: float,
+        directional_band_gain: float,
     ) -> np.ndarray:
         freqs = np.arange(n_freq_bins) * sample_rate / ((n_freq_bins - 1) * 2)
 
@@ -66,7 +78,14 @@ class HeightFilter:
             1.0 + np.exp(-(freqs - high_shelf_hz) / high_scale)
         )
 
-        return bass_mask * shelf_mask
+        band_mask = upmixer_dsp.elevation_band_response(
+            np.ascontiguousarray(freqs, dtype=np.float64),
+            sample_rate,
+            directional_band_hz,
+            directional_band_gain,
+        )
+
+        return bass_mask * shelf_mask * band_mask
 
     @property
     def mask(self) -> np.ndarray:

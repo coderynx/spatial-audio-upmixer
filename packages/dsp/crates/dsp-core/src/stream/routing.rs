@@ -9,6 +9,7 @@ use crate::kernels::butter::{butter_sos, linkwitz_riley_lowpass_sos, BandType};
 use crate::routing::decorrelate::{
     velvet_pair_seeded, VelvetFir, VelvetLine, VELVET_SEED, VELVET_SEED_HEIGHT,
 };
+use crate::routing::sends::directional_band_sos;
 
 use super::conv::StreamingConvolver;
 use super::params::{SendParams, SendShape};
@@ -17,8 +18,9 @@ use super::params::{SendParams, SendShape};
 struct Send {
     filters: Vec<SosFilter>,
     velvet: VelvetLine,
-    /// Elevation-EQ gains, when this send is a height send.
-    elevation: Option<(f64, f64)>,
+    /// Elevation-EQ gains, when this send is a height send: low rolloff,
+    /// high shelf, directional band.
+    elevation: Option<(f64, f64, f64)>,
 }
 
 impl Send {
@@ -36,25 +38,40 @@ impl Send {
         self.filters[0].retune_flat(&hp);
     }
 
-    /// Re-derive a height send's low-rolloff/crossover in place.
+    /// Re-derive a height send's low-rolloff/crossover/band in place.
     fn retune_height(&mut self, sample_rate: u32, p: &SendParams) {
         let nyq = sample_rate as f64 / 2.0;
         let lp = butter_sos(1, p.height_low_rolloff_hz / nyq, BandType::Low);
         let hp = butter_sos(2, p.height_crossover_hz / nyq, BandType::High);
+        let band = directional_band_sos(
+            p.height_directional_band_hz,
+            sample_rate,
+            p.height_directional_band_gain,
+        );
         self.filters[0].retune_flat(&lp);
         self.filters[1].retune_flat(&hp);
-        self.elevation = Some((p.height_low_rolloff_gain, p.height_high_shelf_gain));
+        self.filters[2].retune_flat(&[band]);
+        self.elevation = Some((
+            p.height_low_rolloff_gain,
+            p.height_high_shelf_gain,
+            p.height_directional_band_gain,
+        ));
     }
 
     #[inline]
     fn shape(&mut self, x: f64) -> f64 {
         match self.elevation {
             None => self.filters[0].tick(x),
-            Some((low_gain, high_gain)) => {
+            Some((low_gain, high_gain, band_gain)) => {
                 let low = self.filters[0].tick(x);
                 let bass_shaped = x - low * (1.0 - low_gain);
                 let high = self.filters[1].tick(bass_shaped);
-                bass_shaped + high * (high_gain - 1.0)
+                let shelved = bass_shaped + high * (high_gain - 1.0);
+                if band_gain == 1.0 {
+                    shelved
+                } else {
+                    self.filters[2].tick(shelved)
+                }
             }
         }
     }
@@ -85,6 +102,11 @@ impl StemRouteState {
         let surround_hp = butter_sos(2, p.surround_bass_cutoff_hz / nyq, BandType::High);
         let height_lp = butter_sos(1, p.height_low_rolloff_hz / nyq, BandType::Low);
         let height_hp = butter_sos(2, p.height_crossover_hz / nyq, BandType::High);
+        let height_band = directional_band_sos(
+            p.height_directional_band_hz,
+            sample_rate,
+            p.height_directional_band_gain,
+        );
 
         let (surround_l, surround_r) = velvet_pair_seeded(sample_rate, VELVET_SEED);
         let (height_l, height_r) = velvet_pair_seeded(sample_rate, VELVET_SEED_HEIGHT);
@@ -98,9 +120,14 @@ impl StemRouteState {
             filters: vec![
                 SosFilter::from_flat(&height_lp),
                 SosFilter::from_flat(&height_hp),
+                SosFilter::from_flat(&[height_band]),
             ],
             velvet: VelvetLine::new(fir),
-            elevation: Some((p.height_low_rolloff_gain, p.height_high_shelf_gain)),
+            elevation: Some((
+                p.height_low_rolloff_gain,
+                p.height_high_shelf_gain,
+                p.height_directional_band_gain,
+            )),
         };
 
         Self {
@@ -257,6 +284,8 @@ mod tests {
             height_low_rolloff_gain: 0.15,
             height_crossover_hz: 3000.0,
             height_high_shelf_gain: 1.5,
+            height_directional_band_hz: 8000.0,
+            height_directional_band_gain: 1.0,
             lfe_cutoff_hz: 120.0,
             lfe_filter_order: 4,
             lfe_gain: 0.31622776601683794,
@@ -313,21 +342,26 @@ mod tests {
 
         let sr = 48_000;
         let signal: Vec<f64> = (0..9600).map(|i| (i as f64 * 0.07).sin()).collect();
-        let p = send_params();
 
-        let mut state = StemRouteState::new(sr, &p, &[]);
-        let got = blocked(&mut state, &signal);
+        // The default skips the band section, a lifted band runs it.
+        for band_gain in [1.0, 1.6] {
+            let p = SendParams { height_directional_band_gain: band_gain, ..send_params() };
 
-        let shaped = elevation_eq(
-            &signal, sr, p.height_low_rolloff_hz, p.height_low_rolloff_gain,
-            p.height_crossover_hz, p.height_high_shelf_gain,
-        );
-        let (left, right) = velvet_pair_seeded(sr, VELVET_SEED_HEIGHT);
+            let mut state = StemRouteState::new(sr, &p, &[]);
+            let got = blocked(&mut state, &signal);
 
-        for (index, fir) in [(5, left), (6, right)] {
-            let want = fir.process(&shaped);
-            for (i, (a, b)) in got[index - 3].iter().zip(want.iter()).enumerate() {
-                assert!((a - b).abs() < 1e-12, "shape {index} sample {i}: {a} vs {b}");
+            let shaped = elevation_eq(
+                &signal, sr, p.height_low_rolloff_hz, p.height_low_rolloff_gain,
+                p.height_crossover_hz, p.height_high_shelf_gain,
+                p.height_directional_band_hz, p.height_directional_band_gain,
+            );
+            let (left, right) = velvet_pair_seeded(sr, VELVET_SEED_HEIGHT);
+
+            for (index, fir) in [(5, left), (6, right)] {
+                let want = fir.process(&shaped);
+                for (i, (a, b)) in got[index - 3].iter().zip(want.iter()).enumerate() {
+                    assert!((a - b).abs() < 1e-12, "band {band_gain} shape {index} sample {i}: {a} vs {b}");
+                }
             }
         }
     }

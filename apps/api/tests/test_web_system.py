@@ -52,7 +52,8 @@ def test_configuration_serves_engine_constants(web_client):
     expected_keys = {
         "channel_group_gains", "lfe_gain", "lfe_lowpass_hz", "surround_bass_cutoff_hz",
         "height_low_rolloff_hz", "height_low_rolloff_gain", "height_crossover_hz",
-        "height_high_shelf_gain", "soft_limit_threshold", "limiter_lookahead_ms",
+        "height_high_shelf_gain", "height_directional_band_hz", "height_directional_band_gain",
+        "soft_limit_threshold", "limiter_lookahead_ms",
         "limiter_release_ms", "safety_margin_db", "loudness_max_gain_db", "surround_downmix_coeff",
         "height_downmix_coeff",
         "itu_center_coeff", "speaker_directions",

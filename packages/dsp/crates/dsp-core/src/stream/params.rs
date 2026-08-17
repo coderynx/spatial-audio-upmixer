@@ -56,6 +56,8 @@ pub struct SendParams {
     pub height_low_rolloff_gain: f64,
     pub height_crossover_hz: f64,
     pub height_high_shelf_gain: f64,
+    pub height_directional_band_hz: f64,
+    pub height_directional_band_gain: f64,
     pub lfe_cutoff_hz: f64,
     pub lfe_filter_order: usize,
     pub lfe_gain: f64,

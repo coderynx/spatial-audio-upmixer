@@ -199,6 +199,8 @@ mod tests {
                 "sends": {"surround_bass_cutoff_hz": 250.0,
                           "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
                           "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
+                          "height_directional_band_hz": 8000.0,
+                          "height_directional_band_gain": 1.0,
                           "lfe_cutoff_hz": 120.0, "lfe_filter_order": 4, "lfe_gain": 0.316},
                 "stems": [{"routing": [["FL", 0.9], ["FR", 0.9]], "rebalance_db": 0.0,
                            "enabled": true, "eq_fir": [], "route_scale": 1.0}],

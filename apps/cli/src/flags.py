@@ -37,6 +37,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.height_low_rolloff_gain = args.height_low_rolloff_gain
     if args.height_high_shelf_gain is not None:
         config.height_high_shelf_gain = args.height_high_shelf_gain
+    if args.height_directional_band_gain is not None:
+        config.height_directional_band_gain = args.height_directional_band_gain
     if args.fft_size is not None:
         config.fft_size = args.fft_size
         config.hop_size = args.fft_size // 4

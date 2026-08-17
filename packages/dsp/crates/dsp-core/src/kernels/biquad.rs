@@ -1,6 +1,8 @@
 //! Second-order-section filtering matching `scipy.signal.sosfilt` /
 //! `lfilter` (transposed direct form II) and `sosfilt_zi`.
 
+use num_complex::Complex64;
+
 /// One second-order section, `[b0, b1, b2, a0, a1, a2]` with `a0` normalized
 /// to 1, plus its two delay registers so a caller can stream across blocks.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,6 +116,33 @@ impl SosFilter {
             *v = self.tick(*v);
         }
     }
+}
+
+/// RBJ Audio-EQ-Cookbook peaking filter, one section, `wn` normalized to
+/// Nyquist and `gain` a linear amplitude at the centre.
+pub fn peaking_sos(wn: f64, q: f64, gain: f64) -> [f64; 6] {
+    let a = gain.sqrt();
+    let w0 = std::f64::consts::PI * wn;
+    let alpha = w0.sin() / (2.0 * q);
+    let cos_w0 = w0.cos();
+    [
+        1.0 + alpha * a,
+        -2.0 * cos_w0,
+        1.0 - alpha * a,
+        1.0 + alpha / a,
+        -2.0 * cos_w0,
+        1.0 - alpha / a,
+    ]
+}
+
+/// Magnitude response of one section at `wn` (normalized to Nyquist).
+pub fn sos_magnitude(section: &[f64; 6], wn: f64) -> f64 {
+    let w = std::f64::consts::PI * wn;
+    let z1 = Complex64::from_polar(1.0, -w);
+    let z2 = z1 * z1;
+    let num = section[0] + section[1] * z1 + section[2] * z2;
+    let den = section[3] + section[4] * z1 + section[5] * z2;
+    (num / den).norm()
 }
 
 /// `scipy.signal.sosfilt` on a fresh (zero-state) filter.

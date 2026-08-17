@@ -40,11 +40,14 @@ def elevation_eq(
     low_rolloff_gain: float = 0.15,
     high_shelf_hz: float = 3000.0,
     high_shelf_gain: float = 1.5,
+    directional_band_hz: float = 8000.0,
+    directional_band_gain: float = 1.0,
 ) -> np.ndarray:
-    """Elevation EQ: sub-bass rolloff + HF presence lift.
+    """Elevation EQ: sub-bass rolloff, HF presence lift, directional band.
 
     Mirrors the HRTF elevation cue: attenuate below low_rolloff_hz,
-    boost above high_shelf_hz. Used for height channel signals.
+    boost above high_shelf_hz, then lift Blauert's "above" band at
+    directional_band_hz. Used for height channel signals.
 
     Moved from upmixer.upmix.multichannel so the stem pipeline can
     reuse it without a circular import.
@@ -56,6 +59,8 @@ def elevation_eq(
         low_rolloff_gain,
         high_shelf_hz,
         high_shelf_gain,
+        directional_band_hz,
+        directional_band_gain,
     )
 
 

@@ -131,12 +131,15 @@ export type ChannelGroupGains = { center: number; surround: number; back: number
 
 /** upmixer/separation/stem_router.py height-send shaping (`_height_send`, same
  * formula as `upmixer/utils.py` `elevation_eq`): attenuate below `lowRolloffHz`
- * to `lowRolloffGain`, then boost above `crossoverHz` by `highShelfGain`. */
+ * to `lowRolloffGain`, boost above `crossoverHz` by `highShelfGain`, then lift
+ * the directional band at `directionalBandHz` by `directionalBandGain`. */
 export type HeightShaping = {
   lowRolloffHz: number;
   lowRolloffGain: number;
   crossoverHz: number;
   highShelfGain: number;
+  directionalBandHz: number;
+  directionalBandGain: number;
 };
 
 // --- Spatial Audio Engine voicing chain (ported from upmixer/binaural/) --
@@ -235,6 +238,8 @@ export type ServedEngineConstants = {
   height_low_rolloff_gain: number;
   height_crossover_hz: number;
   height_high_shelf_gain: number;
+  height_directional_band_hz: number;
+  height_directional_band_gain: number;
   soft_limit_threshold: number;
   limiter_lookahead_ms: number;
   limiter_release_ms: number;
@@ -347,6 +352,8 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
       lowRolloffGain: s.height_low_rolloff_gain,
       crossoverHz: s.height_crossover_hz,
       highShelfGain: s.height_high_shelf_gain,
+      directionalBandHz: s.height_directional_band_hz,
+      directionalBandGain: s.height_directional_band_gain,
     },
     softLimitThreshold: s.soft_limit_threshold,
     limiterLookaheadMs: s.limiter_lookahead_ms,

@@ -165,6 +165,8 @@ class MultichannelUpmixer:
                 low_rolloff_gain=cfg.height_low_rolloff_gain,
                 high_shelf_hz=cfg.height_crossover_hz,
                 high_shelf_gain=cfg.height_high_shelf_gain,
+                directional_band_hz=cfg.height_directional_band_hz,
+                directional_band_gain=cfg.height_directional_band_gain,
             )
 
             if "TFL" not in out:

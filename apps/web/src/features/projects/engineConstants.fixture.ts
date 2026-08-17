@@ -28,6 +28,8 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
   height_low_rolloff_hz: 150,
   height_low_rolloff_gain: 0.15,
   height_crossover_hz: 3000,
+  height_directional_band_hz: 8000,
+  height_directional_band_gain: 1,
   height_high_shelf_gain: 1.5,
   soft_limit_threshold: 0.95,
   limiter_lookahead_ms: 5.0,

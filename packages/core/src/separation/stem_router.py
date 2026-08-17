@@ -346,6 +346,8 @@ class StemRouter:
             self._config.height_low_rolloff_gain,
             self._config.height_crossover_hz,
             self._config.height_high_shelf_gain,
+            self._config.height_directional_band_hz,
+            self._config.height_directional_band_gain,
         )
 
     def _surround_send(self, signal: np.ndarray) -> np.ndarray:
