@@ -11,9 +11,9 @@ import numpy as np
 import soundfile as sf
 
 from upmixer.config import UpmixConfig
-from upmixer.separation.drum_remask import reproject_drum_pieces
+from upmixer.separation.remask import share_parent_residual
 from upmixer.separation.separator import StemSeparator
-from upmixer.separation.stem_plan import DRUM_SUB_STEMS, MODEL_DRUMS, SeparationPlan
+from upmixer.separation.stem_plan import MODEL_DRUMS, MODEL_PRIMARY, SeparationPlan
 
 _log = logging.getLogger("upmixer")
 
@@ -38,17 +38,46 @@ def cacheable_plan_stems(plan: SeparationPlan) -> frozenset[str]:
     )
 
 
-def _remask_drum_pieces(
-    loaded: dict[str, np.ndarray], parent_path: str, alpha: float
+def _remasks(cfg: UpmixConfig | None, model: str) -> bool:
+    """Whether *model*'s stage shares its parent's remainder over its outputs.
+
+    Both stages share out only the remainder their own split left: a full
+    re-projection measured worse on every stem metric for either of them
+    (docs/reports/primary_remask.md, docs/reports/drum_remask.md).
+    """
+    if cfg is None:
+        return False
+    if model == MODEL_DRUMS:
+        return cfg.stem_drum_remask
+    if model == MODEL_PRIMARY:
+        return cfg.stem_primary_remask
+    return False
+
+
+def _remask_stage(
+    loaded: dict[str, np.ndarray],
+    on_disk: dict[str, str],
+    parent_path: str,
+    names: frozenset[str],
 ) -> None:
-    """Re-derive the kit pieces in *loaded* from the parent Drums file, in place."""
-    pieces = {
-        name: audio for name, audio in loaded.items() if name in DRUM_SUB_STEMS
-    }
-    if not pieces:
+    """Share this stage's parent remainder over its outputs.
+
+    Children kept on disk for a later stage (the Drums stem feeding drumsep)
+    are rewritten in place, so the next stage separates and re-masks against
+    the re-masked parent and the two passes compose.
+    """
+    children = {name: audio for name, audio in loaded.items() if name in names}
+    for name in names & on_disk.keys():
+        audio, _ = sf.read(on_disk[name], dtype="float32", always_2d=True)
+        children[name] = audio
+    if not children:
         return
     parent, parent_sr = sf.read(parent_path, dtype="float32", always_2d=True)
-    loaded.update(reproject_drum_pieces(parent, pieces, parent_sr, alpha))
+    for name, audio in share_parent_residual(parent, children, parent_sr).items():
+        if name in on_disk:
+            sf.write(on_disk[name], audio, parent_sr, subtype="FLOAT")
+        else:
+            loaded[name] = audio
 
 
 def execute_plan(
@@ -70,8 +99,9 @@ def execute_plan(
     Args:
         stage_callback: Optional callable ``(stage_idx, n_tasks, model,
             output_stems)`` invoked before each model stage runs.
-        cfg: Configuration for the post-separation passes run here (drum
-            kit-piece re-masking). ``None`` runs none of them.
+        cfg: Configuration for the post-separation passes run here (parent
+            remainder sharing on the primary and drumsep stages). ``None``
+            runs none of them.
 
     Returns a dict of canonical_name → ndarray for all requested stems.
     """
@@ -128,21 +158,18 @@ def execute_plan(
                 raise
             on_disk[name] = stable_path
 
-        if (
-            cfg is not None
-            and cfg.stem_drum_remask
-            and task.model == MODEL_DRUMS
-            and task.input_source in all_disk
-        ):
+        if _remasks(cfg, task.model) and task.input_source in all_disk:
             _log.info(
-                "  [stage %d/%d] drum re-mask alpha=%.2f onto parent %s",
+                "  [stage %d/%d] sharing the remainder of parent %s",
                 stage_idx + 1,
                 n_tasks,
-                cfg.stem_drum_remask_alpha,
                 task.input_source,
             )
-            _remask_drum_pieces(
-                loaded, all_disk[task.input_source], cfg.stem_drum_remask_alpha
+            _remask_stage(
+                loaded,
+                on_disk,
+                all_disk[task.input_source],
+                task.output_stems,
             )
 
         _log.info(

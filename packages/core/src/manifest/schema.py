@@ -83,7 +83,7 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "stem_debleed":                 ("config", "stem_debleed"),
         "stem_debleed_model":           ("config", "stem_debleed_model"),
         "stem_drum_remask":             ("config", "stem_drum_remask"),
-        "stem_drum_remask_alpha":       ("config", "stem_drum_remask_alpha"),
+        "stem_primary_remask":          ("config", "stem_primary_remask"),
     },
 
     "format": {
@@ -266,7 +266,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "stem_debleed":                ("stem_debleed",                dict),
     "stem_debleed_model":          ("stem_debleed_model",          str),
     "stem_drum_remask":            ("stem_drum_remask",            bool),
-    "stem_drum_remask_alpha":      ("stem_drum_remask_alpha",      float),
+    "stem_primary_remask":         ("stem_primary_remask",         bool),
     "stem_source_anchor_strength": ("stem_source_anchor_strength", float),
     "downmix_output":              ("downmix_output_path",    str),
     "downmix_surround_coeff":      ("surround_downmix_coeff", float),

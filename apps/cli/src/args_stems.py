@@ -253,18 +253,20 @@ def add_stem_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         dest="stem_drum_remask",
         help=(
-            "Re-derive drum kit pieces as soft masks on the parent Drums stem "
-            "so they sum back to it (stem mode only). Default: enabled."
+            "Share the remainder the kit-piece split leaves on the parent "
+            "Drums stem back over the pieces, so they sum to it (stem mode "
+            "only). Default: enabled."
         ),
     )
 
     parser.add_argument(
-        "--stem-drum-remask-alpha",
-        type=float,
+        "--stem-primary-remask",
+        action=argparse.BooleanOptionalAction,
         default=None,
-        metavar="FLOAT",
+        dest="stem_primary_remask",
         help=(
-            "Drum re-mask exponent; below 1.0 shares overlapping bins more "
-            "evenly between kit pieces. Default: 1.0."
+            "Share the remainder the Bass/Drums/Guitar/Piano/Other split "
+            "leaves on its input instrumental back over those stems, so they "
+            "sum to it (stem mode only). Default: enabled."
         ),
     )

@@ -205,8 +205,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.stem_debleed_model = args.stem_debleed_model
     if args.stem_drum_remask is not None:
         config.stem_drum_remask = args.stem_drum_remask
-    if args.stem_drum_remask_alpha is not None:
-        config.stem_drum_remask_alpha = args.stem_drum_remask_alpha
+    if args.stem_primary_remask is not None:
+        config.stem_primary_remask = args.stem_primary_remask
     if args.stems is not None:
         from upmixer.separation.stem_plan import normalize_stems as _normalize
         raw = [s.strip() for s in args.stems.split(",") if s.strip()]

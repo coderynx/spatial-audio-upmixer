@@ -200,12 +200,12 @@ class UpmixConfig:
     stem_debleed: dict | None = None
     stem_debleed_model: str = "mel_band_roformer_bleed_suppressor_v1.ckpt"
 
-    # Re-derive drum kit pieces as soft masks on the parent Drums spectrogram
-    # instead of keeping the drumsep model's near-binary partition, which
-    # drops part of the 6-12 kHz cymbal region. alpha is the mask exponent:
-    # lower shares overlapping bins more evenly (less dullness, more bleed).
+    # Share the remainder each split leaves on its parent back over the
+    # children, so they sum to it. Full re-projection was measured worse on
+    # SDR, fullness and bleedless at every exponent for both stages
+    # (docs/reports/primary_remask.md, docs/reports/drum_remask.md).
     stem_drum_remask: bool = True
-    stem_drum_remask_alpha: float = 1.0
+    stem_primary_remask: bool = True
 
     def resolve_fft_params(self, actual_sample_rate: int) -> tuple[int, int]:
         """Returns (fft_size, hop_size) after applying sample rate adaptation."""

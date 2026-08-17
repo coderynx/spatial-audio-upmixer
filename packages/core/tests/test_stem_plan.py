@@ -356,7 +356,9 @@ def test_stem_cache_identity_changes_for_inference_overrides():
         plan, UpmixConfig(stem_pitch_shift=0.75)
     )
 
-    assert default_identity == plan.inference_hash
+    assert stem_cache_identity(
+        plan, UpmixConfig(stem_primary_remask=False)
+    ) == plan.inference_hash
     assert tuned_identity != default_identity
     assert overlap_identity != default_identity
     assert tta_identity != default_identity
@@ -391,7 +393,9 @@ def test_stem_cache_identity_changes_for_bleed_reduction():
     )
 
     # Gate off leaves the plan hash untouched; any enabled variant diverges.
-    assert default_identity == plan.inference_hash
+    assert stem_cache_identity(
+        plan, UpmixConfig(stem_primary_remask=False)
+    ) == plan.inference_hash
     assert gate_identity != default_identity
     assert len(
         {
@@ -404,18 +408,26 @@ def test_stem_cache_identity_changes_for_bleed_reduction():
     ) == 5
 
 
-def test_stem_cache_identity_changes_for_drum_remask():
+def test_stem_cache_identity_changes_for_remask():
     from upmixer.config import UpmixConfig
     from upmixer.separation.stem_identity import stem_cache_identity
 
     drum_plan = resolve_separation_plan(["Kick", "Snare"])
-    other_plan = resolve_separation_plan(["Vocals", "Bass"])
+    bass_plan = resolve_separation_plan(["Bass"])
+    vocals_plan = resolve_separation_plan(["Vocals"])
 
-    enabled = stem_cache_identity(drum_plan, UpmixConfig())
-    disabled = stem_cache_identity(drum_plan, UpmixConfig(stem_drum_remask=False))
-    alpha = stem_cache_identity(drum_plan, UpmixConfig(stem_drum_remask_alpha=0.7))
-
-    assert disabled == drum_plan.inference_hash
-    assert len({enabled, disabled, alpha}) == 3
-    # Plans without the drumsep stage are unaffected by the setting.
-    assert stem_cache_identity(other_plan, UpmixConfig()) == other_plan.inference_hash
+    both_off = UpmixConfig(stem_drum_remask=False, stem_primary_remask=False)
+    assert stem_cache_identity(drum_plan, both_off) == drum_plan.inference_hash
+    assert len(
+        {
+            stem_cache_identity(drum_plan, UpmixConfig()),
+            stem_cache_identity(drum_plan, UpmixConfig(stem_drum_remask=False)),
+            stem_cache_identity(drum_plan, UpmixConfig(stem_primary_remask=False)),
+            stem_cache_identity(drum_plan, both_off),
+        }
+    ) == 4
+    # Each pass only counts for plans that run its own model stage.
+    assert stem_cache_identity(
+        bass_plan, UpmixConfig(stem_drum_remask=False)
+    ) == stem_cache_identity(bass_plan, UpmixConfig())
+    assert stem_cache_identity(vocals_plan, UpmixConfig()) == vocals_plan.inference_hash
