@@ -498,3 +498,8 @@ and the bed limiter already covers the delivery path.
 Phase 2's report lives in `docs/plans/mixing/phase2_report.md`, phase 3's in
 `docs/plans/mixing/phase3_report.md` — the latter re-runs every table above
 and gives the before/after against §1a–§1d and §4.
+
+Phase 4 (`docs/plans/mixing/phase4_report.md`) supersedes §2: heights are folded
+into the stereo downmix at `k_h = 1/√2`, so §2b/§2c's "loss" is now a
+before/after pair in the kit itself. Worst case `wide`/Crash **8.56 → 2.44 dB**,
+per-preset means roughly halved.

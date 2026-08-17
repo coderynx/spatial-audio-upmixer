@@ -250,6 +250,42 @@ Alternative b₀ = 0.500 (−6.02 dB) for surround content with heavy rear activ
 
 LFE handling in downmix: excluded from the default 2/0 sum unless explicitly combined.
 
+### Height fold-down (project convention, outside BS.775)
+
+BS.775-4 predates height channels and defines no coefficient for them, so a
+literal reading of Annex 4 drops TFL/TFR/TBL/TBR from the 2/0 and 1/0
+downmixes. This project does not: the routing presets put the majority of some
+stems' energy overhead (Crash 0.86 of its routed energy on `wide`), and
+dropping it made the written stereo downmix a different mix from the stereo
+*render* of the same track, which folds heights.
+
+The convention adopted here is the common Atmos re-render practice — front
+heights fold onto the front pair, back heights onto the surround pair, each at
+a height coefficient `k_h`:
+
+```
+Lo = FL + a₀·C + k_s·(SL + a₀·BL) + k_h·(TFL + k_s·TBL)
+Ro = FR + a₀·C + k_s·(SR + a₀·BR) + k_h·(TFR + k_s·TBR)
+Mo = a₀·(FL + FR + k_h·(TFL + TFR)) + C
+     + k_s·(SL + SR + a₀·(BL + BR) + k_h·(TBL + TBR))
+```
+
+| Coefficient | Default | dB | Configurable as |
+|---|---|---|---|
+| k_h (height) | 0.7071 | −3.01 dB | `config.height_downmix_coeff`, `format.downmix.height_coeff`, `--downmix-height-coeff` |
+
+`k_h = 0.0` reproduces the standard's height-free matrices exactly. Back
+heights arrive through `k_s` as well, matching how BS.775 already treats back
+surrounds relative to sides. Implemented once in `dsp-core`'s
+`itu_downmix_stereo`/`itu_downmix_mono`, so the export path and the preview's
+stereo monitoring path apply the same matrix.
+
+This is a *level* law, unlike the render path's `fold_route_to_stereo`
+(a pan law, see "Stem-route folding is a pan law, not a level law" below): the
+two stereo paths now agree that heights are audible in stereo and differ only
+in the per-stem renormalization the render path applies afterwards. Measured
+residual per stem: `docs/plans/mixing/phase4_report.md`.
+
 ### 3/2 → 3/0 (5.1 to 3.0)
 
 ```

@@ -59,6 +59,13 @@ Every stage below is one function, called from both sides:
 | Crosstalk (transaural) | `spatial::xtc` | `crosstalk/renderer.py` | `stream::output` |
 | BS.775 stereo downmix | `spatial::downmix` | `utils.py` | `stream::output` |
 
+The downmix row is the one entry whose *matrix* is not shared code: the export
+calls the kernel with the whole bed, while the preview mixes per speaker from a
+per-channel gain pair built in `engineParams.ts::downmixGains` out of the
+served `surround_downmix_coeff` / `height_downmix_coeff` / `itu_center_coeff`.
+The coefficients are shared, the two-line matrix is not — change one and change
+the other in the same commit (the height fold, phase 4, did).
+
 A `stereo` layout (`FORMAT_MAP["stereo"]`, ITU-R BS.2051 System A) has no
 collapse stage at all: the bed *is* two channels, so the preview stays in
 native mode — limiter on, `soft_limit_threshold` 0 — and the export writes the

@@ -354,28 +354,60 @@ def test_send_frequency_response() -> None:
     assert set(_SURROUND + _HEIGHT).issubset(derived)
 
 
+def _downmix_ratio_db(
+    preset: str, stem: str, signal: np.ndarray, height_coeff: float
+) -> np.ndarray:
+    """Transfer function of the stereo downmix over the direct stereo render."""
+    immersive = _route_stem("7.1.4", preset, stem, signal)
+    down_l, down_r = itu_downmix_stereo(immersive, height_coeff=height_coeff)
+    folded = _route_stem("stereo", preset, stem, signal)
+    return _tf_db(down_l + down_r) - _tf_db(folded["FL"] + folded["FR"])
+
+
+def _height_delivery(
+    preset: str, stem: str, signal: np.ndarray, height_coeff: float
+) -> float:
+    """Fraction of a stem's routed height energy the stereo downmix carries."""
+    bed = _route_stem("7.1.4", preset, stem, signal)
+    heights = {name: bed[name] for name in _HEIGHT if name in bed}
+    in_bed = sum(float(np.dot(x, x)) for x in heights.values())
+    if in_bed <= 0.0:
+        return 0.0
+    left, right = itu_downmix_stereo(heights, height_coeff=height_coeff)
+    return (float(np.dot(left, left)) + float(np.dot(right, right))) / in_bed
+
+
+def _energy_loss_db(height_fraction: float, delivered: float) -> float:
+    """Stem energy missing from the downmix, heights delivered at *delivered*."""
+    kept = 1.0 - height_fraction * (1.0 - delivered)
+    return -10.0 * math.log10(max(kept, 1e-9))
+
+
+def _level_offset_db(ratio: np.ndarray) -> tuple[float, list[float]]:
+    bands = [
+        level
+        for center, level in _band_means_db(ratio)
+        if _NOTCH_LO_HZ <= center <= _NOTCH_HI_HZ
+    ]
+    return sum(bands) / len(bands), bands
+
+
 def test_downmix_fold_comb_and_height_loss() -> None:
     """Measurement 2 — BS.775 downmix vs the stereo render of the same stem."""
     signal = _pink()
     freqs = _freqs()
     fine = (freqs >= _NOTCH_LO_HZ) & (freqs <= _NOTCH_HI_HZ)
+    height_coeff = UpmixConfig().height_downmix_coeff
     rows = []
     for stem in ("Crowd", "Other", "Crash", "Hi-Hat", "Backing Vocals", "Drums"):
-        immersive = _route_stem("7.1.4", "balanced", stem, signal)
-        down_l, down_r = itu_downmix_stereo(immersive)
-        folded = _route_stem("stereo", "balanced", stem, signal)
-
-        ratio = _tf_db(down_l + down_r) - _tf_db(folded["FL"] + folded["FR"])
-        bands = [
-            level
-            for center, level in _band_means_db(ratio)
-            if _NOTCH_LO_HZ <= center <= _NOTCH_HI_HZ
-        ]
-        offset = sum(bands) / len(bands)
+        dropped, _ = _level_offset_db(_downmix_ratio_db("balanced", stem, signal, 0.0))
+        ratio = _downmix_ratio_db("balanced", stem, signal, height_coeff)
+        offset, bands = _level_offset_db(ratio)
         depth, freq = _worst_notch_db(ratio)
         rows.append(
             (
                 stem,
+                f"{dropped:+.2f}",
                 f"{offset:+.2f}",
                 f"{max(bands) - min(bands):.2f}",
                 f"{float(np.std(ratio[fine] - offset)):.2f}",
@@ -386,7 +418,8 @@ def test_downmix_fold_comb_and_height_loss() -> None:
         "2a. Downmix (7.1.4 → BS.775 stereo) vs direct stereo render, balanced",
         (
             "Stem",
-            "level offset (dB)",
+            "level offset, heights dropped (dB)",
+            "level offset, heights folded (dB)",
             "band ripple p-p (dB)",
             "per-bin ripple σ (dB)",
             "worst notch rel. (dB)",
@@ -397,34 +430,46 @@ def test_downmix_fold_comb_and_height_loss() -> None:
     rows = []
     for preset in STEM_ROUTING_PRESET_NAMES:
         table = _accounting("7.1.4", preset)
-        losses = {
-            stem: -10.0 * math.log10(max(1.0 - zones["height"], 1e-9))
-            for stem, zones in table.items()
-        }
-        worst = max(losses, key=losses.get)
+        dropped = {}
+        folded = {}
+        for stem, zones in table.items():
+            dropped[stem] = _energy_loss_db(zones["height"], 0.0)
+            folded[stem] = _energy_loss_db(
+                zones["height"], _height_delivery(preset, stem, signal, height_coeff)
+            )
+        worst = max(folded, key=folded.get)
         rows.append(
             (
                 preset,
-                f"{sum(losses.values()) / len(losses):.2f}",
-                f"{worst} {losses[worst]:.2f}",
+                f"{sum(dropped.values()) / len(dropped):.2f}",
+                f"{sum(folded.values()) / len(folded):.2f}",
+                f"{worst} {folded[worst]:.2f}",
                 f"{max(table[s]['height'] for s in table):.3f}",
             )
         )
+        assert sum(folded.values()) < sum(dropped.values()), preset
     _print_table(
-        "2b. Energy lost by dropping heights from the downmix, per preset (7.1.4)",
-        ("Preset", "mean loss (dB)", "worst stem (dB)", "max height fraction"),
+        "2b. Stem energy the stereo downmix fails to carry, per preset (7.1.4)",
+        (
+            "Preset",
+            "mean loss, heights dropped (dB)",
+            "mean loss, heights folded (dB)",
+            "worst stem, folded (dB)",
+            "max height fraction",
+        ),
         rows,
     )
 
     per_stem = _accounting("7.1.4", "balanced")
     _print_table(
         "2c. Height fraction and downmix loss per stem, balanced (7.1.4)",
-        ("Stem", "height fraction", "loss (dB)"),
+        ("Stem", "height fraction", "loss dropped (dB)", "loss folded (dB)"),
         [
             (
                 stem,
                 f"{zones['height']:.3f}",
-                f"{-10.0 * math.log10(max(1.0 - zones['height'], 1e-9)):.2f}",
+                f"{_energy_loss_db(zones['height'], 0.0):.2f}",
+                f"{_energy_loss_db(zones['height'], _height_delivery('balanced', stem, signal, height_coeff)):.2f}",
             )
             for stem, zones in per_stem.items()
         ],

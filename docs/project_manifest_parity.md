@@ -117,7 +117,10 @@ via `track_prepare_overrides`.
 Position sliders intentionally collapse an arbitrary speaker matrix to front/back
 and floor/height. Use Advanced JSON for asymmetric or per-channel routing. LFE
 is excluded from stereo downmixes under ITU-R BS.775; `0.7071` is default
-surround coefficient and `0.5` is available for dense rear content.
+surround coefficient and `0.5` is available for dense rear content. Height
+channels *are* folded in, at `format.downmix.height_coeff` (default `0.7071`,
+`0.0` to drop them) — a project convention, see
+`docs/standards/spatial_layouts_bs775_bs2051.md`.
 
 Each stem's LFE send amount is the `"LFE"` weight inside its
 `mixing.stem_routing` entry — a dedicated slider next to the position
