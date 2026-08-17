@@ -147,6 +147,56 @@ fn firwin2_matches_scipy() {
     }
 }
 
+/// The velvet decorrelator has no SciPy counterpart — it is Rust-native, so
+/// these literals are a pin, shared verbatim with
+/// `packages/core/tests/test_velvet_decorrelator.py` so the PyO3 and wasm
+/// builds are checkably the same filter.
+#[test]
+fn velvet_pair_matches_the_pinned_tap_table() {
+    use upmixer_dsp_core::routing::decorrelate::velvet_pair_default;
+
+    let (left, right) = velvet_pair_default(48_000);
+    let expected: [(&[(usize, f64)], usize); 2] = [
+        (
+            &[
+                (1, 0.43628207230905075),
+                (68, 0.3926538650781457),
+                (109, -0.3533884785703311),
+                (146, -0.31804963071329806),
+            ],
+            1411,
+        ),
+        (
+            &[
+                (46, 0.4362820723090507),
+                (88, -0.39265386507814565),
+                (134, 0.35338847857033107),
+                (176, 0.318049630713298),
+            ],
+            1428,
+        ),
+    ];
+    for (fir, (head, span)) in [&left, &right].into_iter().zip(expected) {
+        assert_eq!(fir.taps().len(), 30);
+        assert_eq!(fir.span(), span);
+        for (got, want) in fir.taps().iter().zip(head) {
+            assert_eq!(got.0, want.0);
+            assert!((got.1 - want.1).abs() < 1e-15, "{got:?} vs {want:?}");
+        }
+    }
+
+    let signal: Vec<f64> = (0..2048).map(|i| (0.05 * i as f64).sin()).collect();
+    for (fir, want) in [
+        (&left, [-0.08037244581415715, -0.20449503809930403]),
+        (&right, [0.18897751998941792, 0.17069075512360038]),
+    ] {
+        let out = fir.process(&signal);
+        for (got, want) in [out[1500], out[2000]].into_iter().zip(want) {
+            assert!((got - want).abs() < 1e-12, "{got} vs {want}");
+        }
+    }
+}
+
 #[test]
 fn minimum_phase_matches_scipy() {
     for name in ["minimum_phase_1023", "minimum_phase_511"] {

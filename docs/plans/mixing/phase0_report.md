@@ -492,3 +492,7 @@ stem passing through to 3.58 unclamped.
 If per-stem overload control is ever wanted, it is a proper look-ahead
 limiter per stem, not a saturator. Not built — nothing currently asks for it,
 and the bed limiter already covers the delivery path.
+
+---
+
+Phase 2's report lives in `docs/plans/mixing/phase2_report.md`.

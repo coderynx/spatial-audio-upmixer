@@ -3,6 +3,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
+use upmixer_dsp_core::routing::decorrelate;
 use upmixer_dsp_core::routing::sends;
 use upmixer_dsp_core::spatial::downmix::{self, DownmixRole};
 
@@ -94,6 +95,35 @@ fn diffuse_send<'py>(
     PyArray1::from_vec(py, out)
 }
 
+/// One side of the velvet-noise decorrelator pair, applied to `signal`.
+///
+/// `side` is `"left"` or `"right"`; both sides of a channel pair must come
+/// from the same `seed` for the fold-down property to hold.
+#[pyfunction]
+#[pyo3(signature = (signal, sample_rate, side, length_ms, taps, seed, wet))]
+fn velvet_pair_send<'py>(
+    py: Python<'py>,
+    signal: PyReadonlyArray1<'py, f64>,
+    sample_rate: u32,
+    side: &str,
+    length_ms: f64,
+    taps: usize,
+    seed: u64,
+    wet: f64,
+) -> PyResult<Bound<'py, PyArray1<f64>>> {
+    let (left, right) = decorrelate::velvet_pair(sample_rate, length_ms, taps, seed, wet);
+    let fir = match side {
+        "left" => left,
+        "right" => right,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "side must be 'left' or 'right', got {other:?}"
+            )))
+        }
+    };
+    Ok(PyArray1::from_vec(py, fir.process(signal.as_array().to_vec().as_slice())))
+}
+
 #[pyfunction]
 #[pyo3(signature = (signal, sample_rate, low_rolloff_hz, low_rolloff_gain, high_shelf_hz,
                     high_shelf_gain))]
@@ -123,6 +153,11 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(soft_limit, m)?)?;
     m.add_function(wrap_pyfunction!(haas_decorrelate, m)?)?;
     m.add_function(wrap_pyfunction!(diffuse_send, m)?)?;
+    m.add_function(wrap_pyfunction!(velvet_pair_send, m)?)?;
     m.add_function(wrap_pyfunction!(elevation_eq, m)?)?;
+    m.add("VELVET_LENGTH_MS", decorrelate::VELVET_LENGTH_MS)?;
+    m.add("VELVET_TAPS_PER_SIDE", decorrelate::VELVET_TAPS_PER_SIDE)?;
+    m.add("VELVET_SEED", decorrelate::VELVET_SEED)?;
+    m.add("VELVET_WET", decorrelate::VELVET_WET)?;
     Ok(())
 }

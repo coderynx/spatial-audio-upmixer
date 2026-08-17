@@ -7,6 +7,7 @@
 
 use crate::kernels::biquad::SosFilter;
 use crate::kernels::butter::butter_bandpass_sos;
+use crate::kernels::rng::next_unit;
 
 use super::bass::BassParams;
 use super::compressor::alpha;
@@ -36,18 +37,6 @@ const DELAY_STAGGER: [f64; 6] = [0.35, 0.48, 0.61, 0.74, 0.87, 1.0];
 /// Band-pass order. 2nd order never reaches unity across 1.6 octaves, which
 /// spreads the reconstruction ripple over the whole band instead of its edges.
 const BAND_ORDER: usize = 4;
-
-fn splitmix64(state: &mut u64) -> u64 {
-    *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    let mut z = *state;
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
-
-fn next_unit(state: &mut u64) -> f64 {
-    (splitmix64(state) >> 11) as f64 / (1u64 << 53) as f64
-}
 
 /// Glasberg & Moore's ERB-rate scale, the warping that puts the poles at
 /// roughly constant density per critical band rather than per hertz.
