@@ -57,7 +57,7 @@ deferred improvements are now planned as phases 8–11:
 
 | Phase | File | Deliverable |
 |-------|------|-------------|
-| 8 | `phase8_d33_rebaseline.md` | Close parity ledger D33 (mid-bass decorrelation over the worklet budget) and re-baseline the measurement kit — phases 3–5 made the phase 0 tables stale. Gate for 9–11. |
+| 8 | `phase8_d33_rebaseline.md` | Close parity ledger D33 (mid-bass decorrelation over the worklet budget) and re-baseline the measurement kit — phases 3–5 made the phase 0 tables stale. Gate for 9–11. **Done** — see `phase8_report.md` and `phase8_baseline.md`. |
 | 9 | `phase9_loudness_renorm.md` | BS.1770-weighted energy renormalization in `StemRouter.route` and `_normalize_to_source`; measurement-gated, may close as "within tolerance". |
 | 10 | `phase10_mdap_panner.md` | MDAP panner replacing the raised-cosine spread panner behind the unchanged `StemPlacement` model — triplet-confined point placements, direction-independent spread. |
 | 11 | `phase11_content_aware_routing.md` | Roadmap 4.1: archaeology gate on the dead stem-analyzer modules, then revive (transient/sustain send split, default-off) or delete. |
@@ -69,8 +69,8 @@ deferred improvements are now planned as phases 8–11:
   boundaries (web/CLI consume only core's public API; no quality logic in
   the web layer) all apply.
 - `uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q`
-  must pass before and after every phase (baseline: 1107 passed /
-  31 deselected as of 2026-08-17). Phases touching `apps/web` also run
+  must pass before and after every phase (baseline: 1110 passed /
+  31 deselected as of 2026-08-17, phase 8). Phases touching `apps/web` also run
   `npm test` and `npm run build` there.
 - **Preview/export parity is a hard constraint.** Phase 3 retired the
   surround/height send constants (`SURROUND_HAAS_DELAY_MS_*`,
@@ -87,10 +87,8 @@ deferred improvements are now planned as phases 8–11:
   gate the Rust side.
 - The preview worklet must stay inside its 2.67 ms/quantum budget
   (overrun = silence, not glitch). Any phase touching the streaming path
-  runs `npm run bench:engine` in `apps/web` and reports numbers. Known
-  open violation: ledger D33 (mid-bass decorrelation) — phase 8 owns
-  closing it; until then bench failures attributable to D33 are
-  pre-existing, anything else is new.
+  runs `npm run bench:engine` in `apps/web` and reports numbers. It is
+  green as of phase 8 (ledger D33 closed), so any failure there is new.
 - Phases 9–11 cite the phase 8 baseline tables, not the phase 0 report —
   phases 3–5 moved send energy and LFE level, so the phase 0 numbers are
   stale for send-heavy stems.
