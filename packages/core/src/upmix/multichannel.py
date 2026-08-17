@@ -2,7 +2,10 @@ import numpy as np
 import upmixer_dsp
 
 from upmixer.config import UpmixConfig
+from upmixer.analysis.coherence import CoherenceEstimator
 from upmixer.analysis.spatial import SpatialPlan
+from upmixer.analysis.stft import STFTAnalyzer
+from upmixer.decomposition.direct_ambient import center_weight
 from upmixer.formats import ChannelLabel, InputFormat, OutputFormat
 from upmixer.utils import (
     elevation_eq as _elevation_eq,
@@ -11,6 +14,38 @@ from upmixer.utils import (
     ITU_CENTER_COEFF,
     SURROUND_VELVET_SEED,
 )
+
+
+def _extract_center(
+    FL: np.ndarray, FR: np.ndarray, cfg: UpmixConfig, sr: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return (C, residual FL, residual FR) for a front pair with no center.
+
+    Extraction is full (no partial gain) and C carries the extracted mid
+    divided by the BS.775 fold coefficient: only that pairing keeps both the
+    stereo fold-down of the result identical to the input fronts and the
+    front-triple energy equal to the input pair's. See
+    `docs/standards/spatial_layouts_bs775_bs2051.md` § "Deriving a missing
+    centre".
+    """
+    stft = STFTAnalyzer(cfg, sr)
+    X_L = stft.forward(FL)
+    X_R = stft.forward(FR)
+
+    estimator = CoherenceEstimator(cfg)
+    state = estimator.create_state(stft.n_freq_bins)
+    directness = np.empty(X_L.shape, dtype=np.float64)
+    for i in range(X_L.shape[1]):
+        estimator.estimate_frame(X_L[:, i], X_R[:, i], state)
+        directness[:, i] = estimator.directness_frame(state)
+
+    extracted = center_weight(X_L, X_R, directness, cfg.epsilon) * (X_L + X_R) * 0.5
+    n = len(FL)
+    return (
+        stft.inverse(extracted / ITU_CENTER_COEFF, n),
+        stft.inverse(X_L - extracted, n),
+        stft.inverse(X_R - extracted, n),
+    )
 
 
 def _lfe_filter(
@@ -29,6 +64,13 @@ class MultichannelUpmixer:
     using gain remixing plus velvet-noise decorrelation — one side of a pair
     per derived channel, so neither side of a pair is a plain copy of its
     source and their fold-down cannot cancel.
+
+    A missing center is the one exception to pass-through: it is extracted
+    subtractively from FL/FR by coherence (see `_extract_center` and
+    `upmixer.decomposition`), so FL/FR are replaced by the residual fronts
+    rather than replaying the centered content alongside C. Every other
+    derivation, including LFE, reads the original FL/FR — a residual front
+    has centered content missing, which those sends want to keep.
     """
 
     def __init__(
@@ -64,11 +106,15 @@ class MultichannelUpmixer:
         BR = out.get("BR")
 
         if "C" not in out and FL is not None and FR is not None:
-            out["C"] = (ITU_CENTER_COEFF * 0.5) * (FL + FR)
+            out["C"], out["FL"], out["FR"] = _extract_center(FL, FR, cfg, sr)
             C = out["C"]
 
         if "LFE" not in out:
-            src = C if C is not None else ((FL + FR) * 0.5 if FL is not None else None)
+            src = (
+                (FL + FR) * 0.5
+                if FL is not None and FR is not None
+                else C
+            )
             if src is not None:
                 out["LFE"] = _lfe_filter(
                     src, sr, cfg.lfe_cutoff_hz, cfg.lfe_gain, cfg.lfe_filter_order

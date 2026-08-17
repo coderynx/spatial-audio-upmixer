@@ -39,6 +39,16 @@ class SoftMatrixBatchResult:
     harmonic_mask: np.ndarray
 
 
+def center_weight(
+    X_L: np.ndarray, X_R: np.ndarray, directness: np.ndarray, epsilon: float
+) -> np.ndarray:
+    """Per-bin fraction of the mid signal eligible for the center channel."""
+    mag_L = np.abs(X_L)
+    mag_R = np.abs(X_R)
+    pan = (mag_L - mag_R) / (mag_L + mag_R + epsilon)
+    return directness * (1.0 - np.abs(pan))
+
+
 class SoftMatrixDecomposer:
     """Perceptual spectral decomposer for music remix upmixing.
 
@@ -79,15 +89,11 @@ class SoftMatrixDecomposer:
         mid = (X_L_frame + X_R_frame) * 0.5
         side = (X_L_frame - X_R_frame) * 0.5
 
-        mag_L = np.abs(X_L_frame)
-        mag_R = np.abs(X_R_frame)
-        pan = (mag_L - mag_R) / (mag_L + mag_R + self._eps)
-
         directness = coherence_frame if directness_frame is None else directness_frame
-        center_weight = directness * (1.0 - np.abs(pan))
-        center = self._center_extraction_gain * center_weight * mid
+        weight = center_weight(X_L_frame, X_R_frame, directness, self._eps)
+        center = self._center_extraction_gain * weight * mid
 
-        reduction = self._center_attenuation * center_weight * 0.5
+        reduction = self._center_attenuation * weight * 0.5
         front_L = X_L_frame * (1.0 - reduction)
         front_R = X_R_frame * (1.0 - reduction)
 
@@ -123,14 +129,10 @@ class SoftMatrixDecomposer:
         mid = (X_L + X_R) * 0.5
         side = (X_L - X_R) * 0.5
 
-        mag_L = np.abs(X_L)
-        mag_R = np.abs(X_R)
-        pan = (mag_L - mag_R) / (mag_L + mag_R + self._eps)
+        weight = center_weight(X_L, X_R, coherence, self._eps)
+        center = self._center_extraction_gain * weight * mid
 
-        center_weight = coherence * (1.0 - np.abs(pan))
-        center = self._center_extraction_gain * center_weight * mid
-
-        reduction = self._center_attenuation * center_weight * 0.5
+        reduction = self._center_attenuation * weight * 0.5
         front_L = X_L * (1.0 - reduction)
         front_R = X_R * (1.0 - reduction)
 

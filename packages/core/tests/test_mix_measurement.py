@@ -27,6 +27,7 @@ from upmixer.separation.stem_router import StemRouter, build_stem_routing
 from upmixer.upmix.multichannel import MultichannelUpmixer
 from upmixer.utils import (
     HEIGHT_VELVET_SEED,
+    ITU_CENTER_COEFF,
     SURROUND_VELVET_SEED,
     itu_downmix_stereo,
     velvet_send,
@@ -262,14 +263,24 @@ def test_send_frequency_response() -> None:
         {ChannelLabel.FL: impulse.copy(), ChannelLabel.FR: impulse.copy()}
     )
     rows = []
+    source_pair = 2.0 * float(np.dot(impulse, impulse))
     front_pair = float(np.dot(derived["FL"], derived["FL"])) + float(
         np.dot(derived["FR"], derived["FR"])
     )
     center = float(np.dot(derived["C"], derived["C"]))
+    fold_error = derived["FL"] + ITU_CENTER_COEFF * derived["C"] - impulse
     rows.append(
         (
-            "C build-up (FL+FR+C vs FL+FR)",
-            f"{10.0 * math.log10((front_pair + center) / front_pair):+.2f}",
+            "C build-up (FL+FR+C vs input pair)",
+            f"{10.0 * math.log10((front_pair + center) / source_pair):+.2f}",
+            "-",
+            "-",
+        )
+    )
+    rows.append(
+        (
+            "C fold-down error (FL+0.707C vs input FL)",
+            f"{10.0 * math.log10(max(float(np.dot(fold_error, fold_error)), 1e-30) / float(np.dot(impulse, impulse))):+.2f}",
             "-",
             "-",
         )
