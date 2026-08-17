@@ -137,10 +137,11 @@ The height send's elevation EQ is served in four parts —
 added in phase 7, `height_directional_band_hz` /
 `height_directional_band_gain`. Its Q is not served: `routing::sends`'s
 `DIRECTIONAL_BAND_Q` is structural, one design shared by the offline send,
-the streaming send, and the STFT height mask (which reads the same section's
-magnitude through `upmixer_dsp.elevation_band_response` rather than
-approximating it). A band gain of exactly 1.0 skips the section on both
-sides, so the default voicing is bit-identical to the pre-band one.
+the streaming send, and the STFT height mask (which reads the whole chain's
+magnitude on the bin grid through `upmixer_dsp.elevation_response` rather than
+approximating any of it — see `docs/plans/mixing/phase7_mask_parity_report.md`).
+A band gain of exactly 1.0 skips the section on both sides, so the default
+voicing is bit-identical to the pre-band one.
 
 Constants that live in Rust are the ones that were already duplicated and are
 structural rather than tunable: the BS.1770 true-peak FIR, the ACN/N3D

@@ -50,8 +50,10 @@ validation; a phase must be green before the next starts.
 | 7 | `phase7_elevation_eq_band.md` | Optional: retune the elevation EQ toward the ~8 kHz directional band (Blauert) instead of the broad 3 kHz shelf. |
 
 Phases 0–7 are done (see the `phase*_report.md` files; phase 7 shipped
-with the directional band at gain 1.0 pending a listening A/B). The
-formerly deferred improvements are now planned as phases 8–11:
+with the directional band at gain 1.0 pending a listening A/B, and the
+STFT height mask it left disagreeing with the time-domain send was
+closed afterwards in `phase7_mask_parity_report.md`). The formerly
+deferred improvements are now planned as phases 8–11:
 
 | Phase | File | Deliverable |
 |-------|------|-------------|

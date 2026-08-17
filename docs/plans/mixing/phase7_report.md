@@ -93,35 +93,29 @@ as `routing::sends::directional_band_sos` — and reached by:
   (`stream::routing`), with the offline/stream equivalence test now run at
   both band gains;
 - `HeightFilter`'s STFT mask, which reads the same section's magnitude on the
-  bin grid through the new `upmixer_dsp.elevation_band_response` rather than
-  approximating it with a sigmoid the way its other two stages do.
+  bin grid rather than approximating it with a sigmoid the way its other two
+  stages did at the time of writing.
 
 Q is deliberately not a served parameter (`DIRECTIONAL_BAND_Q = 1.0` in
 `routing::sends`): the band is a psychoacoustic cue, its width is not a mix
 control. Recorded in `docs/contracts/preview_export_parity.md` §2.
 
-### The mask's other two stages do not agree with their biquads
+### The mask's other two stages did not agree with their biquads — fixed since
 
-`test_height_voicing.py::test_stft_mask_and_time_domain_send_share_the_band`
-holds the band to 0.5 dB across third-octave bands and passes at **2e-14 dB** —
-it is the same filter on both sides, so this is a wiring check, not a
-tolerance.
+**Closed by `docs/plans/mixing/phase7_mask_parity_report.md` (2026-08-17).**
 
-The plan asked for that comparison over the whole curve. It does not hold, and
-not because of anything phase 7 did. `HeightFilter`'s sub-bass and shelf
-sections are logistic curves fitted by eye to butterworth sections, and they
-are off by:
+As shipped in phase 7, only the band agreed. `HeightFilter`'s sub-bass and
+shelf sections were logistic curves fitted by eye to butterworth sections, off
+by up to **5.4 dB at 50 Hz** and 1.3 dB at 4 kHz, so the stereo→multichannel
+STFT path and the stem path did not voice heights the same. Phase 7 recorded
+that rather than fixing it, because closing it re-voices shipped height output.
 
-| | 50 Hz | 100 Hz | 500 Hz | 2 kHz | 4 kHz | 16 kHz |
-|---|---|---|---|---|---|---|
-| time-domain send | −8.86 | −4.93 | −0.48 | −0.81 | +1.86 | +3.50 |
-| STFT mask | −13.58 | −9.73 | +0.03 | +0.50 | +3.17 | +3.52 |
-
-Up to **5.4 dB** apart at 50 Hz, 1.3 dB at 4 kHz. So the stereo→multichannel
-STFT path and the stem path do not voice heights the same today, and never
-have. Closing that means re-voicing the STFT path's height output on real
-material — an audible change to shipped output, out of scope here and not
-something to smuggle into an optional phase. Recorded rather than fixed.
+The follow-up closed it the same way the band was done: the mask is now the
+whole chain's magnitude from the same section designs
+(`upmixer_dsp.elevation_response`), agreeing to 2e-14 dB across 20 Hz–20 kHz,
+and `test_..._share_the_band` became `test_..._share_the_whole_curve`. The
+biquads were matched exactly rather than re-tuned; measurements and the
+reasoning are in that report.
 
 ## 5. Parity
 
@@ -165,6 +159,7 @@ the reason those rows say FAIL** — mid-bass decorrelation, untouched here.
 ## 8. What phase 7 did not do
 
 - Move the shipped voicing (§1).
-- Fix the STFT mask's sigmoid approximation of the other two stages (§4).
+- Fix the STFT mask's sigmoid approximation of the other two stages (§4) —
+  done afterwards, `phase7_mask_parity_report.md`.
 - Touch the binaural renderer's height handling, or `head_model.py`'s use of
   `elevation_eq` — it calls the shelf by keyword and takes the band at unity.
