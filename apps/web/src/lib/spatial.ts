@@ -86,66 +86,6 @@ export function stemPositionStereo(route: Record<string, number>): { left: Vec3;
   };
 }
 
-/** Fixed azimuth/elevation (degrees) of the 11 positional speakers, in the
- * same JSAmbisonics/ambisonic convention used by `positionToAzimuthElevation`
- * (positive azimuth = left) — the browser twin of the core's
- * `binaural/geometry.py` `SPEAKER_AZIMUTH_ELEVATION`, which the backend panner
- * reads. Computed once from `speakerCoordinates` rather than duplicated, so
- * the two stay in sync automatically. */
-export const speakerAzimuthElevation: Record<string, { azim: number; elev: number }> =
-  Object.fromEntries(
-    Object.entries(speakerCoordinates).map(([channel, position]) => [channel, positionToAzimuthElevation(position)]),
-  );
-
-/** Inverse of `useStemPreview.ts`'s `coordinates()`: azimuth (positive =
- * left, matching the ambisonic/SH convention `monoEncoder.azim` expects and
- * the backend's `_POSITIONS` table) and elevation, in degrees, for a
- * Web Audio position vector. */
-export function positionToAzimuthElevation(position: Vec3): { azim: number; elev: number } {
-  const radius = Math.sqrt(position.x * position.x + position.y * position.y + position.z * position.z);
-  if (radius === 0) return { azim: 0, elev: 0 };
-  const elev = (Math.asin(Math.min(1, Math.max(-1, position.y / radius))) * 180) / Math.PI;
-  const azim = (Math.atan2(-position.x, -position.z) * 180) / Math.PI;
-  return { azim, elev };
-}
-
-// Mirrors `packages/core/src/separation/stem_placement.py`'s panner constants;
-// the preview and the export must weight a position identically.
-const SCENE_SPREAD_DEG = 60;
-const ELEVATION_DISTANCE_WEIGHT = 1.6;
-const MINIMUM_SEND = 1e-3;
-
-/** Degree-space distance with azimuth wrapped to ±180° — BL/TBL sit at +135°
- * and BR/TBR at −135°, so an unwrapped difference puts the far rear pair
- * ~315° away and drops one whole side. Elevation counts heavier than azimuth:
- * the height layer sits only ~35° up, so without it every wide floor-level
- * position spills overhead. */
-function angularDistance(azimuth: number, elevation: number, position: { azim: number; elev: number }): number {
-  const deltaAzimuth = ((((position.azim - azimuth + 180) % 360) + 360) % 360) - 180;
-  return Math.hypot(deltaAzimuth, ELEVATION_DISTANCE_WEIGHT * (position.elev - elevation));
-}
-
-/** Port of `stem_placement.py`'s `placement_route` for a zero-width placement,
- * which is what `routing_for_scene` builds from a dragged scene position: a
- * raised-cosine falloff over angular distance, constant-power normalized. Used
- * as a fallback when a stem has a scene position but no resolved
- * `stem_routing` entry yet. */
-export function routingFromAzimuthElevation(azimuth: number, elevation: number): Record<string, number> {
-  const distances = Object.entries(speakerAzimuthElevation).map(
-    ([channel, position]) => [channel, angularDistance(azimuth, elevation, position)] as const,
-  );
-  const span = Math.max(SCENE_SPREAD_DEG, Math.min(...distances.map(([, distance]) => distance)));
-  const weights = distances.map(
-    ([channel, distance]) => [channel, Math.cos(0.5 * Math.PI * Math.min(1, distance / span))] as const,
-  );
-  const norm = Math.sqrt(weights.reduce((sum, [, weight]) => sum + weight * weight, 0)) || 1;
-  const mapping: Record<string, number> = {};
-  for (const [channel, weight] of weights) {
-    if (weight / norm > MINIMUM_SEND) mapping[channel] = weight / norm;
-  }
-  return mapping;
-}
-
 /** Port of `stem_router.py`'s `apply_stem_pan` inverse: the stem's position
  * between hard left (0) and hard right (1), 0.5 when the pair is silent. */
 export function stemPan(route: Record<string, number>): number {

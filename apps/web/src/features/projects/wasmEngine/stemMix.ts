@@ -1,5 +1,4 @@
 import type { ProjectStem, StemScene } from "@/api";
-import { routingFromAzimuthElevation } from "@/lib/spatial";
 import type { EngineConstants } from "../masteringProfiles";
 import { estimateRouteScale } from "../masteringProfiles";
 import type { StemMix } from "./engineParams";
@@ -26,15 +25,10 @@ export function resolveStemMixes(options: {
   return stems.map((stem) => {
     const base = stem.stem_key.split("@", 1)[0];
     const scene = sceneRoot.stems?.[stem.stem_key] || sceneRoot.stems?.[base] || {};
-    let routing = mix?.stem_routing?.[stem.stem_key] || mix?.stem_routing?.[base];
-    // No resolved routing yet (a freshly dropped stem, say) — fall back to
-    // the same nearest-3-speakers weighting `routing_for_scene` uses.
-    if (!routing || Object.keys(routing).length === 0) {
-      routing =
-        scene.azimuth_deg != null || scene.elevation_deg != null
-          ? routingFromAzimuthElevation(scene.azimuth_deg || 0, scene.elevation_deg || 0)
-          : {};
-    }
+    // Routing is always the core's: `routing_for_scene` pans a scene position
+    // through the same panner the export uses, so the preview never derives
+    // one of its own.
+    const routing = mix?.stem_routing?.[stem.stem_key] || mix?.stem_routing?.[base] || {};
 
     let total = 0;
     let frontWeight = 0;
