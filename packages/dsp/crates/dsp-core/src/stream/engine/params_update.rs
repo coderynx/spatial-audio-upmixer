@@ -69,8 +69,10 @@ impl PreviewEngine {
         if old.master.bass != self.params.master.bass
             || old.master.lf_targets != self.params.master.lf_targets
         {
-            self.unifier = build_unifier(self.sample_rate, n_channels, &self.params);
-            self.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params);
+            self.unifier =
+                build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
+            self.decorrelator =
+                build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);
         }
 
         if old.master != self.params.master {
@@ -112,8 +114,10 @@ impl PreviewEngine {
             .master
             .compressor
             .map(|c| StreamingCompressor::new(c, self.sample_rate, n_channels));
-        self.unifier = build_unifier(self.sample_rate, n_channels, &self.params);
-        self.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params);
+        self.unifier =
+            build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
+        self.decorrelator =
+            build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);
     }
 
     /// Rebuild the per-stem routing state and gain smoothers to match

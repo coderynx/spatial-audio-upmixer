@@ -17,8 +17,7 @@ use crate::kernels::fft::RealFft;
 use crate::kernels::stft::hann_periodic;
 
 use crate::stream::master::{
-    CausalChain, LfUnifier, StreamingDecorrelator, StreamingLimiter, DECORR_HORIZON_MS,
-    UNIFY_HORIZON_MS,
+    CausalChain, LfUnifier, StreamingDecorrelator, StreamingLimiter,
 };
 use crate::stream::meters::{Level, Meters};
 use crate::stream::output::OutputStage;
@@ -47,7 +46,6 @@ const METER_WINDOW_FRAMES: usize = 2048;
 /// master output gain across a live [`PreviewEngine::update_params`] edit,
 /// so the step lands as a fast ramp rather than a click.
 const GAIN_RAMP_MS: f64 = 8.0;
-
 
 /// Decoded stereo PCM for one stem, as the host transfers it.
 pub struct StemSource {
@@ -118,8 +116,6 @@ pub struct PreviewEngine {
     post: Queue,
     unify_done: usize,
     emitted: usize,
-    unify_horizon: usize,
-    decorr_horizon: usize,
     total_frames: usize,
     meters: Meters,
     /// Trailing `METER_WINDOW_FRAMES` of the collapsed output, kept only for
@@ -140,6 +136,7 @@ pub(super) fn build_unifier(
     sample_rate: u32,
     n_channels: usize,
     params: &EngineParams,
+    base: usize,
 ) -> Option<LfUnifier> {
     let bass = params.master.bass?;
     bass.unify_hz?;
@@ -152,17 +149,21 @@ pub(super) fn build_unifier(
         params.lfe_index,
         bass,
         params.master.lf_targets.clone(),
+        base,
     ))
 }
 
-/// Mid-bass decorrelation exists only when the bass block asks for it.
+/// Mid-bass decorrelation exists only when the bass block asks for it. Its
+/// band split carries a forward pass across calls, so it has to be told which
+/// frame the source it will be fed starts at.
 pub(super) fn build_decorrelator(
     sample_rate: u32,
     n_channels: usize,
     params: &EngineParams,
+    base: usize,
 ) -> Option<StreamingDecorrelator> {
     let bass = params.master.bass?;
-    StreamingDecorrelator::new(sample_rate, n_channels, params.lfe_index, &bass)
+    StreamingDecorrelator::new(sample_rate, n_channels, params.lfe_index, &bass, base)
 }
 
 fn build_output(
@@ -194,8 +195,8 @@ impl PreviewEngine {
             .master
             .compressor
             .map(|c| StreamingCompressor::new(c, sample_rate, n_channels));
-        let unifier = build_unifier(sample_rate, n_channels, &params);
-        let decorrelator = build_decorrelator(sample_rate, n_channels, &params);
+        let unifier = build_unifier(sample_rate, n_channels, &params, 0);
+        let decorrelator = build_decorrelator(sample_rate, n_channels, &params, 0);
         let limiter = params
             .master
             .limiter
@@ -240,8 +241,6 @@ impl PreviewEngine {
             post: Queue::new(n_channels),
             unify_done: 0,
             emitted: 0,
-            unify_horizon: (sample_rate as f64 * UNIFY_HORIZON_MS / 1000.0) as usize,
-            decorr_horizon: (sample_rate as f64 * DECORR_HORIZON_MS / 1000.0) as usize,
             total_frames,
             meters: Meters::default(),
             output_meter_tail: vec![Vec::new(); 2],
@@ -424,10 +423,10 @@ impl PreviewEngine {
         }
     }
 
-    /// Samples of `pre` both stages need on either side of what they emit.
+    /// Samples of `pre` both stages need ahead of what they emit.
     fn look_ahead(&self) -> usize {
-        let unify = if self.unifier.is_some() { self.unify_horizon } else { 0 };
-        let decorr = if self.decorrelator.is_some() { self.decorr_horizon } else { 0 };
+        let unify = self.unifier.as_ref().map_or(0, |u| u.look_ahead());
+        let decorr = self.decorrelator.as_ref().map_or(0, |d| d.look_ahead());
         unify.max(decorr)
     }
 
@@ -449,30 +448,30 @@ impl PreviewEngine {
             return;
         }
 
+        let base = self.pre.base;
         let mut window: Vec<Vec<f64>> = self
             .pre
             .channels
             .iter()
-            .map(|c| c[(start - self.pre.base)..(end - self.pre.base)].to_vec())
+            .map(|c| c[(start - base)..(end - base)].to_vec())
             .collect();
 
-        let base = self.pre.base;
         if let Some(unifier) = &mut self.unifier {
-            // The LF unifier needs context on both sides; hand it the whole
-            // live `pre` window and let it read outward from there.
-            let mut full: Vec<Vec<f64>> = self.pre.channels.clone();
-            unifier.process(&mut full, start - base, end - base);
-            window = full
-                .iter()
-                .map(|c| c[(start - base)..(end - base)].to_vec())
-                .collect();
+            unifier.process(&self.pre.channels, base, self.total_frames, &mut window, start, end);
         }
 
         // Reads its band out of `pre`, i.e. from before unification, which is
         // the order `bass_control` runs offline.
         if let Some(decorrelator) = &mut self.decorrelator {
             if !self.params.bypass_mastering {
-                decorrelator.process(&self.pre.channels, &mut window, start - base, end - base);
+                decorrelator.process(
+                    &self.pre.channels,
+                    base,
+                    self.total_frames,
+                    &mut window,
+                    start,
+                    end,
+                );
             }
         }
 
@@ -591,11 +590,9 @@ impl PreviewEngine {
         if let Some(comp) = &mut self.compressor {
             comp.reset();
         }
-        if let Some(unifier) = &mut self.unifier {
-            unifier.reset();
-        }
-        self.decorrelator = build_decorrelator(self.sample_rate, self.params.speakers.len(), &self.params);
         let n_channels = self.params.speakers.len();
+        self.unifier = build_unifier(self.sample_rate, n_channels, &self.params, 0);
+        self.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params, 0);
         self.causal = (0..n_channels)
             .map(|i| {
                 CausalChain::new(self.sample_rate, &self.params.master, self.params.lfe_index == Some(i))

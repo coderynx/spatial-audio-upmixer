@@ -1,6 +1,6 @@
 //! Playhead moves: cold jumps and warmed seeks.
 
-use super::{PreviewEngine, SEEK_PREROLL_MS};
+use super::{build_decorrelator, build_unifier, PreviewEngine, SEEK_PREROLL_MS};
 use crate::stream::meters::Level;
 
 impl PreviewEngine {
@@ -17,6 +17,11 @@ impl PreviewEngine {
         self.unify_done = target;
         self.pre.base = target;
         self.post.base = target;
+        // Rebuilt at the landing frame: their band splits carry a forward
+        // pass and `rewind` left one starting at the top of the programme.
+        let n_channels = self.params.speakers.len();
+        self.unifier = build_unifier(self.sample_rate, n_channels, &self.params, target);
+        self.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params, target);
         // A cold jump has rendered nothing at the new position yet, so the
         // last render's levels are stale — reset them rather than reporting
         // whatever was playing before the jump. `seek`'s own preroll render

@@ -6,6 +6,7 @@
 //! is why the preview can be the same filter as the export rather than a
 //! bounded approximation of it.
 
+pub mod band;
 pub mod conv;
 pub mod engine;
 pub mod master;

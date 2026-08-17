@@ -16,20 +16,31 @@ use crate::mastering::decorrelate::Decorrelator;
 use crate::mastering::limiter::{LimiterParams, FIR_DELAY, FIR_MARGIN_SAMPLES};
 use crate::mastering::non_lfe;
 
+use super::band::RollingBand;
 use super::conv::StreamingConvolver;
 use super::params::MasterParams;
-use super::state::HorizonFiltFilt;
 
 /// Look-behind and look-ahead the LF unifier's zero-phase pass runs with.
 /// At 100 ms the 80-120 Hz filter has decayed by `e^-40`, so truncating there
-/// is below any tolerance that matters — see `state::HorizonFiltFilt`.
+/// is below any tolerance that matters — see [`super::band::RollingBand`].
 pub const UNIFY_HORIZON_MS: f64 = 100.0;
 
-/// The decorrelator's own, longer horizon. Its band split is a 4th-order
-/// 100-300 Hz band-pass, whose impulse response is still 2e-6 of peak at
-/// 100 ms where the unifier's 2nd-order low-pass is at 8e-20 — truncating
-/// there showed up directly as a block-size dependence around 1e-8.
-pub const DECORR_HORIZON_MS: f64 = 300.0;
+/// Band the unifier's backward pass produces per warm-up — see
+/// [`DECORR_CHUNK_MS`].
+pub const UNIFY_CHUNK_MS: f64 = 50.0;
+
+/// The decorrelator's own, longer horizon: its band split is a 4th-order
+/// 100-300 Hz band-pass, whose impulse response outlives the unifier's
+/// 2nd-order low-pass by orders of magnitude. Only the backward pass is
+/// truncated here — the forward one carries its whole history — which is
+/// what keeps 200 ms enough: measured against the offline pass, the band
+/// lands within 5e-12, where 150 ms gives 2.5e-9 and 100 ms gives 1.3e-6.
+pub const DECORR_HORIZON_MS: f64 = 200.0;
+
+/// Band the decorrelator's backward pass produces per warm-up. Bigger spends
+/// the warm-up over more output; the engine has to buffer `2 * chunk +
+/// horizon` of look-ahead for it, which is what caps it.
+pub const DECORR_CHUNK_MS: f64 = 50.0;
 
 /// Causal, per-channel front of the chain.
 pub struct CausalChain {
@@ -175,8 +186,7 @@ impl CausalChain {
 /// advance only over what is emitted — the same discipline
 /// [`StreamingLimiter`]'s release smoother follows.
 pub struct LfUnifier {
-    filter: HorizonFiltFilt,
-    bed_idx: Vec<usize>,
+    filter: RollingBand,
     lf_targets: Vec<(usize, f64)>,
     lfe: Option<usize>,
     params: BassParams,
@@ -191,14 +201,20 @@ impl LfUnifier {
         lfe: Option<usize>,
         params: BassParams,
         lf_targets: Vec<(usize, f64)>,
+        base: usize,
     ) -> Self {
         let nyq = sample_rate as f64 / 2.0;
-        let horizon = (sample_rate as f64 * UNIFY_HORIZON_MS / 1000.0) as usize;
+        let scale = |ms: f64| (sample_rate as f64 * ms / 1000.0) as usize;
         let cutoff = params.unify_hz.unwrap_or(nyq);
         let sos = butter_sos(2, (cutoff / nyq).clamp(1e-4, 0.999), BandType::Low);
         Self {
-            filter: HorizonFiltFilt::new(sos, horizon, horizon),
-            bed_idx: non_lfe(n_channels, lfe),
+            filter: RollingBand::new(
+                sos,
+                scale(UNIFY_HORIZON_MS),
+                scale(UNIFY_CHUNK_MS),
+                non_lfe(n_channels, lfe),
+                base,
+            ),
             lf_targets,
             lfe,
             params,
@@ -207,58 +223,60 @@ impl LfUnifier {
         }
     }
 
-    /// Drop the punch envelopes. The zero-phase pass carries nothing across
-    /// calls, so this is the whole of the unifier's state.
-    pub fn reset(&mut self) {
-        self.punch = PunchState::default();
+    /// Source frames ahead of `end` its band split needs — see
+    /// [`RollingBand::look_ahead`].
+    pub fn look_ahead(&self) -> usize {
+        self.filter.look_ahead()
     }
 
-    /// Unify the low band across `queue[..][start..end]`, reading outward
-    /// from `start`/`end` for the zero-phase pass's context.
-    pub fn process(&mut self, queue: &mut [Vec<f64>], start: usize, end: usize) {
+    /// Unify the low band across `window`, which holds `source[..][start..end]`
+    /// and is the only thing written — the zero-phase pass reads its context
+    /// outward from `start`/`end` in `source`, which stays untouched so the
+    /// decorrelator still sees the pre-unification signal offline hands it.
+    pub fn process(
+        &mut self,
+        source: &[Vec<f64>],
+        base: usize,
+        total: usize,
+        window: &mut [Vec<f64>],
+        start: usize,
+        end: usize,
+    ) {
         if end <= start || self.lf_targets.is_empty() {
             return;
         }
         let n = end - start;
         let mut bus = vec![0.0; n];
-        let mut lows: Vec<Vec<f64>> = Vec::with_capacity(self.bed_idx.len());
-        for &i in &self.bed_idx {
-            if i >= queue.len() {
-                lows.push(Vec::new());
-                continue;
-            }
-            let low = self.filter.process_window(&queue[i], start, end);
-            for (acc, v) in bus.iter_mut().zip(low.iter()) {
+        self.filter.advance(source, base, total, start, end);
+        for slot in 0..self.filter.channels().len() {
+            for (acc, v) in bus.iter_mut().zip(self.filter.band(slot, start, end)) {
                 *acc += v;
             }
-            lows.push(low);
         }
         self.punch.run(&mut bus, self.sample_rate, &self.params);
 
-        for (&i, low) in self.bed_idx.iter().zip(lows.iter()) {
-            if i >= queue.len() {
-                continue;
-            }
-            for (k, l) in low.iter().enumerate() {
-                queue[i][start + k] -= l;
+        for (slot, &i) in self.filter.channels().iter().enumerate() {
+            let Some(out) = window.get_mut(i) else { continue };
+            for (v, l) in out.iter_mut().zip(self.filter.band(slot, start, end)) {
+                *v -= l;
             }
         }
 
         let harmonics = self.params.excite.then(|| excite_harmonics(&bus, &self.params));
         for &(i, weight) in &self.lf_targets {
-            if i >= queue.len() || weight == 0.0 {
+            if i >= window.len() || weight == 0.0 {
                 continue;
             }
             let harmonics = harmonics.as_ref().filter(|_| Some(i) != self.lfe);
-            for k in 0..n.min(queue[i].len().saturating_sub(start)) {
+            for k in 0..n.min(window[i].len()) {
                 let h = harmonics.map_or(0.0, |h| h[k]);
-                queue[i][start + k] += (bus[k] + h) * weight;
+                window[i][k] += (bus[k] + h) * weight;
             }
         }
     }
 }
 
-/// Mid-bass decorrelation over the same look-ahead window as [`LfUnifier`].
+/// Mid-bass decorrelation over its own look-ahead window.
 ///
 /// Mirrors the tail of `mastering::bass::bass_control`: the zero-phase band
 /// comes off the *pre*-unification queue, exactly as offline takes it before
@@ -267,8 +285,8 @@ impl LfUnifier {
 /// samples are already final, instead of needing a second horizon behind the
 /// unifier.
 pub struct StreamingDecorrelator {
-    filter: HorizonFiltFilt,
-    channels: Vec<(usize, Decorrelator)>,
+    band: RollingBand,
+    channels: Vec<Decorrelator>,
 }
 
 impl StreamingDecorrelator {
@@ -279,29 +297,48 @@ impl StreamingDecorrelator {
         n_channels: usize,
         lfe: Option<usize>,
         params: &BassParams,
+        base: usize,
     ) -> Option<Self> {
         let sos = crate::mastering::decorrelate::band_sos(sample_rate, params)?;
-        let horizon = (sample_rate as f64 * DECORR_HORIZON_MS / 1000.0) as usize;
+        let scale = |ms: f64| (sample_rate as f64 * ms / 1000.0) as usize;
+        let bed = non_lfe(n_channels, lfe);
         Some(Self {
-            filter: HorizonFiltFilt::new(sos, horizon, horizon),
-            channels: non_lfe(n_channels, lfe)
-                .into_iter()
-                .map(|i| (i, Decorrelator::new(i, sample_rate, params)))
-                .collect(),
+            channels: bed.iter().map(|i| Decorrelator::new(*i, sample_rate, params)).collect(),
+            band: RollingBand::new(
+                sos,
+                scale(DECORR_HORIZON_MS),
+                scale(DECORR_CHUNK_MS),
+                bed,
+                base,
+            ),
         })
     }
 
+    /// Source frames ahead of `end` its band split needs — see
+    /// [`RollingBand::look_ahead`].
+    pub fn look_ahead(&self) -> usize {
+        self.band.look_ahead()
+    }
+
     /// Decorrelate `window[..][..]`, taking the band from `pre[..][start..end]`
-    /// and reading outward from there for the zero-phase pass's context.
-    pub fn process(&mut self, pre: &[Vec<f64>], window: &mut [Vec<f64>], start: usize, end: usize) {
+    /// and reading ahead of it for the zero-phase pass's context.
+    pub fn process(
+        &mut self,
+        pre: &[Vec<f64>],
+        pre_base: usize,
+        total: usize,
+        window: &mut [Vec<f64>],
+        start: usize,
+        end: usize,
+    ) {
         if end <= start {
             return;
         }
-        for (i, decorrelator) in self.channels.iter_mut() {
-            let Some(source) = pre.get(*i) else { continue };
-            let Some(out) = window.get_mut(*i) else { continue };
-            let band = self.filter.process_window(source, start, end);
-            decorrelator.run(out, &band);
+        self.band.advance(pre, pre_base, total, start, end);
+        for (slot, decorrelator) in self.channels.iter_mut().enumerate() {
+            let channel = self.band.channels()[slot];
+            let Some(out) = window.get_mut(channel) else { continue };
+            decorrelator.run(out, self.band.band(slot, start, end));
         }
     }
 }

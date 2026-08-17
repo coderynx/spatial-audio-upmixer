@@ -5,7 +5,6 @@
 //! offline give the same samples.
 
 use crate::kernels::biquad::SosFilter;
-use crate::kernels::filtfilt::sosfiltfilt;
 use crate::mastering::compressor::CompParams;
 
 /// A one-pole `lfilter([a], [1, -(1-a)], x)` that survives across blocks.
@@ -153,46 +152,10 @@ impl StreamingCompressor {
 /// Streaming SOS filter — a thin alias so call sites read as "carried state".
 pub type StreamingSos = SosFilter;
 
-/// Zero-phase low-pass over a bounded look-behind/look-ahead horizon.
-///
-/// The offline mono-maker runs `sosfiltfilt`, whose backward pass is
-/// anticausal and therefore impossible to compute causally. Because the
-/// worklet owns the whole stem it can still look ahead: running the offline
-/// filter over `[t - behind, t + ahead]` and keeping the middle reproduces it
-/// to within the filter's own decay over `ahead` samples — for the 80-100 Hz
-/// mono-maker that is `e^-40` at a 100 ms horizon, far below any tolerance
-/// that matters.
-pub struct HorizonFiltFilt {
-    sections: Vec<[f64; 6]>,
-    behind: usize,
-    ahead: usize,
-}
-
-impl HorizonFiltFilt {
-    pub fn new(sections: Vec<[f64; 6]>, behind: usize, ahead: usize) -> Self {
-        Self { sections, behind, ahead }
-    }
-
-    /// Filter `signal[start..end]`, using surrounding samples for context.
-    ///
-    /// Near either end of `signal` the true file boundary is used, which is
-    /// what the offline pass sees, so the result there is exact.
-    pub fn process_window(&self, signal: &[f64], start: usize, end: usize) -> Vec<f64> {
-        let lo = start.saturating_sub(self.behind);
-        let hi = (end + self.ahead).min(signal.len());
-        let window = &signal[lo..hi];
-        let filtered = sosfiltfilt(&self.sections, window)
-            .unwrap_or_else(|| crate::kernels::biquad::sosfilt(&self.sections, window));
-        filtered[start - lo..end - lo].to_vec()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::kernels::biquad::lfilter;
-    use crate::kernels::butter::{butter_sos, BandType};
-    use crate::kernels::filtfilt::sosfiltfilt;
 
     #[test]
     fn one_pole_matches_the_offline_lfilter() {
@@ -209,33 +172,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn horizon_filtfilt_reproduces_the_offline_zero_phase_pass() {
-        let sr = 48_000;
-        let signal: Vec<f64> = (0..24_000)
-            .map(|i| {
-                let t = i as f64 / sr as f64;
-                (2.0 * std::f64::consts::PI * 60.0 * t).sin()
-                    + 0.3 * (2.0 * std::f64::consts::PI * 900.0 * t).sin()
-            })
-            .collect();
-        let sos = butter_sos(2, 100.0 / (sr as f64 / 2.0), BandType::Low);
-        let offline = sosfiltfilt(&sos, &signal).expect("signal is long enough");
-
-        // 100 ms of context either side, the horizon the worklet renders with.
-        let horizon = HorizonFiltFilt::new(sos, 4800, 4800);
-        let mut got = Vec::with_capacity(signal.len());
-        let block = 128;
-        let mut start = 0;
-        while start < signal.len() {
-            let end = (start + block).min(signal.len());
-            got.extend(horizon.process_window(&signal, start, end));
-            start = end;
-        }
-
-        assert_eq!(got.len(), offline.len());
-        for (i, (a, b)) in got.iter().zip(offline.iter()).enumerate() {
-            assert!((a - b).abs() < 1e-9, "sample {i}: {a} vs {b}");
-        }
-    }
 }
