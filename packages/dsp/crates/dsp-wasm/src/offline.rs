@@ -139,7 +139,7 @@ pub unsafe extern "C" fn dsp_render_binaural(
     out: *mut f64,
 ) -> u32 {
     use upmixer_dsp_core::kernels::biquad::sosfilt;
-    use upmixer_dsp_core::kernels::butter::{butter_sos, BandType};
+    use upmixer_dsp_core::kernels::butter::linkwitz_riley_lowpass_sos;
     use upmixer_dsp_core::spatial::ambisonics::{decode_to_binaural, DecodeFilterSet, HoaBus, N_ACN_CHANNELS};
     use upmixer_dsp_core::spatial::voicing::apply_voicing;
 
@@ -171,7 +171,7 @@ pub unsafe extern "C" fn dsp_render_binaural(
     // LFE joins before voicing, matching render_binaural (ledger D11).
     if let Some(lfe) = params.lfe_index {
         let nyq = sample_rate as f64 / 2.0;
-        let sos = butter_sos(params.lfe_filter_order, params.lfe_cutoff_hz / nyq, BandType::Low);
+        let sos = linkwitz_riley_lowpass_sos(params.lfe_filter_order, params.lfe_cutoff_hz / nyq);
         let filtered = sosfilt(&sos, &flat[lfe * n_frames..(lfe + 1) * n_frames]);
         for i in 0..n_frames {
             let v = filtered[i] * params.lfe_gain;

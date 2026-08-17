@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.signal import butter, sosfilt
+import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.analysis.spatial import SpatialPlan
@@ -16,8 +16,10 @@ from upmixer.utils import (
 def _lfe_filter(
     signal: np.ndarray, sr: int, cutoff_hz: float, gain: float, order: int
 ) -> np.ndarray:
-    sos = butter(order, cutoff_hz / (sr / 2.0), btype="low", output="sos")
-    return sosfilt(sos, signal) * gain
+    filtered = upmixer_dsp.lfe_lowpass(
+        np.ascontiguousarray(signal, dtype=np.float64), sr, cutoff_hz, order
+    )
+    return filtered * gain
 
 
 class MultichannelUpmixer:

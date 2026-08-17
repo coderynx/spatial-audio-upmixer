@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from upmixer.config import UpmixConfig
 from upmixer.routing.lfe import LFEExtractor
@@ -30,6 +31,22 @@ def test_lpf_stopband():
     freq_per_bin = sr / ((n_freq_bins - 1) * 2)
     bin_1000 = int(1000 / freq_per_bin)
     assert lfe.mask[bin_1000] < 0.01
+
+
+def test_lpf_mask_is_linkwitz_riley_at_cutoff():
+    """LR signature: half amplitude at cutoff, where Butterworth is 1/sqrt(2)."""
+    config = UpmixConfig(auto_fft_size=False, lfe_cutoff_hz=120.0, lfe_filter_order=4)
+    n_freq_bins = 2049
+    sr = 44100
+    lfe = LFEExtractor(config, sr, n_freq_bins)
+
+    cutoff_bin = round(120.0 / (sr / ((n_freq_bins - 1) * 2)))
+    assert lfe.mask[cutoff_bin] == pytest.approx(0.5, abs=0.02)
+
+
+def test_odd_filter_order_is_rejected():
+    with pytest.raises(ValueError):
+        LFEExtractor(UpmixConfig(auto_fft_size=False, lfe_filter_order=3), 44100, 2049)
 
 
 def test_lfe_extract_preserves_shape():

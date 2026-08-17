@@ -5,7 +5,7 @@
 //! counterpart would have accumulated, so the two agree sample for sample.
 
 use crate::kernels::biquad::SosFilter;
-use crate::kernels::butter::{butter_sos, BandType};
+use crate::kernels::butter::{butter_sos, linkwitz_riley_lowpass_sos, BandType};
 use crate::routing::decorrelate::{
     velvet_pair_seeded, VelvetFir, VelvetLine, VELVET_SEED, VELVET_SEED_HEIGHT,
 };
@@ -220,10 +220,9 @@ impl LfeBus {
     pub fn new(sample_rate: u32, p: &SendParams) -> Self {
         let nyq = sample_rate as f64 / 2.0;
         Self {
-            filter: SosFilter::from_flat(&butter_sos(
+            filter: SosFilter::from_flat(&linkwitz_riley_lowpass_sos(
                 p.lfe_filter_order,
                 p.lfe_cutoff_hz / nyq,
-                BandType::Low,
             )),
             gain: p.lfe_gain,
         }
@@ -236,7 +235,7 @@ impl LfeBus {
     /// Re-derive the lowpass and gain in place, keeping the filter state.
     pub fn retune(&mut self, sample_rate: u32, p: &SendParams) {
         let nyq = sample_rate as f64 / 2.0;
-        let sos = butter_sos(p.lfe_filter_order, p.lfe_cutoff_hz / nyq, BandType::Low);
+        let sos = linkwitz_riley_lowpass_sos(p.lfe_filter_order, p.lfe_cutoff_hz / nyq);
         self.filter.retune_flat(&sos);
         self.gain = p.lfe_gain;
     }
@@ -354,7 +353,7 @@ mod tests {
         let mut bus = LfeBus::new(sr, &p);
         let got: Vec<f64> = signal.iter().map(|v| bus.tick(*v)).collect();
 
-        let lp = butter_sos(p.lfe_filter_order, p.lfe_cutoff_hz / (sr as f64 / 2.0), BandType::Low);
+        let lp = linkwitz_riley_lowpass_sos(p.lfe_filter_order, p.lfe_cutoff_hz / (sr as f64 / 2.0));
         let want: Vec<f64> = sosfilt(&lp, &signal).iter().map(|v| v * p.lfe_gain).collect();
 
         for (a, b) in got.iter().zip(want.iter()) {

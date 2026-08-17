@@ -10,7 +10,7 @@ pub mod sum;
 pub mod upfirdn;
 
 pub use biquad::{lfilter, sosfilt, sosfilt_zi, Sos};
-pub use butter::{butter_sos, BandType};
+pub use butter::{butter_sos, linkwitz_riley_lowpass_sos, BandType};
 pub use fft::{fftconvolve, next_fast_len, RealFft};
 pub use filtfilt::sosfiltfilt;
 pub use fir_design::{firwin2, minimum_phase};

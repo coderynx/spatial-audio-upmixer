@@ -455,7 +455,7 @@ class StemRouter:
                 channels[label.value][:n] += route_scale * gain * signal
 
         if "LFE" in channels:
-            channels["LFE"] += self._lfe_gain * upmixer_dsp.lowpass(
+            channels["LFE"] += self._lfe_gain * upmixer_dsp.lfe_lowpass(
                 np.ascontiguousarray(lfe_bus, dtype=np.float64),
                 self._sr,
                 self._config.lfe_cutoff_hz,

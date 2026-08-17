@@ -23,7 +23,7 @@ from upmixer.utils import soft_limit
 
 
 def _lfe_lowpass(signal: np.ndarray, sample_rate: int, cutoff_hz: float, order: int) -> np.ndarray:
-    return upmixer_dsp.lowpass(
+    return upmixer_dsp.lfe_lowpass(
         np.ascontiguousarray(signal, dtype=np.float64), sample_rate, cutoff_hz, order
     )
 

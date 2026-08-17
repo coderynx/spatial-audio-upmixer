@@ -7,7 +7,7 @@ use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
 use upmixer_dsp_core::kernels::biquad::sosfilt;
-use upmixer_dsp_core::kernels::butter::{butter_sos, BandType};
+use upmixer_dsp_core::kernels::butter::{butter_sos, linkwitz_riley_lowpass_sos, BandType};
 use upmixer_dsp_core::spatial::{
     ambisonics::{self, DecodeFilterSet, HoaBus, N_ACN_CHANNELS},
     voicing::{self, VoicingParams},
@@ -142,32 +142,22 @@ fn apply_xtc<'py>(
     (PyArray1::from_vec(py, out_l), PyArray1::from_vec(py, out_r))
 }
 
-fn butterworth(
-    py: Python<'_>,
-    signal: PyReadonlyArray1<'_, f64>,
-    sample_rate: u32,
-    cutoff_hz: f64,
-    order: usize,
-    band: BandType,
-) -> Vec<f64> {
-    let input = signal.as_array().to_vec();
-    py.detach(|| {
-        let sos = butter_sos(order, cutoff_hz / (sample_rate as f64 / 2.0), band);
-        sosfilt(&sos, &input)
-    })
-}
-
-/// Butterworth low-pass — the LFE feed for binaural, transaural, and the
-/// stem router's LFE bus.
+/// Linkwitz-Riley low-pass — the LFE feed for binaural, transaural, and the
+/// stem router's LFE bus. `order` must be even; see
+/// `docs/standards/spatial_layouts_bs775_bs2051.md` § "LFE lowpass".
 #[pyfunction]
-fn lowpass<'py>(
+fn lfe_lowpass<'py>(
     py: Python<'py>,
     signal: PyReadonlyArray1<'py, f64>,
     sample_rate: u32,
     cutoff_hz: f64,
     order: usize,
 ) -> Bound<'py, PyArray1<f64>> {
-    let out = butterworth(py, signal, sample_rate, cutoff_hz, order, BandType::Low);
+    let input = signal.as_array().to_vec();
+    let out = py.detach(|| {
+        let sos = linkwitz_riley_lowpass_sos(order, cutoff_hz / (sample_rate as f64 / 2.0));
+        sosfilt(&sos, &input)
+    });
     PyArray1::from_vec(py, out)
 }
 
@@ -180,7 +170,11 @@ fn highpass<'py>(
     cutoff_hz: f64,
     order: usize,
 ) -> Bound<'py, PyArray1<f64>> {
-    let out = butterworth(py, signal, sample_rate, cutoff_hz, order, BandType::High);
+    let input = signal.as_array().to_vec();
+    let out = py.detach(|| {
+        let sos = butter_sos(order, cutoff_hz / (sample_rate as f64 / 2.0), BandType::High);
+        sosfilt(&sos, &input)
+    });
     PyArray1::from_vec(py, out)
 }
 
@@ -190,7 +184,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(render_hoa_to_binaural, m)?)?;
     m.add_function(wrap_pyfunction!(apply_voicing, m)?)?;
     m.add_function(wrap_pyfunction!(apply_xtc, m)?)?;
-    m.add_function(wrap_pyfunction!(lowpass, m)?)?;
+    m.add_function(wrap_pyfunction!(lfe_lowpass, m)?)?;
     m.add_function(wrap_pyfunction!(highpass, m)?)?;
     Ok(())
 }

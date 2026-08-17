@@ -31,8 +31,14 @@ class LFEExtractor:
     def _build_lpf_mask(
         cutoff_hz: float, sample_rate: int, n_freq_bins: int, order: int
     ) -> np.ndarray:
-        """Builds a Butterworth-shaped frequency magnitude mask."""
+        """Builds a Linkwitz-Riley-shaped frequency magnitude mask.
+
+        The squared Butterworth magnitude of the time-domain LFE lowpass
+        (−6 dB at cutoff) — see
+        ``docs/standards/spatial_layouts_bs775_bs2051.md`` § "LFE lowpass".
+        """
+        if order < 2 or order % 2:
+            raise ValueError(f"lfe_filter_order must be even and >= 2, got {order}")
         freqs = np.arange(n_freq_bins) * sample_rate / ((n_freq_bins - 1) * 2)
         ratio = freqs / cutoff_hz
-        mask = 1.0 / np.sqrt(1.0 + np.power(ratio, 2 * order))
-        return mask
+        return 1.0 / (1.0 + np.power(ratio, order))

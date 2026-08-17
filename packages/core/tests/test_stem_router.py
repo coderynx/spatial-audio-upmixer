@@ -147,7 +147,7 @@ def test_default_lfe_gain_is_applied_once():
 
     channels = router.route(stems, len(stems["Bass"]))
     stem_mono = stems["Bass"][:, 0]
-    expected = config.lfe_gain * upmixer_dsp.lowpass(
+    expected = config.lfe_gain * upmixer_dsp.lfe_lowpass(
         np.ascontiguousarray(stem_mono, dtype=np.float64),
         48000,
         config.lfe_cutoff_hz,

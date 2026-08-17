@@ -91,6 +91,21 @@ pub fn butter_sos(order: usize, wn: f64, band: BandType) -> Vec<[f64; 6]> {
     bilinear_to_sos(&poles_a, &zeros_a, gain_a)
 }
 
+/// Linkwitz-Riley low-pass of even `order`: two cascaded Butterworth
+/// sections of half the order, so `|H|` is the Butterworth magnitude squared
+/// (−6 dB at cutoff) and the phase is a full multiple of 180° there.
+///
+/// The LFE bus uses it because the mains keep their bass unfiltered — see
+/// `docs/standards/spatial_layouts_bs775_bs2051.md` § "LFE lowpass".
+pub fn linkwitz_riley_lowpass_sos(order: usize, wn: f64) -> Vec<[f64; 6]> {
+    assert!(
+        order >= 2 && order % 2 == 0,
+        "Linkwitz-Riley order must be even and >= 2"
+    );
+    let half = butter_sos(order / 2, wn, BandType::Low);
+    [half.clone(), half].concat()
+}
+
 /// `bilinear_zpk` at `fs = 2` followed by `zpk2sos`. The transform sends the
 /// remaining degree to zeros at −1, so every zero stays real.
 fn bilinear_to_sos(
@@ -239,6 +254,30 @@ mod tests {
             let sos = butter_sos(order, 0.1, BandType::Low);
             let gain: f64 = sos.iter().map(|r| Sos::new(*r).dc_gain()).product();
             assert!((gain - 1.0).abs() < 1e-12, "order {order} DC gain {gain}");
+        }
+    }
+
+    /// The Linkwitz-Riley signature: −6 dB at cutoff where Butterworth is −3.
+    #[test]
+    fn linkwitz_riley_is_half_amplitude_at_cutoff() {
+        use crate::kernels::biquad::sosfilt;
+
+        let (sr, cutoff) = (48_000.0f64, 120.0f64);
+        let n = sr as usize;
+        let sine: Vec<f64> = (0..n)
+            .map(|i| (2.0 * std::f64::consts::PI * cutoff * i as f64 / sr).sin())
+            .collect();
+        let rms = |v: &[f64]| (v.iter().map(|x| x * x).sum::<f64>() / v.len() as f64).sqrt();
+
+        for order in [2usize, 4, 8] {
+            let lr = sosfilt(&linkwitz_riley_lowpass_sos(order, cutoff / (sr / 2.0)), &sine);
+            let bw = sosfilt(&butter_sos(order, cutoff / (sr / 2.0), BandType::Low), &sine);
+            let settled = n / 2;
+            assert!((rms(&lr[settled..]) / rms(&sine[settled..]) - 0.5).abs() < 1e-3);
+            assert!(
+                (rms(&bw[settled..]) / rms(&sine[settled..]) - std::f64::consts::FRAC_1_SQRT_2).abs()
+                    < 1e-3
+            );
         }
     }
 

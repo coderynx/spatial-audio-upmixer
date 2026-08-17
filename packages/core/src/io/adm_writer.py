@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import soundfile as sf
-from scipy.signal import butter, sosfilt
+import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, FORMAT_MAP, OutputFormat
@@ -158,12 +158,6 @@ class AdmBwfStemWriter:
         self._config = config
         self._output_fmt = output_fmt
         self._output_ch_values = {label.value for label in output_fmt.channels}
-        self._lfe_sos = butter(
-            config.lfe_filter_order,
-            config.lfe_cutoff_hz / (sample_rate / 2.0),
-            btype="low",
-            output="sos",
-        )
 
     def write(
         self,
@@ -231,7 +225,12 @@ class AdmBwfStemWriter:
                 lfe_audio = (
                     self._config.lfe_gain
                     * lfe_routing_gain
-                    * sosfilt(self._lfe_sos, mono)
+                    * upmixer_dsp.lfe_lowpass(
+                        np.ascontiguousarray(mono, dtype=np.float64),
+                        self._sr,
+                        self._config.lfe_cutoff_hz,
+                        self._config.lfe_filter_order,
+                    )
                 )
                 track_idx = len(all_tracks)
                 all_tracks.append(lfe_audio)
