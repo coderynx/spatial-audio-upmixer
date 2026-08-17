@@ -1,7 +1,7 @@
 //! Shaping applied to a source before it reaches a height speaker: the
 //! elevation cue EQ. Decorrelation itself lives in `routing::decorrelate`.
 
-use crate::kernels::biquad::{peaking_sos, sosfilt};
+use crate::kernels::biquad::{peaking_sos, sos_cascade_response, sos_magnitude, sosfilt};
 use crate::kernels::butter::{butter_sos, BandType};
 
 /// Q of the directional-band peak. Structural, not served: the band is a
@@ -62,10 +62,47 @@ pub fn elevation_eq(
     )
 }
 
+/// Magnitude response of the whole `elevation_eq` chain at each frequency in
+/// Hz, from the same section designs, so an STFT mask can voice heights the
+/// way the time-domain send does without approximating it.
+///
+/// Magnitude only: the sections are minimum-phase, a per-bin mask is
+/// zero-phase, so magnitude is the agreement that is achievable.
+#[allow(clippy::too_many_arguments)]
+pub fn elevation_response(
+    freqs_hz: &[f64],
+    sample_rate: u32,
+    low_rolloff_hz: f64,
+    low_rolloff_gain: f64,
+    high_shelf_hz: f64,
+    high_shelf_gain: f64,
+    directional_band_hz: f64,
+    directional_band_gain: f64,
+) -> Vec<f64> {
+    let nyq = sample_rate as f64 / 2.0;
+    let sos_lp = butter_sos(1, low_rolloff_hz / nyq, BandType::Low);
+    let sos_hp = butter_sos(2, high_shelf_hz / nyq, BandType::High);
+    let band = directional_band_sos(directional_band_hz, sample_rate, directional_band_gain);
+
+    freqs_hz
+        .iter()
+        .map(|f| {
+            let wn = (f / nyq).min(1.0);
+            let bass = 1.0 - sos_cascade_response(&sos_lp, wn) * (1.0 - low_rolloff_gain);
+            let shelf = 1.0 + sos_cascade_response(&sos_hp, wn) * (high_shelf_gain - 1.0);
+            let shaped = (bass * shelf).norm();
+            if directional_band_gain == 1.0 {
+                shaped
+            } else {
+                shaped * sos_magnitude(&band, wn)
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::biquad::sos_magnitude;
 
     #[test]
     fn elevation_eq_attenuates_low_frequency_content() {
@@ -108,6 +145,25 @@ mod tests {
         // +4.1 dB at centre must not read as a broadband brightness change.
         assert!((sos_magnitude(&sos, 1000.0 / nyq) - 1.0).abs() < 0.05);
         assert!((sos_magnitude(&sos, 20000.0 / nyq) - 1.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn elevation_response_matches_the_time_domain_chain() {
+        let sr = 48_000;
+        let freqs = [50.0, 100.0, 500.0, 2000.0, 4000.0, 16000.0];
+        for band_gain in [1.0, 1.6] {
+            let want = elevation_response(&freqs, sr, 150.0, 0.15, 3000.0, 1.5, 8000.0, band_gain);
+            for (hz, want) in freqs.iter().zip(want.iter()) {
+                let tone: Vec<f64> = (0..48_000)
+                    .map(|i| (2.0 * std::f64::consts::PI * hz * i as f64 / sr as f64).sin())
+                    .collect();
+                let out = elevation_eq(&tone, sr, 150.0, 0.15, 3000.0, 1.5, 8000.0, band_gain);
+                let tail = &out[24_000..];
+                let amplitude =
+                    (2.0 * tail.iter().map(|v| v * v).sum::<f64>() / tail.len() as f64).sqrt();
+                assert!((amplitude - want).abs() < 1e-9, "{hz} Hz: {amplitude} vs {want}");
+            }
+        }
     }
 
     #[test]

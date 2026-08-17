@@ -135,14 +135,27 @@ pub fn peaking_sos(wn: f64, q: f64, gain: f64) -> [f64; 6] {
     ]
 }
 
-/// Magnitude response of one section at `wn` (normalized to Nyquist).
-pub fn sos_magnitude(section: &[f64; 6], wn: f64) -> f64 {
+/// Complex response of one section at `wn` (normalized to Nyquist).
+pub fn sos_response(section: &[f64; 6], wn: f64) -> Complex64 {
     let w = std::f64::consts::PI * wn;
     let z1 = Complex64::from_polar(1.0, -w);
     let z2 = z1 * z1;
     let num = section[0] + section[1] * z1 + section[2] * z2;
     let den = section[3] + section[4] * z1 + section[5] * z2;
-    (num / den).norm()
+    num / den
+}
+
+/// Complex response of a cascade at `wn` (normalized to Nyquist).
+pub fn sos_cascade_response(sections: &[[f64; 6]], wn: f64) -> Complex64 {
+    sections
+        .iter()
+        .map(|s| sos_response(s, wn))
+        .product::<Complex64>()
+}
+
+/// Magnitude response of one section at `wn` (normalized to Nyquist).
+pub fn sos_magnitude(section: &[f64; 6], wn: f64) -> f64 {
+    sos_response(section, wn).norm()
 }
 
 /// `scipy.signal.sosfilt` on a fresh (zero-state) filter.

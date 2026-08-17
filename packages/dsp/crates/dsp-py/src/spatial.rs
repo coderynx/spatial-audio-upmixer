@@ -3,7 +3,6 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
-use upmixer_dsp_core::kernels::biquad::sos_magnitude;
 use upmixer_dsp_core::routing::decorrelate;
 use upmixer_dsp_core::routing::sends;
 use upmixer_dsp_core::spatial::downmix::{self, DownmixRole};
@@ -132,23 +131,33 @@ fn elevation_eq<'py>(
     PyArray1::from_vec(py, out)
 }
 
-/// Magnitude response of the directional band at each frequency, so the STFT
-/// height mask and the time-domain send share one filter design.
+/// Magnitude response of the whole `elevation_eq` chain at each frequency, so
+/// the STFT height mask and the time-domain send share one filter design.
 #[pyfunction]
-fn elevation_band_response<'py>(
+#[pyo3(signature = (freqs_hz, sample_rate, low_rolloff_hz, low_rolloff_gain, high_shelf_hz,
+                    high_shelf_gain, directional_band_hz, directional_band_gain))]
+#[allow(clippy::too_many_arguments)]
+fn elevation_response<'py>(
     py: Python<'py>,
     freqs_hz: PyReadonlyArray1<'py, f64>,
     sample_rate: u32,
+    low_rolloff_hz: f64,
+    low_rolloff_gain: f64,
+    high_shelf_hz: f64,
+    high_shelf_gain: f64,
     directional_band_hz: f64,
     directional_band_gain: f64,
 ) -> Bound<'py, PyArray1<f64>> {
-    let sos = sends::directional_band_sos(directional_band_hz, sample_rate, directional_band_gain);
-    let nyq = sample_rate as f64 / 2.0;
-    let out = freqs_hz
-        .as_array()
-        .iter()
-        .map(|f| sos_magnitude(&sos, (f / nyq).min(1.0)))
-        .collect();
+    let out = sends::elevation_response(
+        freqs_hz.as_array().to_vec().as_slice(),
+        sample_rate,
+        low_rolloff_hz,
+        low_rolloff_gain,
+        high_shelf_hz,
+        high_shelf_gain,
+        directional_band_hz,
+        directional_band_gain,
+    );
     PyArray1::from_vec(py, out)
 }
 
@@ -158,7 +167,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(soft_limit, m)?)?;
     m.add_function(wrap_pyfunction!(velvet_pair_send, m)?)?;
     m.add_function(wrap_pyfunction!(elevation_eq, m)?)?;
-    m.add_function(wrap_pyfunction!(elevation_band_response, m)?)?;
+    m.add_function(wrap_pyfunction!(elevation_response, m)?)?;
     m.add("VELVET_LENGTH_MS", decorrelate::VELVET_LENGTH_MS)?;
     m.add("VELVET_TAPS_PER_SIDE", decorrelate::VELVET_TAPS_PER_SIDE)?;
     m.add("VELVET_SEED", decorrelate::VELVET_SEED)?;
