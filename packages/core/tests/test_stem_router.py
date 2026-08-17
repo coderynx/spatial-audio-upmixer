@@ -267,3 +267,38 @@ def test_apply_stem_pan_round_trips_through_the_inverse():
         panned = apply_stem_pan({"FL": 1.0, "FR": 1.0}, pan)
         recovered = math.atan2(panned["FR"], panned["FL"]) / (math.pi / 2)
         assert recovered == pytest.approx(pan, abs=1e-9)
+
+
+def _noise(n: int = 48000, seed: int = 7) -> np.ndarray:
+    mono = np.random.default_rng(seed).standard_normal(n) * 0.2
+    return np.column_stack([mono, mono])
+
+
+def test_send_pairs_survive_a_mono_fold_down():
+    stems = {"Other": _noise()}
+    channels = _router(stem_routing={"Other": {"SL": 0.7, "SR": 0.7, "TFL": 0.7, "TFR": 0.7}}).route(
+        stems, len(stems["Other"])
+    )
+
+    for left, right in (("SL", "SR"), ("TFL", "TFR")):
+        summed = channels[left] + channels[right]
+        power_sum = float(np.dot(channels[left], channels[left])) + float(
+            np.dot(channels[right], channels[right])
+        )
+        loss = 10.0 * math.log10(float(np.dot(summed, summed)) / power_sum)
+        assert abs(loss) < 0.5, f"{left}+{right} fold-down moved {loss:.2f} dB"
+
+
+def test_surround_and_height_sends_are_decorrelated_from_each_other():
+    stems = {"Other": _noise()}
+    channels = _router(stem_routing={"Other": {"SL": 0.7, "TFL": 0.7}}).route(
+        stems, len(stems["Other"])
+    )
+
+    # Different zone seeds: without them a stem sent around and overhead would
+    # arrive as the same signal from two directions.
+    surround, height = channels["SL"], channels["TFL"]
+    correlation = float(np.dot(surround, height)) / math.sqrt(
+        float(np.dot(surround, surround)) * float(np.dot(height, height))
+    )
+    assert abs(correlation) < 0.2, f"surround/height correlation {correlation:.3f}"

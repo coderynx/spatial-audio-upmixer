@@ -5,9 +5,11 @@ import upmixer_dsp
 
 ITU_CENTER_COEFF: float = 1.0 / math.sqrt(2)
 
-# Public so the web engine-constants endpoint (apps/api system slice) can
-# serve the exact default — see docs/contracts/preview_export_parity.md.
-DIFFUSE_SEND_BLEND: float = 0.55
+# Decorrelator tap-set seeds, one per zone class, taken from the shared DSP
+# core so the preview builds the same filters — see
+# docs/contracts/preview_export_parity.md.
+SURROUND_VELVET_SEED: int = upmixer_dsp.VELVET_SEED
+HEIGHT_VELVET_SEED: int = upmixer_dsp.VELVET_SEED_HEIGHT
 
 
 def db_to_linear(db: float) -> float:
@@ -57,39 +59,38 @@ def elevation_eq(
     )
 
 
-def haas_decorrelate(signal: np.ndarray, delay_samples: int) -> np.ndarray:
-    """Return a copy of signal delayed by delay_samples (zero-padded at head).
-
-    Used for Haas-effect L/R decorrelation on surround and height channel
-    pairs. The left channel is undelayed; the right channel receives this
-    delay. Varying delays per channel pair (13–23 ms) prevents comb filtering
-    while creating perceived spatial width.
-    """
-    return upmixer_dsp.haas_decorrelate(
-        np.ascontiguousarray(signal, dtype=np.float64), max(0, delay_samples)
-    )
-
-
-def diffuse_send(
+def velvet_send(
     signal: np.ndarray,
     sr: int,
-    delay_ms: float = 35.0,
-    blend: float = DIFFUSE_SEND_BLEND,
+    side: str,
+    seed: int = upmixer_dsp.VELVET_SEED,
 ) -> np.ndarray:
-    """Early-reflection diffusion for surround/height sends.
+    """Decorrelate one side of a channel pair for a surround or height send.
 
-    Blends the original signal with a delayed copy to simulate room
-    diffusion without convolving a full IR. Applied post-separation so
-    separation artifacts remain in their source channel and do not multiply.
+    Applies one side of the velvet-noise decorrelator pair: a sparse aperiodic
+    FIR that diffuses without the comb a delayed copy produces, and whose two
+    sides share no tap, so a BS.775 fold-down of the pair cannot cancel. Both
+    sides of a pair must use the same seed for that to hold; zone classes use
+    different seeds so a stem's surround and height sends stay decorrelated
+    from each other too.
+
+    Applied post-separation so separation artifacts remain in their source
+    channel and do not multiply.
 
     Args:
-        signal:   1D audio signal.
-        sr:       Sample rate.
-        delay_ms: Early reflection delay in ms (default 35 ms).
-        blend:    Wet mix level (1 - blend = dry).  Range [0, 1].
+        signal: 1D audio signal.
+        sr:     Sample rate.
+        side:   "left" or "right".
+        seed:   Tap-set seed — VELVET_SEED (surround) or VELVET_SEED_HEIGHT.
     """
-    return upmixer_dsp.diffuse_send(
-        np.ascontiguousarray(signal, dtype=np.float64), sr, delay_ms, blend
+    return upmixer_dsp.velvet_pair_send(
+        np.ascontiguousarray(signal, dtype=np.float64),
+        sr,
+        side,
+        upmixer_dsp.VELVET_LENGTH_MS,
+        upmixer_dsp.VELVET_TAPS_PER_SIDE,
+        seed,
+        upmixer_dsp.VELVET_WET,
     )
 
 

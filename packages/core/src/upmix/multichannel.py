@@ -6,9 +6,10 @@ from upmixer.analysis.spatial import SpatialPlan
 from upmixer.formats import ChannelLabel, InputFormat, OutputFormat
 from upmixer.utils import (
     elevation_eq as _elevation_eq,
-    haas_decorrelate,
-    diffuse_send,
+    velvet_send,
+    HEIGHT_VELVET_SEED,
     ITU_CENTER_COEFF,
+    SURROUND_VELVET_SEED,
 )
 
 
@@ -23,8 +24,9 @@ class MultichannelUpmixer:
     """Upmix multichannel audio to a higher format.
 
     Passes through existing channels unchanged. Derives missing channels
-    using gain remixing + Haas decorrelation (right spatial channels) +
-    early-reflection diffusion (surround/height sources).
+    using gain remixing plus velvet-noise decorrelation — one side of a pair
+    per derived channel, so neither side of a pair is a plain copy of its
+    source and their fold-down cannot cancel.
     """
 
     def __init__(
@@ -70,28 +72,29 @@ class MultichannelUpmixer:
                     src, sr, cfg.lfe_cutoff_hz, cfg.lfe_gain, cfg.lfe_filter_order
                 )
 
+        def surround(signal: np.ndarray, side: str) -> np.ndarray:
+            return velvet_send(signal, sr, side, SURROUND_VELVET_SEED)
+
+        def height(signal: np.ndarray, side: str) -> np.ndarray:
+            return velvet_send(signal, sr, side, HEIGHT_VELVET_SEED)
+
         if "SL" not in out:
             src = FL if FL is not None else (BL if BL is not None else None)
             if src is not None:
-                out["SL"] = cfg.surround_gain * diffuse_send(src, sr)
+                out["SL"] = cfg.surround_gain * surround(src, "left")
                 SL = out["SL"]
         if "SR" not in out:
             src = FR if FR is not None else (BR if BR is not None else None)
             if src is not None:
-                diffused = diffuse_send(src, sr)
-                out["SR"] = cfg.surround_gain * haas_decorrelate(
-                    diffused, int(sr * 23.0 / 1000.0)
-                )
+                out["SR"] = cfg.surround_gain * surround(src, "right")
                 SR = out["SR"]
 
         if fmt.has_back:
             if "BL" not in out and SL is not None:
-                out["BL"] = cfg.back_gain * diffuse_send(SL, sr)
+                out["BL"] = cfg.back_gain * surround(SL, "left")
                 BL = out["BL"]
             if "BR" not in out and SR is not None:
-                out["BR"] = cfg.back_gain * haas_decorrelate(
-                    diffuse_send(SR, sr), int(sr * 19.0 / 1000.0)
-                )
+                out["BR"] = cfg.back_gain * surround(SR, "right")
                 BR = out["BR"]
 
         if fmt.has_height:
@@ -117,10 +120,12 @@ class MultichannelUpmixer:
             )
 
             if "TFL" not in out:
-                out["TFL"] = cfg.height_gain * _elevation_eq(h_src_L, **eq_kwargs)
+                out["TFL"] = cfg.height_gain * _elevation_eq(
+                    height(h_src_L, "left"), **eq_kwargs
+                )
             if "TFR" not in out:
                 out["TFR"] = cfg.height_gain * _elevation_eq(
-                    haas_decorrelate(h_src_R, int(sr * 17.0 / 1000.0)), **eq_kwargs
+                    height(h_src_R, "right"), **eq_kwargs
                 )
 
             if fmt.n_height_channels == 4:
@@ -133,10 +138,12 @@ class MultichannelUpmixer:
                     hb_src_L, hb_src_R = h_src_L, h_src_R
 
                 if "TBL" not in out:
-                    out["TBL"] = cfg.height_gain * _elevation_eq(hb_src_L, **eq_kwargs)
+                    out["TBL"] = cfg.height_gain * _elevation_eq(
+                        height(hb_src_L, "left"), **eq_kwargs
+                    )
                 if "TBR" not in out:
                     out["TBR"] = cfg.height_gain * _elevation_eq(
-                        haas_decorrelate(hb_src_R, int(sr * 13.0 / 1000.0)), **eq_kwargs
+                        height(hb_src_R, "right"), **eq_kwargs
                     )
 
         result = {label.value: out[label.value] for label in fmt.channels}

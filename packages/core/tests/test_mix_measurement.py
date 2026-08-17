@@ -23,16 +23,14 @@ import pytest
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, INPUT_FORMAT_MAP, ChannelLabel
 from upmixer.separation.stem_placement import BALANCED_PLACEMENTS, STEM_ROUTING_PRESET_NAMES
-from upmixer.separation.stem_router import (
-    HEIGHT_HAAS_DELAY_MS_L,
-    HEIGHT_HAAS_DELAY_MS_R,
-    SURROUND_HAAS_DELAY_MS_L,
-    SURROUND_HAAS_DELAY_MS_R,
-    StemRouter,
-    build_stem_routing,
-)
+from upmixer.separation.stem_router import StemRouter, build_stem_routing
 from upmixer.upmix.multichannel import MultichannelUpmixer
-from upmixer.utils import diffuse_send, itu_downmix_stereo
+from upmixer.utils import (
+    HEIGHT_VELVET_SEED,
+    SURROUND_VELVET_SEED,
+    itu_downmix_stereo,
+    velvet_send,
+)
 
 pytestmark = pytest.mark.perf
 
@@ -116,6 +114,19 @@ def _band_energy(signal: np.ndarray, lo_hz: float, hi_hz: float) -> float:
     return float(np.sum(np.abs(spectrum[mask]) ** 2))
 
 
+def _dip_count(tf_db: np.ndarray) -> int:
+    """Crossings below −10 dB in the search band.
+
+    The metric that separates a comb from a sparse aperiodic filter: a comb
+    produces hundreds of evenly spaced dips, velvet a few dozen scattered
+    ones. Third-octave bands are wider than a comb's notch spacing and hide
+    the difference entirely (phase 0 §1b).
+    """
+    freqs = _freqs()
+    band = tf_db[(freqs >= _NOTCH_LO_HZ) & (freqs <= _NOTCH_HI_HZ)]
+    return int(np.sum((band[:-1] >= -10.0) & (band[1:] < -10.0)))
+
+
 def _worst_notch_db(tf_db: np.ndarray) -> tuple[float, float]:
     """(depth_db, frequency_hz) of the deepest dip in the comb search band."""
     freqs = _freqs()
@@ -171,30 +182,34 @@ def test_send_frequency_response() -> None:
     impulse = _impulse()
 
     chains = {
-        "surround L (HP250 → 31 ms)": (
+        "surround L (HP250 → velvet L)": (
             router._surround_send(impulse),
-            SURROUND_HAAS_DELAY_MS_L,
+            "left",
+            SURROUND_VELVET_SEED,
         ),
-        "surround R (HP250 → 37 ms)": (
+        "surround R (HP250 → velvet R)": (
             router._surround_send(impulse),
-            SURROUND_HAAS_DELAY_MS_R,
+            "right",
+            SURROUND_VELVET_SEED,
         ),
-        "height L (elev EQ → 23 ms)": (
+        "height L (elev EQ → velvet L)": (
             router._height_send(impulse),
-            HEIGHT_HAAS_DELAY_MS_L,
+            "left",
+            HEIGHT_VELVET_SEED,
         ),
-        "height R (elev EQ → 29 ms)": (
+        "height R (elev EQ → velvet R)": (
             router._height_send(impulse),
-            HEIGHT_HAAS_DELAY_MS_R,
+            "right",
+            HEIGHT_VELVET_SEED,
         ),
     }
 
-    eq_only = {name: _tf_db(eq) for name, (eq, _) in chains.items()}
+    eq_only = {name: _tf_db(eq) for name, (eq, _, _) in chains.items()}
     full = {
-        name: _tf_db(diffuse_send(eq, _SR, delay_ms=delay))
-        for name, (eq, delay) in chains.items()
+        name: _tf_db(velvet_send(eq, _SR, side, seed))
+        for name, (eq, side, seed) in chains.items()
     }
-    comb = {name: full[name] - eq_only[name] for name in chains}
+    decorrelator = {name: full[name] - eq_only[name] for name in chains}
 
     names = tuple(chains)
     band_levels = {name: dict(_band_means_db(full[name])) for name in names}
@@ -209,26 +224,32 @@ def test_send_frequency_response() -> None:
     )
 
     rows = []
-    for name, (_, delay) in chains.items():
-        depth, freq = _worst_notch_db(comb[name])
+    for name, (eq, side, seed) in chains.items():
+        depth, freq = _worst_notch_db(decorrelator[name])
         eq_depth, eq_freq = _worst_notch_db(full[name])
-        band = [level for _, level in _band_means_db(comb[name])]
+        band = [level for _, level in _band_means_db(decorrelator[name])]
+        gain = 10.0 * math.log10(
+            float(np.dot(velvet_send(eq, _SR, side, seed), velvet_send(eq, _SR, side, seed)))
+            / float(np.dot(eq, eq))
+        )
         rows.append(
             (
                 name,
                 f"{depth:.2f} @ {freq:.0f} Hz",
-                f"{1000.0 / delay:.1f} Hz",
+                _dip_count(decorrelator[name]),
                 f"{max(band) - min(band):.2f}",
+                f"{gain:+.2f}",
                 f"{eq_depth:.2f} @ {eq_freq:.0f} Hz",
             )
         )
     _print_table(
-        "1b. Diffuse-send comb, isolated from the send EQ",
+        "1b. Decorrelator response, isolated from the send EQ",
         (
             "Chain",
             "worst notch (dB)",
-            "notch spacing (1/D)",
+            "dips < −10 dB",
             "band ripple p-p (dB)",
+            "broadband gain (dB)",
             "worst notch, full chain",
         ),
         rows,
@@ -277,13 +298,13 @@ def test_send_frequency_response() -> None:
     )
 
     pairs = {
-        "StemRouter surround (31/37 ms)": (
-            diffuse_send(router._surround_send(impulse), _SR, delay_ms=SURROUND_HAAS_DELAY_MS_L),
-            diffuse_send(router._surround_send(impulse), _SR, delay_ms=SURROUND_HAAS_DELAY_MS_R),
+        "StemRouter surround (velvet L/R)": (
+            velvet_send(router._surround_send(impulse), _SR, "left", SURROUND_VELVET_SEED),
+            velvet_send(router._surround_send(impulse), _SR, "right", SURROUND_VELVET_SEED),
         ),
-        "StemRouter height (23/29 ms)": (
-            diffuse_send(router._height_send(impulse), _SR, delay_ms=HEIGHT_HAAS_DELAY_MS_L),
-            diffuse_send(router._height_send(impulse), _SR, delay_ms=HEIGHT_HAAS_DELAY_MS_R),
+        "StemRouter height (velvet L/R)": (
+            velvet_send(router._height_send(impulse), _SR, "left", HEIGHT_VELVET_SEED),
+            velvet_send(router._height_send(impulse), _SR, "right", HEIGHT_VELVET_SEED),
         ),
         "MultichannelUpmixer SL+SR": (derived["SL"], derived["SR"]),
         "MultichannelUpmixer BL+BR": (derived["BL"], derived["BR"]),
@@ -321,8 +342,15 @@ def test_send_frequency_response() -> None:
     )
 
     for name in chains:
-        depth, _ = _worst_notch_db(comb[name])
-        assert depth < -15.0, f"{name} comb notch only {depth:.2f} dB"
+        dips = _dip_count(decorrelator[name])
+        assert dips < 120, f"{name} has {dips} dips, comb-like"
+    for name, (left, right) in pairs.items():
+        summed = left + right
+        loss = 10.0 * math.log10(
+            float(np.dot(summed, summed))
+            / (float(np.dot(left, left)) + float(np.dot(right, right)))
+        )
+        assert abs(loss) < 0.5, f"{name} fold-down lost {loss:.2f} dB"
     assert set(_SURROUND + _HEIGHT).issubset(derived)
 
 

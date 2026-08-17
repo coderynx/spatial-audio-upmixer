@@ -43,7 +43,12 @@ import upmixer_dsp
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
 from upmixer.separation.stem_placement import STEREO_PLACEMENT_LAYOUT, preset_routing
-from upmixer.utils import ITU_CENTER_COEFF, diffuse_send
+from upmixer.utils import (
+    HEIGHT_VELVET_SEED,
+    ITU_CENTER_COEFF,
+    SURROUND_VELVET_SEED,
+    velvet_send,
+)
 
 DEFAULT_ROUTING_PRESET = "balanced"
 DEFAULT_ROUTING_LAYOUT = "7.1.4"
@@ -60,15 +65,6 @@ _HEIGHT_CHANNELS   = {ChannelLabel.TFL, ChannelLabel.TFR, ChannelLabel.TBL, Chan
 _VOCAL_STEM_NAMES: frozenset[str] = frozenset({
     "Vocals", "Lead Vocals", "Backing Vocals",
 })
-
-# Per-side Haas delays (ms) for surround/back and height diffuse sends.
-# Different per side so L/R don't comb-filter. Public so the web
-# engine-constants endpoint (apps/api system slice) can serve the exact values
-# — see docs/contracts/preview_export_parity.md.
-SURROUND_HAAS_DELAY_MS_L: float = 31.0
-SURROUND_HAAS_DELAY_MS_R: float = 37.0
-HEIGHT_HAAS_DELAY_MS_L: float = 23.0
-HEIGHT_HAAS_DELAY_MS_R: float = 29.0
 
 ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
     "front": {
@@ -404,19 +400,19 @@ class StemRouter:
                 for label in self._fmt.channels
             )
             surround_L = (
-                diffuse_send(self._surround_send(stem_L), self._sr, delay_ms=SURROUND_HAAS_DELAY_MS_L)
+                velvet_send(self._surround_send(stem_L), self._sr, "left", SURROUND_VELVET_SEED)
                 if needs_surround else stem_L
             )
             surround_R = (
-                diffuse_send(self._surround_send(stem_R), self._sr, delay_ms=SURROUND_HAAS_DELAY_MS_R)
+                velvet_send(self._surround_send(stem_R), self._sr, "right", SURROUND_VELVET_SEED)
                 if needs_surround else stem_R
             )
             height_L = (
-                diffuse_send(self._height_send(stem_L), self._sr, delay_ms=HEIGHT_HAAS_DELAY_MS_L)
+                velvet_send(self._height_send(stem_L), self._sr, "left", HEIGHT_VELVET_SEED)
                 if needs_height else stem_L
             )
             height_R = (
-                diffuse_send(self._height_send(stem_R), self._sr, delay_ms=HEIGHT_HAAS_DELAY_MS_R)
+                velvet_send(self._height_send(stem_R), self._sr, "right", HEIGHT_VELVET_SEED)
                 if needs_height else stem_R
             )
 
