@@ -32,13 +32,15 @@ const CHANNEL_SHAPE: Record<string, string> = {
   TBR: "height_right",
 };
 
-/** BS.775-4 Annex 4 Table 2 contributions; height channels and LFE excluded. */
+/** BS.775-4 Annex 4 Table 2 contributions, plus the project's height fold
+ * (docs/standards/spatial_layouts_bs775_bs2051.md); LFE excluded. */
 function downmixGains(
   channel: string,
   c: EngineConstants,
 ): [number, number] | undefined {
   const itu = c.ituCenterCoeff;
   const surround = c.surroundDownmixCoeff;
+  const height = c.heightDownmixCoeff;
   switch (channel) {
     case "FL":
       return [1, 0];
@@ -54,6 +56,14 @@ function downmixGains(
       return [surround * itu, 0];
     case "BR":
       return [0, surround * itu];
+    case "TFL":
+      return [height, 0];
+    case "TFR":
+      return [0, height];
+    case "TBL":
+      return [height * surround, 0];
+    case "TBR":
+      return [0, height * surround];
     default:
       return undefined;
   }

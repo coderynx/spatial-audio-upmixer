@@ -271,6 +271,18 @@ class TestParseAndApplyIntegration:
         assert cfg.downmix_enabled is True
         assert cfg.surround_downmix_coeff == pytest.approx(0.5)
 
+    def test_downmix_height_coeff_applies_and_is_bounded(self):
+        data = _minimal(format={"downmix": {"enabled": True, "height_coeff": 0.0}})
+        _, jobs = parse_manifest(data)
+        cfg = UpmixConfig()
+        apply_asset_job(cfg, jobs[0])
+        assert cfg.height_downmix_coeff == pytest.approx(0.0)
+
+        with pytest.raises(ManifestError, match="at most"):
+            validate_manifest(
+                _minimal(format={"downmix": {"enabled": True, "height_coeff": 1.5}})
+            )
+
     def test_rejects_unknown_known_block_field(self):
         data = _minimal(mixing={"channel_layout": "5.1", "typo": True})
         with pytest.raises(ManifestError, match="Unknown manifest field"):

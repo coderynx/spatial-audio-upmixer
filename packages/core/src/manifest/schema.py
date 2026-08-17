@@ -95,6 +95,7 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
             "enabled":        ("config", "downmix_enabled"),
             "output":         ("config", "downmix_output"),
             "surround_coeff": ("config", "downmix_surround_coeff"),
+            "height_coeff":   ("config", "downmix_height_coeff"),
         },
         # Spatial Audio Engine binaural render — a delivery format
         # (format.type: binaural), not a channel layout or a mixing concern.
@@ -270,6 +271,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "stem_source_anchor_strength": ("stem_source_anchor_strength", float),
     "downmix_output":              ("downmix_output_path",    str),
     "downmix_surround_coeff":      ("surround_downmix_coeff", float),
+    "downmix_height_coeff":        ("height_downmix_coeff",   float),
     "downmix_enabled":             ("downmix_enabled",        bool),
     "preview":          ("preview",           bool),
     "preview_duration": ("preview_duration_s", float),

@@ -241,6 +241,7 @@ export type ServedEngineConstants = {
   safety_margin_db: number;
   loudness_max_gain_db: number;
   surround_downmix_coeff: number;
+  height_downmix_coeff: number;
   itu_center_coeff: number;
   speaker_directions: Record<string, { azimuth_rad: number; elevation_rad: number }>;
   comp_profiles: Record<string, CompProfile>;
@@ -282,6 +283,7 @@ export type EngineConstants = {
   safetyMarginDb: number;
   loudnessMaxGainDb: number;
   surroundDownmixCoeff: number;
+  heightDownmixCoeff: number;
   ituCenterCoeff: number;
   /** Ambisonic encode angles, served so the browser never re-derives them. */
   speakerDirections: Record<string, { azimuth_rad: number; elevation_rad: number }>;
@@ -352,6 +354,7 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     safetyMarginDb: s.safety_margin_db,
     loudnessMaxGainDb: s.loudness_max_gain_db,
     surroundDownmixCoeff: s.surround_downmix_coeff,
+    heightDownmixCoeff: s.height_downmix_coeff,
     ituCenterCoeff: s.itu_center_coeff,
     speakerDirections: s.speaker_directions,
     compProfiles: s.comp_profiles as Record<CompProfileName, CompProfile>,

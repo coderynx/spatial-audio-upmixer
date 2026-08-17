@@ -37,7 +37,7 @@ describe("buildEngineParams", () => {
     expect(fl?.azimuth_rad).toBe(TEST_SERVED_CONSTANTS.speaker_directions.FL.azimuth_rad);
   });
 
-  it("applies channel group gains and excludes height and LFE from the downmix", () => {
+  it("applies channel group gains, folds heights into the downmix, excludes LFE", () => {
     const params = buildEngineParams(input());
     const speakers = params.speakers as { name: string; group_gain: number; downmix: unknown }[];
     const by = (name: string) => speakers.find((s) => s.name === name)!;
@@ -48,7 +48,11 @@ describe("buildEngineParams", () => {
     expect(by("TFL").group_gain).toBe(constants.channelGains.height);
 
     expect(by("C").downmix).toEqual([constants.ituCenterCoeff, constants.ituCenterCoeff]);
-    expect(by("TFL").downmix).toBeNull();
+    expect(by("TFL").downmix).toEqual([constants.heightDownmixCoeff, 0]);
+    expect(by("TBR").downmix).toEqual([
+      0,
+      constants.heightDownmixCoeff * constants.surroundDownmixCoeff,
+    ]);
     expect(by("LFE").downmix).toBeNull();
   });
 

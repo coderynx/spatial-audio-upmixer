@@ -54,6 +54,7 @@ def test_configuration_serves_engine_constants(web_client):
         "height_low_rolloff_hz", "height_low_rolloff_gain", "height_crossover_hz",
         "height_high_shelf_gain", "soft_limit_threshold", "limiter_lookahead_ms",
         "limiter_release_ms", "safety_margin_db", "loudness_max_gain_db", "surround_downmix_coeff",
+        "height_downmix_coeff",
         "itu_center_coeff", "speaker_directions",
         "comp_profiles", "bass_profiles", "bass_sub_cutoff_hz", "bass_mid_cutoff_hz",
         "bass_excite_blend", "bass_excite_drive", "bass_lf_spreads",

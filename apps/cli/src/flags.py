@@ -80,6 +80,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.output_sample_rate = args.output_sample_rate
     if args.downmix_surround_coeff is not None:
         config.surround_downmix_coeff = args.downmix_surround_coeff
+    if args.downmix_height_coeff is not None:
+        config.height_downmix_coeff = args.downmix_height_coeff
     if args.downmix_output is not None:
         config.downmix_output_path = args.downmix_output
     if args.preview:

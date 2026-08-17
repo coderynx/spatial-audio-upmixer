@@ -81,6 +81,8 @@ class UpmixConfig:
     transaural_profile: str = "stereo"
 
     surround_downmix_coeff: float = 0.7071
+    # BS.775 has no height coefficient; see docs/standards/spatial_layouts_bs775_bs2051.md.
+    height_downmix_coeff: float = 0.7071
 
     downmix_enabled: bool = False
     loudness_normalize: bool = True

@@ -69,6 +69,7 @@ def engine_constants() -> dict[str, Any]:
         "safety_margin_db": _SAFETY_MARGIN_DB,
         "loudness_max_gain_db": cfg.loudness_max_gain_db,
         "surround_downmix_coeff": cfg.surround_downmix_coeff,
+        "height_downmix_coeff": cfg.height_downmix_coeff,
         "itu_center_coeff": ITU_CENTER_COEFF,
         # The shared DSP core encodes the ambisonic bus, so the browser must
         # not re-derive these angles from its own coordinate table.

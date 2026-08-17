@@ -290,6 +290,7 @@ def separate(
         left, right = itu_downmix_stereo(
             {label.value: audio_full[:, i] for i, label in enumerate(input_fmt.channels)},
             surround_coeff=cfg.surround_downmix_coeff,
+            height_coeff=cfg.height_downmix_coeff,
         )
         audio_full = np.column_stack([left, right]).astype(np.float32, copy=False)
         forced_stereo_array = True

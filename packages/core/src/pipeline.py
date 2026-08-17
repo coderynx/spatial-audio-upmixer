@@ -55,6 +55,7 @@ def _stereo_delivery_channels(
     left, right = itu_downmix_stereo(
         {label.value: audio[:, i] for i, label in enumerate(input_fmt.channels)},
         surround_coeff=cfg.surround_downmix_coeff,
+        height_coeff=cfg.height_downmix_coeff,
     )
     return {"FL": left, "FR": right}
 
@@ -571,7 +572,11 @@ class UpmixPipeline:
         """Write ITU-R BS.775-4 Table 2 stereo downmix to cfg.downmix_output_path."""
         from upmixer.loudness import measure_true_peak
 
-        L, R = itu_downmix_stereo(channels, surround_coeff=cfg.surround_downmix_coeff)
+        L, R = itu_downmix_stereo(
+            channels,
+            surround_coeff=cfg.surround_downmix_coeff,
+            height_coeff=cfg.height_downmix_coeff,
+        )
         stereo = np.column_stack([L, R])
         tp = measure_true_peak({"FL": L, "FR": R}, sample_rate)
         if tp > cfg.loudness_max_tp:

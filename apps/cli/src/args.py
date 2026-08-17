@@ -287,6 +287,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="K",
         help="ITU-R BS.775-4 Annex 8 surround coefficient k_s (default: 0.7071).",
     )
+    parser.add_argument(
+        "--downmix-height-coeff",
+        type=float,
+        default=None,
+        metavar="K",
+        help="Height fold-down coefficient k_h for the stereo downmix (default: 0.7071; 0 drops heights).",
+    )
 
     parser.add_argument("--preview",          action="store_true", help="Process a short excerpt (default 30 s) instead of the full file.")
     parser.add_argument("--preview-duration", type=float, default=None, metavar="S", help="Preview window length in seconds (default: 30).")

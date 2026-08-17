@@ -65,6 +65,7 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             "engine.stem_phase_fix_scale": 0.0,
             "processing.preview_duration": 0.0,
             "processing.preview_start": 0.0,
+            "format.downmix.height_coeff": 0.0,
             "routing.lfe_cutoff": 0.0,
             "routing.content_hf_analysis_hz": 0.0,
             "mastering.eq.strength": 0.0,
@@ -81,6 +82,7 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             "mastering.eq.strength": 1.0,
             "mastering.match_reference.strength": 1.0,
             "engine.stem_phase_fix_scale": 1.0,
+            "format.downmix.height_coeff": 1.0,
         }
         if path in minimums and float(value) < minimums[path]:
             raise ManifestError(f"{path} must be at least {minimums[path]}.")

@@ -276,7 +276,9 @@ class StemUpmixPipeline:
 
         cfg = self.config
         left, right = itu_downmix_stereo(
-            channels, surround_coeff=cfg.surround_downmix_coeff
+            channels,
+            surround_coeff=cfg.surround_downmix_coeff,
+            height_coeff=cfg.height_downmix_coeff,
         )
         stereo = np.column_stack([left, right])
         tp = measure_true_peak({"FL": left, "FR": right}, out_sr)

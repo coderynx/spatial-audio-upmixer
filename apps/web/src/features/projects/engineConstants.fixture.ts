@@ -35,6 +35,7 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
   safety_margin_db: 0.1,
   loudness_max_gain_db: 30.0,
   surround_downmix_coeff: 0.7071,
+  height_downmix_coeff: 0.7071,
   itu_center_coeff: 1 / Math.sqrt(2),
   speaker_directions: {
     FL: { azimuth_rad: 0.5216182970963865, elevation_rad: 0.0 },
