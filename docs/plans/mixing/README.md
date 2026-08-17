@@ -69,8 +69,10 @@ Deferred (not planned as phases; revisit after 0–5 ship and are heard):
 - `uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q`
   must pass before and after every phase (baseline: 846 tests). Phases
   touching `apps/web` also run `npm test` and `npm run build` there.
-- **Preview/export parity is a hard constraint.** The surround/height send
-  constants (`SURROUND_HAAS_DELAY_MS_*`, `DIFFUSE_SEND_BLEND`) are public,
+- **Preview/export parity is a hard constraint.** Phase 3 retired the
+  surround/height send constants (`SURROUND_HAAS_DELAY_MS_*`,
+  `DIFFUSE_SEND_BLEND`) — the decorrelator tap sets that replaced them are
+  structural and live in `dsp-core`. Tunable send constants are still public,
   served by the apps/api engine-constants endpoint
   (`apps/api/src/features/system/service.py`) and consumed by
   `apps/web/src/features/projects/engineParams.ts` and the wasm streaming

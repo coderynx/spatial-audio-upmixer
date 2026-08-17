@@ -46,7 +46,7 @@ Every stage below is one function, called from both sides:
 | Stage | Core module | Export entry | Preview entry |
 |---|---|---|---|
 | Per-stem EQ | `spatial`/`kernels::fir_design` | `separation/stem_eq.py` | `stream::routing` |
-| Stem → speaker bed | `stream::routing`, `routing::sends` | `separation/stem_router.py` | `stream::routing` |
+| Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate}` | `separation/stem_router.py` | `stream::routing` |
 | Scene position → routing | `routing::scene` | `apps/api/.../routing.py` | served with the project |
 | Reference match | `match_reference::{spectrum,curve}` | `mastering/match_reference/` | `stream::master` |
 | Spectral EQ | `mastering::eq` | `mastering/eq.py` | `stream::master` |
@@ -116,7 +116,14 @@ core performs the ambisonic encode, `speaker_directions` — read straight from
 
 Constants that live in Rust are the ones that were already duplicated and are
 structural rather than tunable: the BS.1770 true-peak FIR, the ACN/N3D
-normalization, and the filter-design internals.
+normalization, the filter-design internals, and the surround/height
+decorrelator tap sets (`routing::decorrelate`'s `VELVET_*`). The decorrelator
+is not a tunable: its two seeds *are* the filters, and the fold-down property
+both zone pairs are built on holds only while both sides come from the same
+draw — a wire round-trip could only introduce a value that breaks it.
+`packages/core` reads the same constants back through the PyO3 binding
+(`upmixer.utils.SURROUND_VELVET_SEED` / `HEIGHT_VELVET_SEED`), so neither
+side has a copy.
 
 **Changing a served constant** means editing it in its core module — the web
 has no second copy to keep in sync, only a test-only mock
@@ -229,4 +236,5 @@ or that the port itself resolved.
 | D30 | The preview forwarded only the mastering *profile name* for bass and compression (`audioEngine.ts` read `mastering.bass.profile` and `engineParams.ts` re-read the preset from the served constants), so the per-field pot overrides the UI already exposed never reached the worklet. Moving any bass or compressor pot changed the export while the preview kept playing the bare preset. | Fixed: `resolveBassParams`/`resolveCompParams` merge the profile with the project's overrides in `masteringProfiles.ts`, and `MasterMix` now carries resolved blocks rather than names. `engineParams.test.ts::forwards per-field overrides, not just the profile preset` pins it. |
 | D31 | Mid-bass decorrelation's zero-phase band split truncated at the unifier's 100 ms horizon, making the preview's output depend on render block size at ~1e-8. | Fixed before shipping: the stage carries its own 300 ms horizon, sized from the band-pass's measured impulse response. Covered by `stream_equivalence.rs`. |
 | D32 | Per-stem rebalance gain was not the same operation on both sides: the export path's `StemRebalancer` applied `tanh(x/0.95)*0.95` to the whole stem whenever a boost exceeded +3 dB, while the preview (`stream::engine`) applied `rebalance_db` as pure smoothed linear gain. Any fader past +3 dB in the mixer previewed clean and exported with odd-harmonic distortion (−48.8 dB THD on a −20 dBFS sine at +6 dB, −10.9 dB at +12 dB on a hot stem). | Fixed by deleting the tanh stage: both sides are now linear gain, and overload protection stays where it already was, on the mastering chain's look-ahead true-peak limiter over the routed bed. `test_stem_rebalance.py::test_large_boost_is_exactly_linear` / `::test_large_boost_thd_at_numerical_floor` pin it. |
+| D33 | The committed `apps/web/public/wasm/upmixer_dsp.wasm` was last rebuilt at `8da41d5`, two commits before `4548970` added mid-bass decorrelation — so the preview has been running an engine without that stage while the export applies it, the §1 build-provenance risk realized. Rebuilding the artifact also re-opens the §4 budget: with `decorrelate: 1` the current engine benches mean 0.72x / p99 2.6x / worst 2.8x of the deadline against budgets of 0.4x / 1.0x / 1.5x. | Artifact fixed (rebuilt in the phase 3 commit, so the preview now runs the shipped algorithm); the budget overrun it exposes is **open** — mid-bass decorrelation needs the same treatment D25/D26 got before the preview can be trusted not to starve. Measured attribution: the identical build with `decorrelate: 0` is mean 0.30x / p99 0.82x, inside budget. |
 | D28 | The whole-programme measurement D27 introduced (§ P3) advanced only while paused and only from a `resume()`d `AudioContext`; a fresh context starts suspended and the worklet never registered its own progress callback, so the "calibrating loudness" UI could hang indefinitely with no feedback, and at best took minutes on an eight-minute track. | Fixed: the context resumes on init (with a pointer-gesture fallback for autoplay policy), the worklet's progress reaches the UI, and measurement runs in two stages — a fast excerpt pass clears the UI in seconds, then the exact whole-programme pass keeps refining the gain in the background (§ P3). |

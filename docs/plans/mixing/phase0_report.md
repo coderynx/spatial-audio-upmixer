@@ -495,4 +495,6 @@ and the bed limiter already covers the delivery path.
 
 ---
 
-Phase 2's report lives in `docs/plans/mixing/phase2_report.md`.
+Phase 2's report lives in `docs/plans/mixing/phase2_report.md`, phase 3's in
+`docs/plans/mixing/phase3_report.md` — the latter re-runs every table above
+and gives the before/after against §1a–§1d and §4.
