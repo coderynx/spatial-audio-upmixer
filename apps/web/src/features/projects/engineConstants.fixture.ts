@@ -31,6 +31,7 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
   height_directional_band_hz: 8000,
   height_directional_band_gain: 1,
   height_high_shelf_gain: 1.5,
+  stem_transient_duck: 0,
   soft_limit_threshold: 0.95,
   limiter_lookahead_ms: 5.0,
   limiter_release_ms: 50.0,

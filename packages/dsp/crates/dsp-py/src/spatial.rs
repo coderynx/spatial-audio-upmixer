@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 
 use upmixer_dsp_core::routing::decorrelate;
 use upmixer_dsp_core::routing::sends;
+use upmixer_dsp_core::routing::transient;
 use upmixer_dsp_core::spatial::downmix::{self, DownmixRole};
 
 use crate::to_bed;
@@ -161,6 +162,25 @@ fn elevation_response<'py>(
     PyArray1::from_vec(py, out)
 }
 
+/// Duck onsets out of a stereo send input, both sides sharing one gain.
+#[pyfunction]
+#[pyo3(signature = (left, right, sample_rate, depth))]
+fn transient_duck<'py>(
+    py: Python<'py>,
+    left: PyReadonlyArray1<'py, f64>,
+    right: PyReadonlyArray1<'py, f64>,
+    sample_rate: u32,
+    depth: f64,
+) -> (Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>) {
+    let (l, r) = transient::transient_duck(
+        left.as_array().to_vec().as_slice(),
+        right.as_array().to_vec().as_slice(),
+        sample_rate,
+        depth,
+    );
+    (PyArray1::from_vec(py, l), PyArray1::from_vec(py, r))
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(itu_downmix_stereo, m)?)?;
     m.add_function(wrap_pyfunction!(itu_downmix_mono, m)?)?;
@@ -173,5 +193,11 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("VELVET_SEED", decorrelate::VELVET_SEED)?;
     m.add("VELVET_SEED_HEIGHT", decorrelate::VELVET_SEED_HEIGHT)?;
     m.add("VELVET_WET", decorrelate::VELVET_WET)?;
+    m.add_function(wrap_pyfunction!(transient_duck, m)?)?;
+    m.add("DUCK_ATTACK_MS", transient::DUCK_ATTACK_MS)?;
+    m.add("DUCK_RELEASE_MS", transient::DUCK_RELEASE_MS)?;
+    m.add("DUCK_REFERENCE_MS", transient::DUCK_REFERENCE_MS)?;
+    m.add("DUCK_THRESHOLD_RATIO", transient::DUCK_THRESHOLD_RATIO)?;
+    m.add("DUCK_FULL_RATIO", transient::DUCK_FULL_RATIO)?;
     Ok(())
 }

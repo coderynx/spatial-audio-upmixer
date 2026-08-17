@@ -244,6 +244,7 @@ export type ServedEngineConstants = {
   height_high_shelf_gain: number;
   height_directional_band_hz: number;
   height_directional_band_gain: number;
+  stem_transient_duck: number;
   soft_limit_threshold: number;
   limiter_lookahead_ms: number;
   limiter_release_ms: number;
@@ -286,6 +287,7 @@ export type EngineConstants = {
   lfeLowpassHz: number;
   surroundBassCutoffHz: number;
   heightShaping: HeightShaping;
+  stemTransientDuck: number;
   softLimitThreshold: number;
   limiterLookaheadMs: number;
   limiterReleaseMs: number;
@@ -359,6 +361,7 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
       directionalBandHz: s.height_directional_band_hz,
       directionalBandGain: s.height_directional_band_gain,
     },
+    stemTransientDuck: s.stem_transient_duck,
     softLimitThreshold: s.soft_limit_threshold,
     limiterLookaheadMs: s.limiter_lookahead_ms,
     limiterReleaseMs: s.limiter_release_ms,

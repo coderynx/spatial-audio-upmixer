@@ -56,6 +56,8 @@ class UpmixConfig:
     height_directional_band_hz: float = 8000.0
     height_directional_band_gain: float = 1.0
 
+    stem_transient_duck: float = 0.0
+
     output_format: str = "5.1"
     output_subtype: str = "PCM_24"
     output_type: str = "multichannel"

@@ -351,6 +351,24 @@ class StemRouter:
             self._config.height_directional_band_gain,
         )
 
+    def _duck_transients(
+        self, stem_L: np.ndarray, stem_R: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Hold onsets out of the diffuse sends, both sides on one gain.
+
+        Feeds the surround and height sends only: the front bed keeps the
+        whole transient, which is the point. A depth of 0.0 returns the input
+        arrays unchanged.
+        """
+        if self._config.stem_transient_duck <= 0.0:
+            return stem_L, stem_R
+        return upmixer_dsp.transient_duck(
+            np.ascontiguousarray(stem_L, dtype=np.float64),
+            np.ascontiguousarray(stem_R, dtype=np.float64),
+            self._sr,
+            self._config.stem_transient_duck,
+        )
+
     def _surround_send(self, signal: np.ndarray) -> np.ndarray:
         return upmixer_dsp.highpass(
             np.ascontiguousarray(signal, dtype=np.float64),
@@ -439,20 +457,21 @@ class StemRouter:
                 label in _HEIGHT_CHANNELS and label.value in stem_routing
                 for label in self._fmt.channels
             )
+            send_L, send_R = self._duck_transients(stem_L, stem_R)
             surround_L = (
-                velvet_send(self._surround_send(stem_L), self._sr, "left", SURROUND_VELVET_SEED)
+                velvet_send(self._surround_send(send_L), self._sr, "left", SURROUND_VELVET_SEED)
                 if needs_surround else stem_L
             )
             surround_R = (
-                velvet_send(self._surround_send(stem_R), self._sr, "right", SURROUND_VELVET_SEED)
+                velvet_send(self._surround_send(send_R), self._sr, "right", SURROUND_VELVET_SEED)
                 if needs_surround else stem_R
             )
             height_L = (
-                velvet_send(self._height_send(stem_L), self._sr, "left", HEIGHT_VELVET_SEED)
+                velvet_send(self._height_send(send_L), self._sr, "left", HEIGHT_VELVET_SEED)
                 if needs_height else stem_L
             )
             height_R = (
-                velvet_send(self._height_send(stem_R), self._sr, "right", HEIGHT_VELVET_SEED)
+                velvet_send(self._height_send(send_R), self._sr, "right", HEIGHT_VELVET_SEED)
                 if needs_height else stem_R
             )
 

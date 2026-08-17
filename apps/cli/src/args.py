@@ -184,6 +184,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--height-low-rolloff-gain",type=float, default=None, help="Sub-bass gain for height channels (default: 0.15)")
     parser.add_argument("--height-high-shelf-gain", type=float, default=None, help="HF presence boost for height channels (default: 1.5)")
     parser.add_argument("--height-directional-band-gain", type=float, default=None, metavar="GAIN", help="Gain of the ~8 kHz elevation directional band for height channels (default: 1.0, off)")
+    parser.add_argument("--stem-transient-duck", type=float, default=None, metavar="DEPTH", help="Hold stem onsets out of the surround and height sends, 0.0-1.0 (default: 0.0, off)")
 
     parser.add_argument("--fft-size",   type=int,  default=None, help="STFT window size")
     parser.add_argument("--no-auto-fft",action="store_true",     help="Disable automatic FFT size scaling for high sample rates")

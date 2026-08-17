@@ -87,12 +87,15 @@ impl TransientDucker {
         // against |x| a steady tone reads as its own crest factor forever.
         self.slow = self.fast + self.reference * (self.slow - self.fast);
 
-        if self.slow <= EPS {
+        // Sub-threshold is the overwhelmingly common case, and taking it
+        // before the divide keeps that divide off the audio thread's
+        // per-sample dependency chain. Algebraically the same score.
+        let threshold = self.slow * DUCK_THRESHOLD_RATIO;
+        if self.slow <= EPS || self.fast <= threshold {
             return 1.0;
         }
-        let score = ((self.fast / self.slow - DUCK_THRESHOLD_RATIO)
-            / (DUCK_FULL_RATIO - DUCK_THRESHOLD_RATIO))
-            .clamp(0.0, 1.0);
+        let span = self.slow * (DUCK_FULL_RATIO - DUCK_THRESHOLD_RATIO);
+        let score = ((self.fast - threshold) / span).min(1.0);
         1.0 - self.depth * score
     }
 }

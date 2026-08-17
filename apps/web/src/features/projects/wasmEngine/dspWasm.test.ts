@@ -77,6 +77,7 @@ const PARAMS = {
     height_directional_band_hz: 8000,
     height_directional_band_gain: 1,
     height_high_shelf_gain: 1.5,
+    stem_transient_duck: 0,
     lfe_cutoff_hz: 120,
     lfe_filter_order: 4,
     lfe_gain: 0.31622776601683794,

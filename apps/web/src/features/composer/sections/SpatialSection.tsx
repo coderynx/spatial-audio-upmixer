@@ -195,6 +195,19 @@ export function SpatialSection({
         }
       />
       <SliderField
+        label="Stem transient duck"
+        value={manifest.routing.stem_transient_duck}
+        min={0}
+        max={1}
+        step={0.01}
+        onChange={(stem_transient_duck) =>
+          setManifest({
+            ...manifest,
+            routing: { ...manifest.routing, stem_transient_duck },
+          })
+        }
+      />
+      <SliderField
         label="Content mix strength"
         value={manifest.routing.content_mix_strength}
         min={0}

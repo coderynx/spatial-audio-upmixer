@@ -10,6 +10,7 @@ use crate::routing::decorrelate::{
     velvet_pair_seeded, VelvetFir, VelvetLine, VELVET_SEED, VELVET_SEED_HEIGHT,
 };
 use crate::routing::sends::directional_band_sos;
+use crate::routing::transient::TransientDucker;
 
 use super::conv::StreamingConvolver;
 use super::params::{SendParams, SendShape};
@@ -92,6 +93,11 @@ pub struct StemRouteState {
     pub eq: Option<(StreamingConvolver, StreamingConvolver)>,
     surround: [Send; 2],
     height: [Send; 2],
+    /// One ducker feeds both send pairs: its state depends only on the stem's
+    /// input, so a single trajectory is what the offline path's two separate
+    /// calls each reproduce.
+    ducker: TransientDucker,
+    ducked: [Vec<f64>; 2],
     /// Last block's shaped sends: surround L/R then height L/R.
     shaped: [Vec<f64>; 4],
 }
@@ -139,6 +145,8 @@ impl StemRouteState {
             }),
             surround: [surround_send(&surround_l), surround_send(&surround_r)],
             height: [height_send(&height_l), height_send(&height_r)],
+            ducker: TransientDucker::new(sample_rate, p.stem_transient_duck),
+            ducked: Default::default(),
             shaped: Default::default(),
         }
     }
@@ -151,6 +159,7 @@ impl StemRouteState {
         for s in self.surround.iter_mut().chain(self.height.iter_mut()) {
             s.reset();
         }
+        self.ducker.reset();
     }
 
     /// Adopt new send shaping and/or a new stem EQ in place, keeping every
@@ -173,6 +182,7 @@ impl StemRouteState {
             for s in self.height.iter_mut() {
                 s.retune_height(sample_rate, sends);
             }
+            self.ducker.retune(sample_rate, sends.stem_transient_duck);
         }
         if eq_changed {
             if eq_fir.is_empty() {
@@ -201,6 +211,20 @@ impl StemRouteState {
         let dry = |source: &[f64], out: &mut Vec<f64>| {
             out.clear();
             out.extend_from_slice(source);
+        };
+        let (left, right) = if self.ducker.depth() > 0.0 {
+            self.ducked[0].clear();
+            self.ducked[1].clear();
+            self.ducked[0].reserve(left.len());
+            self.ducked[1].reserve(right.len());
+            for (l, r) in left.iter().zip(right.iter()) {
+                let gain = self.ducker.tick(*l, *r);
+                self.ducked[0].push(l * gain);
+                self.ducked[1].push(r * gain);
+            }
+            (&self.ducked[0][..], &self.ducked[1][..])
+        } else {
+            (left, right)
         };
         for (i, source) in [left, right].into_iter().enumerate() {
             if surround {
@@ -286,6 +310,7 @@ mod tests {
             height_high_shelf_gain: 1.5,
             height_directional_band_hz: 8000.0,
             height_directional_band_gain: 1.0,
+            stem_transient_duck: 0.0,
             lfe_cutoff_hz: 120.0,
             lfe_filter_order: 4,
             lfe_gain: 0.31622776601683794,
@@ -364,6 +389,57 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The duck must land on the send input, before the filters and the
+    /// velvet line, exactly as `StemRouter.route` orders it offline — and
+    /// blocked ragged, since the preview chooses the block size.
+    #[test]
+    fn ducked_sends_match_the_offline_duck_then_shape_order() {
+        use crate::kernels::biquad::sosfilt;
+        use crate::routing::transient::transient_duck;
+
+        let sr = 48_000;
+        let signal: Vec<f64> = (0..24_000)
+            .map(|i| {
+                let bed = 0.2 * (i as f64 * 0.04).sin();
+                bed + if i % 6_000 < 24 { 0.8 } else { 0.0 }
+            })
+            .collect();
+        let p = SendParams { stem_transient_duck: 0.7, ..send_params() };
+
+        let mut state = StemRouteState::new(sr, &p, &[]);
+        let got = blocked(&mut state, &signal);
+
+        let (ducked, _) = transient_duck(&signal, &signal, sr, p.stem_transient_duck);
+        let hp = butter_sos(2, p.surround_bass_cutoff_hz / (sr as f64 / 2.0), BandType::High);
+        let shaped = sosfilt(&hp, &ducked);
+        let (left, right) = velvet_pair_seeded(sr, VELVET_SEED);
+
+        for (index, fir) in [(0, left), (1, right)] {
+            let want = fir.process(&shaped);
+            for (i, (a, b)) in got[index].iter().zip(want.iter()).enumerate() {
+                assert!((a - b).abs() < 1e-12, "send {index} sample {i}: {a} vs {b}");
+            }
+        }
+    }
+
+    /// Depth 0.0 must leave the shaped sends untouched, so every existing
+    /// render is bit for bit what it was.
+    #[test]
+    fn zero_duck_depth_leaves_the_sends_bit_for_bit() {
+        let sr = 48_000;
+        let signal: Vec<f64> = (0..12_000).map(|i| (i as f64 * 0.04).sin()).collect();
+
+        let mut off = StemRouteState::new(sr, &send_params(), &[]);
+        let want = blocked(&mut off, &signal);
+        let mut explicit = StemRouteState::new(
+            sr,
+            &SendParams { stem_transient_duck: 0.0, ..send_params() },
+            &[],
+        );
+        let got = blocked(&mut explicit, &signal);
+        assert_eq!(got, want);
     }
 
     /// The surround and height sends of one stem must not be copies of each

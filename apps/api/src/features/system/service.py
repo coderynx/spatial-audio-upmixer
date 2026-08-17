@@ -65,6 +65,7 @@ def engine_constants() -> dict[str, Any]:
         "height_high_shelf_gain": cfg.height_high_shelf_gain,
         "height_directional_band_hz": cfg.height_directional_band_hz,
         "height_directional_band_gain": cfg.height_directional_band_gain,
+        "stem_transient_duck": cfg.stem_transient_duck,
         "soft_limit_threshold": cfg.peak_limit_threshold,
         "limiter_lookahead_ms": cfg.limiter_lookahead_ms,
         "limiter_release_ms": cfg.limiter_release_ms,
