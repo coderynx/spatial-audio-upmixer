@@ -44,7 +44,14 @@ from upmixer.binaural.renderer import render_binaural_delivery
 from upmixer.config import UpmixConfig
 from upmixer.crosstalk.renderer import render_crosstalk_delivery
 from upmixer.codecs import validate_codec
-from upmixer.formats import BINAURAL, TRANSAURAL, OutputFormat, validate_delivery
+from upmixer.formats import (
+    BINAURAL,
+    TRANSAURAL,
+    OutputFormat,
+    detect_input_format,
+    validate_delivery,
+)
+from upmixer.loudness import measure_integrated_loudness
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.writer import AudioWriter, write_audio
 from upmixer.mastering import MasteringChain, MasteringResult
@@ -381,7 +388,9 @@ class StemUpmixPipeline:
 
         if cfg.normalize_output:
             _progress("  Normalizing output...", 0.86)
-            channels = _normalize_to_source(channels, audio_full, sr, sep_sr)
+            channels = _normalize_to_source(
+                channels, audio_full, sr, sep_sr, output_fmt
+            )
 
         del all_stems, audio_full, source_zones, passthrough_resampled
 
@@ -472,14 +481,42 @@ class StemUpmixPipeline:
 
 
 def _normalize_to_source(
-    channels: dict[str, np.ndarray], audio_full: np.ndarray, sr: int, sep_sr: int
+    channels: dict[str, np.ndarray],
+    audio_full: np.ndarray,
+    sr: int,
+    sep_sr: int,
+    output_fmt: OutputFormat,
 ) -> dict[str, np.ndarray]:
-    """Rescale output channels to match the source's total energy."""
+    """Rescale output channels to match the source's BS.1770 loudness.
+
+    Total energy summed every channel equally, so a bed with heavily shaped
+    height/surround sends landed off the source's loudness even at matched
+    energy (phase 9 report). Falls back to energy when either side is too
+    short or quiet to gate, or the source layout is unknown.
+    """
     if sr != sep_sr:
         g = math.gcd(sr, sep_sr)
         source_audio = resample_poly(audio_full, sep_sr // g, sr // g, axis=0)
     else:
         source_audio = audio_full
+    if source_audio.ndim == 1:
+        source_audio = source_audio[:, None]
+
+    try:
+        source_fmt = detect_input_format(source_audio.shape[1])
+    except ValueError:
+        source_fmt = None
+    if source_fmt is not None:
+        source_lkfs = measure_integrated_loudness(
+            {label.value: source_audio[:, i] for i, label in enumerate(source_fmt.channels)},
+            sep_sr,
+            source_fmt,
+        )
+        output_lkfs = measure_integrated_loudness(channels, sep_sr, output_fmt)
+        if min(source_lkfs, output_lkfs) > -70.0:
+            scale = 10.0 ** ((source_lkfs - output_lkfs) / 20.0)
+            return {name: ch * scale for name, ch in channels.items()}
+
     source_energy = float(np.vdot(source_audio, source_audio).real)
     output_energy = sum(float(np.vdot(ch, ch).real) for ch in channels.values())
     if source_energy > 1e-20 and output_energy > 1e-20:

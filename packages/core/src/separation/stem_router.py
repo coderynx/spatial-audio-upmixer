@@ -42,6 +42,7 @@ import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
+from upmixer.loudness import CHANNEL_WEIGHT, k_weighted_power
 from upmixer.separation.stem_placement import STEREO_PLACEMENT_LAYOUT, preset_routing
 from upmixer.utils import (
     HEIGHT_VELVET_SEED,
@@ -209,8 +210,8 @@ def fold_route_to_stereo(route: dict[str, float]) -> dict[str, float]:
     """Collapse a speaker map onto FL/FR for a 2-channel output format.
 
     Only the resulting left/right *ratio* is meaningful: ``StemRouter.route``
-    renormalizes each stem to its own input energy afterwards, so the side
-    weights are a pan law, not the BS.775-4 level law. Idempotent.
+    renormalizes each stem to its own loudness afterwards, so the side weights
+    are a pan law, not the BS.775-4 level law. Idempotent.
     """
     left = right = 0.0
     for channel, gain in route.items():
@@ -358,6 +359,43 @@ class StemRouter:
             2,
         )
 
+    def _route_scale(
+        self,
+        route_items: list[tuple[ChannelLabel, float, np.ndarray]],
+        stem_L: np.ndarray,
+        stem_R: np.ndarray,
+    ) -> float:
+        """Per-stem scalar matching routed loudness to the stem's own loudness.
+
+        Raw energy equates a band-limited surround send with a full-band front
+        one and ignores BS.1770's channel weights, so a surround-routed stem
+        lands up to ~4.7 LU loud at the same energy (phase 9 report). Falls
+        back to raw energy when the material is too short or quiet to gate.
+        LFE is outside both sums: it is added unscaled, after its lowpass.
+        """
+        powers: dict[int, float] = {}
+
+        def power(signal: np.ndarray) -> float:
+            key = id(signal)
+            if key not in powers:
+                powers[key] = k_weighted_power(signal, self._sr)
+            return powers[key]
+
+        input_power = power(stem_L) + power(stem_R)
+        routed_power = sum(
+            CHANNEL_WEIGHT.get(label, 1.0) * gain * gain * power(signal)
+            for label, gain, signal in route_items
+        )
+        if input_power > 0.0 and routed_power > 0.0:
+            return math.sqrt(input_power / routed_power)
+
+        input_energy = float(np.dot(stem_L, stem_L) + np.dot(stem_R, stem_R))
+        routed_energy = sum(
+            gain * gain * float(np.dot(signal, signal))
+            for _, gain, signal in route_items
+        )
+        return math.sqrt(input_energy / routed_energy) if routed_energy > 1e-20 else 1.0
+
     def route(
         self,
         stems: dict[str, np.ndarray],
@@ -447,12 +485,7 @@ class StemRouter:
                 elif label == ChannelLabel.C:
                     route_items.append((label, gain, stem_mono))
 
-            input_energy = float(np.dot(stem_L, stem_L) + np.dot(stem_R, stem_R))
-            routed_energy = sum(
-                gain * gain * float(np.dot(signal, signal))
-                for _, gain, signal in route_items
-            )
-            route_scale = np.sqrt(input_energy / routed_energy) if routed_energy > 1e-20 else 1.0
+            route_scale = self._route_scale(route_items, stem_L, stem_R)
             for label, gain, signal in route_items:
                 channels[label.value][:n] += route_scale * gain * signal
 

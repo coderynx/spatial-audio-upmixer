@@ -9,6 +9,7 @@ import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
+from upmixer.loudness import measure_integrated_loudness
 from upmixer.separation.stem_analyzer import analyze_stem
 from upmixer.separation.stem_router import (
     DEFAULT_ROUTING,
@@ -302,3 +303,36 @@ def test_surround_and_height_sends_are_decorrelated_from_each_other():
         float(np.dot(surround, surround)) * float(np.dot(height, height))
     )
     assert abs(correlation) < 0.2, f"surround/height correlation {correlation:.3f}"
+
+
+def _noise(n: int = 48000) -> np.ndarray:
+    signal = 0.2 * np.random.default_rng(20260817).standard_normal(n)
+    return np.column_stack([signal, signal])
+
+
+def test_surround_routed_stem_lands_at_the_same_loudness_as_a_front_one():
+    """Phase 9: raw-energy matching left Crowd +3.86 LU over Lead Vocals."""
+    fmt = FORMAT_MAP["7.1.4"]
+    router = StemRouter(UpmixConfig(output_format="7.1.4"), fmt, 48000)
+    audio = _noise()
+
+    front = measure_integrated_loudness(
+        router.route({"Lead Vocals": audio}, len(audio)), 48000, fmt
+    )
+    wide = measure_integrated_loudness(
+        router.route({"Crowd": audio}, len(audio)), 48000, fmt
+    )
+
+    assert abs(wide - front) < 0.25
+
+
+def test_front_only_stereo_route_still_matches_raw_energy():
+    """Regression anchor: plain stereo renders must not move (no send filters,
+    unity BS.1770 weights, so the loudness scalar is the energy scalar)."""
+    router = StemRouter(UpmixConfig(output_format="stereo"), FORMAT_MAP["stereo"], 48000)
+    audio = _noise()
+    channels = router.route({"Vocals": audio}, len(audio))
+
+    routed = sum(float(np.dot(ch, ch)) for ch in channels.values())
+    source = float(np.dot(audio[:, 0], audio[:, 0]) + np.dot(audio[:, 1], audio[:, 1]))
+    assert routed == pytest.approx(source, rel=1e-6)

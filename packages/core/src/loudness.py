@@ -40,6 +40,7 @@ CHANNEL_WEIGHT: dict[ChannelLabel, float] = {
 _BLOCK_S = 0.400
 _HOP_S   = 0.100
 _ABS_GATE = -70.0
+_LKFS_OFFSET = -0.691
 _REL_GATE_OFFSET = -10.0
 
 
@@ -87,6 +88,19 @@ def measure_integrated_loudness(
     if not weights:
         return -70.0
     return upmixer_dsp.integrated_loudness(weights, audio, sample_rate)
+
+
+def k_weighted_power(signal: np.ndarray, sample_rate: int) -> float:
+    """Gated K-weighted mean square of one channel — BS.1770-4's ``z_i``.
+
+    The per-channel term the loudness sum is built from, so callers can weight
+    and combine channels themselves. Returns 0.0 when the material is too
+    short (under one 400 ms block) or too quiet to gate.
+    """
+    lkfs = upmixer_dsp.integrated_loudness(
+        [1.0], [np.ascontiguousarray(signal, dtype=np.float64)], sample_rate
+    )
+    return 10.0 ** ((lkfs - _LKFS_OFFSET) / 10.0) if lkfs > _ABS_GATE else 0.0
 
 
 def measure_true_peak(channels: dict[str, np.ndarray], sample_rate: int = 48000) -> float:

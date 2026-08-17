@@ -191,11 +191,12 @@ export type TransauralProfile = "stereo" | "smart_speaker" | "car" | "laptop" | 
 // binaural decode bank, 4 channels fits well inside the browser's 8ch cap,
 // so no multi-file split is needed.
 
-/** Approximates `stem_router.py`'s per-stem constant-power `route_scale`
- * (`sqrt(input_energy/routed_energy)`) from the route table alone, treating
- * every contributing send as comparable energy — good enough to keep a
- * widely-routed stem from reading louder than a narrowly-routed one, not an
- * exact energy match (the real value needs the decoded buffers' energy). */
+/** Approximates `stem_router.py`'s per-stem `route_scale` from the route table
+ * alone, treating every contributing send as comparable energy — good enough to
+ * keep a widely-routed stem from reading louder than a narrowly-routed one, not
+ * an exact match (the real value measures the decoded buffers, K-weighted per
+ * BS.1770 — ledger D3). The channel weights below are that measurement's, so
+ * the estimate at least carries the surround channels' +1.5 dB. */
 export function estimateRouteScale(route: Record<string, number>, gains: ChannelGroupGains): number {
   const groupGain = (channel: string): number => {
     if (channel === "C") return gains.center;
@@ -204,11 +205,14 @@ export function estimateRouteScale(route: Record<string, number>, gains: Channel
     if (channel.startsWith("T")) return gains.height;
     return 1;
   };
+  // BS.1770-5: side surrounds +1.5 dB, every other non-LFE channel unity.
+  const loudnessWeight = (channel: string): number =>
+    channel === "SL" || channel === "SR" ? 1.41 : 1;
   let sumSquares = 0;
   for (const [channel, weight] of Object.entries(route)) {
     if (channel === "LFE" || weight <= 0) continue;
     const scaled = weight * groupGain(channel);
-    sumSquares += scaled * scaled;
+    sumSquares += loudnessWeight(channel) * scaled * scaled;
   }
   return sumSquares > 1e-10 ? 1 / Math.sqrt(sumSquares) : 1;
 }

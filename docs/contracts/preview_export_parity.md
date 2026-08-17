@@ -187,9 +187,13 @@ than a 32-tap approximation.
 
 One remains open: `estimateRouteScale`
 (`apps/web/src/features/projects/masteringProfiles.ts`) still approximates
-`StemRouter.route`'s energy normalization from the routing table rather than
-the decoded stems (ledger D3). The core could compute it exactly — it owns the
+`StemRouter.route`'s normalization from the routing table rather than the
+decoded stems (ledger D3). The core could compute it exactly — it owns the
 stems — but only on a debounce, since it needs a full pass per routing change.
+Since phase 9 that normalization is loudness-domain (BS.1770 channel weights
+over K-weighted, gated per-channel power) rather than raw energy; the estimate
+carries the channel weights, which it can evaluate from the table alone, but
+not the K-weighting, which needs the buffers.
 
 ## 4. Realtime budget
 
@@ -251,7 +255,7 @@ or that the port itself resolved.
 
 | # | Discrepancy | Status |
 |---|---|---|
-| D3 | `estimateRouteScale` approximates `route_scale` from the routing table, not decoded-buffer energy. It also sums every channel in the route regardless of the layout, so a route wider than the layout reads as a level error rather than an approximation. | Open — see §3. Neutralized for `stereo` layouts, where the API stores each layout's routing already folded to FL/FR (`_normalize_layout_mix`, applied per layout block now that a track carries one mix per layout), and a layout added to a track has its routing rebuilt for that layout's own channel set rather than inherited wider. |
+| D3 | `estimateRouteScale` approximates `route_scale` from the routing table, not decoded-buffer energy. It also sums every channel in the route regardless of the layout, so a route wider than the layout reads as a level error rather than an approximation. | Open — see §3. Neutralized for `stereo` layouts, where the API stores each layout's routing already folded to FL/FR (`_normalize_layout_mix`, applied per layout block now that a track carries one mix per layout), and a layout added to a track has its routing rebuilt for that layout's own channel set rather than inherited wider. Narrowed by phase 9: the export scalar is now BS.1770-weighted (K-weighted, gated per-channel power × channel weight), and the estimate applies the same +1.5 dB side-surround weight — the residual gap is the K-weighting of the send chains, worth up to ~3.2 LU on a fully surround-routed stem (`phase9_report.md` §2). |
 | D4 | The preview's loudness omitted K-weighting and gating and read a few excerpts, not the whole programme. | Fixed by the port: `stream::engine::measure` runs the real BS.1770 measurement over the whole render. |
 | D9 | Biquad realizations of the mono-maker and bass bands flipped their net effect versus the backend's zero-phase `sosfiltfilt`. | Fixed by the port: there is one implementation, and the mono-maker's zero-phase pass survives streaming via a bounded horizon. |
 | D14 | The look-ahead limiter existed only on the native path, with the collapse paths on the old tanh saturator. | Fixed by the port; the split now follows the export exactly — limiter on native, soft limit on the collapse paths. |

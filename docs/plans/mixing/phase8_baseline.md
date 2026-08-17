@@ -190,6 +190,11 @@ Two things worth carrying into phases 9-11:
 | live | Drums | -18.33 | -0.60 |
 | live | Other | -21.97 | -0.47 |
 | live | Instrumental | -14.47 | -1.04 |
+Measurement 4's tables below are **superseded by phase 9**, which made
+`route_scale` match loudness rather than raw energy — the non-LFE total is no
+longer 1.0 for send-routed stems. See `phase9_report.md` §2 for the current
+7.1.4 numbers.
+
 ### 4. Zone energy fraction of stem input energy — balanced, stereo
 
 | Stem | front | surround | height | LFE | non-LFE total |

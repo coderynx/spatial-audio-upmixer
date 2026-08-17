@@ -552,9 +552,9 @@ the same file otherwise yields `@zone`-keyed stems.
 `stem_router.fold_route_to_stereo` collapses a speaker map onto FL/FR: `C`
 splits at 1/√2 into both sides, `LFE` is dropped, and every other left/right
 channel sums at unity into its own side — deliberately *not* BS.775's `k_s`.
-`StemRouter.route` renormalizes each stem to its own input energy afterwards
-(`route_scale = sqrt(input_energy / routed_energy)`), so only the resulting L/R
-ratio survives; the surround/height coefficients would be discarded anyway.
+`StemRouter.route` renormalizes each stem to its own loudness afterwards
+(`route_scale`, BS.1770-weighted since mixing phase 9), so only the resulting
+L/R ratio survives; the surround/height coefficients would be discarded anyway.
 
 Without the fold a 2-channel format silently drops audio: the `surround`,
 `back` and `height_*` zone routes carry no FL/FR entries at all, and

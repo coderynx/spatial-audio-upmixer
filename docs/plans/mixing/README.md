@@ -58,7 +58,7 @@ deferred improvements are now planned as phases 8–11:
 | Phase | File | Deliverable |
 |-------|------|-------------|
 | 8 | `phase8_d33_rebaseline.md` | Close parity ledger D33 (mid-bass decorrelation over the worklet budget) and re-baseline the measurement kit — phases 3–5 made the phase 0 tables stale. Gate for 9–11. **Done** — see `phase8_report.md` and `phase8_baseline.md`. |
-| 9 | `phase9_loudness_renorm.md` | BS.1770-weighted energy renormalization in `StemRouter.route` and `_normalize_to_source`; measurement-gated, may close as "within tolerance". |
+| 9 | `phase9_loudness_renorm.md` | BS.1770-weighted energy renormalization in `StemRouter.route` and `_normalize_to_source`; measurement-gated, may close as "within tolerance". **Done** — offsets were real (4.66 LU worst spread) and the fix shipped; see `phase9_report.md`. |
 | 10 | `phase10_mdap_panner.md` | MDAP panner replacing the raised-cosine spread panner behind the unchanged `StemPlacement` model — triplet-confined point placements, direction-independent spread. |
 | 11 | `phase11_content_aware_routing.md` | Roadmap 4.1: archaeology gate on the dead stem-analyzer modules, then revive (transient/sustain send split, default-off) or delete. |
 
