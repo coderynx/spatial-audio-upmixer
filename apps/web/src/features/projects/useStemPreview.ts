@@ -46,6 +46,10 @@ export function useStemPreview(
   // Web Audio graph is not built until it is set — every graph-building effect
   // below is gated on it.
   constants: EngineConstants | null = null,
+  // The selected track's manifest `routing` block. Send values here are
+  // per-track and must reach the worklet, or a track previews with the
+  // served default while the export uses its own value.
+  routing?: { stem_transient_duck?: number; height_directional_band_gain?: number },
 ) {
   const layoutChannelsKey = layoutChannels.join(",");
   // Stable-identity, layout-scoped speaker list: drives the ambisonic
@@ -122,6 +126,7 @@ export function useStemPreview(
   engine.mix = mix;
   engine.sourcePreviewUrl = sourcePreviewUrl;
   engine.mastering = mastering;
+  engine.routing = routing;
   engine.layoutChannels = layoutChannels;
   engine.outputMode = outputMode;
   engine.spatialProfile = spatialProfile;
@@ -206,7 +211,11 @@ export function useStemPreview(
     if (!constants) return;
     engine.apply();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [mix, scene.stems, mastering, constants]);
+    // Depend on the send values themselves, not the `routing` object: the
+    // project page rebuilds its manifest every render, so the object identity
+    // changes constantly while these numbers do not.
+  }, [mix, scene.stems, mastering, routing?.stem_transient_duck,
+      routing?.height_directional_band_gain, constants]);
 
   // Profile switch: retune the already-built voicing chain (cheap, no graph
   // rebuild), swap in the new profile's decode filter set, then recalibrate.

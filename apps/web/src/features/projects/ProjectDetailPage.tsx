@@ -19,6 +19,7 @@ import { InspectorGroup } from "@/app/InspectorRow";
 import { SegmentedControl } from "@/app/SegmentedControl";
 import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
 import { Button } from "@/components/ui/button";
+import { SliderField } from "@/components/forms/fields";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { isStereoLayout, outputModeForLayoutSwitch } from "@/lib/layouts";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
@@ -167,7 +168,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     () => monitorMastering(previewMastering, masteringBypassed),
     [previewMastering, masteringBypassed],
   );
-  const preview = useStemPreview(previewStems, {}, trackManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants);
+  const preview = useStemPreview(previewStems, {}, trackManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants, trackManifest?.routing);
   const previousRoutingLayoutRef = React.useRef(routingLayout);
   React.useEffect(() => { previousRoutingLayoutRef.current = routingLayout; }, [projectId]);
   React.useEffect(() => {
@@ -454,6 +455,25 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             <p className="mb-2 truncate text-[11px] text-muted-foreground">{`${selected?.asset.title || selected?.asset.filename} · ${selectedLayout}`}</p>
             <select className="flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px]" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets ?? []).map((name) => <option key={name}>{name}</option>)}</select>
             <Button className="mt-2.5 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 />Apply preset</Button>
+          </InspectorGroup>
+          <InspectorGroup title="Diffuse sends">
+            <SliderField
+              label="Transient duck"
+              value={trackManifest.routing.stem_transient_duck}
+              min={0}
+              max={1}
+              step={0.01}
+              onChange={(stem_transient_duck) =>
+                updateTrackManifest({
+                  ...trackManifest,
+                  routing: { ...trackManifest.routing, stem_transient_duck },
+                }, true)
+              }
+            />
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Holds onsets in the front bed, so only sustain reaches the surround and height
+              sends. 0 is off.
+            </p>
           </InspectorGroup>
           <InspectorGroup title="Stem">
             {selectedStem ? (() => {
