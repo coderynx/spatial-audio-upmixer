@@ -420,3 +420,22 @@ class TestSingleAssetParse:
         _, jobs = parse_manifest(data)
         assert "name" not in jobs[0].config
         assert "metadata" not in jobs[0].config
+
+
+def test_routing_stem_transient_duck_reaches_config_and_is_range_checked():
+    """The routing block's allowlist and _FIELD_MAP are separate tables — a key
+    in one and not the other validates but never lands, or lands but is
+    rejected on the way in."""
+    from upmixer.config import UpmixConfig
+    from upmixer.manifest import apply_asset_job
+
+    manifest = _minimal(routing={"stem_transient_duck": 0.7})
+    validate_manifest(manifest)
+    _meta, jobs = parse_manifest(manifest)
+    config = UpmixConfig()
+    apply_asset_job(config, jobs[0])
+    assert config.stem_transient_duck == 0.7
+
+    for out_of_range in (-0.1, 1.5):
+        with pytest.raises(ManifestError):
+            validate_manifest(_minimal(routing={"stem_transient_duck": out_of_range}))

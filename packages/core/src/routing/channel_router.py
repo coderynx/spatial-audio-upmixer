@@ -19,6 +19,7 @@ _rb("routing", {
     "height_low_rolloff_gain":("config", "height_low_rolloff_gain"),
     "height_high_shelf_gain": ("config", "height_high_shelf_gain"),
     "height_directional_band_gain": ("config", "height_directional_band_gain"),
+    "stem_transient_duck":    ("config", "stem_transient_duck"),
     "content_mix_strength":   ("config", "content_mix_strength"),
     "content_hf_analysis_hz": ("config", "content_hf_analysis_hz"),
 })
