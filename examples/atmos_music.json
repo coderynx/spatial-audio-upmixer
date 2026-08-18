@@ -39,8 +39,7 @@
     },
     "loudness": {
       "normalize": true,
-      "target": -18.0,
-      "max_tp": -1.0
+      "target_preset": "atmos-music"
     }
   },
 
