@@ -231,6 +231,16 @@ describe("MasteringSection bass controls", () => {
     expect(screen.getByLabelText("Sub trim")).toBeInTheDocument();
   });
 
+  it("shows the profile's own placement while the overrides are unset", () => {
+    // A native <select> handed a value no option carries falls back to its
+    // first option, which read "front"/"off" while `deep` was running
+    // "bed"/"add" — the panel claiming a redistribution that was not running.
+    renderAt("7.1.4");
+    expect(defaultManifest.mastering.bass.spread).toBeNull();
+    expect(select("Spread")).toHaveValue("bed");
+    expect(select("Subwoofer")).toHaveValue("add");
+  });
+
   it("keeps the tone controls on every layout", () => {
     renderAt("stereo");
     expect(screen.getByText("Tone")).toBeInTheDocument();

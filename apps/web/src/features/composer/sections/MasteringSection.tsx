@@ -151,11 +151,14 @@ export function MasteringSection({
   const match = manifest.mastering.match_reference;
   const hasReference = masteringReference !== null;
   const { eq, compressor, bass, loudness } = manifest.mastering;
-  // `excite` is nullable like every other bass override, so an unset switch
-  // has to show what the profile does rather than a bare `false`.
-  const profileExcite = bass.profile
-    ? (configuration?.constants?.bass_profiles?.[bass.profile]?.excite ?? false)
-    : false;
+  // Every bass override is nullable, so an unset control has to show what the
+  // profile does. A native <select> given a value no option carries displays
+  // its first option instead, which silently claimed "front"/"off" while the
+  // profile was running "bed"/"add".
+  const bassProfile = bass.profile
+    ? configuration?.constants?.bass_profiles?.[bass.profile]
+    : undefined;
+  const profileExcite = bassProfile?.excite ?? false;
   // Bass management redistributes the low band across a speaker array, so
   // most of its controls have nothing to act on until the layout provides
   // one: an LFE send needs an LFE channel, and on a two-channel bed every
@@ -491,7 +494,7 @@ export function MasteringSection({
             {canSpread && (
               <SelectField
                 label="Spread"
-                value={bass.spread || ""}
+                value={bass.spread || bassProfile?.spread || ""}
                 disabled={bassOff}
                 onChange={(spread) => setMastering({ bass: { ...bass, spread } })}
                 options={(choices?.bass_spreads || []).map((value) => ({
@@ -504,7 +507,7 @@ export function MasteringSection({
               <>
                 <SelectField
                   label="Subwoofer"
-                  value={bass.lfe_mode || ""}
+                  value={bass.lfe_mode || bassProfile?.lfe_mode || ""}
                   disabled={bassOff}
                   onChange={(lfe_mode) => setMastering({ bass: { ...bass, lfe_mode } })}
                   options={(choices?.bass_lfe_modes || []).map((value) => ({
