@@ -437,7 +437,7 @@ def test_startup_sweep_schedules_reference_match_for_projects_with_a_reference(t
     `WorkerManager.start` runs for real here — it's cheap (thread pools + a
     DB scan, no model loading) — since the sweep it performs is exactly
     what's under test."""
-    from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
+    from upmixer_web.shared.database import create_database_engine, create_session_factory
     from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
 
     database_url = f"sqlite:///{tmp_path / 'refmatch-startup-sweep.db'}"

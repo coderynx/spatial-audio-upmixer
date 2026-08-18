@@ -3,7 +3,7 @@ import math
 import numpy as np
 
 from upmixer.config import UpmixConfig
-from upmixer.formats import FORMAT_MAP, INPUT_FORMAT_MAP, ChannelLabel
+from upmixer.formats import FORMAT_MAP, ChannelLabel
 from upmixer.upmix.multichannel import MultichannelUpmixer, _extract_center
 from upmixer.utils import ITU_CENTER_COEFF
 
@@ -80,7 +80,6 @@ def test_existing_center_input_passes_through_untouched():
     }
     upmixer = MultichannelUpmixer(
         UpmixConfig(output_format="7.1.4"),
-        INPUT_FORMAT_MAP["5.1"],
         FORMAT_MAP["7.1.4"],
         _SR,
     )
@@ -94,7 +93,6 @@ def test_derived_lfe_uses_the_original_fronts():
     mono = _sine(freq=60.0)
     upmixer = MultichannelUpmixer(
         UpmixConfig(output_format="5.1"),
-        INPUT_FORMAT_MAP["stereo"],
         FORMAT_MAP["5.1"],
         _SR,
     )

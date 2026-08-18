@@ -13,10 +13,6 @@ from dataclasses import dataclass
 
 from upmixer.formats import ChannelLabel
 
-LFE_LABEL = ChannelLabel.LFE
-"""LFE has no spatial position — excluded from the ambisonic encode."""
-
-
 @dataclass(frozen=True)
 class Vec3:
     x: float

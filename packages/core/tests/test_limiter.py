@@ -52,7 +52,7 @@ def test_limiter_meets_true_peak_ceiling_on_hard_transient():
     )
     out = limiter.process(channels)
 
-    tp = measure_true_peak(out, _SR)
+    tp = measure_true_peak(out)
     assert tp <= ceiling_dbtp + 0.05, f"True peak {tp} dBTP exceeds ceiling {ceiling_dbtp}"
 
 
@@ -69,7 +69,7 @@ def test_limiter_meets_true_peak_ceiling_on_near_nyquist_tone():
     )
     out = limiter.process(channels)
 
-    tp = measure_true_peak(out, _SR)
+    tp = measure_true_peak(out)
     assert tp <= ceiling_dbtp + 0.05, f"True peak {tp} dBTP exceeds ceiling {ceiling_dbtp}"
 
 
@@ -92,7 +92,7 @@ def test_limiter_meets_ceiling_on_dense_random_noise(seed):
     )
     out = limiter.process(channels)
 
-    tp = measure_true_peak(out, _SR)
+    tp = measure_true_peak(out)
     assert tp <= ceiling_dbtp + 0.05, f"True peak {tp} dBTP exceeds ceiling {ceiling_dbtp}"
 
 

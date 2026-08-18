@@ -77,8 +77,6 @@ class SoftMatrixDecomposer:
         self._harmonicity_est = HarmonicityEstimator(config, n_freq)
         self._harmonicity_state = self._harmonicity_est.create_state()
 
-        self._prev_mag: np.ndarray | None = None
-
     def decompose_frame(
         self,
         X_L_frame: np.ndarray,
@@ -154,4 +152,3 @@ class SoftMatrixDecomposer:
     def reset(self) -> None:
         self._transient_detector.reset(self._transient_state)
         self._harmonicity_est.reset(self._harmonicity_state)
-        self._prev_mag = None

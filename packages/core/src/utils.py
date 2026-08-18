@@ -12,20 +12,6 @@ SURROUND_VELVET_SEED: int = upmixer_dsp.VELVET_SEED
 HEIGHT_VELVET_SEED: int = upmixer_dsp.VELVET_SEED_HEIGHT
 
 
-def db_to_linear(db: float) -> float:
-    return 10.0 ** (db / 20.0)
-
-
-def linear_to_db(linear: float, floor_db: float = -120.0) -> float:
-    if linear <= 0:
-        return floor_db
-    return max(20.0 * np.log10(linear), floor_db)
-
-
-def rms(signal: np.ndarray) -> float:
-    return float(np.sqrt(np.mean(signal**2)))
-
-
 def soft_limit(signal: np.ndarray, threshold: float = 0.95) -> np.ndarray:
     """Soft limiter using tanh saturation above threshold."""
     return upmixer_dsp.soft_limit(

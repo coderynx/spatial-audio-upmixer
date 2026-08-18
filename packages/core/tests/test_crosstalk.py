@@ -6,7 +6,6 @@ from upmixer.crosstalk.filters import apply_xtc, load_xtc_filter_set
 from upmixer.crosstalk.geometry import speaker_azimuths_rad
 from upmixer.crosstalk.profiles import (
     CROSSTALK_PROFILES,
-    VOICING_PARAMS,
     XTC_FILTER_SET,
     XTC_PARAMS,
     CrosstalkProfile,

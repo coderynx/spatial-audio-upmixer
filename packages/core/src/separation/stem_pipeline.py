@@ -109,7 +109,6 @@ class StemUpmixPipeline:
         self._custom_routing = custom_routing
         self._separators: dict[str, StemSeparator] = {}
         self._separator_sr: int | None = None
-        self._separator_batch_size: int | None = None
         self._separator_settings: tuple[object, ...] | None = None
 
     def _validated_separator_settings(self) -> tuple[object, ...]:
@@ -144,9 +143,6 @@ class StemUpmixPipeline:
         (in practice all stages of a single plan run at the same sep_sr).
         """
         cfg = self.config
-        sep_log_level = (
-            logging.DEBUG if _log.isEnabledFor(logging.DEBUG) else logging.WARNING
-        )
         requested_settings = self._validated_separator_settings()
         if (
             self._separator_sr != sep_sr
@@ -160,14 +156,12 @@ class StemUpmixPipeline:
                 s.close()
             self._separators = {}
             self._separator_sr = sep_sr
-            self._separator_batch_size = cfg.stem_batch_size
             self._separator_settings = requested_settings
         if model not in self._separators:
             separator = StemSeparator(
                 model=model,
                 model_dir=self._model_dir,
                 sample_rate=sep_sr,
-                log_level=sep_log_level,
                 batch_size=cfg.stem_batch_size,
                 segment_size=cfg.stem_segment_size,
                 chunk_duration_s=cfg.stem_chunk_duration_s,
@@ -195,7 +189,6 @@ class StemUpmixPipeline:
             s.close()
         self._separators = {}
         self._separator_sr = None
-        self._separator_batch_size = None
         self._separator_settings = None
 
     def __enter__(self) -> "StemUpmixPipeline":
@@ -288,7 +281,7 @@ class StemUpmixPipeline:
             height_coeff=cfg.height_downmix_coeff,
         )
         stereo = np.column_stack([left, right])
-        tp = measure_true_peak({"FL": left, "FR": right}, out_sr)
+        tp = measure_true_peak({"FL": left, "FR": right})
         if tp > cfg.loudness_max_tp:
             stereo *= 10.0 ** ((cfg.loudness_max_tp - tp) / 20.0)
         write_audio(

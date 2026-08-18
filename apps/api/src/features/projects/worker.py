@@ -6,7 +6,6 @@ import copy
 import shutil
 from contextlib import ExitStack
 from datetime import datetime, timezone
-from pathlib import Path
 
 from upmixer.config import UpmixConfig
 from upmixer.manifest import apply_asset_job, parse_manifest

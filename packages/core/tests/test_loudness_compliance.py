@@ -5,13 +5,12 @@ Verifies:
   - Analytical fallback at 96 kHz yields valid SOS structure
   - Channel weights per BS.1770-4 §2.2 Table 1 + Annex 1 Table 3
   - Integrated loudness gating behaviour (absolute + relative, floor returns)
-  - True-peak oversampling factor: 4x at <=48 kHz, 2x at 96 kHz (Annex 2)
+  - True-peak measurement floor, near-full-scale accuracy, and FIR response (Annex 2)
   - normalize_loudness info dict and TP-limiting logic
 """
 from __future__ import annotations
 
 import math
-from unittest.mock import patch
 
 import numpy as np
 from scipy.signal import sosfreqz
@@ -186,7 +185,7 @@ def test_surround_channel_louder_than_front_due_to_weight():
 
 def test_true_peak_silence_returns_floor():
     channels = {"FL": np.zeros(SR48)}
-    result = measure_true_peak(channels, SR48)
+    result = measure_true_peak(channels)
     assert result <= -100.0
 
 
@@ -195,16 +194,15 @@ def test_true_peak_near_full_scale():
     t = np.linspace(0, 1.0, SR48, endpoint=False)
     audio = amp * np.sin(2.0 * math.pi * 997.0 * t)
     channels = {"FL": audio}
-    result = measure_true_peak(channels, SR48)
+    result = measure_true_peak(channels)
     floor_db = 20.0 * math.log10(amp)
     assert result >= floor_db - 0.1
     assert result <= 3.0
 
 
-def test_true_peak_uses_bs1770_fir_at_48k_and_96k():
+def test_true_peak_uses_bs1770_fir():
     audio = np.sin(2 * np.pi * 997 * np.arange(SR48) / SR48)
-    assert measure_true_peak({"FL": audio}, SR48) > -0.1
-    assert measure_true_peak({"FL": audio}, SR96) > -0.1
+    assert measure_true_peak({"FL": audio}) > -0.1
 
 
 def test_normalize_info_dict_keys():

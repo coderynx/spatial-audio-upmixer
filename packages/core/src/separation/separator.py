@@ -195,10 +195,6 @@ class StemSeparator:
         sample_rate: Output sample rate for stems. The mix is resampled to
             exactly this rate before separation, so stems are returned at
             exactly this rate.
-        log_level: Accepted for backward compatibility; the in-core engine
-            logs through the ``upmixer`` logger directly (see ``_log``
-            calls in ``inference/engine.py``), so this no longer changes a
-            separate third-party logger's verbosity.
         batch_size: TFC-TDF chunk batch size (ignored by Roformer models,
             which do not batch). ``None`` selects a backend-aware value.
         segment_size: Chunk frame count. ``None`` selects a VM-memory-aware
@@ -220,7 +216,6 @@ class StemSeparator:
         model: str = DEFAULT_MODEL,
         model_dir: str | None = None,
         sample_rate: int = 44100,
-        log_level: int = logging.WARNING,
         batch_size: int | None = None,
         segment_size: int | None = None,
         chunk_duration_s: float | None = None,
@@ -243,7 +238,6 @@ class StemSeparator:
             Path.home() / ".cache" / "upmixer-models"
         )
         self._sample_rate = sample_rate
-        self._log_level = log_level
         self._backend = _detect_backend()
         remembered = _SUCCESSFUL_BATCHES.get((model, self._backend))
         self._batch_size = (
@@ -389,14 +383,11 @@ class StemSeparator:
     def separate(
         self,
         audio_path: str,
-        output_dir: str | None = None,
     ) -> dict[str, np.ndarray]:
         """Separate audio into stems.
 
         Args:
             audio_path: Path to input audio file (any format/channel count).
-            output_dir: Ignored (kept for API compatibility). Stems are always
-                written to the instance's persistent temp directory.
 
         Returns:
             Dict mapping canonical stem name to numpy array (n_samples, 2) float32.

@@ -3,7 +3,6 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-from upmixer.formats import InputFormat, detect_input_format
 
 
 class AudioReader:
@@ -22,10 +21,6 @@ class AudioReader:
         if audio.ndim == 1:
             audio = audio[:, np.newaxis]
         return audio, sr
-
-    def detect_format(self) -> InputFormat:
-        """Auto-detect input format from file channel count."""
-        return detect_input_format(self._channels)
 
     @property
     def duration_seconds(self) -> float:

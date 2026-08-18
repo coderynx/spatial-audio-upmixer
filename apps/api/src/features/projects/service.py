@@ -27,7 +27,7 @@ from upmixer_web.features.projects.layouts import (
 from upmixer_web.features.projects.routing import merge_scene, routing_for_scene
 from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS, ProjectStemStorage
 from upmixer_web.shared.manifests import normalize_job_manifest
-from upmixer_web.shared.models import ImportBatch, Job, MasteringReference, Project, ProjectStem, ProjectTrack
+from upmixer_web.shared.models import ImportBatch, Job, MasteringReference, Project, ProjectTrack
 
 
 PROJECT_LOAD_OPTIONS = (

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
 from alembic import command
@@ -43,8 +42,3 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     """Create sessions that retain loaded state after commits."""
     return sessionmaker(engine, expire_on_commit=False)
 
-
-def session_dependency(factory: sessionmaker[Session]) -> Iterator[Session]:
-    """Yield one request-scoped session."""
-    with factory() as session:
-        yield session

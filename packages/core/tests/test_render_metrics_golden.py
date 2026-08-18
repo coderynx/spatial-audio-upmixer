@@ -129,7 +129,7 @@ def _deterministic_bed(sr: int, duration_s: float, fmt) -> dict[str, np.ndarray]
 def _metrics(channels: dict[str, np.ndarray], sr: int, fmt) -> dict:
     return {
         "measured_lkfs": measure_integrated_loudness(channels, sr, fmt),
-        "measured_tp_dbtp": measure_true_peak(channels, sr),
+        "measured_tp_dbtp": measure_true_peak(channels),
         "channel_rms": {
             name: float(np.sqrt(np.mean(np.square(ch)))) for name, ch in channels.items()
         },

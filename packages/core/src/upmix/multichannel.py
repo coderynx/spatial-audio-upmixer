@@ -6,7 +6,7 @@ from upmixer.analysis.coherence import CoherenceEstimator
 from upmixer.analysis.spatial import SpatialPlan
 from upmixer.analysis.stft import STFTAnalyzer
 from upmixer.decomposition.direct_ambient import center_weight
-from upmixer.formats import ChannelLabel, InputFormat, OutputFormat
+from upmixer.formats import ChannelLabel, OutputFormat
 from upmixer.utils import (
     elevation_eq as _elevation_eq,
     velvet_send,
@@ -76,12 +76,10 @@ class MultichannelUpmixer:
     def __init__(
         self,
         config: UpmixConfig,
-        input_fmt: InputFormat,
         output_fmt: OutputFormat,
         sample_rate: int,
     ):
         self._cfg = config
-        self._input_fmt = input_fmt
         self._output_fmt = output_fmt
         self._sr = sample_rate
 

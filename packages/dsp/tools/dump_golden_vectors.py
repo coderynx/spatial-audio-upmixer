@@ -185,7 +185,7 @@ def dump_loudness() -> None:
             "channels": [c.value for c in fmt.channels],
             "weights": [CHANNEL_WEIGHT.get(c, 0.0) for c in fmt.channels],
             "lkfs": measure_integrated_loudness(channels, sr, fmt),
-            "true_peak_dbtp": measure_true_peak(channels, sr),
+            "true_peak_dbtp": measure_true_peak(channels),
         },
         {},
         1e-10,

@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import os
-import queue
 import signal
 import time
 
-import pytest
 
 from upmixer.config import UpmixConfig
 from upmixer_web.worker import subprocess as job_subprocess

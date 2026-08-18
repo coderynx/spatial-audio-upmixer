@@ -127,7 +127,6 @@ def synth_room_tail(sr: int, rt60_s: float, pre_delay_s: float, seed: int, lp_hz
 
 
 def build_filter_set(
-    name: str,
     room_rt60_s: float | None,
     room_pre_delay_s: float = 0.005,
     target_energy: float | None = None,
@@ -263,7 +262,7 @@ def main() -> None:
         "listening_o3_decode": (0.12, 0.005, 2500.0),
     }
     print("Building flat_o3_decode (rt60=None)...")
-    flat_matrix = build_filter_set("flat_o3_decode", None)
+    flat_matrix = build_filter_set(None)
     write_filter_set("flat_o3_decode", flat_matrix, CORE_OUT_DIR)
     # Overall-loudness reference every room-tail profile is matched to —
     # see `build_filter_set`'s docstring, stage 2.
@@ -271,7 +270,7 @@ def main() -> None:
     for name, (rt60, pre_delay, tail_lp) in room_profiles.items():
         print(f"Building {name} (rt60={rt60}, pre_delay={pre_delay}, tail_lp={tail_lp})...")
         matrix = build_filter_set(
-            name, rt60, room_pre_delay_s=pre_delay, target_energy=target_energy, room_tail_lp_hz=tail_lp
+            rt60, room_pre_delay_s=pre_delay, target_energy=target_energy, room_tail_lp_hz=tail_lp
         )
         write_filter_set(name, matrix, CORE_OUT_DIR)
 

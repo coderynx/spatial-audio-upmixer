@@ -1,7 +1,6 @@
 """Tests for batch processing (upmixer.batch)."""
 from __future__ import annotations
 
-import json
 import os
 
 import numpy as np
@@ -149,8 +148,8 @@ class TestResolveBatchJobs:
 
     def test_flac_only_batch_dir(self, tmp_path):
         """Directory with only .flac files (no .wav) must still be scanned."""
-        a = _make_wav(str(tmp_path / "alpha.flac"))
-        b = _make_wav(str(tmp_path / "beta.flac"))
+        _make_wav(str(tmp_path / "alpha.flac"))
+        _make_wav(str(tmp_path / "beta.flac"))
         out_dir = str(tmp_path / "out")
         os.makedirs(out_dir)
         jobs = resolve_batch_jobs(batch_dir=str(tmp_path), output_dir=out_dir)

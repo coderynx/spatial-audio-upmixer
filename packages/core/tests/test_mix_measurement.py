@@ -23,7 +23,7 @@ import pytest
 import upmixer_dsp
 
 from upmixer.config import UpmixConfig
-from upmixer.formats import FORMAT_MAP, INPUT_FORMAT_MAP, ChannelLabel
+from upmixer.formats import FORMAT_MAP, ChannelLabel
 from upmixer.loudness import CHANNEL_WEIGHT
 from upmixer.separation.stem_placement import BALANCED_PLACEMENTS, STEM_ROUTING_PRESET_NAMES
 from upmixer.separation.stem_router import StemRouter, build_stem_routing
@@ -260,7 +260,7 @@ def test_send_frequency_response() -> None:
     )
 
     upmixer = MultichannelUpmixer(
-        UpmixConfig(), INPUT_FORMAT_MAP["stereo"], FORMAT_MAP["7.1.4"], _SR
+        UpmixConfig(), FORMAT_MAP["7.1.4"], _SR
     )
     derived = upmixer.process(
         {ChannelLabel.FL: impulse.copy(), ChannelLabel.FR: impulse.copy()}

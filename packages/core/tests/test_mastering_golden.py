@@ -143,7 +143,7 @@ class TestLoudnessMeasurementGolden:
 
     def test_true_peak(self):
         channels = _make_channels()
-        tp = measure_true_peak(channels, _SR)
+        tp = measure_true_peak(channels)
         assert tp == pytest.approx(_unhex(_GOLDEN_RAW_TP_HEX), abs=1e-9), (
             f"measure_true_peak changed: {tp:.9f}"
         )
@@ -168,7 +168,7 @@ if __name__ == "__main__" and os.getenv("REGENERATE_GOLDEN"):
 
     raw_channels = _make_channels()
     lkfs = measure_integrated_loudness(raw_channels, _SR, _FMT)
-    tp = measure_true_peak(raw_channels, _SR)
+    tp = measure_true_peak(raw_channels)
     print(f'_GOLDEN_RAW_LKFS_HEX = "{struct.pack("<d", lkfs).hex()}"')
     print(f'_GOLDEN_RAW_TP_HEX   = "{struct.pack("<d", tp).hex()}"')
     sys.exit(0)

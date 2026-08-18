@@ -103,7 +103,7 @@ def k_weighted_power(signal: np.ndarray, sample_rate: int) -> float:
     return 10.0 ** ((lkfs - _LKFS_OFFSET) / 10.0) if lkfs > _ABS_GATE else 0.0
 
 
-def measure_true_peak(channels: dict[str, np.ndarray], sample_rate: int = 48000) -> float:
+def measure_true_peak(channels: dict[str, np.ndarray]) -> float:
     """True Peak across all channels (BS.1770-4 Annex 2).
 
     Uses BS.1770-5 Annex 2 order-48 4-phase FIR interpolation.  Four-times
@@ -158,7 +158,7 @@ def normalize_loudness(
     for v in adjusted.values():
         v *= gain_linear
 
-    measured_tp = measure_true_peak(adjusted, sample_rate)
+    measured_tp = measure_true_peak(adjusted)
     tp_limited = False
 
     if apply_tp_gain and measured_tp > max_tp_dbtp:
@@ -170,7 +170,7 @@ def normalize_loudness(
         tp_limited = True
 
     final_lkfs = measure_integrated_loudness(adjusted, sample_rate, fmt)
-    final_tp = measure_true_peak(adjusted, sample_rate)
+    final_tp = measure_true_peak(adjusted)
     return adjusted, {
         "pre_lkfs":         measured_lkfs,
         "measured_lkfs":    final_lkfs,

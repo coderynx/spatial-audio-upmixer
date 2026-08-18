@@ -1,5 +1,4 @@
 import numpy as np
-import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.routing.channel_router import HeightFilter

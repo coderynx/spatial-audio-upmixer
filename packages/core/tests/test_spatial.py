@@ -2,7 +2,7 @@ import numpy as np
 
 from upmixer.analysis.spatial import SpatialPlan, analyze_spatial_plan
 from upmixer.config import UpmixConfig
-from upmixer.formats import ChannelLabel, FORMAT_MAP, INPUT_5_1
+from upmixer.formats import ChannelLabel, FORMAT_MAP
 from upmixer.routing.channel_router import ChannelRouter
 from upmixer.decomposition.direct_ambient import SoftMatrixResult
 from upmixer.upmix.multichannel import MultichannelUpmixer
@@ -93,7 +93,7 @@ def test_multichannel_spatial_motion_does_not_change_input_channels():
         ChannelLabel.SL: np.full(n, 0.03),
         ChannelLabel.SR: np.full(n, -0.03),
     }
-    upmixer = MultichannelUpmixer(UpmixConfig(output_format="7.1.4"), INPUT_5_1, FORMAT_MAP["7.1.4"], 48_000)
+    upmixer = MultichannelUpmixer(UpmixConfig(output_format="7.1.4"), FORMAT_MAP["7.1.4"], 48_000)
     output = upmixer.process(inputs, _plan("spacious", n=8))
 
     for label, source in inputs.items():

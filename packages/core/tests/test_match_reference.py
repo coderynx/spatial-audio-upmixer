@@ -371,7 +371,7 @@ class TestGating:
         ref_tail = _stereo_ref(n=N)
         ref_padded = np.concatenate([np.zeros((SR * 10, 2)), ref_tail], axis=0)
         freqs1, power1 = weighted_power_spectrum_reference(ref_tail, SR, 8192)
-        freqs2, power2 = weighted_power_spectrum_reference(ref_padded, SR, 8192)
+        _, power2 = weighted_power_spectrum_reference(ref_padded, SR, 8192)
         db1 = 10.0 * np.log10(power1 + 1e-20)
         db2 = 10.0 * np.log10(power2 + 1e-20)
         for target_hz in (440.0, 550.0):

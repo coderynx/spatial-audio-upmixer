@@ -166,18 +166,6 @@ class InputFormat:
         return len(self.channels)
 
     @property
-    def has_lfe(self) -> bool:
-        return ChannelLabel.LFE in self.channels
-
-    @property
-    def has_center(self) -> bool:
-        return ChannelLabel.C in self.channels
-
-    @property
-    def has_surround(self) -> bool:
-        return ChannelLabel.SL in self.channels
-
-    @property
     def has_back(self) -> bool:
         return ChannelLabel.BL in self.channels
 

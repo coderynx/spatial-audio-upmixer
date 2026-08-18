@@ -1,7 +1,6 @@
 """Tests for batch stem separation: separator reuse, stem cache, manifests."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 

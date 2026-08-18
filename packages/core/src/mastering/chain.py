@@ -290,7 +290,7 @@ class MasteringChain:
 
             result = MasteringResult(
                 measured_lkfs=measure_integrated_loudness(channels, sample_rate, output_fmt),
-                measured_tp_dbtp=measure_true_peak(channels, sample_rate),
+                measured_tp_dbtp=measure_true_peak(channels),
                 applied_gain_db=ln_info["applied_gain_db"],
                 tp_limited=ln_info["tp_limited"],
             )

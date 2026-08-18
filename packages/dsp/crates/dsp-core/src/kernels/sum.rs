@@ -14,13 +14,6 @@ pub fn pairwise_sum(values: &[f64]) -> f64 {
     pairwise_sum(&values[..half]) + pairwise_sum(&values[half..])
 }
 
-pub fn pairwise_mean(values: &[f64]) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    pairwise_sum(values) / values.len() as f64
-}
-
 /// Sum of squares, pairwise, without materializing the squared vector.
 pub fn pairwise_sum_squares(values: &[f64]) -> f64 {
     if values.len() <= BLOCK {

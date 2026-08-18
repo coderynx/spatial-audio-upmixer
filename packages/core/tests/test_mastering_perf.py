@@ -60,7 +60,7 @@ def test_integrated_loudness_speed():
 def test_true_peak_memory():
     channels = _make_channels()
     tracemalloc.start()
-    measure_true_peak(channels, _SR)
+    measure_true_peak(channels)
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     peak_mb = peak / 1024 / 1024
@@ -74,7 +74,7 @@ def test_true_peak_memory():
 def test_true_peak_speed():
     channels = _make_channels()
     t0 = time.perf_counter()
-    measure_true_peak(channels, _SR)
+    measure_true_peak(channels)
     elapsed = time.perf_counter() - t0
     print(f"\n  measure_true_peak: {elapsed:.3f}s (limit {_TP_WALL_S}s)")
     assert elapsed < _TP_WALL_S, (

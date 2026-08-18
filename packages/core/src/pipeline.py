@@ -373,7 +373,6 @@ class UpmixPipeline:
             channels = self._run_stereo_pipeline(
                 cfg, left, right, sr, n_samples, fft_size, hop_size, progress_callback
             )
-            channels = self._post_process(channels)
         else:
             from upmixer.upmix.multichannel import MultichannelUpmixer
 
@@ -387,9 +386,9 @@ class UpmixPipeline:
             )
             if self._spatial_plan is not None:
                 _log.info("  Spatial: %s (confidence %.2f)", self._spatial_plan.profile, self._spatial_plan.confidence)
-            upmixer = MultichannelUpmixer(cfg, input_fmt, output_fmt, sr)
+            upmixer = MultichannelUpmixer(cfg, output_fmt, sr)
             channels = upmixer.process(input_channels, self._spatial_plan)
-            channels = self._post_process_multichannel(channels, sr, audio)
+            channels = self._post_process_multichannel(channels, audio)
 
         _progress("  Processing complete.", 0.9)
 
@@ -527,14 +526,9 @@ class UpmixPipeline:
 
         return channels
 
-    def _post_process(self, channels: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        """Return stereo-sourced mixing output for the mastering chain."""
-        return channels
-
     def _post_process_multichannel(
         self,
         channels: dict[str, np.ndarray],
-        sr: int,
         original_audio: np.ndarray,
     ) -> dict[str, np.ndarray]:
         """Mixing-phase post-processing for multichannel-sourced output: energy normalization.
@@ -578,7 +572,7 @@ class UpmixPipeline:
             height_coeff=cfg.height_downmix_coeff,
         )
         stereo = np.column_stack([L, R])
-        tp = measure_true_peak({"FL": L, "FR": R}, sample_rate)
+        tp = measure_true_peak({"FL": L, "FR": R})
         if tp > cfg.loudness_max_tp:
             stereo *= 10.0 ** ((cfg.loudness_max_tp - tp) / 20.0)
             _log.warning("  Downmix gain reduced %.2f dB to protect true peak", cfg.loudness_max_tp - tp)

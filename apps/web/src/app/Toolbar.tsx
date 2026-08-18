@@ -10,10 +10,6 @@ export function Toolbar({ children, className }: { children: ReactNode; classNam
   );
 }
 
-export function ToolbarGroup({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("flex items-center gap-1", className)}>{children}</div>;
-}
-
 export function ToolbarSeparator() {
   return <div className="h-5 w-px shrink-0 bg-border" aria-hidden="true" />;
 }
