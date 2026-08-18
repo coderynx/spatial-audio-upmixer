@@ -93,7 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with sessions() as session:
             yield session
 
-    register_system_routes(app, settings, storage, stem_capability, manager, database_session)
+    register_system_routes(app, settings, storage, stem_capability, database_session)
     register_import_routes(app, settings, storage, database_session)
     register_job_routes(app, settings, manager, stem_capability, database_session, sessions)
     register_project_routes(app, settings, storage, manager, stem_capability, database_session, sessions)

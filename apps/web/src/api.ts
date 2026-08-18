@@ -233,15 +233,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export type SeparationDispatchState = {
-  paused: boolean
-}
-
 export const api = {
   getConfiguration: () => request<Configuration>("/api/v1/configuration"),
-  getSeparationState: () => request<SeparationDispatchState>("/api/v1/separation"),
-  pauseSeparation: () => request<SeparationDispatchState>("/api/v1/separation/pause", { method: "POST" }),
-  resumeSeparation: () => request<SeparationDispatchState>("/api/v1/separation/resume", { method: "POST" }),
   resolveStemRouting: (payload: { stems: string[]; channel_layout: string; preset: string }) =>
     request<StemRouting>("/api/v1/stem-routing/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   getImport: (id: string) => request<ImportPreview>(`/api/v1/imports/${id}`),

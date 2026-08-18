@@ -122,18 +122,6 @@ def test_served_filter_assets_have_shipped_wavs(web_client):
             assert matches, f"no shipped WAV for {basename} under {subdir}/"
 
 
-def test_separation_pause_toggles_global_dispatch(web_client):
-    assert web_client.get("/api/v1/separation").json() == {"paused": False}
-
-    assert web_client.post("/api/v1/separation/pause").json() == {"paused": True}
-    assert web_client.get("/api/v1/separation").json() == {"paused": True}
-    assert web_client.app.state.manager.is_dispatch_paused()
-
-    assert web_client.post("/api/v1/separation/resume").json() == {"paused": False}
-    assert web_client.get("/api/v1/separation").json() == {"paused": False}
-    assert not web_client.app.state.manager.is_dispatch_paused()
-
-
 def test_capability_uses_engine_selected_device(tmp_path, monkeypatch):
     class FakeStemSeparator:
         def __init__(self, **_kwargs):

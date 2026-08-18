@@ -60,7 +60,6 @@ class _ManagerCore:
         self.worker_count = worker_count
         self._stop = threading.Event()
         self._wake = threading.Event()
-        self._paused = threading.Event()
         self._dispatcher: threading.Thread | None = None
         self._executor: ThreadPoolExecutor | None = None
         self._active: set[str] = set()
@@ -103,18 +102,6 @@ class _ManagerCore:
     def notify(self) -> None:
         self._wake.set()
 
-    def pause_dispatch(self) -> None:
-        """Stop dispatching new queued work application-wide; in-flight work
-        runs to completion."""
-        self._paused.set()
-
-    def resume_dispatch(self) -> None:
-        self._paused.clear()
-        self._wake.set()
-
-    def is_dispatch_paused(self) -> bool:
-        return self._paused.is_set()
-
     def _dispatch_loop(self) -> None:
         while not self._stop.is_set():
             self._submit_available()
@@ -122,7 +109,7 @@ class _ManagerCore:
             self._wake.clear()
 
     def _submit_available(self) -> None:
-        if not self._executor or self._paused.is_set():
+        if not self._executor:
             return
         with self._lock:
             capacity = self.worker_count - len(self._active)
