@@ -31,7 +31,8 @@ def _write_source(path: str, n: int = SR * 2) -> None:
     sf.write(path, _sine(n), SR, subtype="FLOAT")
 
 
-def _fake_execute_plan(get_separator, plan, sep_path, sep_sr, stage_callback=None, cfg=None):
+def _fake_execute_plan(get_separator, plan, sep_path, sep_sr, stage_callback=None,
+                       cfg=None, resume_key=None):
     """Constant stems shaped like the real separator's output, no model needed."""
     audio, _ = sf.read(sep_path, dtype="float32", always_2d=True)
     n = len(audio)

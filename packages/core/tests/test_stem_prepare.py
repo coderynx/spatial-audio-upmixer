@@ -26,7 +26,8 @@ def _sine(n: int, freq: float = 440.0, amp: float = 0.3) -> np.ndarray:
     return np.column_stack([ch, ch])
 
 
-def _fake_execute_plan(get_separator, plan, sep_path, sep_sr, stage_callback=None, cfg=None):
+def _fake_execute_plan(get_separator, plan, sep_path, sep_sr, stage_callback=None,
+                       cfg=None, resume_key=None):
     audio, _ = sf.read(sep_path, dtype="float32", always_2d=True)
     n = len(audio)
     return {name: np.full((n, 2), 0.2, dtype=np.float32) for name in plan.requested_stems}

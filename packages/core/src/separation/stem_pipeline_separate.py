@@ -121,16 +121,9 @@ def _resolve_input_format(
     return input_fmt
 
 
-def _load_cached_stems(
-    cfg: UpmixConfig,
-    plan: SeparationPlan,
-    input_path: str,
-    sep_sr: int,
-    cache_identity: str,
-) -> dict[str, np.ndarray] | None:
-    from upmixer.separation.stem_cache import StemCache
-
-    silence_kwargs = dict(
+def _cache_key_kwargs(cfg: UpmixConfig) -> dict:
+    """Cache-key components shared by the stem cache and the resume key."""
+    return dict(
         is_preview=cfg.preview,
         preview_duration=cfg.preview_duration_s,
         preview_start=cfg.preview_start_s,
@@ -141,6 +134,34 @@ def _load_cached_stems(
         silence_pad_ms=cfg.stem_silence_pad_ms,
         path_key=cfg.stem_cache_key,
     )
+
+
+def _resume_key(
+    cfg: UpmixConfig, input_path: str, cache_identity: str, sep_sr: int
+) -> str | None:
+    """Identity a crash checkpoint is filed under, or ``None`` when disabled.
+
+    Same components as the stem cache's own key, so a checkpoint is only ever
+    replayed into a run that would have produced it. Previews are excluded:
+    they are short-lived and are never cached either.
+    """
+    if not cfg.stem_cache_dir or cfg.preview or not cache_identity:
+        return None
+    from upmixer.separation.stem_cache import _cache_key
+
+    return _cache_key(input_path, cache_identity, sep_sr, **_cache_key_kwargs(cfg))
+
+
+def _load_cached_stems(
+    cfg: UpmixConfig,
+    plan: SeparationPlan,
+    input_path: str,
+    sep_sr: int,
+    cache_identity: str,
+) -> dict[str, np.ndarray] | None:
+    from upmixer.separation.stem_cache import StemCache
+
+    silence_kwargs = _cache_key_kwargs(cfg)
     custom_inference_tuning = any(
         value not in (None, False) for value in (
             cfg.stem_batch_size,
@@ -201,6 +222,7 @@ def _run_zone_separation(
     sep_sr: int,
     stereo_mode: bool,
     progress: Callable[[str, float], None],
+    resume_key: str | None = None,
 ) -> dict[str, np.ndarray]:
     all_stems: dict[str, np.ndarray] = {}
     tmp_files: list[str] = []
@@ -230,6 +252,9 @@ def _run_zone_separation(
                     stage_frac,
                 )
 
+            zone_resume_key = (
+                None if resume_key is None else f"{resume_key}|{zone_name}"
+            )
             if cfg.stem_silence_skip:
                 if isinstance(pair_src, str):
                     zone_audio = audio_full
@@ -241,6 +266,7 @@ def _run_zone_separation(
                     get_separator, plan, zone_audio, sr, sep_sr, cfg,
                     original_path=original_path,
                     stage_callback=_stage_callback,
+                    resume_key=zone_resume_key,
                 )
             else:
                 if isinstance(pair_src, str):
@@ -251,7 +277,8 @@ def _run_zone_separation(
                     sep_path = tmp
                     tmp_files.append(tmp)
                 zone_stems = execute_plan(
-                    get_separator, plan, sep_path, sep_sr, _stage_callback, cfg
+                    get_separator, plan, sep_path, sep_sr, _stage_callback, cfg,
+                    zone_resume_key,
                 )
 
             for stem_name, stem_audio in zone_stems.items():
@@ -385,6 +412,7 @@ def separate(
         all_stems = _run_zone_separation(
             get_separator, cfg, plan, sep_zones, audio_full, sr, sep_sr,
             stereo_mode, progress,
+            _resume_key(cfg, input_path, cache_identity, sep_sr),
         )
 
         if cfg.stem_bleed_reduction and all_stems:
