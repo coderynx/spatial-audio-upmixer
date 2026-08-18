@@ -112,15 +112,29 @@ export function vecAngle(vector: Vec3): number {
   return Math.atan2(vector.x, -vector.z);
 }
 
-/** Fraction (0..1) of a stem's total routed weight sent to the four height
- * speakers — the Haze view's height-ring intensity per stem/angle. */
-export function heightFraction(route: Record<string, number>): number {
-  let top = 0;
+function weightFraction(route: Record<string, number>, of: Set<string>): number {
+  let part = 0;
   let total = 0;
   for (const [channel, weight] of Object.entries(route)) {
     if (weight <= 0 || !speakerCoordinates[channel]) continue;
     total += weight;
-    if (TOP_CHANNELS.has(channel)) top += weight;
+    if (of.has(channel)) part += weight;
   }
-  return total > 0 ? top / total : 0;
+  return total > 0 ? part / total : 0;
+}
+
+/** Fraction (0..1) of a stem's total routed weight sent to the four height
+ * speakers — the Haze view's height-ring intensity per stem/angle. */
+export function heightFraction(route: Record<string, number>): number {
+  return weightFraction(route, TOP_CHANNELS);
+}
+
+const DUCKED_CHANNELS = new Set(["SL", "SR", "BL", "BR", ...TOP_CHANNELS]);
+
+/** Fraction (0..1) of a stem's routed weight reaching the decorrelated
+ * surround and height sends — the only paths the transient duck attenuates
+ * (`routing/transient.rs`), FL/FR/C carrying the dry bed untouched. Scales a
+ * stem's reported duck gain into how much of *that stem* actually moved. */
+export function duckedFraction(route: Record<string, number>): number {
+  return weightFraction(route, DUCKED_CHANNELS);
 }

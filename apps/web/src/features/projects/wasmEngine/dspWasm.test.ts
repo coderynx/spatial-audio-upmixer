@@ -219,7 +219,7 @@ describe("shared DSP core (wasm)", () => {
     expect(wasm.dsp_engine_position(engine)).toBe(512);
   });
 
-  it("reports a [level, centroid] pair for the haze/elevation displays", () => {
+  it("reports a [level, centroid, duck] triple for the haze/elevation displays", () => {
     const wasm = instantiate();
     const engine = createEngine(wasm, PARAMS);
     const left = writeStem(wasm, tone(FRAMES));
@@ -231,12 +231,14 @@ describe("shared DSP core (wasm)", () => {
 
     const spectrumPtr = wasm.dsp_alloc(256 * 4);
     const written = wasm.dsp_engine_stem_spectrum(engine, spectrumPtr, 256);
-    expect(written).toBe(2);
+    expect(written).toBe(3);
 
     const spectrum = new Float32Array(wasm.memory.buffer, spectrumPtr, written);
     expect(spectrum[0]).toBeGreaterThan(0);
     expect(spectrum[1]).toBeGreaterThanOrEqual(0);
     expect(spectrum[1]).toBeLessThanOrEqual(1);
+    // These params carry no duck, so the third value is unity.
+    expect(spectrum[2]).toBe(1);
   });
 
   it("swaps parameters in place without dropping the stems or playhead", () => {

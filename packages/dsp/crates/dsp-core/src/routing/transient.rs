@@ -163,6 +163,7 @@ pub struct MultibandDucker {
     split: [BandSplit; 2],
     bands: [TransientDucker; 3],
     depth: f64,
+    last_gain: f64,
 }
 
 impl MultibandDucker {
@@ -171,6 +172,7 @@ impl MultibandDucker {
             split: [BandSplit::new(sample_rate), BandSplit::new(sample_rate)],
             bands: std::array::from_fn(|_| TransientDucker::new(sample_rate, depth)),
             depth: depth.clamp(0.0, 1.0),
+            last_gain: 1.0,
         }
     }
 
@@ -199,22 +201,34 @@ impl MultibandDucker {
         self.depth
     }
 
+    /// Deepest band gain the last [`Self::tick`] applied, in
+    /// `[1 - depth, 1]`. The readout the UI's duck display samples — the
+    /// deepest band rather than an average, since one band collapsing is what
+    /// the duck is for and what a listener hears move.
+    pub fn last_gain(&self) -> f64 {
+        self.last_gain
+    }
+
     /// Ducked sample pair. At depth 0.0 the input passes through untouched
     /// and the crossover never runs.
     #[inline]
     pub fn tick(&mut self, left: f64, right: f64) -> (f64, f64) {
         if self.depth == 0.0 {
+            self.last_gain = 1.0;
             return (left, right);
         }
         let l = self.split[0].tick(left);
         let r = self.split[1].tick(right);
         let mut out_l = 0.0;
         let mut out_r = 0.0;
+        let mut lowest = 1.0;
         for (i, band) in self.bands.iter_mut().enumerate() {
             let gain = band.tick(l[i], r[i]);
             out_l += l[i] * gain;
             out_r += r[i] * gain;
+            lowest = f64::min(lowest, gain);
         }
+        self.last_gain = lowest;
         (out_l, out_r)
     }
 }

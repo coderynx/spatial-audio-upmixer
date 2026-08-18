@@ -245,8 +245,8 @@ describe("useStemPreview metering", () => {
       1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
       0.7, 0.8, 0.9, 1.0,
     ];
-    // One [level, centroid] pair per stem.
-    const spectrum = [0.5, 0.6, 0.2, 0.3];
+    // One [level, centroid, duck] triple per stem.
+    const spectrum = [0.5, 0.6, 1, 0.2, 0.3, 0.4];
     act(() => {
       capturedCallbacks.onFrame?.({ position: 48000, meters, spectrum } as never);
     });
@@ -264,8 +264,8 @@ describe("useStemPreview metering", () => {
     expect(preview.headphoneLevels.current.left.rms).toBeCloseTo(0.7, 6);
     expect(preview.headphoneLevels.current.right.rms).toBeCloseTo(0.9, 6);
 
-    expect(preview.stemSpectrum.current.get("Vocals")).toEqual({ level: 0.5, centroid: 0.6 });
-    expect(preview.stemSpectrum.current.get("Bass")).toEqual({ level: 0.2, centroid: 0.3 });
+    expect(preview.stemSpectrum.current.get("Vocals")).toEqual({ level: 0.5, centroid: 0.6, duck: 1 });
+    expect(preview.stemSpectrum.current.get("Bass")).toEqual({ level: 0.2, centroid: 0.3, duck: 0.4 });
   });
 
   it("zeroes every meter's target on pause, since the worklet stops reporting", async () => {
@@ -284,7 +284,7 @@ describe("useStemPreview metering", () => {
       1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
       0.7, 0.8, 0.9, 1.0,
     ];
-    const spectrum = [0.5, 0.6, 0.2, 0.3];
+    const spectrum = [0.5, 0.6, 1, 0.2, 0.3, 0.4];
     act(() => {
       capturedCallbacks.onFrame?.({ position: 48000, meters, spectrum } as never);
     });

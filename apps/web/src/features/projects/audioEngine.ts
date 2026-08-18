@@ -23,7 +23,7 @@ import type { MasterPreview } from "./masterPreview";
 import { DspEngineClient } from "./wasmEngine/engineClient";
 import { buildEngineParams } from "./wasmEngine/engineParams";
 import { FilterTapCache } from "./wasmEngine/filterTaps";
-import { SILENT_METER_LEVEL, decodeMeterFrame, type MeterFrame, type MeterLevel } from "./wasmEngine/meters";
+import { SILENT_METER_LEVEL, decodeMeterFrame, type MeterFrame, type MeterLevel, type StemSpectrum } from "./wasmEngine/meters";
 import { loadStemsInto } from "./wasmEngine/stemLoader";
 import { resolveStemMixes } from "./wasmEngine/stemMix";
 import {
@@ -45,7 +45,7 @@ export {
   type OutputMode,
 } from "./wasmEngine/engineTypes";
 export { withReferenceMatchParams } from "./wasmEngine/filterTaps";
-export type { MeterLevel } from "./wasmEngine/meters";
+export type { MeterLevel, StemSpectrum } from "./wasmEngine/meters";
 
 const CONTEXT_SAMPLE_RATE = 48000;
 
@@ -100,9 +100,7 @@ export class PreviewAudioEngine {
   /** Parallel to `stemOrder` — how many bars each stem's meter shows. */
   private stemChannelCounts: number[] = [];
 
-  readonly stemSpectrum: EngineRef<Map<string, { level: number; centroid: number }>> = engineRef(
-    new Map(),
-  );
+  readonly stemSpectrum: EngineRef<Map<string, StemSpectrum>> = engineRef(new Map());
   readonly channelLevels: EngineRef<Map<string, MeterLevel>> = engineRef(new Map());
   readonly stemLevels: EngineRef<Map<string, MeterLevel[]>> = engineRef(new Map());
   readonly headphoneLevels: EngineRef<{ left: MeterLevel; right: MeterLevel }> = engineRef({

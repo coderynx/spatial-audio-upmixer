@@ -114,6 +114,11 @@ pub struct PreviewEngine {
     master_gain: OnePole,
     pre: Queue,
     post: Queue,
+    /// One channel per stem, carrying its per-frame duck gain. Routing runs a
+    /// whole look-ahead horizon ahead of what is emitted, so the duck readout
+    /// has to be queued and read back at the emit position like every other
+    /// meter, or it would flash before the hit that caused it.
+    duck: Queue,
     unify_done: usize,
     emitted: usize,
     total_frames: usize,
@@ -183,6 +188,7 @@ fn build_output(
 impl PreviewEngine {
     pub fn new(sample_rate: u32, params: EngineParams, stems: Vec<Arc<StemSource>>) -> Self {
         let n_channels = params.speakers.len();
+        let params_stems = params.stems.len();
         let routes = params
             .stems
             .iter()
@@ -239,6 +245,7 @@ impl PreviewEngine {
             limiter,
             pre: Queue::new(n_channels),
             post: Queue::new(n_channels),
+            duck: Queue::new(params_stems.max(1)),
             unify_done: 0,
             emitted: 0,
             total_frames,
@@ -363,6 +370,7 @@ impl PreviewEngine {
                 }
             }
             route.process(&left, &right, needs_surround, needs_height);
+            self.duck.channels[stem_index].extend_from_slice(route.duck_trace());
 
             for i in 0..count {
                 let gain = smoother.tick(target_gain);
@@ -389,6 +397,13 @@ impl PreviewEngine {
                     bed[channel][i] += signal * weight * speaker.group_gain * gain;
                 }
             }
+        }
+
+        // A stem skipped above (muted and settled, or with no parameters)
+        // still has to advance in lockstep, at unity.
+        let duck_len = start + count - self.duck.base;
+        for trace in &mut self.duck.channels {
+            trace.resize(duck_len, 1.0);
         }
 
         if let Some(lfe) = self.params.lfe_index {
@@ -577,6 +592,7 @@ impl PreviewEngine {
 
         self.emitted += emit;
         self.post.drain_to(self.emitted.saturating_sub(METER_WINDOW_FRAMES));
+        self.duck.drain_to(self.emitted.saturating_sub(METER_WINDOW_FRAMES));
         self.pre.drain_to(self.emitted.saturating_sub(self.look_ahead()));
         emit
     }
@@ -602,6 +618,7 @@ impl PreviewEngine {
         self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
         self.pre = Queue::new(n_channels);
         self.post = Queue::new(n_channels);
+        self.duck = Queue::new(self.params.stems.len().max(1));
         self.unify_done = 0;
         self.emitted = 0;
     }

@@ -10,7 +10,7 @@ export type DspEngineParams = Record<string, unknown>;
 export type DspMeterFrame = {
   position: number;
   meters: number[];
-  /** `[level, centroid]` pairs, one per stem — see `stem_spectrum` in the core. */
+  /** `[level, centroid, duck]` triples, one per stem — see `stem_spectrum` in the core. */
   spectrum: number[];
 };
 

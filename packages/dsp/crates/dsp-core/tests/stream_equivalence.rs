@@ -364,10 +364,11 @@ fn stem_spectrum_registers_a_playing_stem_and_silences_a_disabled_one() {
     engine.render(&mut scratch, 4096);
 
     let spectrum = engine.stem_spectrum();
-    assert_eq!(spectrum.len(), 2, "one (level, centroid) pair per stem");
-    for &(level, centroid) in &spectrum {
+    assert_eq!(spectrum.len(), 2, "one (level, centroid, duck) triple per stem");
+    for &(level, centroid, duck) in &spectrum {
         assert!(level > 0.0 && level <= 1.0, "level {level} out of range");
         assert!((0.0..=1.0).contains(&centroid), "centroid {centroid} out of range");
+        assert_eq!(duck, 1.0, "these params duck nothing");
     }
 
     let muted = params_json(false).replace(
@@ -379,8 +380,47 @@ fn stem_spectrum_registers_a_playing_stem_and_silences_a_disabled_one() {
     engine.update_params(serde_json::from_str(&muted).expect("engine params"));
     engine.render(&mut scratch, 4096);
     let spectrum = engine.stem_spectrum();
-    assert_eq!(spectrum[0], (0.0, 0.0), "a disabled stem reports silence");
+    assert_eq!(spectrum[0], (0.0, 0.0, 1.0), "a disabled stem reports silence");
     assert!(spectrum[1].0 > 0.0, "the other stem keeps registering");
+}
+
+/// The duck readout must follow the emit position, not the render horizon:
+/// routing runs a whole look-ahead ahead, so an unaligned readout would show
+/// the reduction long before the hit that caused it is audible.
+#[test]
+fn the_duck_readout_lands_with_the_transient_not_ahead_of_it() {
+    const CLICK: usize = 40_000;
+    let params: EngineParams = serde_json::from_str(
+        &params_json(true).replace(r#""lfe_gain": 0.31622776601683794"#,
+                                   r#""lfe_gain": 0.31622776601683794, "stem_transient_duck": 0.8"#),
+    )
+    .expect("engine params");
+    let n_channels = params.speakers.len();
+
+    let clicking = |seed: f64| {
+        let mut left: Vec<f32> = deterministic_signal(CLICK * 2, SR, seed)
+            .iter()
+            .map(|v| (v * 0.2) as f32)
+            .collect();
+        for s in left.iter_mut().skip(CLICK).take(24) {
+            *s += 0.9;
+        }
+        let right = left.clone();
+        std::sync::Arc::new(StemSource { left, right })
+    };
+    let mut engine = PreviewEngine::new(SR, params, vec![clicking(0.0), clicking(3.0)]);
+    let mut scratch = vec![0.0; n_channels * 4096];
+
+    while engine.position() + 4096 < CLICK {
+        engine.render(&mut scratch, 4096);
+    }
+    let before = engine.stem_spectrum()[0].2;
+    assert_eq!(before, 1.0, "ducked before the click was even emitted");
+
+    engine.render(&mut scratch, 4096);
+    let during = engine.stem_spectrum()[0].2;
+    assert!(during < 1.0, "no duck reported over the click: {during}");
+    assert!(during >= 0.2 - 1e-12, "duck {during} below the 0.8 depth");
 }
 
 #[test]
@@ -529,3 +569,4 @@ fn clearing_the_limiter_through_update_params_actually_removes_it() {
         "removing the limiter should free the peak above its old ceiling, got {unlimited_peak}"
     );
 }
+

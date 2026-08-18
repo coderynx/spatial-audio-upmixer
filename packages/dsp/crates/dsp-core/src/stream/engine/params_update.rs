@@ -1,6 +1,6 @@
 //! Live parameter edits and the rebuilds a topology change forces.
 
-use super::{build_decorrelator, build_unifier, PreviewEngine, GAIN_RAMP_MS};
+use super::{build_decorrelator, build_unifier, PreviewEngine, Queue, GAIN_RAMP_MS};
 use crate::stream::master::StreamingLimiter;
 use crate::stream::params::EngineParams;
 use crate::stream::routing::StemRouteState;
@@ -124,6 +124,10 @@ impl PreviewEngine {
     /// `self.params.stems` — used when a stem was added or removed, where
     /// there is no previous per-index state to retune.
     fn rebuild_routes(&mut self) {
+        // The duck trace is indexed by stem, so it restarts with the routes —
+        // based at the render horizon they will resume from, not at frame 0.
+        self.duck = Queue::new(self.params.stems.len().max(1));
+        self.duck.base = self.pre.end();
         self.routes = self
             .params
             .stems

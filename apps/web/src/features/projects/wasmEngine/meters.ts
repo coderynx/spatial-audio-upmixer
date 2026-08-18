@@ -11,9 +11,13 @@ function level(rms: number, peak: number): MeterLevel {
 
 export type MeterFrame = { position: number; meters: number[]; spectrum: number[] };
 
+/** `duck` is the transient ducker's mean gain over the meter window, 1 for
+ * no reduction — see `PreviewEngine::stem_spectrum`. */
+export type StemSpectrum = { level: number; centroid: number; duck: number };
+
 export type DecodedMeters = {
   stemLevels: Map<string, MeterLevel[]>;
-  stemSpectrum: Map<string, { level: number; centroid: number }>;
+  stemSpectrum: Map<string, StemSpectrum>;
   channelLevels: Map<string, MeterLevel>;
   headphoneLevels: { left: MeterLevel; right: MeterLevel };
 };
@@ -32,16 +36,17 @@ export function decodeMeterFrame(
   const meters = frame.meters;
   const stemCount = stemOrder.length;
   const stemLevels = new Map<string, MeterLevel[]>();
-  const stemSpectrum = new Map<string, { level: number; centroid: number }>();
+  const stemSpectrum = new Map<string, StemSpectrum>();
   for (let i = 0; i < stemCount; i += 1) {
     const o = i * 4;
     const bars = [level(meters[o] ?? 0, meters[o + 1] ?? 0)];
     if ((stemChannelCounts[i] ?? 1) >= 2) bars.push(level(meters[o + 2] ?? 0, meters[o + 3] ?? 0));
     stemLevels.set(stemOrder[i], bars);
-    const s = i * 2;
+    const s = i * 3;
     stemSpectrum.set(stemOrder[i], {
       level: frame.spectrum[s] ?? 0,
       centroid: frame.spectrum[s + 1] ?? 0,
+      duck: frame.spectrum[s + 2] ?? 1,
     });
   }
 

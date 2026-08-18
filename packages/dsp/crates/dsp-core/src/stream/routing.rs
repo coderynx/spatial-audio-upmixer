@@ -98,6 +98,8 @@ pub struct StemRouteState {
     /// calls each reproduce.
     ducker: MultibandDucker,
     ducked: [Vec<f64>; 2],
+    /// Last block's per-frame duck gain, read by the UI's duck display.
+    duck_trace: Vec<f64>,
     /// Last block's shaped sends: surround L/R then height L/R.
     shaped: [Vec<f64>; 4],
 }
@@ -147,6 +149,7 @@ impl StemRouteState {
             height: [height_send(&height_l), height_send(&height_r)],
             ducker: MultibandDucker::new(sample_rate, p.stem_transient_duck),
             ducked: Default::default(),
+            duck_trace: Default::default(),
             shaped: Default::default(),
         }
     }
@@ -212,18 +215,22 @@ impl StemRouteState {
             out.clear();
             out.extend_from_slice(source);
         };
+        self.duck_trace.clear();
         let (left, right) = if self.ducker.depth() > 0.0 {
             self.ducked[0].clear();
             self.ducked[1].clear();
             self.ducked[0].reserve(left.len());
             self.ducked[1].reserve(right.len());
+            self.duck_trace.reserve(left.len());
             for (l, r) in left.iter().zip(right.iter()) {
                 let (dl, dr) = self.ducker.tick(*l, *r);
                 self.ducked[0].push(dl);
                 self.ducked[1].push(dr);
+                self.duck_trace.push(self.ducker.last_gain());
             }
             (&self.ducked[0][..], &self.ducked[1][..])
         } else {
+            self.duck_trace.resize(left.len(), 1.0);
             (left, right)
         };
         for (i, source) in [left, right].into_iter().enumerate() {
@@ -244,6 +251,12 @@ impl StemRouteState {
     #[inline]
     pub fn send(&self, index: usize) -> &[f64] {
         &self.shaped[index]
+    }
+
+    /// Per-frame duck gain over the block [`Self::process`] just shaped, all
+    /// ones when the duck is off.
+    pub fn duck_trace(&self) -> &[f64] {
+        &self.duck_trace
     }
 }
 
@@ -440,6 +453,29 @@ mod tests {
         );
         let got = blocked(&mut explicit, &signal);
         assert_eq!(got, want);
+    }
+
+    /// The trace the duck display reads has to cover the block whatever the
+    /// depth, and has to actually move when a transient lands.
+    #[test]
+    fn the_duck_trace_covers_the_block_and_dips_on_a_transient() {
+        let sr = 48_000;
+        let signal: Vec<f64> = (0..12_000)
+            .map(|i| 0.2 * (i as f64 * 0.04).sin() + if i % 6_000 < 24 { 0.8 } else { 0.0 })
+            .collect();
+
+        let mut off = StemRouteState::new(sr, &send_params(), &[]);
+        off.process(&signal, &signal, true, true);
+        assert_eq!(off.duck_trace(), vec![1.0; signal.len()]);
+
+        let p = SendParams { stem_transient_duck: 0.7, ..send_params() };
+        let mut on = StemRouteState::new(sr, &p, &[]);
+        on.process(&signal, &signal, true, true);
+        let trace = on.duck_trace();
+        assert_eq!(trace.len(), signal.len());
+        let deepest = trace.iter().cloned().fold(f64::INFINITY, f64::min);
+        assert!(deepest < 0.9, "trace never dipped: {deepest}");
+        assert!(deepest >= 1.0 - p.stem_transient_duck - 1e-12, "trace {deepest} below depth");
     }
 
     /// The surround and height sends of one stem must not be copies of each
