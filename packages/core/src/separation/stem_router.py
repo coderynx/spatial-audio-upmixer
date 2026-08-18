@@ -93,6 +93,8 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Ride":           {"FL": 0.35, "FR": 0.35, "TFL": 0.55, "TFR": 0.55},
         "Crash":          {"FL": 0.32, "FR": 0.32, "TFL": 0.60, "TFR": 0.60},
         "Crowd":          {"SL": 0.30, "SR": 0.30, "TFL": 0.10, "TFR": 0.10},
+        "Vocals Reverb":  {"SL": 0.34, "SR": 0.34, "TFL": 0.26, "TFR": 0.26,
+                           "TBL": 0.18, "TBR": 0.18},
     },
     "surround": {
         "Vocals":         {"SL": 0.22, "SR": 0.22, "TBL": 0.14, "TBR": 0.14},
@@ -118,6 +120,8 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Crash":          {"SL": 0.28, "SR": 0.28, "TBL": 0.30, "TBR": 0.30},
         "Crowd":          {"SL": 0.32, "SR": 0.32, "BL": 0.20, "BR": 0.20,
                            "TBL": 0.18, "TBR": 0.18},
+        "Vocals Reverb":  {"SL": 0.40, "SR": 0.40, "BL": 0.24, "BR": 0.24,
+                           "TBL": 0.26, "TBR": 0.26},
     },
     "back": {
         "Vocals":         {"BL": 0.20, "BR": 0.20},
@@ -136,6 +140,7 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Ride":           {"BL": 0.20, "BR": 0.20, "TBL": 0.40, "TBR": 0.40},
         "Crash":          {"BL": 0.28, "BR": 0.28, "TBL": 0.48, "TBR": 0.48},
         "Crowd":          {"BL": 0.30, "BR": 0.30, "TBL": 0.22, "TBR": 0.22},
+        "Vocals Reverb":  {"BL": 0.38, "BR": 0.38, "TBL": 0.30, "TBR": 0.30},
     },
     "height_front": {
         "Vocals":         {"TFL": 0.32, "TFR": 0.32},
@@ -154,6 +159,8 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Ride":           {"TFL": 0.68, "TFR": 0.68},
         "Crash":          {"TFL": 0.80, "TFR": 0.80, "TBL": 0.25, "TBR": 0.25},
         "Crowd":          {"TFL": 0.20, "TFR": 0.20, "TBL": 0.12, "TBR": 0.12},
+        "Vocals Reverb":  {"TFL": 0.52, "TFR": 0.52, "TBL": 0.26, "TBR": 0.26,
+                           "SL": 0.16, "SR": 0.16},
     },
     "height_back": {
         "Vocals":         {"TBL": 0.25, "TBR": 0.25},
@@ -172,6 +179,7 @@ ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
         "Ride":           {"TBL": 0.62, "TBR": 0.62},
         "Crash":          {"TBL": 0.75, "TBR": 0.75},
         "Crowd":          {"TBL": 0.28, "TBR": 0.28},
+        "Vocals Reverb":  {"TBL": 0.58, "TBR": 0.58, "SL": 0.14, "SR": 0.14},
     },
 }
 

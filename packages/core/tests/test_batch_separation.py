@@ -129,7 +129,7 @@ class TestSeparatorReuse:
                 self.directory = tmp_path / model
                 self.directory.mkdir()
 
-            def separate_to_file(self, audio_path, keep_on_disk):
+            def separate_to_file(self, audio_path, keep_on_disk, stem_overrides=None):
                 if self.model == "first.ckpt":
                     path = self.directory / "Drums.wav"
                     sf.write(

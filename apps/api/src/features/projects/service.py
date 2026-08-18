@@ -52,6 +52,7 @@ _SEPARATION_ENGINE_KEYS = (
     "stem_phase_fix_high_hz", "stem_phase_fix_scale", "stem_phase_fix_reference_model",
     "stem_debleed", "stem_debleed_model",
     "stem_drum_remask", "stem_primary_remask",
+    "stem_wet_dry_split", "stem_dereverb_model", "stem_wet_denoise",
 )
 
 # Engine keys a per-file extraction override may set (bleed reduction is chosen
@@ -66,6 +67,9 @@ _TRACK_ENGINE_OVERRIDE_KEYS = {
     "stem_phase_fix_reference_model",
     "stem_debleed",
     "stem_debleed_model",
+    "stem_wet_dry_split",
+    "stem_dereverb_model",
+    "stem_wet_denoise",
 }
 
 

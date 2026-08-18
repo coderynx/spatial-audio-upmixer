@@ -71,7 +71,7 @@ scaling) respects the explicit-control contract.
 
 | Phase | File | Deliverable |
 |-------|------|-------------|
-| 12 | `phase12_wet_dry_split.md` | Per-stem dereverb at separation time; wet component becomes an ordinary stem routed surround/height-heavy. Vocals first, harness-gated, default off. The only phase that touches separation — eval harness + knowledge base rules apply. |
+| 12 | `phase12_wet_dry_split.md` | Per-stem dereverb at separation time; wet component becomes an ordinary stem routed surround/height-heavy. Vocals first, harness-gated, default off. The only phase that touches separation — eval harness + knowledge base rules apply. **Code complete, default off** — the wet stem is the dereverb model's own residual, so dry + wet nulls against the parent. Harness run on a synthetic dry+RIR corpus (directional, not licensed-corpus): the standard anvuew checkpoint wins by a thin margin and stays the default, and the harmony trap measured at −0.8 dB (the wet stem *is* a side-panned backing layer), which added a warning on the combined-`Vocals` path. Licensed-corpus run and listening A/B still outstanding; see `phase12_report.md` §7. |
 | 13 | `phase13_multiband_duck.md` | Split the phase 11 duck into 3 Linkwitz-Riley bands so cymbal wash keeps flowing to the heights through snare hits. Structural replacement, `depth` stays the only knob, budget-gated before wiring. |
 | 14 | `phase14_spatial_automation.md` | Optional, product-heavy: per-stem automation curves (gain + send openness) as prepare-time data — editable in the UI, consumed identically by export and preview; slice 2 adds suggested curves from section analysis. |
 
@@ -82,8 +82,8 @@ scaling) respects the explicit-control contract.
   boundaries (web/CLI consume only core's public API; no quality logic in
   the web layer) all apply.
 - `uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q`
-  must pass before and after every phase (baseline: 1133 passed /
-  34 deselected as of 2026-08-17, phase 10). Phases touching `apps/web` also run
+  must pass before and after every phase (baseline: 1151 passed /
+  38 deselected as of 2026-08-18, phase 12). Phases touching `apps/web` also run
   `npm test` and `npm run build` there.
 - **Preview/export parity is a hard constraint.** Phase 3 retired the
   surround/height send constants (`SURROUND_HAAS_DELAY_MS_*`,

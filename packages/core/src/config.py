@@ -212,6 +212,16 @@ class UpmixConfig:
     stem_drum_remask: bool = True
     stem_primary_remask: bool = True
 
+    # Split the vocal stem into a dry stem and a wet "Vocals Reverb" stem the
+    # router places surround/height-heavy. The wet stem is the dereverb model's
+    # residual against its own input, so the pair nulls against the parent.
+    # Costs one model download (GPL weights) and one inference stage per zone.
+    stem_wet_dry_split: bool = False
+    stem_dereverb_model: str = "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt"
+    # Gentle denoise over the wet stem only: the residual carries whatever the
+    # dereverb model got wrong, into the speakers where artifacts show most.
+    stem_wet_denoise: bool = False
+
     def resolve_fft_params(self, actual_sample_rate: int) -> tuple[int, int]:
         """Returns (fft_size, hop_size) after applying sample rate adaptation."""
         if self.auto_fft_size:

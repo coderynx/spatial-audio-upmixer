@@ -28,6 +28,13 @@ def temporary_wav_path(prefix: str) -> str:
     return path
 
 
+def _discard(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 def cacheable_plan_stems(plan: SeparationPlan) -> frozenset[str]:
     """All public outputs produced by a plan at no extra inference cost."""
     return frozenset(
@@ -146,7 +153,9 @@ def execute_plan(
         keep_on_disk = task.output_stems & later_inputs
 
         sep = get_separator(task.model, sep_sr)
-        loaded, on_disk = sep.separate_to_file(input_path_for_task, keep_on_disk)
+        loaded, on_disk = sep.separate_to_file(
+            input_path_for_task, keep_on_disk, task.stem_overrides
+        )
 
         for name, path in on_disk.items():
             stable_path = temporary_wav_path("upmixer_intermediate_")
@@ -184,6 +193,13 @@ def execute_plan(
             if not name.startswith("_"):
                 all_loaded[name] = audio
 
+        # A stage may re-emit a stem an earlier one left on disk (the dereverb
+        # split replaces its own parent). That copy is stale from here on.
+        for name in loaded.keys() | on_disk.keys():
+            superseded = all_disk.pop(name, None)
+            if superseded is not None and superseded != on_disk.get(name):
+                _discard(superseded)
+
         all_disk.update(on_disk)
 
     for name, path in all_disk.items():
@@ -193,12 +209,8 @@ def execute_plan(
                 audio = np.concatenate([audio, audio], axis=1)
             all_loaded[name] = audio
 
-    for name, path in all_disk.items():
-        if name not in plan.requested_stems:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+    for path in all_disk.values():
+        _discard(path)
 
     _log.info("  All stages complete. Produced stems: %s", sorted(all_loaded.keys()))
     return all_loaded

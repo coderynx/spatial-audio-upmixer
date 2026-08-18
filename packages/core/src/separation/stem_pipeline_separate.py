@@ -23,6 +23,7 @@ from upmixer.separation.stem_pipeline_exec import (
 )
 from upmixer.separation.stem_plan import (
     DEFAULT_STEMS,
+    WET_VOCAL_STEM,
     SeparationPlan,
     normalize_stems,
     resolve_separation_plan,
@@ -66,6 +67,27 @@ def _separate_array(
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+
+
+def warn_combined_vocal_split(plan: SeparationPlan) -> None:
+    """Warn when the wet/dry split runs on a combined Vocals stem.
+
+    Measured on the phase 12 corpus: fed a dry double-tracked harmony and no
+    reverb at all, the dereverb checkpoints put the whole harmony layer in the
+    wet output (−0.8 dB relative to the harmony). Splitting the lead avoids
+    it; splitting a combined stem sends backing vocals to the surrounds.
+    """
+    if any(
+        task.input_source == "Vocals" and WET_VOCAL_STEM in task.output_stems
+        for task in plan.tasks
+    ):
+        _log.warning(
+            "Wet/dry split is running on the combined Vocals stem: side-panned "
+            "backing vocals will follow the reverb into '%s'. Request "
+            "lead-vocals/backing-vocals to split the lead instead "
+            "(docs/plans/mixing/phase12_report.md §7).",
+            WET_VOCAL_STEM,
+        )
 
 
 def _resolve_output_sample_rate(cfg: UpmixConfig, sr: int) -> int:
@@ -254,6 +276,9 @@ def separate(
     """Read, zone-split, separate, and cache stems — no routing or mastering."""
     if cfg.stem_bleed_reduction:
         validate_bleed_config(cfg)
+    if cfg.stem_wet_dry_split:
+        from upmixer.separation.inference.registry import get_model_spec
+        get_model_spec(cfg.stem_dereverb_model)
 
     reader = AudioReader(input_path)
     read_started = time.monotonic()
@@ -270,9 +295,15 @@ def separate(
     _log.info("  Output format: %s (%dch)", output_fmt.name, output_fmt.n_channels)
     raw_stems = cfg.stems or []
     canonical = normalize_stems(raw_stems) if raw_stems else list(DEFAULT_STEMS)
-    plan = resolve_separation_plan(canonical)
+    plan = resolve_separation_plan(
+        canonical,
+        wet_dry_split=cfg.stem_wet_dry_split,
+        wet_denoise=cfg.stem_wet_denoise,
+        dereverb_model=cfg.stem_dereverb_model,
+    )
     _log.info("  Stems:         %s", sorted(plan.requested_stems))
     _log.info("  Models:        %s", [t.model for t in plan.tasks])
+    warn_combined_vocal_split(plan)
 
     forced_stereo_array = False
     if cfg.preview:

@@ -442,6 +442,7 @@ class StemSeparator:
         self,
         audio_path: str,
         keep_on_disk: frozenset[str],
+        stem_overrides: dict[str, str] | None = None,
     ) -> tuple[dict[str, np.ndarray], dict[str, str]]:
         """Separate audio, keeping specified stems as on-disk WAV files.
 
@@ -455,6 +456,9 @@ class StemSeparator:
                           Their paths are returned so the next pipeline stage
                           can use them as input.  The caller is responsible for
                           cleanup once the files are no longer needed.
+            stem_overrides: Per-call tag→canonical mapping replacing this
+                          model's ``MODEL_STEM_OVERRIDES`` entry, for a model
+                          whose output names depend on what it was fed.
 
         Returns:
             ``(loaded, on_disk)`` where:
@@ -471,7 +475,7 @@ class StemSeparator:
             [os.path.basename(p) for p in output_paths],
         )
 
-        _overrides = MODEL_STEM_OVERRIDES.get(self._model)
+        _overrides = stem_overrides or MODEL_STEM_OVERRIDES.get(self._model)
         loaded: dict[str, np.ndarray] = {}
         on_disk: dict[str, str] = {}
 

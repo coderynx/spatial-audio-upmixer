@@ -20,7 +20,7 @@ def test_configuration_lists_every_stem_and_runtime_capability(web_client):
     assert configuration["choices"]["stems"] == [
         "Vocals", "Bass", "Drums", "Guitar", "Piano", "Other",
         "Kick", "Snare", "Toms", "Hi-Hat", "Ride", "Crash", "Crowd",
-        "Lead Vocals", "Backing Vocals",
+        "Lead Vocals", "Backing Vocals", "Vocals Reverb",
     ]
     assert "vocal-presence" in configuration["choices"]["stem_eq_profiles"]
     assert configuration["choices"]["stem_phase_fix_reference_models"] == [
@@ -205,6 +205,20 @@ def test_stem_routing_resolve_returns_the_layout_own_channels(web_client):
     assert set(routing) == {"Vocals", "Drums"}
     assert set(routing["Vocals"]) <= {"FL", "FR", "C", "LFE", "SL", "SR"}
     assert routing["Vocals"]["C"] > 0.0
+
+
+def test_stem_routing_resolve_serves_the_wet_vocal_stem(web_client):
+    payload = {
+        "stems": ["Vocals", "Vocals Reverb"],
+        "channel_layout": "7.1.4",
+        "preset": "balanced",
+    }
+
+    routing = web_client.post("/api/v1/stem-routing/resolve", json=payload).json()
+
+    wet = routing["Vocals Reverb"]
+    assert wet["SL"] > 0.0 and wet["TBL"] > 0.0
+    assert wet.get("C", 0.0) < routing["Vocals"]["C"]
 
 
 def test_stem_routing_resolve_rejects_unknown_preset_and_layout(web_client):
