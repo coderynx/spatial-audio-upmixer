@@ -98,6 +98,42 @@ No universal Roformer dereverb checkpoint is publicly downloadable as of
 2026-08-17 — if MVSep-class weights ever get released, they slot into
 lane 1's measurement, nothing else changes.
 
+## Post-split processing of the wet stem
+
+The wet stem flows through the same post-separation path every stem gets
+(`_post_process_stems`: rebalance, per-stem EQ, then routing), but four
+points need explicit handling rather than inheritance by accident:
+
+1. **Null before everything.** The dry + wet = parent property holds only
+   at the split itself; every later pass (cleanup, rebalance, EQ)
+   intentionally breaks the exact sum. Assert the null immediately after
+   the split, before any other processing touches either half.
+2. **Wet-residual cleanup (the real addition).** The residual
+   concentrates what the dereverb model got wrong — musical-noise
+   artifacts, hiss, low-level dry leakage — and it routes to the
+   surround/height speakers where artifacts are most audible. Add an
+   optional gentle denoise pass on the wet stem only (KB
+   `models/cleanup.md` candidates: aufr33 Mel Denoise non-aggressive
+   first — already registry-known; roadmap 2.2's insertion point is the
+   precedent). Default off, own config key alongside the split's,
+   harness + listening gated like the split itself. Runs after the null
+   assert, enters `_stem_cache_identity`.
+3. **Rebalance/EQ profile coverage.** Automatic name-keyed matching means
+   `"Vocals Reverb"` gets independent entries — and that built-in
+   rebalance profiles (`vocal-forward`, `instrumental`) currently
+   reference `"Vocals"` only. Decide per profile whether the wet stem
+   follows the dry gain (boosting dry but not its tail shifts the
+   perceived wet/dry ratio, i.e. distance — sometimes wanted, never
+   accidental) and add explicit wet entries accordingly. Same review for
+   `stem_eq` profile docs.
+4. **Existing gates.** Verify, don't assume: the bleed-reduction gate
+   (`stem_reaches_surround_height`) must cover wet stems once the new
+   placement rows exist (they are surround/height-heavy, so it should
+   fall out of the tables — test it); the transient duck needs no
+   special case per Mechanism item 5; remask/residual-sharing does not
+   apply — the wet stem *is* the residual, there is no remainder left to
+   share.
+
 ## Parity
 
 No new routing DSP: wet stems are data, consumed identically by export
@@ -114,7 +150,8 @@ change expected; if one appears, the parity contract applies as usual.
   per the harness contract; the chosen model's report ships with the PR.
   Known harness quirk: MDXC models need >~3 s clips at native 44100 Hz.
 - Null test: dry + wet sums to the pre-split stem bit-exactly (residual
-  construction guarantees it — assert in a test).
+  construction guarantees it — assert in a test), measured at the split
+  output, before wet cleanup or any other post pass.
 - Measurement kit: channel energy tables with the split on — vocal
   reverb energy moves rearward/upward, dry vocal front distribution
   unchanged within tolerance.
