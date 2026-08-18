@@ -321,6 +321,35 @@ two stereo paths now agree that heights are audible in stereo and differ only
 in the per-stem renormalization the render path applies afterwards. Measured
 residual per stem: `docs/plans/mixing/phase4_report.md`.
 
+### 5.1 re-render fold (measurement programme, not a delivery format)
+
+*(`dsp-core`'s `spatial::downmix::FoldTo51`. Used only to build the
+programme integrated loudness is measured on — see
+`loudness_dsp_bs1770.md` §"Measurement programme". Nothing writes this
+fold to a file.)*
+
+Back surrounds fold into the side pair at BS.775-4 Annex D's `b₀`; front
+and back heights fold onto their base-layer channels at the project's
+`k_h`, the same convention the 2/0 matrix above uses. Both are 1/√2:
+
+```
+FL' = FL + k_h·TFL
+FR' = FR + k_h·TFR
+C'  = C
+SL' = SL + b₀·BL + k_h·TBL
+SR' = SR + b₀·BR + k_h·TBR
+```
+
+| Coefficient | Value | dB |
+|---|---|---|
+| b₀ (back → side) | 0.7071 | −3.01 dB |
+| k_h (height → base layer) | 0.7071 | −3.01 dB |
+
+Unlike the 2/0 downmix coefficients these are **not configurable**: the
+re-render they build is a fixed programme a delivery specification names,
+not a monitoring choice. LFE has no fold contribution — BS.1770 weights it
+zero, so it never reaches the measurement either way.
+
 ### Deriving a missing centre (project convention, inverse of the 2/0 matrix)
 
 *(`MultichannelUpmixer._extract_center`, for a source that has FL/FR but no C.

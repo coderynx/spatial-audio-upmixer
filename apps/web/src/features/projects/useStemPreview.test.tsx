@@ -17,6 +17,7 @@ const transportCalls: { playing?: boolean; loop?: boolean }[] = [];
 const seekCalls: number[] = [];
 const addedStems: number[] = [];
 const measureCalls: number[] = [];
+const measureWeights: number[][] = [];
 // Order matters, not just counts: a measurement forks the engine as it stands,
 // so the profile's filter set has to be in it first.
 const callOrder: string[] = [];
@@ -37,8 +38,9 @@ vi.mock("./wasmEngine/engineClient", () => ({
         updateParams: (params: Record<string, unknown>) => sentParams.push(params),
         setTransport: (state: { playing?: boolean; loop?: boolean }) => transportCalls.push(state),
         seek: (frame: number) => seekCalls.push(frame),
-        measure: async () => {
+        measure: async (weights: number[]) => {
           measureCalls.push(measureCalls.length);
+          measureWeights.push(weights);
           callOrder.push("measure");
           if (measureGate) await measureGate;
           return measureResult;
@@ -127,6 +129,7 @@ beforeEach(() => {
   seekCalls.length = 0;
   addedStems.length = 0;
   measureCalls.length = 0;
+  measureWeights.length = 0;
   callOrder.length = 0;
   measureGate = null;
   measureResult = { lkfs: -18, dbtp: -2 };
@@ -305,6 +308,16 @@ describe("useStemPreview metering", () => {
 });
 
 describe("useStemPreview loudness calibration", () => {
+  it("weights a native bed per channel and a collapsed one as a pair", async () => {
+    // BS.1770: LFE excluded, side surrounds +1.5 dB. A collapse mode delivers
+    // two unity-weighted channels whatever the bed behind it was.
+    await renderPreview({ outputMode: "native" });
+    expect(measureWeights.at(-1)).toEqual([1, 1, 1, 0, 1.41, 1.41]);
+
+    await renderPreview({ outputMode: "binaural" });
+    expect(measureWeights.at(-1)).toEqual([1, 1]);
+  });
+
   it("re-measures when the spatial profile changes, not just the output mode", async () => {
     const result = await renderPreview({ spatialProfile: "studio" });
     expect(measureCalls).toHaveLength(1);

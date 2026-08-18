@@ -64,6 +64,67 @@ For advanced sound systems (BS.2051), weights for channels beyond 5-channel are 
 
 ---
 
+## Measurement Programme
+
+BS.1770 defines *how* to measure a programme, not *which* programme a
+delivery specification asks for. For immersive deliveries these differ:
+
+- **Dolby Atmos Music Master Delivery Specification** — integrated loudness
+  is measured on the **5.1 re-render** of the mix, and that re-render is what
+  distributor QC reads.
+- **Netflix Atmos delivery** — same rule, fold-referenced, at −27 LKFS ±2 LU.
+
+So a bed wider than 5.1 is folded before the meter, per the 5.1 re-render
+matrix in `spatial_layouts_bs775_bs2051.md` §"5.1 re-render fold": front
+heights onto the front pair, back surrounds and back heights onto the
+surround pair. The folded programme is measured with the 5.1 weights above.
+The full-bed number stays available as a secondary diagnostic
+(`MasteringResult.full_bed_lkfs`), and the fold applies by **layout arity**,
+not by output type — a stereo, binaural or transaural delivery already
+measures its own two-channel programme.
+
+Normalization drives off the same folded number. That needs no iteration:
+the correction is one scalar gain across every channel, and a scalar gain
+commutes with the fold.
+
+**True peak is not fold-referenced.** The ceiling is what the limiter
+guarantees on the channels actually written, so `measured_tp_dbtp` and the
+per-channel peaks stay on the delivered bed.
+
+Measured fold delta on synthetic 7.1.4 programmes: −0.32 dB on realistic
+material, −2.35 dB on height-only content
+(`docs/plans/mastering/phase0_report.md` § "Audit 1").
+
+Implemented once in `dsp-core`'s `spatial::downmix::FoldTo51`, reached as
+`upmixer_dsp.fold_to_51` by the export path (`loudness.py`'s
+`measurement_programme`) and folded at the meter input by the preview's
+`stream::measure`.
+
+---
+
+## Delivery Targets
+
+Named targets in `upmixer.mastering.delivery`. A preset supplies both
+numbers; `loudness_target_lkfs` / `loudness_max_tp` override it field by
+field. Tolerance is `None` where the specification publishes a target
+without one, and the compliance block then reports the measured number with
+no pass/fail claim.
+
+| Preset | Integrated | Ceiling | Tolerance | Source |
+|---|---|---|---|---|
+| `atmos-music` | −18.0 LKFS | −1.0 dBTP | — | Dolby Atmos Music Master Delivery Specification (fold-referenced) |
+| `netflix-atmos` | −27.0 LKFS | −2.0 dBTP | ±2 LU | Netflix Atmos delivery specification (fold-referenced) |
+| `ebu-r128` | −23.0 LUFS | −1.0 dBTP | ±0.5 LU | EBU R 128 |
+| `atsc-a85` | −24.0 LKFS | −2.0 dBTP | ±2 LU | ATSC A/85 |
+| `streaming-stereo` | −14.0 LUFS | −1.0 dBTP | — | Common streaming-stereo practice |
+| `apple-music` | −16.0 LUFS | −1.0 dBTP | — | Apple Music sound-check target |
+
+Deviation from Netflix's specification, recorded rather than implemented:
+its −27 LKFS is **dialog-gated**, and this chain has no dialog gate — the
+number is the ungated BS.1770 integrated loudness of the fold.
+
+---
+
 ## Loudness Measurement Algorithm
 
 ### Per-channel mean square

@@ -199,6 +199,16 @@ export type TransauralProfile = "stereo" | "smart_speaker" | "car" | "laptop" | 
 // binaural decode bank, 4 channels fits well inside the browser's 8ch cap,
 // so no multi-file split is needed.
 
+/** BS.1770-5 Annex 1 Table 3 / Annex 3 Table 5 channel weight: side surrounds
+ * carry +1.5 dB, LFE is excluded from the sum, every other channel is unity.
+ * The measurement's weights stay with the caller on both sides of the port
+ * (`packages/core/src/loudness.py`, `dsp-core/src/loudness.rs`), which is why
+ * the browser carries them here rather than reading them back. */
+export function loudnessWeight(channel: string): number {
+  if (channel === "LFE") return 0;
+  return channel === "SL" || channel === "SR" ? 1.41 : 1;
+}
+
 /** Approximates `stem_router.py`'s per-stem `route_scale` from the route table
  * alone, treating every contributing send as comparable energy — good enough to
  * keep a widely-routed stem from reading louder than a narrowly-routed one, not
@@ -213,9 +223,6 @@ export function estimateRouteScale(route: Record<string, number>, gains: Channel
     if (channel.startsWith("T")) return gains.height;
     return 1;
   };
-  // BS.1770-5: side surrounds +1.5 dB, every other non-LFE channel unity.
-  const loudnessWeight = (channel: string): number =>
-    channel === "SL" || channel === "SR" ? 1.41 : 1;
   let sumSquares = 0;
   for (const [channel, weight] of Object.entries(route)) {
     if (channel === "LFE" || weight <= 0) continue;

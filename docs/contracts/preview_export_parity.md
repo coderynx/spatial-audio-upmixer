@@ -53,6 +53,7 @@ Every stage below is one function, called from both sides:
 | Bus compression | `mastering::compressor` | `mastering/compressor.py` | `stream::master` |
 | Bass management | `mastering::bass` | `mastering/bass.py` | `stream::master` |
 | BS.1770 loudness / true peak | `loudness` | `loudness.py` | `stream::engine::measure` |
+| 5.1 re-render (measurement programme) | `spatial::downmix::FoldTo51` | `loudness.py::measurement_programme` | `stream::measure` |
 | Look-ahead limiter | `mastering::limiter` | `mastering/limiter.py` | `stream::master` |
 | Ambisonic encode / HOA decode | `spatial::ambisonics` | `binaural/renderer.py` | `stream::output` |
 | Voicing chain | `spatial::voicing` | `binaural/voicing.py` | `stream::output` |
@@ -82,6 +83,18 @@ per-channel gain pair built in `engineParams.ts::downmixGains` out of the
 served `surround_downmix_coeff` / `height_downmix_coeff` / `itu_center_coeff`.
 The coefficients are shared, the two-line matrix is not — change one and change
 the other in the same commit (the height fold, phase 4, did).
+
+The 5.1 re-render row is unlike the stereo-downmix row above it: its matrix
+*is* shared code, and its two coefficients are deliberately not served. The
+fold builds the programme a delivery specification names, not a monitoring
+choice, so both sides read `FoldTo51`'s own constants
+(`docs/standards/spatial_layouts_bs775_bs2051.md` §"5.1 re-render fold").
+Both sides also decide to fold the same way — by layout arity, on a native
+bed wider than 5.1 — and both leave true peak on the delivered channels.
+The one asymmetry: the export knows its layout from `OutputFormat`, while
+the engine reads the speaker names out of its own parameter block, so a
+preview whose `speakers` carry non-standard names would not fold. Nothing
+writes such a layout.
 
 A `stereo` layout (`FORMAT_MAP["stereo"]`, ITU-R BS.2051 System A) has no
 collapse stage at all: the bed *is* two channels, so the preview stays in
@@ -174,6 +187,15 @@ what each of the offline calls independently reproduces —
 `stream::routing`'s `ducked_sends_match_the_offline_duck_then_shape_order`
 pins it against the offline order, blocked ragged.
 
+The delivery-target table (`upmixer.mastering.delivery`'s
+`DELIVERY_TARGETS`) is served the same way, as `constants.delivery_targets`
+plus a `choices.delivery_targets` name list. The web never re-types a
+specification's numbers: picking a target copies the served loudness and
+ceiling into the manifest's existing `loudness.target` / `loudness.max_tp`,
+which the backend then resolves as the overrides they are. That keeps the
+preview's correction gain reading the same resolved target the export
+normalizes to, through the field it already read.
+
 Constants that live in Rust are the ones that were already duplicated and are
 structural rather than tunable: the BS.1770 true-peak FIR, the ACN/N3D
 normalization, the filter-design internals, and the surround/height
@@ -215,6 +237,13 @@ Two former Tier-3 gaps are **closed**: the preview's loudness is now the real
 BS.1770 measurement over the whole render rather than an excerpt-sampled
 estimate (ledger D4), and its true peak uses the standard's own kernel rather
 than a 32-tap approximation.
+
+A third closed in phase 1: the preview used to measure a native bed with
+unity weights on every channel, counting LFE into the sum and under-weighting
+the side surrounds by 1.5 dB, so a 5.1 preview calibrated to a different
+number than the export delivered. `audioEngine.ts::measureWeights` now sends
+the BS.1770 weights for the layout, and the core overrides them on a bed
+wider than 5.1 where the 5.1 re-render fixes its own.
 
 One remains open: `estimateRouteScale`
 (`apps/web/src/features/projects/masteringProfiles.ts`) still approximates

@@ -18,7 +18,7 @@ import type {
   SpatialProfile,
   TransauralProfile,
 } from "./masteringProfiles";
-import { resolveBassParams, resolveCompParams } from "./masteringProfiles";
+import { loudnessWeight, resolveBassParams, resolveCompParams } from "./masteringProfiles";
 import type { MasterPreview } from "./masterPreview";
 import { DspEngineClient } from "./wasmEngine/engineClient";
 import { buildEngineParams } from "./wasmEngine/engineParams";
@@ -383,6 +383,16 @@ export class PreviewAudioEngine {
     return `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}`;
   }
 
+  /** BS.1770 weights for the channels the measurement sees. Every collapse
+   * mode delivers a unity-weighted pair; a native bed is weighted per
+   * channel, matching what the export measures. The core overrides these on
+   * a native bed wider than 5.1, where the 5.1 re-render it measures instead
+   * fixes its own weights (`docs/standards/loudness_dsp_bs1770.md`). */
+  private measureWeights(): number[] {
+    if (this.outputMode !== "native") return [1, 1];
+    return this.layoutChannels.map(loudnessWeight);
+  }
+
   private async measureIfNeeded() {
     if (!this.client || !this.loaded) return;
     const key = this.measureKey();
@@ -403,7 +413,7 @@ export class PreviewAudioEngine {
     this.callbacks.onMeasureProgress(0);
     this.measuringRaw = true;
     this.apply();
-    const result = await this.client.measure([1, 1]);
+    const result = await this.client.measure(this.measureWeights());
     // A mode switch mid-measurement supersedes this pass; the newer one owns
     // the measuring state from here.
     if (token !== this.measureToken) return;

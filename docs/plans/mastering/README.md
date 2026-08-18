@@ -96,7 +96,7 @@ validation; a phase must be green before the next starts.
 | Phase | File | Deliverable |
 |-------|------|-------------|
 | 0 | `phase0_measurement_kit_baseline.md` | Mastering measurement kit (LRA, M/S maxima, PLR/PSR, per-channel TP, limiter/comp GR stats) + compliance baseline report + audit of the 5.1-fold delta, LFE-link duck depth, 96 kHz TP factor and quantization floor. May re-scope later phases — run first. |
-| 1 | `phase1_delivery_targets.md` | Named delivery targets (atmos-music, ebu-r128, atsc-a85, netflix-atmos, streaming-stereo, apple-music, custom); immersive compliance measured on the 5.1 re-render; results surfaced through jobs API and web UI. |
+| 1 | `phase1_delivery_targets.md` → `phase1_report.md` | **Done.** Named delivery targets (atmos-music, ebu-r128, atsc-a85, netflix-atmos, streaming-stereo, apple-music, custom); immersive compliance measured on the 5.1 re-render; results surfaced through jobs API and web UI. |
 | 2 | `phase2_limiter_linking.md` | LFE out of the limiter's shared gain engine (independent TP cap), GR telemetry, optional partial link — in `dsp-core` once, offline + streaming. |
 | 3 | `phase3_preview_metering_ab.md` | Momentary/short-term loudness + TP + GR meters in the preview, PLR/PSR readout, and a loudness-matched master bypass. |
 | 4 | `phase4_chain_head_tail.md` | Chain head (subsonic HPF + DC block) and pre-limiter soft clip, both linked/shared so the commutation invariant holds; default off. |
@@ -124,8 +124,8 @@ post-codec clipping in the wild.
   boundaries (web/CLI consume only core's public API; no DSP in the web
   layer) all apply.
 - `uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q`
-  must pass before and after every phase (baseline: 1151 passed /
-  38 deselected as of 2026-08-18). Phases touching `apps/web` also run
+  must pass before and after every phase (baseline: 1174 passed /
+  43 deselected after phase 1). Phases touching `apps/web` also run
   `npm test` and `npm run build` there.
 - **Preview/export parity is a hard constraint.** Any new mastering DSP
   lands once in `dsp-core` with both an offline entry and a streaming

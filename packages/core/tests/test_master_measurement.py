@@ -28,9 +28,9 @@ import upmixer_dsp
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
 from upmixer.loudness import (
-    measure_integrated_loudness,
     measure_loudness_stats,
     measure_true_peak,
+    measurement_programme,
 )
 from upmixer.mastering.chain import MasteringChain, MasteringResult
 from upmixer.mastering.limiter import _SAFETY_MARGIN_DB as _LIMITER_SAFETY_MARGIN_DB
@@ -45,17 +45,11 @@ _SEED = 20260818
 _LAYOUTS: tuple[str, ...] = ("stereo", "5.1", "7.1.4")
 _PROGRAMMES: tuple[str, ...] = ("dense", "dynamic")
 
-# Dolby Atmos Music delivery, the source of the config defaults. Phase 1 turns
-# this row into a named preset table with tolerances.
+# Dolby Atmos Music delivery, the source of the config defaults and of phase
+# 1's `atmos-music` target.
 _TARGET_LKFS = -18.0
 _TARGET_TP_DBTP = -1.0
 _HOT_TARGET_LKFS = -10.0
-
-# BS.775-4 Annex D b₀ for the back-to-side fold, and the project's height
-# coefficient (docs/standards/spatial_layouts_bs775_bs2051.md). Phase 1 owns
-# the production implementation; this is the yardstick it has to match.
-_FOLD_SURROUND = 0.7071
-_FOLD_HEIGHT = 0.7071
 
 # Level trims applied to the synthesized bed so the constructed programme has a
 # plausible front-dominant balance instead of twelve equally loud channels.
@@ -127,11 +121,13 @@ def _master(
     bed: dict[str, np.ndarray],
     layout: str,
     target_lkfs: float = _TARGET_LKFS,
+    preset: str | None = None,
 ) -> tuple[dict[str, np.ndarray], MasteringResult]:
     cfg = UpmixConfig(
         output_format=layout,
-        loudness_target_lkfs=target_lkfs,
-        loudness_max_tp=_TARGET_TP_DBTP,
+        loudness_target_preset=preset,
+        loudness_target_lkfs=None if preset else target_lkfs,
+        loudness_max_tp=None if preset else _TARGET_TP_DBTP,
     )
     return MasteringChain(cfg).process(
         {k: v.copy() for k, v in bed.items()}, _SR, FORMAT_MAP[layout]
@@ -164,7 +160,7 @@ def _compliance_table(
             f"{r.psr_db:.1f}" if r.psr_db is not None else "—",
             f"{r.limiter_gr_peak_db:.2f}",
             f"{100.0 * r.limiter_gr_duty:.1f}%",
-            "PASS" if r.measured_tp_dbtp <= _TARGET_TP_DBTP + 1e-6 else "FAIL",
+            "PASS" if r.measured_tp_dbtp <= r.target_max_tp_dbtp + 1e-6 else "FAIL",
         ))
     _print_table(
         title,
@@ -200,39 +196,58 @@ def test_compliance_baseline() -> None:
     assert worst <= _LIMITER_SAFETY_MARGIN_DB, f"overshoot {worst:+.4f} dB"
 
 
-def _fold_to_51(bed: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    """BS.775-governed 7.1.4 → 5.1 re-render: heights onto their base-layer
-    channels, the back pair onto the surround pair."""
-    ks, kh = _FOLD_SURROUND, _FOLD_HEIGHT
-    return {
-        "FL": bed["FL"] + kh * bed["TFL"],
-        "FR": bed["FR"] + kh * bed["TFR"],
-        "C": bed["C"],
-        "LFE": bed["LFE"],
-        "SL": bed["SL"] + ks * bed["BL"] + kh * bed["TBL"],
-        "SR": bed["SR"] + ks * bed["BR"] + kh * bed["TBR"],
-    }
+def test_delivery_target_compliance() -> None:
+    """Phase 1's table: the same programmes under two named delivery targets.
+
+    Every row's LKFS is the number the target's specification asks for — the
+    5.1 re-render on the 7.1.4 rows, the delivered bed on the others — and the
+    fold pair shows how far the two diverge.
+    """
+    for preset in ("atmos-music", "streaming-stereo"):
+        for kind in _PROGRAMMES:
+            results = []
+            folds = []
+            for layout in _LAYOUTS:
+                _, result = _master(_bed(kind, layout), layout, preset=preset)
+                results.append((layout, result))
+                if result.fold_referenced:
+                    folds.append((layout, result))
+            target = results[0][1].target_lkfs
+            _compliance_table(
+                f"Compliance — {kind} programme, {preset} ({target:.0f} LKFS)",
+                results,
+                target,
+            )
+            for layout, result in folds:
+                print(
+                    f"\n{layout} fold-referenced {result.measured_lkfs:.2f} LKFS vs "
+                    f"full bed {result.full_bed_lkfs:.2f} LKFS "
+                    f"(Δ {result.measured_lkfs - result.full_bed_lkfs:+.2f})"
+                )
 
 
 def test_audit_five_one_fold_loudness_delta() -> None:
-    """Audit 1 — full-bed vs 5.1-fold integrated loudness on 7.1.4 renders.
+    """Audit 1 — what the fold-referenced measurement is worth on 7.1.4.
 
-    The error bar on every Atmos compliance claim the chain currently makes:
-    the spec measures the 5.1 re-render, the chain measures the full bed.
+    Phase 0 sized this against a hand-written fold, because the chain then
+    measured the full bed. Since phase 1 the chain reports both numbers
+    itself, so the audit reads its own pair: `measured_lkfs` is the 5.1
+    re-render the delivery specs ask for, `full_bed_lkfs` is what the
+    delivered twelve channels measure, and the delta is how far a full-bed
+    claim would have been off.
     """
     rows = []
     for kind in _PROGRAMMES:
         mastered, result = _master(_bed(kind, "7.1.4"), "7.1.4")
-        folded = _fold_to_51(mastered)
-        fold_lkfs = measure_integrated_loudness(folded, _SR, FORMAT_MAP["5.1"])
-        fold_stats = measure_loudness_stats(folded, _SR, FORMAT_MAP["5.1"])
+        folded, _ = measurement_programme(mastered, FORMAT_MAP["7.1.4"])
+        full_stats = measure_loudness_stats(mastered, _SR, FORMAT_MAP["7.1.4"])
         rows.append((
             kind,
+            f"{result.full_bed_lkfs:.2f}",
             f"{result.measured_lkfs:.2f}",
-            f"{fold_lkfs:.2f}",
-            f"{fold_lkfs - result.measured_lkfs:+.2f}",
+            f"{result.measured_lkfs - result.full_bed_lkfs:+.2f}",
             f"{measure_true_peak(folded):.2f}",
-            f"{result.lra_lu:.1f} → {fold_stats['lra_lu']:.1f}",
+            f"{full_stats['lra_lu']:.1f} → {result.lra_lu:.1f}",
         ))
 
     # A height-only programme isolates the worst case the fold can produce.
@@ -242,13 +257,12 @@ def test_audit_five_one_fold_loudness_delta() -> None:
         for k, v in bed.items()
     }
     mastered, result = _master(height_only, "7.1.4")
-    folded = _fold_to_51(mastered)
-    fold_lkfs = measure_integrated_loudness(folded, _SR, FORMAT_MAP["5.1"])
+    folded, _ = measurement_programme(mastered, FORMAT_MAP["7.1.4"])
     rows.append((
         "height-only",
+        f"{result.full_bed_lkfs:.2f}",
         f"{result.measured_lkfs:.2f}",
-        f"{fold_lkfs:.2f}",
-        f"{fold_lkfs - result.measured_lkfs:+.2f}",
+        f"{result.measured_lkfs - result.full_bed_lkfs:+.2f}",
         f"{measure_true_peak(folded):.2f}",
         "—",
     ))
