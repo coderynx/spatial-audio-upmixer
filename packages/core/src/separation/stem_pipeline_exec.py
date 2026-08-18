@@ -154,7 +154,10 @@ def execute_plan(
 
         sep = get_separator(task.model, sep_sr)
         loaded, on_disk = sep.separate_to_file(
-            input_path_for_task, keep_on_disk, task.stem_overrides
+            input_path_for_task,
+            keep_on_disk,
+            task.stem_overrides,
+            task.output_stems,
         )
 
         for name, path in on_disk.items():

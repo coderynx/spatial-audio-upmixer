@@ -146,7 +146,7 @@ def _fake_dereverb_separator(tmp_path: Path, parent: np.ndarray):
             self.directory = tmp_path / model
             self.directory.mkdir(exist_ok=True)
 
-        def separate_to_file(self, audio_path, keep_on_disk, stem_overrides=None):
+        def separate_to_file(self, audio_path, keep_on_disk, stem_overrides=None, wanted=None):
             if self.model == "parent.ckpt":
                 path = self.directory / "Vocals.wav"
                 sf.write(path, parent, SR, subtype="FLOAT")
