@@ -45,7 +45,10 @@ vi.mock("./wasmEngine/engineClient", () => ({
         },
         setDecodeTaps: () => callOrder.push("decodeTaps"),
         setXtcTaps: () => callOrder.push("xtcTaps"),
-        addStem: (left: Float32Array) => addedStems.push(left.length),
+        addStem: (left: Float32Array) => {
+          addedStems.push(left.length);
+          callOrder.push("stem");
+        },
         dispose: () => {},
       };
     }),
@@ -418,6 +421,24 @@ describe("useStemPreview loudness calibration", () => {
       await preview.playPause();
     });
     expect(transportCalls.at(-1)).toMatchObject({ playing: true });
+  });
+
+  it("waits for the stems and filter sets before it calibrates a profile that changed mid-load", async () => {
+    // The saved listening profile hydrates a tick after mount, while
+    // `initialize()` is still decoding stems — measuring there would
+    // calibrate against a half-built engine and stamp the mode as done.
+    const result = render(<Harness spatialProfile="studio" />);
+    await act(async () => {
+      await Promise.resolve();
+      result.rerender(<Harness spatialProfile="listening" />);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(callOrder.indexOf("measure")).toBeGreaterThan(callOrder.lastIndexOf("stem"));
+    expect(callOrder.indexOf("decodeTaps")).toBeLessThan(callOrder.indexOf("measure"));
   });
 
   it("blocks playback until the in-flight measurement resolves, then allows it", async () => {

@@ -93,6 +93,10 @@ export class PreviewAudioEngine {
   /** While set, render uncorrected so the measurement sees the raw program. */
   private measuringRaw = false;
   private measureToken = 0;
+  /** Stems and filter sets are all in the engine. A measurement before this
+      would calibrate against a half-built engine — and stamp the mode as
+      measured, so the real one never runs. */
+  private loaded = false;
   /** Transport was playing when a profile switch forced the pause below — resume once the winning pass lands. */
   private resumeAfterMeasure = false;
   private resumeOnGesture: (() => void) | null = null;
@@ -380,7 +384,7 @@ export class PreviewAudioEngine {
   }
 
   private async measureIfNeeded() {
-    if (!this.client) return;
+    if (!this.client || !this.loaded) return;
     const key = this.measureKey();
     // While a pass is in flight (`measuringRaw`), `measuredForMode` still
     // names the mode being replaced — switching back to it is not "already
@@ -421,6 +425,7 @@ export class PreviewAudioEngine {
   async initialize(): Promise<void> {
     if (!this.supported || !this.constants) return;
     const token = ++this.loadToken;
+    this.loaded = false;
     this.callbacks.onError(null);
     this.callbacks.onReady(false);
     this.callbacks.onLoadProgress(0);
@@ -489,6 +494,16 @@ export class PreviewAudioEngine {
       ]);
       if (token !== this.loadToken) return;
 
+      // A profile switch during the loads above was dropped by the gate in
+      // `measureIfNeeded`, so re-resolve both against the current fields: the
+      // cached sets only need re-pushing into the fresh engine.
+      await Promise.all([
+        this.loadDecodeFilterSet(this.spatialProfile),
+        this.loadXtcFilterSet(this.transauralProfile),
+      ]);
+      if (token !== this.loadToken) return;
+
+      this.loaded = true;
       this.callbacks.onReady(true);
       await this.measureIfNeeded();
     } catch (error) {
@@ -552,6 +567,7 @@ export class PreviewAudioEngine {
 
   reset() {
     this.loadToken += 1;
+    this.loaded = false;
     this.playing = false;
     this.duration = 0;
     this.currentTimeRef.current = 0;
