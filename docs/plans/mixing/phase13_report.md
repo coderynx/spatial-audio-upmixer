@@ -1,5 +1,12 @@
 # Phase 13 report — multiband transient duck
 
+> **Outcome: the band split was built, measured, shipped, and reverted the
+> same day.** It is not in the signal path. On real cymbal stems at the depth
+> a user actually reached for it, it modulates timbre badly enough to be
+> heard immediately — see §9, which is the part of this report that matters.
+> Everything between here and there describes the version that was reverted.
+
+
 Plan: `docs/plans/mixing/phase13_multiband_duck.md`. Extends phase 11's
 ducker (`phase11_report.md`); baseline tables cited are phase 8's, per the
 README ground rules.
@@ -118,8 +125,11 @@ That is worth recording as a measurement trap for phase 14.
 
 ### 3.4 Where the split changes nothing: an isolated cymbal stem
 
-Added after a listening report of "muted hi-hats" was raised against this
-phase. It is not this phase, and the measurement says why.
+**Superseded by §9.3 — this section's conclusion is wrong, and the way it is
+wrong is the point.** It was written after the first "muted hi-hats" report to
+show the split was not responsible. The signal it used cannot exercise the
+split, so it returned no difference; that was read as "no effect" when it
+meant "not tested". Left in place because the reasoning error is worth seeing.
 
 Band-limited noise bursts standing in for a cymbal stem, ducked at the same
 depth by phase 11's broadband detector and phase 13's multiband one:
@@ -137,9 +147,9 @@ split can only change behaviour on a stem whose bands carry *different*
 material — §3.3's snare-plus-wash — which is the case it was built for and the
 only case where it moves.
 
-So the phase neither helps nor harms a per-piece kit (Kick/Snare/Hi-Hat/… as
-separate stems); it pays off on a combined Drums stem, or any stem mixing body
-and air. Worth knowing before reaching for `depth` on a drum-sub project.
+The conclusion drawn at the time — since disproved — was that the phase
+neither helps nor harms a per-piece kit. §9.1 measures the opposite on the
+same stems, using real audio instead of band-limited noise.
 
 ### 3.5 Off is still off
 
@@ -249,3 +259,83 @@ duck A/B and phase 12's licensed-corpus run as outstanding listening work. The
 phase 11 note about the shared gain — does a hard-panned hi-hat duck the whole
 send pair distractingly — is now a *per-band* shared gain, which should make it
 less audible, and is still unanswered by measurement.
+
+
+## 9. Reverted — why
+
+A listening report came in the same day: hi-hats and crashes "lose some
+frequencies" on a project running `stem_transient_duck: 1`. The stems had not
+been re-separated (file mtimes a day older), and the only `dsp-core` change
+between the previous committed wasm and this one was the band split, so the
+split was the whole difference.
+
+### 9.1 What the split does to a cymbal
+
+Measured on the reporter's own stems, loudest 15 s window of each, depth 1.0.
+The statistic is the standard deviation over time of the stem's low→high
+spectral tilt *error* against the unducked stem — i.e. how much the duck moves
+the timbre rather than the level. A level-only duck scores near zero.
+
+| stem | broadband (phase 11) | multiband (phase 13) |
+|---|---|---|
+| **Crash** | 10.00 dB | **23.58 dB** |
+| **Ride** | 3.63 dB | **11.24 dB** |
+| Hi-Hat | 6.69 dB | 7.09 dB |
+| Snare | 6.27 dB | 4.76 dB |
+| Kick | 8.24 dB | 3.95 dB |
+
+Total level change is within 0.2 dB between the two on every stem. The split
+does not duck *more* — it ducks **unevenly**, and on a cymbal that is the
+whole audible defect.
+
+The mechanism is the one thing §3 never tested: a cymbal is broadband **and**
+decays at a different rate in each band. Three detectors on three decays
+diverge through the tail, so the crash's timbre morphs while it rings. A
+snare or kick, whose energy is concentrated, gets *better* — the bands track
+each other, and the wrong band stops being dragged by the right one.
+
+### 9.2 No coupling value saves it
+
+Blending each band's gain toward an energy-weighted common gain
+(`g' = common + k·(g − common)`), swept:
+
+| stem | broadband | k=1.0 | k=0.7 | k=0.5 | k=0.3 |
+|---|---|---|---|---|---|
+| Crash | 10.00 | 23.58 | 15.10 | 13.23 | 11.24 |
+| Ride | 3.63 | 11.24 | 7.28 | 5.99 | 4.60 |
+
+Crash is still worse than broadband at k=0.3, where the split has almost no
+selectivity left to justify its cost. There is no setting that keeps the §3.3
+benefit and clears the defect.
+
+### 9.3 Why the phase's own measurements missed it
+
+Three tests, all of which the split passed, and none of which could have
+caught this:
+
+- §3.3's wash was **continuous band-limited noise** — no attack, no decay, so
+  no per-band envelope divergence.
+- `a_low_band_hit_leaves_the_high_band_wash_alone` used a **steady 9 kHz
+  sine** as the wash, for the same reason.
+- §3.4's cymbal A/B used **band-limited noise bursts**, which live in one band
+  and therefore cannot diverge across bands at all — it returned 0.00 dB
+  difference and was read as "the split is neutral here", when the real
+  finding was "this signal cannot exercise the split".
+
+The common error: every synthetic case was **narrowband where real cymbals are
+broadband**. A multiband stage can only be validated on material whose bands
+carry genuinely different envelopes, and the corpus never contained any.
+
+### 9.4 What stands
+
+Reverted in full (`git revert 42e797f`): `routing::transient` is phase 11's
+broadband ducker again, `stream::routing` runs `TransientDucker`, and both
+bindings are rebuilt. Phase 13 is **closed as rejected**, not deferred — the
+motivating case in §3.3 is real, but it is worth less than the timbre damage
+it costs on the stems most likely to be routed overhead, and the plan's own
+"no audible band-split coloration" acceptance criterion is exactly what
+failed.
+
+If it is ever revisited, the gate is a corpus of **real, broadband, decaying**
+cymbal recordings, and the acceptance statistic is §9.1's tilt swing, not
+onset-vs-sustain separation.

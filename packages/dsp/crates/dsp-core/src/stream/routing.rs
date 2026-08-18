@@ -10,7 +10,7 @@ use crate::routing::decorrelate::{
     velvet_pair_seeded, VelvetFir, VelvetLine, VELVET_SEED, VELVET_SEED_HEIGHT,
 };
 use crate::routing::sends::directional_band_sos;
-use crate::routing::transient::MultibandDucker;
+use crate::routing::transient::TransientDucker;
 
 use super::conv::StreamingConvolver;
 use super::params::{SendParams, SendShape};
@@ -96,7 +96,7 @@ pub struct StemRouteState {
     /// One ducker feeds both send pairs: its state depends only on the stem's
     /// input, so a single trajectory is what the offline path's two separate
     /// calls each reproduce.
-    ducker: MultibandDucker,
+    ducker: TransientDucker,
     ducked: [Vec<f64>; 2],
     /// Last block's shaped sends: surround L/R then height L/R.
     shaped: [Vec<f64>; 4],
@@ -145,7 +145,7 @@ impl StemRouteState {
             }),
             surround: [surround_send(&surround_l), surround_send(&surround_r)],
             height: [height_send(&height_l), height_send(&height_r)],
-            ducker: MultibandDucker::new(sample_rate, p.stem_transient_duck),
+            ducker: TransientDucker::new(sample_rate, p.stem_transient_duck),
             ducked: Default::default(),
             shaped: Default::default(),
         }
@@ -218,9 +218,9 @@ impl StemRouteState {
             self.ducked[0].reserve(left.len());
             self.ducked[1].reserve(right.len());
             for (l, r) in left.iter().zip(right.iter()) {
-                let (dl, dr) = self.ducker.tick(*l, *r);
-                self.ducked[0].push(dl);
-                self.ducked[1].push(dr);
+                let gain = self.ducker.tick(*l, *r);
+                self.ducked[0].push(l * gain);
+                self.ducked[1].push(r * gain);
             }
             (&self.ducked[0][..], &self.ducked[1][..])
         } else {
