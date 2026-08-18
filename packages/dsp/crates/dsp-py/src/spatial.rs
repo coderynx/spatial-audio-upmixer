@@ -198,6 +198,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("DUCK_RELEASE_MS", transient::DUCK_RELEASE_MS)?;
     m.add("DUCK_REFERENCE_MS", transient::DUCK_REFERENCE_MS)?;
     m.add("DUCK_THRESHOLD_RATIO", transient::DUCK_THRESHOLD_RATIO)?;
+    m.add("DUCK_MIN_GAIN", transient::DUCK_MIN_GAIN)?;
     m.add("DUCK_FULL_RATIO", transient::DUCK_FULL_RATIO)?;
     Ok(())
 }

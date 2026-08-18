@@ -28,6 +28,13 @@ pub const DUCK_REFERENCE_MS: f64 = 250.0;
 pub const DUCK_THRESHOLD_RATIO: f64 = 1.25;
 pub const DUCK_FULL_RATIO: f64 = 2.5;
 
+/// Deepest attenuation one band may reach, -20 dB. Not a taste setting: at
+/// depth 1.0 the gain would otherwise land on exactly 0.0 and annihilate the
+/// band rather than duck it, so a band that saturates leaves its neighbours
+/// sounding alone — measured as a 6x jump in cymbal timbre swing between
+/// depth 0.99 and 1.00, against a smooth curve everywhere below.
+pub const DUCK_MIN_GAIN: f64 = 0.1;
+
 /// Crossover corners between the three detector bands: the body of a hit
 /// below, the cymbal wash the duck must not chase above.
 pub const DUCK_BAND_LOW_HZ: f64 = 200.0;
@@ -83,7 +90,7 @@ impl TransientDucker {
         self.depth
     }
 
-    /// Send gain for this sample pair, in `[1 - depth, 1]`.
+    /// Send gain for this sample pair, in `[max(1 - depth, DUCK_MIN_GAIN), 1]`.
     #[inline]
     pub fn tick(&mut self, left: f64, right: f64) -> f64 {
         if self.depth == 0.0 {
@@ -106,7 +113,7 @@ impl TransientDucker {
         }
         let span = self.slow * (DUCK_FULL_RATIO - DUCK_THRESHOLD_RATIO);
         let score = ((self.fast - threshold) / span).min(1.0);
-        1.0 - self.depth * score
+        (1.0 - self.depth * score).max(DUCK_MIN_GAIN)
     }
 }
 
@@ -312,6 +319,28 @@ mod tests {
             let g = ducker.tick(*l, *r);
             assert!((1.0 - depth - 1e-12..=1.0).contains(&g), "gain {g}");
         }
+    }
+
+    /// Full depth must attenuate, never annihilate. A band that reaches
+    /// exactly zero stops contributing at all and leaves the bands beside it
+    /// sounding alone, which is heard as the send changing colour rather than
+    /// level — the defect `DUCK_MIN_GAIN` exists to prevent.
+    #[test]
+    fn full_depth_floors_the_gain_instead_of_nulling_the_band() {
+        let x = click_train_over_bed(96_000);
+        let mut ducker = TransientDucker::new(SR, 1.0);
+        let mut lowest = 1.0_f64;
+        for (l, r) in x.iter().zip(x.iter()) {
+            lowest = lowest.min(ducker.tick(*l, *r));
+        }
+        assert!(lowest >= DUCK_MIN_GAIN - 1e-12, "gain reached {lowest}");
+        assert!(lowest <= DUCK_MIN_GAIN + 1e-9, "floor never exercised: {lowest}");
+
+        // And the whole send keeps every band alive through the onset.
+        let (out, _) = transient_duck(&x, &x, SR, 1.0);
+        let window = |v: &[f64]| v[12_000..12_600].iter().map(|s| s * s).sum::<f64>();
+        let kept = 10.0 * (window(&out) / window(&x)).log10();
+        assert!(kept > -20.1, "onset lost {kept} dB, below the -20 dB floor");
     }
 
     /// Both sides take the same per-band gain, so a one-sided onset cannot

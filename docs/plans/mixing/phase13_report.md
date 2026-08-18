@@ -339,3 +339,26 @@ failed.
 If it is ever revisited, the gate is a corpus of **real, broadband, decaying**
 cymbal recordings, and the acceptance statistic is §9.1's tilt swing, not
 onset-vs-sustain separation.
+
+### 9.5 Postscript — the depth-1.0 endpoint
+
+§9.1's measurements were all taken at depth 1.0, which is the one degenerate
+point in the parameter's range: `1.0 - depth * score` with `score` saturated
+lands on gain exactly 0.0, so a band that scores full is annihilated rather
+than ducked and its neighbours are left sounding alone. A depth sweep over the
+same stems shows a discontinuity, not a slope — 0.68 / 2.55 / 1.72 dB
+(Crash / Ride / Hi-Hat) at 0.90, 1.79 / 3.71 / 3.18 at 0.99, then
+11.41 / 4.90 / 10.74 at 1.00. The broadband ducker jumps the same way
+(0.63 → 3.02 on the Crash), so the singularity belongs to the duck, not to
+the split.
+
+`DUCK_MIN_GAIN = 0.1` floors the per-band gain at −20 dB and removes it: the
+same stems now score 0.70 / 2.70 / 1.80 at depth 1.0, for 0.04–0.4 dB of
+maximum ducking depth. See ledger D38.
+
+This does not reopen the phase. Off the endpoint the split still costs
+~1.8-2.8x broadband's timbre swing, and §9.2's coupling sweep still has no
+setting that clears it. What it does establish is that **23.58 dB was not the
+split's number** — it was the endpoint's, amplified by the split. A revisit
+would have to re-measure the whole §9.1 table at a floored depth before
+arguing anything from it.
