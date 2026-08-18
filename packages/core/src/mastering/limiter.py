@@ -121,9 +121,15 @@ class LookAheadLimiter:
         self._lookahead_ms = float(lookahead_ms)
         self._release_ms = float(release_ms)
         self._sr = int(sample_rate)
+        self.gr_peak_db: float = 0.0
+        self.gr_duty: float = 0.0
 
     def process(self, channels: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         """Apply the linked look-ahead limiter to every channel (incl. LFE).
+
+        Sets :attr:`gr_peak_db` and :attr:`gr_duty` — the deepest gain
+        reduction applied and the fraction of samples held under reduction —
+        so a caller can report what the limiter actually did.
 
         Args:
             channels: Dict channel_name -> 1D array.
@@ -137,7 +143,7 @@ class LookAheadLimiter:
         if max(len(channels[name]) for name in names) == 0:
             return channels
 
-        limited, max_gr_db = upmixer_dsp.lookahead_limit(
+        limited, max_gr_db, duty = upmixer_dsp.lookahead_limit(
             [np.ascontiguousarray(channels[name], dtype=np.float64) for name in names],
             self._sr,
             self._ceiling_dbtp,
@@ -145,13 +151,15 @@ class LookAheadLimiter:
             self._release_ms,
             _SAFETY_MARGIN_DB,
         )
+        self.gr_peak_db = max_gr_db
+        self.gr_duty = duty
 
         if max_gr_db > 1e-6:
             _log.info(
                 "  Look-ahead limiter: ceiling=%.1f dBTP  lookahead=%.1f ms  "
-                "release=%.0f ms  GR peak=%.1f dB",
+                "release=%.0f ms  GR peak=%.1f dB  GR duty=%.1f%%",
                 self._ceiling_dbtp, self._lookahead_ms,
-                self._release_ms, max_gr_db,
+                self._release_ms, max_gr_db, 100.0 * duty,
             )
 
         return {

@@ -154,9 +154,9 @@ fn lookahead_limit<'py>(
     lookahead_ms: f64,
     release_ms: f64,
     safety_margin_db: f64,
-) -> (Vec<Bound<'py, PyArray1<f64>>>, f64) {
+) -> (Vec<Bound<'py, PyArray1<f64>>>, f64, f64) {
     let mut bed = to_bed(channels);
-    let gr = py.detach(|| limiter::lookahead_limit(
+    let info = py.detach(|| limiter::lookahead_limit(
         &mut bed,
         sample_rate,
         &limiter::LimiterParams {
@@ -166,7 +166,7 @@ fn lookahead_limit<'py>(
             safety_margin_db,
         },
     ));
-    (from_bed(py, bed), gr)
+    (from_bed(py, bed), info.max_gr_db, info.duty)
 }
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

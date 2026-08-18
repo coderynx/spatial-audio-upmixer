@@ -41,12 +41,22 @@ pub fn forward_window_min(values: &[f64], window: usize) -> Vec<f64> {
     filtered[half..half + values.len()].to_vec()
 }
 
-/// Apply the limiter to every channel, LFE included, and return the peak
-/// gain reduction in dB.
-pub fn lookahead_limit(bed: &mut super::Bed, sample_rate: u32, p: &LimiterParams) -> f64 {
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LimiterInfo {
+    pub max_gr_db: f64,
+    /// Fraction of output samples receiving more than `GR_DUTY_FLOOR_DB`.
+    pub duty: f64,
+}
+
+/// Gain reduction below this is inaudible bookkeeping, not limiting.
+pub const GR_DUTY_FLOOR_DB: f64 = 0.1;
+
+/// Apply the limiter to every channel, LFE included, and return its gain-
+/// reduction statistics.
+pub fn lookahead_limit(bed: &mut super::Bed, sample_rate: u32, p: &LimiterParams) -> LimiterInfo {
     let n = bed.iter().map(|c| c.len()).max().unwrap_or(0);
     if n == 0 {
-        return 0.0;
+        return LimiterInfo::default();
     }
     let over_sr = sample_rate as f64 * TRUE_PEAK_OVERSAMPLE as f64;
     let ceiling_linear = 10.0_f64.powf((p.ceiling_dbtp - p.safety_margin_db) / 20.0);
@@ -98,5 +108,10 @@ pub fn lookahead_limit(bed: &mut super::Bed, sample_rate: u32, p: &LimiterParams
         }
     }
 
-    need_smoothed.iter().fold(0.0_f64, |m, v| m.max(*v))
+    let floor_gain = 10.0_f64.powf(-GR_DUTY_FLOOR_DB / 20.0);
+    let engaged = dilated.iter().filter(|g| **g < floor_gain).count();
+    LimiterInfo {
+        max_gr_db: need_smoothed.iter().fold(0.0_f64, |m, v| m.max(*v)),
+        duty: engaged as f64 / dilated.len() as f64,
+    }
 }

@@ -155,10 +155,32 @@ mod limiter {
     }
 
     #[test]
+    fn gain_reduction_duty_tracks_how_long_the_limiter_holds() {
+        let sr = 48_000usize;
+        let mut bed = vec![(0..sr)
+            .map(|i| {
+                let t = i as f64 / sr as f64;
+                // One loud half, one quiet half: only the loud half limits.
+                let amp = if t < 0.5 { 0.98 } else { 0.05 };
+                amp * (2.0 * std::f64::consts::PI * 997.0 * t).sin()
+            })
+            .collect::<Vec<f64>>()];
+        let info = lookahead_limit(&mut bed, sr as u32, &params());
+        assert!(info.max_gr_db > 0.0, "expected the limiter to engage");
+        assert!(
+            (0.3..0.7).contains(&info.duty),
+            "duty {} should track the loud half",
+            info.duty
+        );
+    }
+
+    #[test]
     fn quiet_material_passes_through_untouched() {
         let quiet: Vec<f64> = (0..9600).map(|i| 0.05 * (i as f64 * 0.1).sin()).collect();
         let mut bed = vec![quiet.clone()];
-        let gr = lookahead_limit(&mut bed, 48_000, &params());
+        let info = lookahead_limit(&mut bed, 48_000, &params());
+        assert_eq!(info.duty, 0.0);
+        let gr = info.max_gr_db;
         assert!(gr < 1e-9, "unexpected gain reduction {gr} dB");
         for (a, b) in bed[0].iter().zip(quiet.iter()) {
             assert!((a - b).abs() < 1e-12);
@@ -176,7 +198,7 @@ mod limiter {
             })
             .collect();
         let mut bed = vec![loud.clone(), loud.iter().map(|v| v * 0.8).collect()];
-        let gr = lookahead_limit(&mut bed, sr as u32, &params());
+        let gr = lookahead_limit(&mut bed, sr as u32, &params()).max_gr_db;
         assert!(gr > 0.0, "expected the limiter to engage");
         let refs: Vec<&[f64]> = bed.iter().map(|c| c.as_slice()).collect();
         let dbtp = measure_true_peak(&refs);

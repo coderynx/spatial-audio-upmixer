@@ -14,6 +14,13 @@ pub const ABS_GATE: f64 = -70.0;
 pub const REL_GATE_OFFSET: f64 = -10.0;
 pub const LKFS_OFFSET: f64 = -0.691;
 
+/// EBU Tech 3341 short-term window; Tech 3342 measures LRA over these.
+pub const SHORT_TERM_S: f64 = 3.000;
+/// EBU Tech 3342 relative gate for the loudness-range distribution.
+pub const LRA_GATE_OFFSET: f64 = -20.0;
+pub const LRA_LOW_PERCENTILE: f64 = 0.10;
+pub const LRA_HIGH_PERCENTILE: f64 = 0.95;
+
 /// BS.1770-4 Annex 1 Tables 1-2, exact at 48 kHz.
 pub const K_STAGE1_48K: [f64; 6] = [
     1.53512485958697, -2.69169618940638, 1.19839281085285,
@@ -105,16 +112,20 @@ fn channel_weighted_blocks(
     )
 }
 
-/// BS.1770-4 integrated loudness with absolute + relative gating.
+/// Summed weighted mean-square per window across every present channel, for a
+/// window of `window_s` seconds advanced by `HOP_S`.
 ///
-/// `channels` pairs each channel's BS.1770 weight with its samples; zero-
-/// weight channels (LFE) must be omitted by the caller, exactly as the
-/// Python implementation skips them.
-pub fn measure_integrated_loudness(channels: &[(f64, &[f64])], sample_rate: u32) -> f64 {
-    let block_len = (BLOCK_S * sample_rate as f64) as usize;
+/// One K-weighting pass feeds the integrated, momentary, short-term and LRA
+/// statistics; they differ only in window length and how the blocks are gated.
+fn weighted_power_blocks(
+    channels: &[(f64, &[f64])],
+    sample_rate: u32,
+    window_s: f64,
+) -> Option<Vec<f64>> {
+    let block_len = (window_s * sample_rate as f64) as usize;
     let hop_len = (HOP_S * sample_rate as f64) as usize;
     if block_len == 0 || hop_len == 0 {
-        return ABS_GATE;
+        return None;
     }
     let sos = k_weighting_sos(sample_rate);
 
@@ -135,38 +146,107 @@ pub fn measure_integrated_loudness(channels: &[(f64, &[f64])], sample_rate: u32)
             }
         });
     }
+    power_blocks.filter(|b| !b.is_empty())
+}
 
-    let Some(power_blocks) = power_blocks else {
-        return ABS_GATE;
-    };
-    if power_blocks.is_empty() {
-        return ABS_GATE;
-    }
-
-    let block_lkfs: Vec<f64> = power_blocks
+fn block_loudness(power_blocks: &[f64]) -> Vec<f64> {
+    power_blocks
         .iter()
         .map(|p| LKFS_OFFSET + 10.0 * p.max(1e-30).log10())
-        .collect();
+        .collect()
+}
+
+fn mean_loudness(power_blocks: &[f64], idx: &[usize]) -> f64 {
+    let vals: Vec<f64> = idx.iter().map(|&i| power_blocks[i]).collect();
+    LKFS_OFFSET + 10.0 * (pairwise_sum(&vals) / vals.len() as f64).max(1e-30).log10()
+}
+
+/// Indices surviving the absolute gate, then a gate `offset` LU below the
+/// ungated mean of those — the two-pass shape both BS.1770 (−10 LU) and
+/// EBU Tech 3342 (−20 LU) use.
+fn gated_indices(power_blocks: &[f64], block_lkfs: &[f64], offset: f64) -> Vec<usize> {
     let above_abs: Vec<usize> = (0..block_lkfs.len())
         .filter(|&i| block_lkfs[i] >= ABS_GATE)
         .collect();
     if above_abs.is_empty() {
-        return ABS_GATE;
+        return above_abs;
     }
-
-    let mean_of = |idx: &[usize]| {
-        let vals: Vec<f64> = idx.iter().map(|&i| power_blocks[i]).collect();
-        pairwise_sum(&vals) / vals.len() as f64
-    };
-    let ungated = LKFS_OFFSET + 10.0 * mean_of(&above_abs).max(1e-30).log10();
+    let ungated = mean_loudness(power_blocks, &above_abs);
     let above_rel: Vec<usize> = above_abs
         .iter()
         .copied()
-        .filter(|&i| block_lkfs[i] >= ungated + REL_GATE_OFFSET)
+        .filter(|&i| block_lkfs[i] >= ungated + offset)
         .collect();
+    if above_rel.is_empty() { above_abs } else { above_rel }
+}
 
-    let gated = if above_rel.is_empty() { &above_abs } else { &above_rel };
-    LKFS_OFFSET + 10.0 * mean_of(gated).max(1e-30).log10()
+/// BS.1770-4 integrated loudness with absolute + relative gating.
+///
+/// `channels` pairs each channel's BS.1770 weight with its samples; zero-
+/// weight channels (LFE) must be omitted by the caller, exactly as the
+/// Python implementation skips them.
+pub fn measure_integrated_loudness(channels: &[(f64, &[f64])], sample_rate: u32) -> f64 {
+    let Some(power_blocks) = weighted_power_blocks(channels, sample_rate, BLOCK_S) else {
+        return ABS_GATE;
+    };
+    let block_lkfs = block_loudness(&power_blocks);
+    let gated = gated_indices(&power_blocks, &block_lkfs, REL_GATE_OFFSET);
+    if gated.is_empty() {
+        return ABS_GATE;
+    }
+    mean_loudness(&power_blocks, &gated)
+}
+
+/// Loudness statistics sharing one K-weighting pass over the programme.
+#[derive(Clone, Copy, Debug)]
+pub struct LoudnessStats {
+    pub integrated_lkfs: f64,
+    /// EBU Tech 3342 loudness range, in LU. `0.0` when the programme is
+    /// shorter than one short-term window or never clears the gates.
+    pub lra_lu: f64,
+    /// Loudest 400 ms window (Tech 3341 momentary maximum), in LKFS.
+    pub max_momentary_lkfs: f64,
+    /// Loudest 3 s window (Tech 3341 short-term maximum), in LKFS.
+    pub max_short_term_lkfs: f64,
+}
+
+/// EBU Tech 3342 loudness range: the 10th-to-95th percentile spread of the
+/// short-term distribution, after the absolute and −20 LU relative gates.
+fn loudness_range(power_blocks: &[f64], short_term: &[f64]) -> f64 {
+    let gated = gated_indices(power_blocks, short_term, LRA_GATE_OFFSET);
+    if gated.len() < 2 {
+        return 0.0;
+    }
+    let mut kept: Vec<f64> = gated.iter().map(|&i| short_term[i]).collect();
+    kept.sort_by(|a, b| a.partial_cmp(b).expect("gated loudness values are finite"));
+    let pick = |p: f64| kept[((kept.len() - 1) as f64 * p).round() as usize];
+    pick(LRA_HIGH_PERCENTILE) - pick(LRA_LOW_PERCENTILE)
+}
+
+/// Integrated loudness plus the LRA and momentary/short-term maxima.
+pub fn measure_loudness_stats(channels: &[(f64, &[f64])], sample_rate: u32) -> LoudnessStats {
+    let momentary_power = weighted_power_blocks(channels, sample_rate, BLOCK_S);
+    let short_power = weighted_power_blocks(channels, sample_rate, SHORT_TERM_S);
+    let momentary = momentary_power.as_deref().map(block_loudness).unwrap_or_default();
+    let short_term = short_power.as_deref().map(block_loudness).unwrap_or_default();
+
+    let integrated = match &momentary_power {
+        Some(blocks) => {
+            let gated = gated_indices(blocks, &momentary, REL_GATE_OFFSET);
+            if gated.is_empty() { ABS_GATE } else { mean_loudness(blocks, &gated) }
+        }
+        None => ABS_GATE,
+    };
+    let max_of = |v: &[f64]| v.iter().fold(ABS_GATE, |m: f64, x| m.max(*x));
+    LoudnessStats {
+        integrated_lkfs: integrated,
+        lra_lu: match &short_power {
+            Some(blocks) => loudness_range(blocks, &short_term),
+            None => 0.0,
+        },
+        max_momentary_lkfs: max_of(&momentary),
+        max_short_term_lkfs: max_of(&short_term),
+    }
 }
 
 /// Linear true peak of one channel via the 4x BS.1770 interpolator.
@@ -177,6 +257,14 @@ pub fn true_peak_channel(audio: &[f64]) -> f64 {
     upfirdn_up(&TRUE_PEAK_FIR_4X, audio, TRUE_PEAK_OVERSAMPLE)
         .iter()
         .fold(0.0_f64, |m, v| m.max(v.abs()))
+}
+
+/// Per-channel true peak in dBTP, in the order the channels were given.
+pub fn measure_true_peak_per_channel(channels: &[&[f64]]) -> Vec<f64> {
+    channels
+        .iter()
+        .map(|ch| 20.0 * true_peak_channel(ch).max(1e-30).log10())
+        .collect()
 }
 
 /// True peak in dBTP across every channel, LFE included per BS.1770-5.

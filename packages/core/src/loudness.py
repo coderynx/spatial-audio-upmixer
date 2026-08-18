@@ -39,7 +39,7 @@ CHANNEL_WEIGHT: dict[ChannelLabel, float] = {
 
 _BLOCK_S = 0.400
 _HOP_S   = 0.100
-_ABS_GATE = -70.0
+ABS_GATE = -70.0
 _LKFS_OFFSET = -0.691
 _REL_GATE_OFFSET = -10.0
 
@@ -100,20 +100,73 @@ def k_weighted_power(signal: np.ndarray, sample_rate: int) -> float:
     lkfs = upmixer_dsp.integrated_loudness(
         [1.0], [np.ascontiguousarray(signal, dtype=np.float64)], sample_rate
     )
-    return 10.0 ** ((lkfs - _LKFS_OFFSET) / 10.0) if lkfs > _ABS_GATE else 0.0
+    return 10.0 ** ((lkfs - _LKFS_OFFSET) / 10.0) if lkfs > ABS_GATE else 0.0
 
 
 def measure_true_peak(channels: dict[str, np.ndarray]) -> float:
     """True Peak across all channels (BS.1770-4 Annex 2).
 
     Uses BS.1770-5 Annex 2 order-48 4-phase FIR interpolation.  Four-times
-    oversampling is retained at 96 kHz because higher ratios are permitted.
+    oversampling is retained at 96 kHz because higher ratios are permitted
+    (measured error at 96 kHz: docs/standards/loudness_dsp_bs1770.md).
     Returns dBTP. LFE is included per spec.
     """
     audio = [np.ascontiguousarray(v, dtype=np.float64) for v in channels.values()]
     if not audio:
         return -120.0
     return upmixer_dsp.true_peak_dbtp(audio)
+
+
+def measure_true_peak_per_channel(
+    channels: dict[str, np.ndarray],
+) -> dict[str, float]:
+    """Per-channel True Peak in dBTP, keyed by channel name.
+
+    The collapsed maximum :func:`measure_true_peak` returns cannot say *which*
+    channel peaked, which is what an LFE-aware limiter policy needs to know.
+    """
+    names = list(channels)
+    if not names:
+        return {}
+    peaks = upmixer_dsp.true_peak_per_channel(
+        [np.ascontiguousarray(channels[n], dtype=np.float64) for n in names]
+    )
+    return dict(zip(names, peaks))
+
+
+def measure_loudness_stats(
+    channels: dict[str, np.ndarray],
+    sample_rate: int,
+    fmt: OutputFormat,
+) -> dict[str, float]:
+    """BS.1770 integrated loudness plus the EBU Tech 3341/3342 statistics.
+
+    One K-weighting pass yields all four: gated integrated loudness, loudness
+    range (Tech 3342, 10th-95th percentile of the short-term distribution
+    under a -20 LU relative gate), and the momentary (400 ms) and short-term
+    (3 s) maxima.
+
+    Returns a dict with keys ``integrated_lkfs``, ``lra_lu``,
+    ``max_momentary_lkfs`` and ``max_short_term_lkfs``.  ``lra_lu`` is 0.0 for
+    programmes shorter than one short-term window.
+    """
+    weights, audio = _weighted_channels(channels, fmt)
+    if not weights:
+        return {
+            "integrated_lkfs": ABS_GATE,
+            "lra_lu": 0.0,
+            "max_momentary_lkfs": ABS_GATE,
+            "max_short_term_lkfs": ABS_GATE,
+        }
+    integrated, lra, momentary, short_term = upmixer_dsp.loudness_stats(
+        weights, audio, sample_rate
+    )
+    return {
+        "integrated_lkfs": integrated,
+        "lra_lu": lra,
+        "max_momentary_lkfs": momentary,
+        "max_short_term_lkfs": short_term,
+    }
 
 
 def normalize_loudness(
@@ -151,7 +204,7 @@ def normalize_loudness(
             measured_lkfs, measured_tp_dbtp, applied_gain_db, tp_limited.
     """
     measured_lkfs = measure_integrated_loudness(channels, sample_rate, fmt)
-    measurable = measured_lkfs > _ABS_GATE
+    measurable = measured_lkfs > ABS_GATE
     gain_db = min(target_lkfs - measured_lkfs, max_gain_db) if measurable else 0.0
     gain_linear = 10.0 ** (gain_db / 20.0)
     adjusted = {k: v.copy() for k, v in channels.items()}

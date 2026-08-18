@@ -65,7 +65,7 @@ pub unsafe extern "C" fn dsp_master_bed(
         bass::bass_control(&mut bed, params.lfe_index, &params.lf_targets, sample_rate, &bass);
     }
     let reduction = match params.limiter {
-        Some(l) => limiter::lookahead_limit(&mut bed, sample_rate, &l),
+        Some(l) => limiter::lookahead_limit(&mut bed, sample_rate, &l).max_gr_db,
         None => 0.0,
     };
 

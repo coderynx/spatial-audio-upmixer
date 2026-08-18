@@ -40,6 +40,61 @@ mod loudness {
         let delta = measure_true_peak(&[&loud]) - measure_true_peak(&[&sine]);
         assert!((delta - 20.0 * 2.0_f64.log10()).abs() < 1e-12, "{delta} dB");
     }
+
+    #[test]
+    fn per_channel_true_peak_keeps_channel_order() {
+        let sine: Vec<f64> = (0..4096).map(|i| 0.5 * (i as f64 * 0.11).sin()).collect();
+        let quiet: Vec<f64> = sine.iter().map(|v| v * 0.1).collect();
+        let per = measure_true_peak_per_channel(&[&quiet, &sine]);
+        assert!((per[1] - per[0] - 20.0) < 1e-9 && per[1] > per[0]);
+        assert!((per[1] - measure_true_peak(&[&quiet, &sine])).abs() < 1e-12);
+    }
+
+    /// EBU Tech 3342 case 1: two 20 s plateaus 10 dB apart read LRA ≈ 10 LU.
+    #[test]
+    fn loudness_range_matches_a_ten_lu_tone_step() {
+        let sr = 48_000;
+        let tone = |amp: f64, n: usize| -> Vec<f64> {
+            (0..n)
+                .map(|i| {
+                    amp * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / sr as f64).sin()
+                })
+                .collect()
+        };
+        let mut programme = tone(0.5, 20 * sr as usize);
+        programme.extend(tone(0.5 / 10.0_f64.powf(0.5), 20 * sr as usize));
+
+        let stats = measure_loudness_stats(&[(1.0, &programme)], sr);
+        assert!((stats.lra_lu - 10.0).abs() < 1.0, "LRA {} LU", stats.lra_lu);
+        assert!(
+            (stats.max_momentary_lkfs - stats.max_short_term_lkfs).abs() < 0.1,
+            "steady tone should peak the same in both windows"
+        );
+        // The gated integrated sits between the two plateaus.
+        assert!(stats.integrated_lkfs < stats.max_short_term_lkfs);
+        assert!(stats.integrated_lkfs > stats.max_short_term_lkfs - 10.0);
+    }
+
+    #[test]
+    fn stats_agree_with_the_standalone_integrated_measurement() {
+        let sr = 48_000;
+        let noise: Vec<f64> = (0..10 * sr as usize)
+            .map(|i| 0.3 * ((i as f64 * 12.9898).sin() * 43758.5453).fract())
+            .collect();
+        let stats = measure_loudness_stats(&[(1.0, &noise)], sr);
+        let want = measure_integrated_loudness(&[(1.0, &noise)], sr);
+        assert!((stats.integrated_lkfs - want).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_programme_shorter_than_a_short_term_window_has_no_range() {
+        let sr = 48_000;
+        let tone: Vec<f64> = (0..sr as usize).map(|i| 0.5 * (i as f64 * 0.1).sin()).collect();
+        let stats = measure_loudness_stats(&[(1.0, &tone)], sr);
+        assert_eq!(stats.lra_lu, 0.0);
+        assert_eq!(stats.max_short_term_lkfs, ABS_GATE);
+        assert!(stats.max_momentary_lkfs > ABS_GATE);
+    }
 }
 
 mod loudness_stream {

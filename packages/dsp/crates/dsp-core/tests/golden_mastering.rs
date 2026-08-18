@@ -172,7 +172,7 @@ fn lookahead_limiter_matches_python() {
         release_ms: c.param_f64("release_ms"),
         safety_margin_db: c.param_f64("safety_margin_db"),
     };
-    let gr = lookahead_limit(&mut bed, c.param_usize("sample_rate") as u32, &p);
+    let gr = lookahead_limit(&mut bed, c.param_usize("sample_rate") as u32, &p).max_gr_db;
     assert!(gr > 0.0, "the fixture bed should drive the limiter");
     assert_bed(&c, &bed, &names);
 }

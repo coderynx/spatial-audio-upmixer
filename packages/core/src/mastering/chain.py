@@ -111,6 +111,38 @@ class MasteringResult:
     tp_limited: bool = False
     """True if gain was reduced to meet the True Peak ceiling."""
 
+    lra_lu: float | None = None
+    """EBU Tech 3342 loudness range of delivered PCM, in LU."""
+
+    max_momentary_lkfs: float | None = None
+    """Loudest 400 ms window (EBU Tech 3341 momentary maximum), in LKFS."""
+
+    max_short_term_lkfs: float | None = None
+    """Loudest 3 s window (EBU Tech 3341 short-term maximum), in LKFS."""
+
+    plr_db: float | None = None
+    """Peak-to-loudness ratio: true peak minus integrated loudness, in dB."""
+
+    psr_db: float | None = None
+    """Peak-to-short-term ratio: true peak minus the loudest short-term
+    window, in dB.  The over-limiting canary — mastering practice treats a
+    PSR under ~8 dB in the loudest sections as crushed."""
+
+    limiter_gr_peak_db: float | None = None
+    """Deepest gain reduction the true-peak limiter applied, in dB."""
+
+    limiter_gr_duty: float | None = None
+    """Fraction of samples the limiter held under reduction."""
+
+    comp_gr_peak_db: float | None = None
+    """Deepest gain reduction the bus compressor applied, in dB."""
+
+    comp_gr_avg_db: float | None = None
+    """Mean gain reduction across the bus compressor's whole programme."""
+
+    per_channel_tp_dbtp: dict[str, float] | None = None
+    """Delivered True Peak per channel, in dBTP, keyed by channel name."""
+
 
 class MasteringChain:
     """Stateless mastering chain for post-mixing multichannel audio.
@@ -145,6 +177,7 @@ class MasteringChain:
         """
         cfg = self._cfg
         result = MasteringResult()
+        comp_gr: tuple[float, float] | None = None
 
         if cfg.mastering_match_ref_path is not None:
             from .match_reference import ReferenceMatchProcessor
@@ -210,6 +243,7 @@ class MasteringChain:
                     sample_rate=sample_rate,
                 )
                 channels = comp.process(channels)
+                comp_gr = (comp.gr_peak_db, comp.gr_avg_db)
 
         _bass_active = (
             cfg.mastering_bass_profile is not None
@@ -286,12 +320,34 @@ class MasteringChain:
         channels = limiter.process(channels)
 
         if cfg.loudness_normalize:
-            from upmixer.loudness import measure_integrated_loudness, measure_true_peak
+            from upmixer.loudness import (
+                ABS_GATE,
+                measure_loudness_stats,
+                measure_true_peak,
+                measure_true_peak_per_channel,
+            )
 
+            stats = measure_loudness_stats(channels, sample_rate, output_fmt)
+            measured_tp = measure_true_peak(channels)
+            short_term = stats["max_short_term_lkfs"]
             result = MasteringResult(
-                measured_lkfs=measure_integrated_loudness(channels, sample_rate, output_fmt),
-                measured_tp_dbtp=measure_true_peak(channels),
+                measured_lkfs=stats["integrated_lkfs"],
+                measured_tp_dbtp=measured_tp,
                 applied_gain_db=ln_info["applied_gain_db"],
                 tp_limited=ln_info["tp_limited"],
+                lra_lu=stats["lra_lu"],
+                max_momentary_lkfs=stats["max_momentary_lkfs"],
+                max_short_term_lkfs=stats["max_short_term_lkfs"],
+                plr_db=measured_tp - stats["integrated_lkfs"],
+                psr_db=(
+                    measured_tp - short_term
+                    if short_term > ABS_GATE
+                    else None
+                ),
+                limiter_gr_peak_db=limiter.gr_peak_db,
+                limiter_gr_duty=limiter.gr_duty,
+                comp_gr_peak_db=comp_gr[0] if comp_gr else None,
+                comp_gr_avg_db=comp_gr[1] if comp_gr else None,
+                per_channel_tp_dbtp=measure_true_peak_per_channel(channels),
             )
         return channels, result

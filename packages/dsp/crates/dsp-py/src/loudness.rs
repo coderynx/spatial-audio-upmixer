@@ -44,6 +44,35 @@ fn true_peak_dbtp(py: Python<'_>, channels: Vec<PyReadonlyArray1<f64>>) -> f64 {
     })
 }
 
+#[pyfunction]
+fn true_peak_per_channel(py: Python<'_>, channels: Vec<PyReadonlyArray1<f64>>) -> Vec<f64> {
+    let bed = to_bed(channels);
+    py.detach(|| {
+        let refs: Vec<&[f64]> = bed.iter().map(|c| c.as_slice()).collect();
+        loudness::measure_true_peak_per_channel(&refs)
+    })
+}
+
+/// `(integrated_lkfs, lra_lu, max_momentary_lkfs, max_short_term_lkfs)`.
+#[pyfunction]
+fn loudness_stats(
+    py: Python<'_>,
+    weights: Vec<f64>,
+    channels: Vec<PyReadonlyArray1<f64>>,
+    sample_rate: u32,
+) -> (f64, f64, f64, f64) {
+    let bed = to_bed(channels);
+    py.detach(|| {
+        let weighted: Vec<(f64, &[f64])> = weights
+            .iter()
+            .zip(bed.iter())
+            .map(|(w, c)| (*w, c.as_slice()))
+            .collect();
+        let s = loudness::measure_loudness_stats(&weighted, sample_rate);
+        (s.integrated_lkfs, s.lra_lu, s.max_momentary_lkfs, s.max_short_term_lkfs)
+    })
+}
+
 /// BS.1770-5 Annex 2 order-48 four-phase true-peak interpolation FIR.
 #[pyfunction]
 fn true_peak_fir(py: Python<'_>) -> Bound<'_, PyArray1<f64>> {
@@ -54,6 +83,8 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(k_weighting_sos, m)?)?;
     m.add_function(wrap_pyfunction!(integrated_loudness, m)?)?;
     m.add_function(wrap_pyfunction!(true_peak_dbtp, m)?)?;
+    m.add_function(wrap_pyfunction!(true_peak_per_channel, m)?)?;
+    m.add_function(wrap_pyfunction!(loudness_stats, m)?)?;
     m.add_function(wrap_pyfunction!(true_peak_fir, m)?)?;
     Ok(())
 }

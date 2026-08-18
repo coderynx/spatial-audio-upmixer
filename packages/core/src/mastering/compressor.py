@@ -135,6 +135,8 @@ class BusCompressor:
             float(sidechain_hpf_hz) if sidechain_hpf_hz is not None else None
         )
         self._sr = int(sample_rate)
+        self.gr_peak_db: float = 0.0
+        self.gr_avg_db: float = 0.0
 
 
     def process(
@@ -143,6 +145,9 @@ class BusCompressor:
         lfe_key: str = "LFE",
     ) -> dict[str, np.ndarray]:
         """Apply linked-sidechain bus compression to all channels except *lfe_key*.
+
+        Sets :attr:`gr_peak_db` and :attr:`gr_avg_db` so a caller can report
+        how hard the stage worked.
 
         Args:
             channels: Dict channel_name → 1-D float array.
@@ -168,6 +173,8 @@ class BusCompressor:
             self._makeup,
             self._sidechain_hpf,
         )
+        self.gr_peak_db = max_gr
+        self.gr_avg_db = avg_gr
 
         _log.info(
             "  Bus compression: threshold=%.1f dBFS  ratio=%.1fx  "
