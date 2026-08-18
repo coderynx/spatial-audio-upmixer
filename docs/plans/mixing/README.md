@@ -62,6 +62,19 @@ deferred improvements are now planned as phases 8–11:
 | 10 | `phase10_mdap_panner.md` | MDAP panner replacing the raised-cosine spread panner behind the unchanged `StemPlacement` model — triplet-confined point placements, direction-independent spread. **Done** — width response is 1.7-6x flatter across azimuth and the preview's duplicate panner is gone (ledger D34); the preset A/B listening pass is still outstanding, see `phase10_report.md` §8. |
 | 11 | `phase11_content_aware_routing.md` | Roadmap 4.1: archaeology gate on the dead stem-analyzer modules, then revive (transient/sustain send split, default-off) or delete. **Done** — the gate splits: both modules deleted (their whole-file mechanism is what the removal condemned, and the preview cannot run it), while rung 1 shipped as a causal duck on the diffuse send inputs, default 0.0. Onsets reach surround/height 7.26 dB quieter than sustain at depth 0.7; ledger D35. See `phase11_report.md`. |
 
+Phases 12–14 extend content-aware routing beyond the phase 11 duck. The
+governing insight (from the phase 11 archaeology): "causal or nothing"
+binds only the live send DSP — prepare-time analysis whose *output* is
+data both paths consume identically (like stems, like routing maps) is
+parity-safe, and analysis surfaced as user-editable data (not hidden gain
+scaling) respects the explicit-control contract.
+
+| Phase | File | Deliverable |
+|-------|------|-------------|
+| 12 | `phase12_wet_dry_split.md` | Per-stem dereverb at separation time; wet component becomes an ordinary stem routed surround/height-heavy. Vocals first, harness-gated, default off. The only phase that touches separation — eval harness + knowledge base rules apply. **Code complete, default off** — the wet stem is the dereverb model's own residual, so dry + wet nulls against the parent. Harness run on a synthetic dry+RIR corpus (directional, not licensed-corpus): the standard anvuew checkpoint wins by a thin margin and stays the default, and the harmony trap measured at −0.8 dB (the wet stem *is* a side-panned backing layer), which added a warning on the combined-`Vocals` path. Licensed-corpus run and listening A/B still outstanding; see `phase12_report.md` §7. |
+| 13 | `phase13_multiband_duck.md` | Split the phase 11 duck into 3 Linkwitz-Riley bands so cymbal wash keeps flowing to the heights through snare hits. **Built, shipped and reverted the same day — closed as rejected.** The split does not duck more, it ducks unevenly: on a real crash at depth 1.0 it moves the spectral tilt 23.6 dB against broadband's 10.0 dB, because a cymbal is broadband and decays at a different rate in each band, so three detectors diverge through the tail and the timbre morphs while it rings. No coupling value clears it. Every synthetic case in the phase was narrowband and therefore could not exercise the defect. `routing::transient` is phase 11's broadband ducker again; ledger D36. See `phase13_report.md` §9. |
+| 14 | `phase14_spatial_automation.md` | Optional, product-heavy: per-stem automation curves (gain + send openness) as prepare-time data — editable in the UI, consumed identically by export and preview; slice 2 adds suggested curves from section analysis. |
+
 ## Ground rules for every phase
 
 - Read the repo root `AGENTS.md` and `packages/core/AGENTS.md` first.
@@ -69,8 +82,8 @@ deferred improvements are now planned as phases 8–11:
   boundaries (web/CLI consume only core's public API; no quality logic in
   the web layer) all apply.
 - `uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q`
-  must pass before and after every phase (baseline: 1133 passed /
-  34 deselected as of 2026-08-17, phase 10). Phases touching `apps/web` also run
+  must pass before and after every phase (baseline: 1151 passed /
+  38 deselected as of 2026-08-18, phase 12). Phases touching `apps/web` also run
   `npm test` and `npm run build` there.
 - **Preview/export parity is a hard constraint.** Phase 3 retired the
   surround/height send constants (`SURROUND_HAAS_DELAY_MS_*`,
@@ -96,8 +109,12 @@ deferred improvements are now planned as phases 8–11:
   with (a) the phase 0 measurement kit re-run, and (b) a short A/B
   listening note in the phase report (protocol:
   `~/Projects/upmixer-knowledge/techniques/evaluation.md` §6). The
-  separation eval harness is NOT required — no phase here may change
-  separation behavior; if one accidentally does, stop and re-scope.
+  separation eval harness is NOT required for phases 0–11 and 13–14 —
+  those phases must not change separation behavior; if one accidentally
+  does, stop and re-scope. Phase 12 is the sole exception: it adds a
+  separation stage by design, so the harness report is mandatory there
+  and the knowledge-base consultation rules in `packages/core/AGENTS.md`
+  apply.
 - No new Python or JS dependencies. New DSP is hand-rolled in `dsp-core`
   with golden tests, matching existing kernel style.
 - Standards-governed changes (downmix coefficients, LFE behavior) must

@@ -431,3 +431,123 @@ def test_stem_cache_identity_changes_for_remask():
         bass_plan, UpmixConfig(stem_drum_remask=False)
     ) == stem_cache_identity(bass_plan, UpmixConfig())
     assert stem_cache_identity(vocals_plan, UpmixConfig()) == vocals_plan.inference_hash
+
+
+def _fake_multi_model_separator(tmp_path):
+    """Separator stub emitting exactly what each real checkpoint emits.
+
+    The point is primary: its config lists ``vocals`` among its instruments,
+    so it writes a Vocals file even when fed a vocals-free residual.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    emits = {
+        MODEL_DEUX: {"Vocals": 1.0, "_deux_inst": 2.0},
+        MODEL_PRIMARY: {
+            "Bass": 3.0, "Drums": 4.0, "Guitar": 5.0,
+            "Piano": 6.0, "Other": 7.0, "Vocals": 99.0,
+        },
+        "dereverb.ckpt": {"Vocals": 8.0, "Vocals Reverb": 9.0},
+    }
+
+    class FakeSeparator:
+        backend = "cpu"
+
+        def __init__(self, model):
+            self.model = model
+            self.directory = tmp_path / model.replace("/", "_")
+            self.directory.mkdir(exist_ok=True)
+
+        def separate_to_file(
+            self, audio_path, keep_on_disk, stem_overrides=None, wanted=None
+        ):
+            loaded, on_disk = {}, {}
+            for name, value in emits[self.model].items():
+                if wanted is not None and name not in wanted:
+                    continue
+                audio = np.full((256, 2), value, dtype=np.float32)
+                if name in keep_on_disk:
+                    path = self.directory / f"{name}.wav"
+                    sf.write(path, audio, 48_000, subtype="FLOAT")
+                    on_disk[name] = str(path)
+                else:
+                    loaded[name] = audio
+            return loaded, on_disk
+
+        def close(self):
+            pass
+
+    created: dict[str, FakeSeparator] = {}
+    return lambda model, _sr: created.setdefault(model, FakeSeparator(model))
+
+
+def test_primary_vocals_leftover_never_replaces_the_real_vocals(tmp_path):
+    """Regression: the primary model emits its own vocals-free Vocals file.
+
+    Excluding it from the task's ``output_stems`` is not enough on its own —
+    the separator names stems from the files the model wrote, so the leftover
+    used to overwrite deux's Vocals in both the loaded dict and the on-disk
+    intermediate map. On a plan with a later Vocals consumer that surfaced as
+    "Stage N needs intermediate stem 'Vocals' on disk"; without one it
+    silently swapped the vocal stem for a vocals-free residual.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    from upmixer.separation.stem_pipeline_exec import execute_plan
+    from upmixer.separation.stem_plan import SeparationTask
+
+    plan = SeparationPlan(
+        tasks=[
+            SeparationTask(MODEL_DEUX, "original", DEUX_OUTPUT_STEMS,
+                           frozenset({"Vocals"})),
+            SeparationTask(MODEL_PRIMARY, "_deux_inst",
+                           PRIMARY_INSTRUMENTAL_STEMS,
+                           PRIMARY_INSTRUMENTAL_STEMS),
+            SeparationTask("dereverb.ckpt", "Vocals",
+                           frozenset({"Vocals", "Vocals Reverb"}),
+                           frozenset({"Vocals", "Vocals Reverb"})),
+        ],
+        requested_stems=frozenset({"Vocals", "Vocals Reverb", "Bass"}),
+        stems_hash="x",
+    )
+    source = tmp_path / "in.wav"
+    sf.write(source, np.zeros((256, 2), dtype=np.float32), 48_000, subtype="FLOAT")
+
+    stems = execute_plan(
+        _fake_multi_model_separator(tmp_path), plan, str(source), 48_000
+    )
+
+    # The dereverb stage ran, which it cannot do if primary ate its input.
+    assert "Vocals Reverb" in stems
+    assert stems["Vocals"][0, 0] == 8.0
+    assert 99.0 not in {float(v[0, 0]) for v in stems.values()}
+
+
+def test_primary_vocals_leftover_is_dropped_with_no_later_consumer(tmp_path):
+    """The silent half of the same bug: no Vocals consumer, wrong audio out."""
+    import numpy as np
+    import soundfile as sf
+
+    from upmixer.separation.stem_pipeline_exec import execute_plan
+    from upmixer.separation.stem_plan import SeparationTask
+
+    plan = SeparationPlan(
+        tasks=[
+            SeparationTask(MODEL_DEUX, "original", DEUX_OUTPUT_STEMS,
+                           frozenset({"Vocals"})),
+            SeparationTask(MODEL_PRIMARY, "_deux_inst",
+                           PRIMARY_INSTRUMENTAL_STEMS,
+                           frozenset({"Bass"})),
+        ],
+        requested_stems=frozenset({"Vocals", "Bass"}),
+        stems_hash="x",
+    )
+    source = tmp_path / "in.wav"
+    sf.write(source, np.zeros((256, 2), dtype=np.float32), 48_000, subtype="FLOAT")
+
+    stems = execute_plan(
+        _fake_multi_model_separator(tmp_path), plan, str(source), 48_000
+    )
+    assert stems["Vocals"][0, 0] == 1.0

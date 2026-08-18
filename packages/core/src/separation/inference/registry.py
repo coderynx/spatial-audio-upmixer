@@ -138,6 +138,20 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         config_name="denoise_mel_band_roformer_aufr33_sdr_27.9959",
         weights_url="https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt",
     ),
+    # GPL weights: runtime download only, never bundled. The whole anvuew
+    # dereverb family shares one upstream YAML.
+    "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt": ModelSpec(
+        filename="dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt",
+        arch="mel_band_roformer",
+        config_name="dereverb_mel_band_roformer_anvuew",
+        weights_url="https://huggingface.co/anvuew/dereverb_mel_band_roformer/resolve/main/dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt",
+    ),
+    "dereverb_mel_band_roformer_less_aggressive_anvuew_sdr_18.8050.ckpt": ModelSpec(
+        filename="dereverb_mel_band_roformer_less_aggressive_anvuew_sdr_18.8050.ckpt",
+        arch="mel_band_roformer",
+        config_name="dereverb_mel_band_roformer_anvuew",
+        weights_url="https://huggingface.co/anvuew/dereverb_mel_band_roformer/resolve/main/dereverb_mel_band_roformer_less_aggressive_anvuew_sdr_18.8050.ckpt",
+    ),
 }
 
 

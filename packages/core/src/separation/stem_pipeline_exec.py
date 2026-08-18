@@ -13,7 +13,13 @@ import soundfile as sf
 from upmixer.config import UpmixConfig
 from upmixer.separation.remask import share_parent_residual
 from upmixer.separation.separator import StemSeparator
-from upmixer.separation.stem_plan import MODEL_DRUMS, MODEL_PRIMARY, SeparationPlan
+from upmixer.separation.stem_plan import (
+    MODEL_DRUMS,
+    MODEL_PRIMARY,
+    SeparationPlan,
+    SeparationTask,
+)
+from upmixer.separation.stem_resume import ResumeStore
 
 _log = logging.getLogger("upmixer")
 
@@ -26,6 +32,13 @@ def temporary_wav_path(prefix: str) -> str:
     path = handle.name
     handle.close()
     return path
+
+
+def _discard(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def cacheable_plan_stems(plan: SeparationPlan) -> frozenset[str]:
@@ -87,6 +100,7 @@ def execute_plan(
     sep_sr: int,
     stage_callback: StageCallback | None = None,
     cfg: UpmixConfig | None = None,
+    resume_key: str | None = None,
 ) -> dict[str, np.ndarray]:
     """Execute all tasks in the plan against one audio zone (sep_path).
 
@@ -102,6 +116,11 @@ def execute_plan(
         cfg: Configuration for the post-separation passes run here (parent
             remainder sharing on the primary and drumsep stages). ``None``
             runs none of them.
+        resume_key: Identity of this run, enabling the crash checkpoint in
+            ``stem_resume``: a failing stage leaves the finished stages'
+            stems on disk under ``cfg.stem_cache_dir`` and the next run with
+            the same key restarts at the stage that failed. ``None``, or a
+            config with no stem cache directory, disables it.
 
     Returns a dict of canonical_name → ndarray for all requested stems.
     """
@@ -113,78 +132,25 @@ def execute_plan(
     )
 
     n_tasks = len(plan.tasks)
-    for stage_idx, task in enumerate(plan.tasks):
-        if stage_callback is not None:
-            stage_callback(stage_idx, n_tasks, task.model, task.output_stems)
-        _log.info(
-            "  [stage %d/%d] model=%s  input=%s  keep_on_disk=%s",
-            stage_idx + 1,
-            n_tasks,
-            task.model,
-            task.input_source,
-            sorted(task.output_stems & later_inputs) or "(none)",
-        )
-
-        if task.input_source != "original" and task.input_source not in all_disk:
-            available = sorted(all_disk.keys()) or ["(none)"]
-            raise RuntimeError(
-                f"Stage {stage_idx + 1} needs intermediate stem "
-                f"'{task.input_source}' on disk, but it was not produced by "
-                f"any previous stage.\n"
-                f"Available on-disk stems: {available}\n"
-                f"Likely cause: the model that should produce "
-                f"'{task.input_source}' outputs a different filename tag — "
-                f"run with --verbose (-v) to see raw output filenames and "
-                f"update STEM_NAME_MAP in separator.py if needed."
-            )
-
-        input_path_for_task = (
-            sep_path if task.input_source == "original"
-            else all_disk[task.input_source]
-        )
-
-        keep_on_disk = task.output_stems & later_inputs
-
-        sep = get_separator(task.model, sep_sr)
-        loaded, on_disk = sep.separate_to_file(input_path_for_task, keep_on_disk)
-
-        for name, path in on_disk.items():
-            stable_path = temporary_wav_path("upmixer_intermediate_")
-            try:
-                os.replace(path, stable_path)
-            except OSError:
-                if os.path.exists(stable_path):
-                    os.unlink(stable_path)
-                raise
-            on_disk[name] = stable_path
-
-        if _remasks(cfg, task.model) and task.input_source in all_disk:
+    resume = ResumeStore.open(
+        cfg.stem_cache_dir if cfg is not None else None, resume_key, sep_sr
+    )
+    completed = 0
+    if resume is not None:
+        restored = resume.restore()
+        if restored is not None:
+            completed, all_loaded, all_disk = restored
             _log.info(
-                "  [stage %d/%d] sharing the remainder of parent %s",
-                stage_idx + 1,
+                "  Resuming after stage %d/%d — %s already separated",
+                completed,
                 n_tasks,
-                task.input_source,
-            )
-            _remask_stage(
-                loaded,
-                on_disk,
-                all_disk[task.input_source],
-                task.output_stems,
+                sorted(all_loaded.keys() | all_disk.keys()) or "(nothing)",
             )
 
-        _log.info(
-            "  [stage %d/%d] produced: loaded=%s  on_disk=%s",
-            stage_idx + 1,
-            n_tasks,
-            sorted(loaded.keys()) or "(none)",
-            sorted(on_disk.keys()) or "(none)",
-        )
-
-        for name, audio in loaded.items():
-            if not name.startswith("_"):
-                all_loaded[name] = audio
-
-        all_disk.update(on_disk)
+    _run_stages(
+        get_separator, plan, sep_path, sep_sr, stage_callback, cfg,
+        all_loaded, all_disk, later_inputs, completed, resume,
+    )
 
     for name, path in all_disk.items():
         if not name.startswith("_") and name not in all_loaded:
@@ -193,15 +159,151 @@ def execute_plan(
                 audio = np.concatenate([audio, audio], axis=1)
             all_loaded[name] = audio
 
-    for name, path in all_disk.items():
-        if name not in plan.requested_stems:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+    for path in all_disk.values():
+        _discard(path)
+    if resume is not None:
+        resume.clear()
 
     _log.info("  All stages complete. Produced stems: %s", sorted(all_loaded.keys()))
     return all_loaded
+
+
+def _run_stages(
+    get_separator: GetSeparator,
+    plan: SeparationPlan,
+    sep_path: str,
+    sep_sr: int,
+    stage_callback: StageCallback | None,
+    cfg: UpmixConfig | None,
+    all_loaded: dict[str, np.ndarray],
+    all_disk: dict[str, str],
+    later_inputs: frozenset[str],
+    completed: int,
+    resume: "ResumeStore | None",
+) -> None:
+    """Run the plan's stages from ``completed`` onward, mutating both dicts.
+
+    On any failure the stems held at the last completed stage boundary are
+    checkpointed — the failing stage's index is exactly how many stages
+    finished — before the exception propagates.
+    """
+    n_tasks = len(plan.tasks)
+    for stage_idx, task in enumerate(plan.tasks):
+        if stage_idx < completed:
+            _log.info(
+                "  [stage %d/%d] model=%s — restored from checkpoint",
+                stage_idx + 1, n_tasks, task.model,
+            )
+            continue
+        try:
+            _run_one_stage(
+                get_separator, task, stage_idx, n_tasks, sep_path,
+                sep_sr, stage_callback, cfg, all_loaded, all_disk,
+                later_inputs,
+            )
+        except Exception:
+            if resume is not None:
+                resume.checkpoint(stage_idx, all_loaded, all_disk)
+            raise
+
+
+def _run_one_stage(
+    get_separator: GetSeparator,
+    task: SeparationTask,
+    stage_idx: int,
+    n_tasks: int,
+    sep_path: str,
+    sep_sr: int,
+    stage_callback: StageCallback | None,
+    cfg: UpmixConfig | None,
+    all_loaded: dict[str, np.ndarray],
+    all_disk: dict[str, str],
+    later_inputs: frozenset[str],
+) -> None:
+    """Run one model stage, merging its outputs into the run's two dicts."""
+    if stage_callback is not None:
+        stage_callback(stage_idx, n_tasks, task.model, task.output_stems)
+    _log.info(
+        "  [stage %d/%d] model=%s  input=%s  keep_on_disk=%s",
+        stage_idx + 1,
+        n_tasks,
+        task.model,
+        task.input_source,
+        sorted(task.output_stems & later_inputs) or "(none)",
+    )
+
+    if task.input_source != "original" and task.input_source not in all_disk:
+        available = sorted(all_disk.keys()) or ["(none)"]
+        raise RuntimeError(
+            f"Stage {stage_idx + 1} needs intermediate stem "
+            f"'{task.input_source}' on disk, but it was not produced by "
+            f"any previous stage.\n"
+            f"Available on-disk stems: {available}\n"
+            f"Likely cause: the model that should produce "
+            f"'{task.input_source}' outputs a different filename tag — "
+            f"run with --verbose (-v) to see raw output filenames and "
+            f"update STEM_NAME_MAP in separator.py if needed."
+        )
+
+    input_path_for_task = (
+        sep_path if task.input_source == "original"
+        else all_disk[task.input_source]
+    )
+
+    keep_on_disk = task.output_stems & later_inputs
+
+    sep = get_separator(task.model, sep_sr)
+    loaded, on_disk = sep.separate_to_file(
+        input_path_for_task,
+        keep_on_disk,
+        task.stem_overrides,
+        task.output_stems,
+    )
+
+    for name, path in on_disk.items():
+        stable_path = temporary_wav_path("upmixer_intermediate_")
+        try:
+            os.replace(path, stable_path)
+        except OSError:
+            if os.path.exists(stable_path):
+                os.unlink(stable_path)
+            raise
+        on_disk[name] = stable_path
+
+    if _remasks(cfg, task.model) and task.input_source in all_disk:
+        _log.info(
+            "  [stage %d/%d] sharing the remainder of parent %s",
+            stage_idx + 1,
+            n_tasks,
+            task.input_source,
+        )
+        _remask_stage(
+            loaded,
+            on_disk,
+            all_disk[task.input_source],
+            task.output_stems,
+        )
+
+    _log.info(
+        "  [stage %d/%d] produced: loaded=%s  on_disk=%s",
+        stage_idx + 1,
+        n_tasks,
+        sorted(loaded.keys()) or "(none)",
+        sorted(on_disk.keys()) or "(none)",
+    )
+
+    for name, audio in loaded.items():
+        if not name.startswith("_"):
+            all_loaded[name] = audio
+
+    # A stage may re-emit a stem an earlier one left on disk (the dereverb
+    # split replaces its own parent). That copy is stale from here on.
+    for name in loaded.keys() | on_disk.keys():
+        superseded = all_disk.pop(name, None)
+        if superseded is not None and superseded != on_disk.get(name):
+            _discard(superseded)
+
+    all_disk.update(on_disk)
 
 
 def execute_plan_with_silence_skip(
@@ -213,6 +315,7 @@ def execute_plan_with_silence_skip(
     cfg: UpmixConfig,
     original_path: str | None = None,
     stage_callback: StageCallback | None = None,
+    resume_key: str | None = None,
 ) -> dict[str, np.ndarray]:
     """Run stem separation on active spans only, skipping silent regions.
 
@@ -222,6 +325,10 @@ def execute_plan_with_silence_skip(
 
     Returns the same dict shape as :func:`execute_plan`:
     ``{stem_name: (n_sep_samples, 2) float32}``.
+
+    ``resume_key`` is per span, so a crash on a multi-span zone resumes the
+    span it died in; spans that already finished are re-separated, since
+    their stems live only in the caller's stitched array.
     """
     from upmixer.separation.silence import (
         find_active_spans,
@@ -255,12 +362,15 @@ def execute_plan_with_silence_skip(
         if original_path is not None:
             _log.debug("  Silence-skip: full-active fast path uses source file")
             return execute_plan(
-                get_separator, plan, original_path, sep_sr, stage_callback, cfg
+                get_separator, plan, original_path, sep_sr, stage_callback,
+                cfg, resume_key,
             )
         tmp = temporary_wav_path("upmixer_full_")
         try:
             sf.write(tmp, zone_audio, sr, subtype="FLOAT")
-            return execute_plan(get_separator, plan, tmp, sep_sr, stage_callback, cfg)
+            return execute_plan(
+                get_separator, plan, tmp, sep_sr, stage_callback, cfg, resume_key
+            )
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
@@ -273,13 +383,14 @@ def execute_plan_with_silence_skip(
         for stem_name in stem_names
     }
 
-    for s_start, s_end in spans:
+    for span_idx, (s_start, s_end) in enumerate(spans):
         span_audio = zone_audio[s_start:s_end]
         tmp = temporary_wav_path("upmixer_span_")
         try:
             sf.write(tmp, span_audio, sr, subtype="FLOAT")
             outputs = execute_plan(
-                get_separator, plan, tmp, sep_sr, stage_callback, cfg
+                get_separator, plan, tmp, sep_sr, stage_callback, cfg,
+                None if resume_key is None else f"{resume_key}|span{span_idx}",
             )
             sep_start = (
                 int(round(s_start * sep_sr / sr))

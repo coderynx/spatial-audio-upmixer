@@ -573,7 +573,7 @@ def test_channel_energy_accounting() -> None:
             )
         )
     _print_table(
-        "4b. Zone fraction averaged over all 16 stems, per preset (7.1.4)",
+        "4b. Zone fraction averaged over every stem, per preset (7.1.4)",
         ("Preset", "front", "surround", "height", "LFE"),
         rows,
     )

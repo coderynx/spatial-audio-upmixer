@@ -117,6 +117,7 @@ export const fallbackStems = [
   "Crowd",
   "Lead Vocals",
   "Backing Vocals",
+  "Vocals Reverb",
 ];
 
 export const defaultManifest: Manifest = {

@@ -442,6 +442,8 @@ class StemSeparator:
         self,
         audio_path: str,
         keep_on_disk: frozenset[str],
+        stem_overrides: dict[str, str] | None = None,
+        wanted: frozenset[str] | None = None,
     ) -> tuple[dict[str, np.ndarray], dict[str, str]]:
         """Separate audio, keeping specified stems as on-disk WAV files.
 
@@ -455,6 +457,15 @@ class StemSeparator:
                           Their paths are returned so the next pipeline stage
                           can use them as input.  The caller is responsible for
                           cleanup once the files are no longer needed.
+            stem_overrides: Per-call tag→canonical mapping replacing this
+                          model's ``MODEL_STEM_OVERRIDES`` entry, for a model
+                          whose output names depend on what it was fed.
+            wanted:       Canonical names this stage is allowed to contribute.
+                          A model emits every stem it was trained on, which is
+                          not always what the stage is for — the primary model
+                          run on a vocals-free residual still writes a Vocals
+                          file, and letting it through overwrites the real one.
+                          ``None`` accepts everything the model emits.
 
         Returns:
             ``(loaded, on_disk)`` where:
@@ -471,7 +482,7 @@ class StemSeparator:
             [os.path.basename(p) for p in output_paths],
         )
 
-        _overrides = MODEL_STEM_OVERRIDES.get(self._model)
+        _overrides = stem_overrides or MODEL_STEM_OVERRIDES.get(self._model)
         loaded: dict[str, np.ndarray] = {}
         on_disk: dict[str, str] = {}
 
@@ -490,6 +501,18 @@ class StemSeparator:
                     "add an entry to STEM_NAME_MAP to handle this model output. "
                     "File will be discarded.",
                     os.path.basename(full),
+                )
+                try:
+                    os.unlink(full)
+                except OSError:
+                    pass
+                continue
+
+            if wanted is not None and stem_name not in wanted:
+                _log.debug(
+                    "[separator] %s → %r not declared by this stage — discarded",
+                    os.path.basename(full),
+                    stem_name,
                 )
                 try:
                     os.unlink(full)

@@ -82,6 +82,7 @@ BALANCED_PLACEMENTS: dict[str, StemPlacement] = {
     "Other":          _p(0.0, 8.0, 116.0, 62.0, 0.15),
     "Instrumental":   _p(0.0, 6.0, 104.0, 58.0, 0.40),
     "Crowd":          _p(180.0, 12.0, 120.0, 80.0),
+    "Vocals Reverb":  _p(180.0, 22.0, 150.0, 84.0),
 }
 """The reference table. Every other preset is a deliberate departure from it."""
 
@@ -107,6 +108,7 @@ STEM_ROUTING_PRESETS: dict[str, dict[str, StemPlacement]] = {
         "Other":          _p(0.0, 6.0, 72.0, 50.0, 0.12),
         "Instrumental":   _p(0.0, 4.0, 64.0, 46.0, 0.35),
         "Crowd":          _p(180.0, 6.0, 88.0, 58.0),
+        "Vocals Reverb":  _p(180.0, 10.0, 104.0, 62.0),
     },
     # Band across the front arc: each melodic voice gets its own azimuth
     # instead of a symmetric pair, which is what point placements buy over
@@ -139,6 +141,7 @@ STEM_ROUTING_PRESETS: dict[str, dict[str, StemPlacement]] = {
         "Other":          _p(0.0, 18.0, 130.0, 68.0, 0.15),
         "Instrumental":   _p(0.0, 10.0, 116.0, 62.0, 0.40),
         "Crowd":          _p(180.0, 16.0, 132.0, 74.0),
+        "Vocals Reverb":  _p(180.0, 26.0, 160.0, 88.0),
     },
     # Heights carry the non-core content. The core — lead vocal, kick, snare,
     # bass — is untouched: lifting the pulse overhead is the classic Atmos
@@ -155,6 +158,7 @@ STEM_ROUTING_PRESETS: dict[str, dict[str, StemPlacement]] = {
         "Other":          _p(0.0, 30.0, 124.0, 70.0, 0.15),
         "Instrumental":   _p(0.0, 18.0, 102.0, 60.0, 0.40),
         "Crowd":          _p(180.0, 28.0, 132.0, 76.0),
+        "Vocals Reverb":  _p(180.0, 38.0, 160.0, 90.0),
     },
     # Venue: audience behind and above the listener, kit and room opening into
     # the side pair, melodic content wrapped rather than pinned to the wall.
@@ -171,6 +175,7 @@ STEM_ROUTING_PRESETS: dict[str, dict[str, StemPlacement]] = {
         "Other":          _p(0.0, 14.0, 136.0, 72.0, 0.15),
         "Instrumental":   _p(0.0, 8.0, 118.0, 62.0, 0.40),
         "Crowd":          _p(180.0, 22.0, 150.0, 84.0),
+        "Vocals Reverb":  _p(180.0, 30.0, 168.0, 92.0),
     },
 }
 
