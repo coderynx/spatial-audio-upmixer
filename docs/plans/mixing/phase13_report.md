@@ -116,7 +116,32 @@ Whole-file (rather than in-window) the two duckers look nearly identical
 500, so averaging over the file hides exactly the defect this phase fixes.
 That is worth recording as a measurement trap for phase 14.
 
-### 3.4 Off is still off
+### 3.4 Where the split changes nothing: an isolated cymbal stem
+
+Added after a listening report of "muted hi-hats" was raised against this
+phase. It is not this phase, and the measurement says why.
+
+Band-limited noise bursts standing in for a cymbal stem, ducked at the same
+depth by phase 11's broadband detector and phase 13's multiband one:
+
+| case | depth | phase 11 | phase 13 | delta |
+|---|---|---|---|---|
+| closed hi-hat, 8ths @120 bpm, 60 ms decay | 0.7 | −4.85 dB | −4.85 dB | 0.00 dB |
+| crash, one per 2 s, 1.5 s decay | 0.7 | −0.79 dB | −0.80 dB | 0.00 dB |
+| ride, 8ths, 400 ms decay | 0.7 | −0.16 dB | −0.15 dB | +0.00 dB |
+
+**Zero difference, to two decimals.** A cymbal stem is almost entirely inside
+one band, so the high band's detector sees what the broadband detector saw and
+computes the same score; the other two bands are empty and return unity. The
+split can only change behaviour on a stem whose bands carry *different*
+material — §3.3's snare-plus-wash — which is the case it was built for and the
+only case where it moves.
+
+So the phase neither helps nor harms a per-piece kit (Kick/Snare/Hi-Hat/… as
+separate stems); it pays off on a combined Drums stem, or any stem mixing body
+and air. Worth knowing before reaching for `depth` on a drum-sub project.
+
+### 3.5 Off is still off
 
 `transient_duck(x, x, sr, 0.0)` returns `x` bit for bit — the crossover is
 never even constructed at depth 0.0 — and the Python routing path with
