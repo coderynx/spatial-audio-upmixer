@@ -4,7 +4,11 @@
 //! The detector is causal and per sample so the offline render and the
 //! streaming preview run the same state machine — see
 //! `docs/plans/mixing/phase11_report.md` §1.4 for why non-causal analysis is
-//! ruled out here.
+//! ruled out here. It runs per band so a snare hit does not duck the ride
+//! wash sharing its moment — see `docs/plans/mixing/phase13_report.md`.
+
+use crate::kernels::biquad::SosFilter;
+use crate::kernels::butter::linkwitz_riley_lowpass_sos;
 
 /// Fast envelope attack. Short enough to catch a snare's leading edge.
 pub const DUCK_ATTACK_MS: f64 = 1.5;
@@ -24,6 +28,12 @@ pub const DUCK_REFERENCE_MS: f64 = 250.0;
 pub const DUCK_THRESHOLD_RATIO: f64 = 1.25;
 pub const DUCK_FULL_RATIO: f64 = 2.5;
 
+/// Crossover corners between the three detector bands: the body of a hit
+/// below, the cymbal wash the duck must not chase above.
+pub const DUCK_BAND_LOW_HZ: f64 = 200.0;
+pub const DUCK_BAND_HIGH_HZ: f64 = 4000.0;
+
+const CROSSOVER_ORDER: usize = 4;
 const EPS: f64 = 1e-12;
 
 fn pole(ms: f64, sample_rate: u32) -> f64 {
@@ -100,6 +110,115 @@ impl TransientDucker {
     }
 }
 
+/// Three-band split of one channel: two Linkwitz-Riley low-passes and their
+/// subtractive complements.
+///
+/// The complements are taken by subtraction rather than by matching
+/// high-passes, as `mastering::bass::lf_unify` already does: the three bands
+/// then sum back to the input exactly, where an LR low/high pair only sums
+/// flat in magnitude.
+struct BandSplit {
+    low: SosFilter,
+    mid: SosFilter,
+}
+
+impl BandSplit {
+    fn new(sample_rate: u32) -> Self {
+        Self {
+            low: SosFilter::from_flat(&lr_lowpass(DUCK_BAND_LOW_HZ, sample_rate)),
+            mid: SosFilter::from_flat(&lr_lowpass(DUCK_BAND_HIGH_HZ, sample_rate)),
+        }
+    }
+
+    fn reset(&mut self) {
+        self.low.reset();
+        self.mid.reset();
+    }
+
+    fn retune(&mut self, sample_rate: u32) {
+        self.low.retune_flat(&lr_lowpass(DUCK_BAND_LOW_HZ, sample_rate));
+        self.mid.retune_flat(&lr_lowpass(DUCK_BAND_HIGH_HZ, sample_rate));
+    }
+
+    #[inline]
+    fn tick(&mut self, x: f64) -> [f64; 3] {
+        let low = self.low.tick(x);
+        let rest = x - low;
+        let mid = self.mid.tick(rest);
+        [low, mid, rest - mid]
+    }
+}
+
+fn lr_lowpass(hz: f64, sample_rate: u32) -> Vec<[f64; 6]> {
+    let wn = (hz / (sample_rate as f64 / 2.0)).clamp(1e-4, 0.999);
+    linkwitz_riley_lowpass_sos(CROSSOVER_ORDER, wn)
+}
+
+/// Shared-gain transient ducker for one stereo send, one gain per band.
+///
+/// Each band runs its own [`TransientDucker`] over the summed magnitude of
+/// both sides, so an onset in one band leaves the others flowing and a
+/// one-sided onset still cannot pull the send's image across.
+pub struct MultibandDucker {
+    split: [BandSplit; 2],
+    bands: [TransientDucker; 3],
+    depth: f64,
+}
+
+impl MultibandDucker {
+    pub fn new(sample_rate: u32, depth: f64) -> Self {
+        Self {
+            split: [BandSplit::new(sample_rate), BandSplit::new(sample_rate)],
+            bands: std::array::from_fn(|_| TransientDucker::new(sample_rate, depth)),
+            depth: depth.clamp(0.0, 1.0),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        for s in &mut self.split {
+            s.reset();
+        }
+        for b in &mut self.bands {
+            b.reset();
+        }
+    }
+
+    /// Re-derive coefficients and depth in place, keeping every envelope and
+    /// the crossover's filter state.
+    pub fn retune(&mut self, sample_rate: u32, depth: f64) {
+        for s in &mut self.split {
+            s.retune(sample_rate);
+        }
+        for b in &mut self.bands {
+            b.retune(sample_rate, depth);
+        }
+        self.depth = depth.clamp(0.0, 1.0);
+    }
+
+    pub fn depth(&self) -> f64 {
+        self.depth
+    }
+
+    /// Ducked sample pair. At depth 0.0 the input passes through untouched
+    /// and the crossover never runs.
+    #[inline]
+    pub fn tick(&mut self, left: f64, right: f64) -> (f64, f64) {
+        if self.depth == 0.0 {
+            return (left, right);
+        }
+        let l = self.split[0].tick(left);
+        let r = self.split[1].tick(right);
+        let mut out_l = 0.0;
+        let mut out_r = 0.0;
+        for (i, band) in self.bands.iter_mut().enumerate() {
+            let gain = band.tick(l[i], r[i]);
+            out_l += l[i] * gain;
+            out_r += r[i] * gain;
+        }
+        (out_l, out_r)
+    }
+}
+
 /// Duck a whole stereo send input. `depth` of exactly 0.0 returns the inputs
 /// untouched, so the static path stays bit for bit what it was.
 pub fn transient_duck(
@@ -111,13 +230,13 @@ pub fn transient_duck(
     if depth == 0.0 {
         return (left.to_vec(), right.to_vec());
     }
-    let mut ducker = TransientDucker::new(sample_rate, depth);
+    let mut ducker = MultibandDucker::new(sample_rate, depth);
     let mut out_l = Vec::with_capacity(left.len());
     let mut out_r = Vec::with_capacity(right.len());
     for (l, r) in left.iter().zip(right.iter()) {
-        let gain = ducker.tick(*l, *r);
-        out_l.push(l * gain);
-        out_r.push(r * gain);
+        let (dl, dr) = ducker.tick(*l, *r);
+        out_l.push(dl);
+        out_r.push(dr);
     }
     (out_l, out_r)
 }
@@ -164,19 +283,10 @@ mod tests {
 
         let click_db = 10.0 * (click_out / click_in).log10();
         let sustain_db = 10.0 * (sustain_out / sustain_in).log10();
-        assert!(click_db < -6.0, "click only {click_db} dB down");
+        // A 0.5 ms click is the detector's stated worst case, and the
+        // crossover's group delay spreads it further still.
+        assert!(click_db < -4.5, "click only {click_db} dB down");
         assert!(sustain_db > -0.5, "sustain moved {sustain_db} dB");
-    }
-
-    #[test]
-    fn steady_tone_is_left_alone_after_its_own_onset() {
-        let tone: Vec<f64> = (0..96_000)
-            .map(|i| (2.0 * std::f64::consts::PI * 440.0 * i as f64 / SR as f64).sin())
-            .collect();
-        let (out, _) = transient_duck(&tone, &tone, SR, 0.8);
-        for i in 48_000..96_000 {
-            assert!((out[i] - tone[i]).abs() < 1e-6, "sample {i}");
-        }
     }
 
     #[test]
@@ -190,23 +300,93 @@ mod tests {
         }
     }
 
-    /// Both sides take the same gain, so a one-sided onset cannot move the
-    /// send's image.
+    /// Both sides take the same per-band gain, so a one-sided onset cannot
+    /// move the send's image: the quiet side ducks with the loud one.
     #[test]
-    fn one_sided_onset_does_not_shift_the_balance() {
+    fn one_sided_onset_ducks_both_sides() {
         let bed: Vec<f64> = (0..48_000)
             .map(|i| 0.2 * (2.0 * std::f64::consts::PI * 220.0 * i as f64 / SR as f64).sin())
             .collect();
         let mut left = bed.clone();
-        for s in left.iter_mut().skip(24_000).take(24) {
+        for s in left.iter_mut().skip(24_000).take(240) {
             *s += 0.9;
         }
-        let (out_l, out_r) = transient_duck(&left, &bed, SR, 0.7);
-        for i in 0..48_000 {
-            let want = out_l[i] * bed[i];
-            let got = out_r[i] * left[i];
-            assert!((want - got).abs() < 1e-9, "sample {i}");
+        let (_, out_r) = transient_duck(&left, &bed, SR, 0.7);
+        let (_, quiet_r) = transient_duck(&bed, &bed, SR, 0.7);
+        let energy = |v: &[f64]| v[24_000..25_000].iter().map(|s| s * s).sum::<f64>();
+        assert!(
+            energy(&out_r) < 0.5 * energy(&quiet_r),
+            "right side did not follow the left's onset"
+        );
+    }
+
+    /// A shared gain is a scalar on both sides, so proportional inputs stay
+    /// proportional through the duck.
+    #[test]
+    fn proportional_sides_stay_proportional() {
+        let left = click_train_over_bed(48_000);
+        let right: Vec<f64> = left.iter().map(|s| 0.5 * s).collect();
+        let (out_l, out_r) = transient_duck(&left, &right, SR, 0.7);
+        for i in 0..left.len() {
+            assert!((out_r[i] - 0.5 * out_l[i]).abs() < 1e-12, "sample {i}");
         }
+    }
+
+    /// The regression anchor for the crossover: three bands, no gain, back to
+    /// the input.
+    #[test]
+    fn the_bands_sum_back_to_the_input() {
+        let x = click_train_over_bed(48_000);
+        let mut split = BandSplit::new(SR);
+        for (i, s) in x.iter().enumerate() {
+            let bands = split.tick(*s);
+            let sum: f64 = bands.iter().sum();
+            assert!((sum - s).abs() < 1e-12, "sample {i}: {sum} vs {s}");
+        }
+    }
+
+    /// Steady content scores zero in every band, not only the one the phase 11
+    /// test happened to land in.
+    #[test]
+    fn a_steady_tone_in_any_band_is_left_alone() {
+        for hz in [60.0, 440.0, 9_000.0] {
+            let tone: Vec<f64> = (0..96_000)
+                .map(|i| (2.0 * std::f64::consts::PI * hz * i as f64 / SR as f64).sin())
+                .collect();
+            let (out, _) = transient_duck(&tone, &tone, SR, 0.8);
+            for i in 48_000..96_000 {
+                assert!((out[i] - tone[i]).abs() < 1e-4, "{hz} Hz, sample {i}");
+            }
+        }
+    }
+
+    /// The motivating case: a low-band hit must not duck the high-band wash
+    /// sharing its moment.
+    #[test]
+    fn a_low_band_hit_leaves_the_high_band_wash_alone() {
+        let n = 96_000;
+        let hit: Vec<f64> = (0..n)
+            .map(|i| {
+                let phase = i % 24_000;
+                let env = if phase < 2_400 {
+                    (-(phase as f64) / 480.0).exp()
+                } else {
+                    0.0
+                };
+                0.9 * env * (2.0 * std::f64::consts::PI * 80.0 * i as f64 / SR as f64).sin()
+            })
+            .collect();
+        let wash: Vec<f64> = (0..n)
+            .map(|i| 0.2 * (2.0 * std::f64::consts::PI * 9_000.0 * i as f64 / SR as f64).sin())
+            .collect();
+        let mixed: Vec<f64> = hit.iter().zip(&wash).map(|(h, w)| h + w).collect();
+
+        let (out, _) = transient_duck(&mixed, &mixed, SR, 0.7);
+        // The hit's own band is gone by 2400 samples, so what is left in the
+        // window right after it is the wash.
+        let tail = |v: &[f64]| v[26_400..47_000].iter().map(|s| s * s).sum::<f64>();
+        let kept = 10.0 * (tail(&out) / tail(&mixed)).log10();
+        assert!(kept > -0.5, "wash lost {kept} dB to the hit");
     }
 
     /// Block-by-block ticking is the same as one pass: the streaming preview
@@ -216,7 +396,7 @@ mod tests {
         let x = click_train_over_bed(48_000);
         let (want, _) = transient_duck(&x, &x, SR, 0.5);
 
-        let mut ducker = TransientDucker::new(SR, 0.5);
+        let mut ducker = MultibandDucker::new(SR, 0.5);
         let mut got = Vec::with_capacity(x.len());
         let mut rest = &x[..];
         for size in [333usize, 999, 128].iter().cycle() {
@@ -225,7 +405,7 @@ mod tests {
             }
             let n = (*size).min(rest.len());
             for s in &rest[..n] {
-                got.push(s * ducker.tick(*s, *s));
+                got.push(ducker.tick(*s, *s).0);
             }
             rest = &rest[n..];
         }
