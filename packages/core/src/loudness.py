@@ -16,7 +16,7 @@ from functools import lru_cache
 import numpy as np
 import upmixer_dsp
 
-from upmixer.formats import ChannelLabel, OutputFormat
+from upmixer.formats import SURROUND_51, ChannelLabel, OutputFormat
 
 _SURROUND_WEIGHT: float = 1.41  # BS.1770-4 Annex 1 Table 3 literal value
 
@@ -134,6 +134,31 @@ def measure_true_peak_per_channel(
     return dict(zip(names, peaks))
 
 
+def measurement_programme(
+    channels: dict[str, np.ndarray],
+    fmt: OutputFormat,
+) -> tuple[dict[str, np.ndarray], OutputFormat]:
+    """The programme integrated loudness is measured on, per delivery spec.
+
+    Dolby Atmos Music and Netflix both measure the **5.1 re-render** of an
+    immersive mix rather than the full bed, and that is the number distributor
+    QC reads (`docs/standards/loudness_dsp_bs1770.md` §"Measurement
+    programme").  Beds of 5.1 or narrower are already their own programme and
+    are returned untouched.
+
+    Returns:
+        ``(channels, fmt)`` for the programme to measure.  The folded
+        programme carries no LFE — BS.1770 weights it zero either way.
+    """
+    names = list(channels)
+    folded = upmixer_dsp.fold_to_51(names, [
+        np.ascontiguousarray(channels[n], dtype=np.float64) for n in names
+    ])
+    if not folded:
+        return channels, fmt
+    return dict(zip(upmixer_dsp.FOLD_51_CHANNELS, folded)), SURROUND_51
+
+
 def measure_loudness_stats(
     channels: dict[str, np.ndarray],
     sample_rate: int,
@@ -177,6 +202,7 @@ def normalize_loudness(
     max_tp_dbtp: float = -1.0,
     max_gain_db: float = 30.0,
     apply_tp_gain: bool = True,
+    fold_measurement: bool = False,
 ) -> tuple[dict[str, np.ndarray], dict]:
     """Apply a single linear gain for BS.1770-4 loudness (+ optional True Peak) compliance.
 
@@ -198,12 +224,22 @@ def normalize_loudness(
             :class:`~upmixer.mastering.chain.MasteringChain`). Callers
             without such a limiter (e.g. the binaural renderer) must leave
             this ``True``.
+        fold_measurement: measure loudness on :func:`measurement_programme`
+            — the 5.1 re-render for beds wider than 5.1 — instead of the
+            delivered bed.  The correction is still one scalar gain, which
+            commutes with the fold, so nothing has to iterate.
 
     Returns:
         (adjusted_channels, info) where info dict has keys:
             measured_lkfs, measured_tp_dbtp, applied_gain_db, tp_limited.
     """
-    measured_lkfs = measure_integrated_loudness(channels, sample_rate, fmt)
+    def _measure(bed: dict[str, np.ndarray]) -> float:
+        if not fold_measurement:
+            return measure_integrated_loudness(bed, sample_rate, fmt)
+        programme, programme_fmt = measurement_programme(bed, fmt)
+        return measure_integrated_loudness(programme, sample_rate, programme_fmt)
+
+    measured_lkfs = _measure(channels)
     measurable = measured_lkfs > ABS_GATE
     gain_db = min(target_lkfs - measured_lkfs, max_gain_db) if measurable else 0.0
     gain_linear = 10.0 ** (gain_db / 20.0)
@@ -222,7 +258,7 @@ def normalize_loudness(
         gain_db -= tp_excess_db
         tp_limited = True
 
-    final_lkfs = measure_integrated_loudness(adjusted, sample_rate, fmt)
+    final_lkfs = _measure(adjusted)
     final_tp = measure_true_peak(adjusted)
     return adjusted, {
         "pre_lkfs":         measured_lkfs,

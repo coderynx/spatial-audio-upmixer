@@ -58,7 +58,8 @@ def test_configuration_serves_engine_constants(web_client):
         "limiter_release_ms", "safety_margin_db", "loudness_max_gain_db", "surround_downmix_coeff",
         "height_downmix_coeff",
         "itu_center_coeff", "speaker_directions",
-        "comp_profiles", "bass_profiles", "bass_sub_cutoff_hz", "bass_mid_cutoff_hz",
+        "comp_profiles", "bass_profiles", "delivery_targets",
+        "bass_sub_cutoff_hz", "bass_mid_cutoff_hz",
         "bass_excite_blend", "bass_excite_drive", "bass_lf_spreads",
         "bass_punch_fast_ms", "bass_punch_slow_ms", "bass_punch_max_db",
         "bass_decorr_low_hz", "bass_decorr_high_hz", "bass_decorr_sections",
@@ -83,6 +84,10 @@ def test_configuration_serves_engine_constants(web_client):
     assert listening["loudness_target_lkfs"] is None
     assert set(constants["transaural_voicing_params"]) == {
         "stereo", "smart_speaker", "car", "laptop", "phone",
+    }
+    # Delivery targets carry their tolerance so the web can render pass/fail.
+    assert constants["delivery_targets"]["ebu-r128"] == {
+        "target_lkfs": -23.0, "max_tp_dbtp": -1.0, "tolerance_lu": 0.5,
     }
 
 

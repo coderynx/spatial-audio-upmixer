@@ -225,6 +225,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable BS.1770-4 loudness normalization (mastering phase, default: enabled)",
     )
     parser.add_argument(
+        "--loudness-preset",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Named delivery target supplying loudness and ceiling: "
+            "atmos-music, netflix-atmos, ebu-r128, atsc-a85, streaming-stereo, "
+            "apple-music. --loudness-target overrides its loudness"
+        ),
+    )
+    parser.add_argument(
         "--loudness-target",
         type=float,
         default=None,

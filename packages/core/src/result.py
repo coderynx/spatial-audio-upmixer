@@ -29,10 +29,22 @@ class UpmixResult:
         n_channels_out: Number of output channels written.
         mode: Processing mode — ``"realtime"`` (STFT coherence) or ``"stem"``.
         measured_lkfs: Delivered integrated loudness (BS.1770-5),
-            or *None* if loudness normalization was disabled.
+            or *None* if loudness normalization was disabled.  Measured on the
+            5.1 re-render when ``fold_referenced`` is set.
         measured_tp_dbtp: Delivered True Peak in dBTP, or *None*.
         applied_gain_db: Linear gain applied for loudness normalization in dB,
             or *None*.
+        target_preset: Name of the delivery target the master was held to,
+            or *None* for free target/ceiling values.
+        target_lkfs: Integrated loudness target in LKFS.
+        target_max_tp_dbtp: True Peak ceiling in dBTP.
+        target_tolerance_lu: The target's published tolerance in LU, or *None*.
+        loudness_compliant: Whether the delivered loudness lands inside that
+            tolerance; *None* when the target publishes none.
+        tp_compliant: Whether the delivered True Peak stays under the ceiling.
+        fold_referenced: Whether ``measured_lkfs`` is the 5.1 re-render's.
+        full_bed_lkfs: Integrated loudness of the delivered bed itself, the
+            secondary diagnostic beside a fold-referenced measurement.
         stems: Canonical stem names used during separation (stem mode only),
             or *None* in realtime mode.
         processing_time_seconds: Wall-clock time for the full operation.
@@ -51,6 +63,14 @@ class UpmixResult:
     measured_lkfs: float | None = None
     measured_tp_dbtp: float | None = None
     applied_gain_db: float | None = None
+    target_preset: str | None = None
+    target_lkfs: float | None = None
+    target_max_tp_dbtp: float | None = None
+    target_tolerance_lu: float | None = None
+    loudness_compliant: bool | None = None
+    tp_compliant: bool | None = None
+    fold_referenced: bool = False
+    full_bed_lkfs: float | None = None
     stems: list[str] | None = None
     spatial_profile: str | None = None
     spatial_profile_confidence: float | None = None

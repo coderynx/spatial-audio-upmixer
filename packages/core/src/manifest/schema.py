@@ -214,6 +214,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "block_size":                 ("block_size",               int),
     "normalize_output":           ("normalize_output",         bool),
     "loudness_normalize":         ("loudness_normalize",       bool),
+    "loudness_target_preset":     ("loudness_target_preset",   str),
     "loudness_target":            ("loudness_target_lkfs",     float),
     "loudness_max_tp":            ("loudness_max_tp",          float),
     "limiter_lookahead_ms":       ("limiter_lookahead_ms",     float),

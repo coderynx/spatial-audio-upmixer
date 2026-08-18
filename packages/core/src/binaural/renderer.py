@@ -19,6 +19,7 @@ from upmixer.binaural.voicing import apply_voicing
 from upmixer.formats import BINAURAL, ChannelLabel, OutputFormat
 from upmixer.loudness import normalize_loudness
 from upmixer.mastering.chain import MasteringResult
+from upmixer.mastering.delivery import resolve_delivery_target
 from upmixer.utils import soft_limit
 
 
@@ -130,13 +131,14 @@ def render_binaural_delivery(
         return stereo_channels, MasteringResult()
 
     resolved = resolve_profile(cfg.binaural_profile)
-    target_lkfs = VOICING_PARAMS[resolved].loudness_target_lkfs or cfg.loudness_target_lkfs
+    delivery = resolve_delivery_target(cfg)
+    target_lkfs = VOICING_PARAMS[resolved].loudness_target_lkfs or delivery.target_lkfs
     stereo_channels, info = normalize_loudness(
         stereo_channels,
         sample_rate,
         BINAURAL,
         target_lkfs=target_lkfs,
-        max_tp_dbtp=cfg.loudness_max_tp,
+        max_tp_dbtp=delivery.max_tp_dbtp,
         max_gain_db=min(cfg.loudness_max_gain_db, BINAURAL_LOUDNESS_MAX_GAIN_DB),
     )
     stereo_channels[ChannelLabel.FL.value] = soft_limit(

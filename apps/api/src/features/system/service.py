@@ -43,6 +43,7 @@ def engine_constants() -> dict[str, Any]:
         SUB_CUTOFF_HZ,
     )
     from upmixer.mastering.compressor import COMP_PROFILES
+    from upmixer.mastering.delivery import DELIVERY_TARGETS
     from upmixer.mastering.limiter import _SAFETY_MARGIN_DB
     from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
     from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
@@ -85,6 +86,7 @@ def engine_constants() -> dict[str, Any]:
         },
         "comp_profiles": COMP_PROFILES,
         "bass_profiles": BASS_PROFILES,
+        "delivery_targets": DELIVERY_TARGETS,
         "bass_sub_cutoff_hz": SUB_CUTOFF_HZ,
         "bass_mid_cutoff_hz": MID_CUTOFF_HZ,
         "bass_excite_blend": EXCITE_BLEND,
@@ -117,6 +119,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     from upmixer.manifest import list_manifest_keys, manifest_parameter_schema
     from upmixer.mastering.bass import BASS_PROFILES, LFE_MODES, LF_SPREAD_NAMES
     from upmixer.mastering.compressor import COMP_PROFILES
+    from upmixer.mastering.delivery import DELIVERY_TARGETS
     from upmixer.mastering.eq import EQ_PROFILES
     from upmixer.separation.bleed_reduction import DEBLEED_MODELS, PHASE_FIX_REFERENCE_MODELS
     from upmixer.separation.stem_eq import STEM_EQ_PROFILES
@@ -155,6 +158,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
             "eq_profiles": sorted(EQ_PROFILES),
             "compressor_profiles": sorted(COMP_PROFILES),
             "bass_profiles": sorted(BASS_PROFILES),
+            "delivery_targets": list(DELIVERY_TARGETS),
             "bass_spreads": list(LF_SPREAD_NAMES),
             "bass_lfe_modes": list(LFE_MODES),
             "stem_eq_profiles": sorted(STEM_EQ_PROFILES),

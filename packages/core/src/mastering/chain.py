@@ -42,7 +42,12 @@ Processing order
    to all channels simultaneously — no dynamic processing, no clipping.  The
    scalar True-Peak gain step ``normalize_loudness`` otherwise applies is
    skipped here (``apply_tp_gain=False``) since step 4 below now owns
-   True-Peak compliance for this chain.
+   True-Peak compliance for this chain.  Target and ceiling come from the
+   named delivery target (``config.loudness_target_preset``, resolved by
+   :func:`~upmixer.mastering.delivery.resolve_delivery_target`), and for beds
+   wider than 5.1 both the normalization and the reported number are measured
+   on the 5.1 re-render the delivery specs read
+   (``docs/standards/loudness_dsp_bs1770.md`` §"Measurement programme").
 4. **Look-ahead true-peak limiter** — a linked, look-ahead brickwall
    limiter (:class:`~upmixer.mastering.limiter.LookAheadLimiter`) reduces
    gain ahead of any inter-sample peak so the delivered signal never
@@ -75,6 +80,7 @@ import numpy as np
 from upmixer.config import UpmixConfig
 from upmixer.formats import OutputFormat
 
+from .delivery import resolve_delivery_target
 from .limiter import LookAheadLimiter
 
 _log = logging.getLogger("upmixer")
@@ -82,9 +88,10 @@ _log = logging.getLogger("upmixer")
 from upmixer.manifest import register_block_keys as _rbk
 _rbk("mastering", {
     "loudness": {
-        "normalize": ("config", "loudness_normalize"),
-        "target":    ("config", "loudness_target"),
-        "max_tp":    ("config", "loudness_max_tp"),
+        "normalize":     ("config", "loudness_normalize"),
+        "target_preset": ("config", "loudness_target_preset"),
+        "target":        ("config", "loudness_target"),
+        "max_tp":        ("config", "loudness_max_tp"),
     },
 })
 del _rbk
@@ -143,6 +150,52 @@ class MasteringResult:
     per_channel_tp_dbtp: dict[str, float] | None = None
     """Delivered True Peak per channel, in dBTP, keyed by channel name."""
 
+    target_preset: str | None = None
+    """Name of the delivery target the pass was held to, or *None* for free
+    target/ceiling values."""
+
+    target_lkfs: float | None = None
+    """Integrated loudness the pass normalized to, in LKFS."""
+
+    target_tolerance_lu: float | None = None
+    """The target's published tolerance in LU, or *None* where the
+    specification gives a target without one."""
+
+    target_max_tp_dbtp: float | None = None
+    """True Peak ceiling the pass was held to, in dBTP."""
+
+    loudness_compliant: bool | None = None
+    """Whether ``measured_lkfs`` lands inside ``target_tolerance_lu`` of the
+    target.  *None* when the target publishes no tolerance."""
+
+    tp_compliant: bool | None = None
+    """Whether ``measured_tp_dbtp`` stays under the ceiling."""
+
+    fold_referenced: bool = False
+    """True when ``measured_lkfs`` and the loudness statistics come from the
+    5.1 re-render rather than the delivered bed."""
+
+    full_bed_lkfs: float | None = None
+    """Integrated loudness of the delivered bed itself — the secondary
+    diagnostic that sits next to a fold-referenced ``measured_lkfs``."""
+
+    def delivery_fields(self) -> dict:
+        """The loudness and compliance block, keyed as
+        :class:`~upmixer.result.UpmixResult` fields."""
+        return {
+            "measured_lkfs": self.measured_lkfs,
+            "measured_tp_dbtp": self.measured_tp_dbtp,
+            "applied_gain_db": self.applied_gain_db,
+            "target_preset": self.target_preset,
+            "target_lkfs": self.target_lkfs,
+            "target_max_tp_dbtp": self.target_max_tp_dbtp,
+            "target_tolerance_lu": self.target_tolerance_lu,
+            "loudness_compliant": self.loudness_compliant,
+            "tp_compliant": self.tp_compliant,
+            "fold_referenced": self.fold_referenced,
+            "full_bed_lkfs": self.full_bed_lkfs,
+        }
+
 
 class MasteringChain:
     """Stateless mastering chain for post-mixing multichannel audio.
@@ -176,6 +229,10 @@ class MasteringChain:
             ``MasteringResult`` carries the loudness metadata.
         """
         cfg = self._cfg
+        delivery = resolve_delivery_target(cfg)
+        # Layout arity, not output type: a stereo/binaural/transaural delivery
+        # already measures its own two-channel programme.
+        fold = len(output_fmt.channels) > 6
         result = MasteringResult()
         comp_gr: tuple[float, float] | None = None
 
@@ -291,15 +348,16 @@ class MasteringChain:
                 channels,
                 sample_rate,
                 output_fmt,
-                target_lkfs=cfg.loudness_target_lkfs,
-                max_tp_dbtp=cfg.loudness_max_tp,
+                target_lkfs=delivery.target_lkfs,
+                max_tp_dbtp=delivery.max_tp_dbtp,
                 max_gain_db=cfg.loudness_max_gain_db,
                 apply_tp_gain=False,
+                fold_measurement=fold,
             )
             _log.info(
                 "  Loudness: %.1f LKFS → %.1f LKFS  gain %+.1f dB  TP %.1f dBTP%s",
                 ln_info["pre_lkfs"],
-                cfg.loudness_target_lkfs,
+                delivery.target_lkfs,
                 ln_info["applied_gain_db"],
                 ln_info["measured_tp_dbtp"],
                 "  [TP limited]" if ln_info["tp_limited"] else "",
@@ -312,7 +370,7 @@ class MasteringChain:
         # have, which no later scalar gain can undo (the same bug class
         # fixed in render_binaural_delivery; see that module's docstring).
         limiter = LookAheadLimiter(
-            ceiling_dbtp=cfg.loudness_max_tp,
+            ceiling_dbtp=delivery.max_tp_dbtp,
             lookahead_ms=cfg.limiter_lookahead_ms,
             release_ms=cfg.limiter_release_ms,
             sample_rate=sample_rate,
@@ -322,14 +380,24 @@ class MasteringChain:
         if cfg.loudness_normalize:
             from upmixer.loudness import (
                 ABS_GATE,
+                measure_integrated_loudness,
                 measure_loudness_stats,
                 measure_true_peak,
                 measure_true_peak_per_channel,
+                measurement_programme,
             )
 
-            stats = measure_loudness_stats(channels, sample_rate, output_fmt)
+            programme, programme_fmt = (
+                measurement_programme(channels, output_fmt)
+                if fold
+                else (channels, output_fmt)
+            )
+            stats = measure_loudness_stats(programme, sample_rate, programme_fmt)
+            # True peak is measured on the delivered bed either way: the
+            # ceiling is what the limiter guarantees, and it acts there.
             measured_tp = measure_true_peak(channels)
             short_term = stats["max_short_term_lkfs"]
+            deviation = abs(stats["integrated_lkfs"] - delivery.target_lkfs)
             result = MasteringResult(
                 measured_lkfs=stats["integrated_lkfs"],
                 measured_tp_dbtp=measured_tp,
@@ -349,5 +417,21 @@ class MasteringChain:
                 comp_gr_peak_db=comp_gr[0] if comp_gr else None,
                 comp_gr_avg_db=comp_gr[1] if comp_gr else None,
                 per_channel_tp_dbtp=measure_true_peak_per_channel(channels),
+                target_preset=delivery.preset,
+                target_lkfs=delivery.target_lkfs,
+                target_tolerance_lu=delivery.tolerance_lu,
+                target_max_tp_dbtp=delivery.max_tp_dbtp,
+                loudness_compliant=(
+                    deviation <= delivery.tolerance_lu
+                    if delivery.tolerance_lu is not None
+                    else None
+                ),
+                tp_compliant=measured_tp <= delivery.max_tp_dbtp,
+                fold_referenced=fold,
+                full_bed_lkfs=(
+                    measure_integrated_loudness(channels, sample_rate, output_fmt)
+                    if fold
+                    else None
+                ),
             )
         return channels, result

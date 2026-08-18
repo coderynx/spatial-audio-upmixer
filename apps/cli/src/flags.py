@@ -66,6 +66,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.transaural_profile = args.transaural_profile
     if args.no_loudness_normalize:
         config.loudness_normalize = False
+    if args.loudness_preset is not None:
+        config.loudness_target_preset = args.loudness_preset
     if args.loudness_target is not None:
         config.loudness_target_lkfs = args.loudness_target
     if args.limiter_lookahead is not None:

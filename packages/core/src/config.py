@@ -89,8 +89,12 @@ class UpmixConfig:
 
     downmix_enabled: bool = False
     loudness_normalize: bool = True
-    loudness_target_lkfs: float = -18.0
-    loudness_max_tp: float = -1.0
+    # Unset defers to the named delivery target, and with none named to the
+    # Dolby Atmos Music pair these two have always defaulted to; see
+    # upmixer.mastering.delivery.
+    loudness_target_preset: str | None = None
+    loudness_target_lkfs: float | None = None
+    loudness_max_tp: float | None = None
     loudness_max_gain_db: float = 30.0
 
     limiter_lookahead_ms: float = 5.0

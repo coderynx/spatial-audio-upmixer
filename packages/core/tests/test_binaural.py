@@ -15,6 +15,7 @@ from upmixer.binaural.renderer import (
 )
 from upmixer.config import UpmixConfig
 from upmixer.formats import BINAURAL, BINAURAL_BED_FORMATS, ChannelLabel, FORMAT_MAP
+from upmixer.mastering.delivery import resolve_delivery_target
 
 
 def test_encode_gains_omni_channel_is_unity():
@@ -258,7 +259,7 @@ def test_binaural_delivery_meets_true_peak_ceiling_on_hot_bed(profile):
 
     _, result = render_binaural_delivery(channels, bed_fmt, sr, cfg)
 
-    assert result.measured_tp_dbtp <= cfg.loudness_max_tp + 0.05
+    assert result.measured_tp_dbtp <= resolve_delivery_target(cfg).max_tp_dbtp + 0.05
 
 
 @pytest.mark.parametrize("profile", BINAURAL_PROFILES)

@@ -449,9 +449,7 @@ class UpmixPipeline:
             n_channels_in=input_fmt.n_channels,
             n_channels_out=output_fmt.n_channels,
             mode="realtime",
-            measured_lkfs=mastering_result.measured_lkfs,
-            measured_tp_dbtp=mastering_result.measured_tp_dbtp,
-            applied_gain_db=mastering_result.applied_gain_db,
+            **mastering_result.delivery_fields(),
             spatial_profile=self._spatial_plan.profile if self._spatial_plan else None,
             spatial_profile_confidence=self._spatial_plan.confidence if self._spatial_plan else None,
             processing_time_seconds=time.monotonic() - t0,
@@ -565,7 +563,9 @@ class UpmixPipeline:
     ) -> None:
         """Write ITU-R BS.775-4 Table 2 stereo downmix to cfg.downmix_output_path."""
         from upmixer.loudness import measure_true_peak
+        from upmixer.mastering.delivery import resolve_delivery_target
 
+        ceiling = resolve_delivery_target(cfg).max_tp_dbtp
         L, R = itu_downmix_stereo(
             channels,
             surround_coeff=cfg.surround_downmix_coeff,
@@ -573,9 +573,9 @@ class UpmixPipeline:
         )
         stereo = np.column_stack([L, R])
         tp = measure_true_peak({"FL": L, "FR": R})
-        if tp > cfg.loudness_max_tp:
-            stereo *= 10.0 ** ((cfg.loudness_max_tp - tp) / 20.0)
-            _log.warning("  Downmix gain reduced %.2f dB to protect true peak", cfg.loudness_max_tp - tp)
+        if tp > ceiling:
+            stereo *= 10.0 ** ((ceiling - tp) / 20.0)
+            _log.warning("  Downmix gain reduced %.2f dB to protect true peak", ceiling - tp)
         write_audio(
             cfg.downmix_output_path, stereo, sample_rate, cfg.output_codec, cfg.output_subtype
         )

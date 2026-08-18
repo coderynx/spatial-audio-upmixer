@@ -19,6 +19,7 @@ from upmixer.crosstalk.renderer import (
 from upmixer.binaural import head_model
 from upmixer.binaural.head_model import synth_hrir
 from upmixer.formats import FORMAT_MAP, TRANSAURAL, TRANSAURAL_BED_FORMATS, ChannelLabel
+from upmixer.mastering.delivery import resolve_delivery_target
 
 SR = 48000
 HRIR_TAPS = 256
@@ -195,7 +196,7 @@ def test_crosstalk_delivery_meets_true_peak_ceiling_on_hot_bed(profile):
 
     _, result = render_crosstalk_delivery(channels, bed_fmt, SR, cfg)
 
-    assert result.measured_tp_dbtp <= cfg.loudness_max_tp + 0.05
+    assert result.measured_tp_dbtp <= resolve_delivery_target(cfg).max_tp_dbtp + 0.05
 
 
 @pytest.mark.parametrize("profile", CROSSTALK_PROFILES)

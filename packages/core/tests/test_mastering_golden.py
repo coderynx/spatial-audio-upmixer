@@ -12,6 +12,12 @@ arm64 and CI's x86-64) — either flips a bit-exact hash without any audible
 change. The hex constants stay the storage format so the regeneration block
 below keeps printing paste-ready values.
 
+The channel RMS values dropped 1.17 dB in phase 1: a 7.1.4 bed now normalizes
+to the loudness of its 5.1 re-render rather than of the full twelve channels
+(`docs/standards/loudness_dsp_bs1770.md` §"Measurement programme"), and this
+fixture puts full-level content in every height and back channel, so its fold
+delta is far larger than the ~0.32 dB real material shows.
+
 To regenerate after an intentional behaviour change, run:
     REGENERATE_GOLDEN=1 uv run python packages/core/tests/test_mastering_golden.py
 """
@@ -33,23 +39,23 @@ _DURATION_S = 5
 _FMT = FORMAT_MAP["7.1.4"]
 
 _GOLDEN_CHANNEL_RMS_HEX = {
-    "BL": "32482b93b0cba23f",
-    "BR": "48be7722c0cca23f",
-    "C": "4f902852101da23f",
-    "FL": "4cf59bc79b1aa23f",
-    "FR": "e544a6b65718a23f",
-    "LFE": "2954ac787535ac3f",
-    "SL": "a2e8d0bf5ac5a23f",
-    "SR": "ffc369d090c3a23f",
-    "TBL": "f0bca6b7dbd0a23f",
-    "TBR": "66570e2417c3a23f",
-    "TFL": "82b27bea8ac6a23f",
-    "TFR": "f75ddf574dc4a23f",
+    "BL": "08b3146cbb6ca03f",
+    "BR": "fc180ebaa86da03f",
+    "C": "10e2178844a89f3f",
+    "FL": "3f853d05faa39f3f",
+    "FR": "c465d13a04a09f3f",
+    "LFE": "adfdc50487a6a83f",
+    "SL": "d3b86a2d3267a03f",
+    "SR": "6d69da01a265a03f",
+    "TBL": "cba213a93f71a03f",
+    "TBR": "8d1e9fae3765a03f",
+    "TFL": "72a3cdf93b68a03f",
+    "TFR": "51a53fc14666a03f",
 }
 
-_GOLDEN_LKFS_HEX    = "09000000000032c0"   # -18.0 LKFS (final)
-_GOLDEN_TP_HEX      = "9bfddc17d6692fc0"
-_GOLDEN_GAIN_HEX    = "38c860dbfd232cc0"
+_GOLDEN_LKFS_HEX    = "01000000000032c0"   # -18.0 LKFS (5.1 re-render)
+_GOLDEN_TP_HEX      = "4f032adfbde030c0"
+_GOLDEN_GAIN_HEX    = "3ad1d781a37b2ec0"
 _GOLDEN_TP_LIMITED  = False
 
 # BS.1770-5 Annex 3 weights. Moved by 29 ULP (1.3e-14 LKFS) when gating-block

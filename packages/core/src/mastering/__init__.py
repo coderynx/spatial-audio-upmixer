@@ -12,8 +12,17 @@ Sub-modules:
     compressor       — BusCompressor + COMP_PROFILES
     bass             — BassController + BASS_PROFILES
     limiter          — LookAheadLimiter (look-ahead true-peak brickwall limiter)
+    delivery         — DELIVERY_TARGETS (named loudness/ceiling specifications)
 """
 from .chain import MasteringChain, MasteringResult
+from .delivery import DELIVERY_TARGETS, DeliveryTarget, resolve_delivery_target
 from .match_reference import ReferenceMatchProcessor
 
-__all__ = ["MasteringChain", "MasteringResult", "ReferenceMatchProcessor"]
+__all__ = [
+    "DELIVERY_TARGETS",
+    "DeliveryTarget",
+    "MasteringChain",
+    "MasteringResult",
+    "ReferenceMatchProcessor",
+    "resolve_delivery_target",
+]

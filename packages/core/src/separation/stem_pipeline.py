@@ -273,8 +273,10 @@ class StemUpmixPipeline:
 
     def _write_downmix(self, channels: dict[str, np.ndarray], out_sr: int) -> None:
         from upmixer.loudness import measure_true_peak
+        from upmixer.mastering.delivery import resolve_delivery_target
 
         cfg = self.config
+        ceiling = resolve_delivery_target(cfg).max_tp_dbtp
         left, right = itu_downmix_stereo(
             channels,
             surround_coeff=cfg.surround_downmix_coeff,
@@ -282,8 +284,8 @@ class StemUpmixPipeline:
         )
         stereo = np.column_stack([left, right])
         tp = measure_true_peak({"FL": left, "FR": right})
-        if tp > cfg.loudness_max_tp:
-            stereo *= 10.0 ** ((cfg.loudness_max_tp - tp) / 20.0)
+        if tp > ceiling:
+            stereo *= 10.0 ** ((ceiling - tp) / 20.0)
         write_audio(
             cfg.downmix_output_path, stereo, out_sr, cfg.output_codec, cfg.output_subtype
         )
@@ -421,9 +423,7 @@ class StemUpmixPipeline:
             n_channels_in=sep.input_fmt.n_channels,
             n_channels_out=output_fmt.n_channels,
             mode="stem",
-            measured_lkfs=mastering_result.measured_lkfs,
-            measured_tp_dbtp=mastering_result.measured_tp_dbtp,
-            applied_gain_db=mastering_result.applied_gain_db,
+            **mastering_result.delivery_fields(),
             stems=sep.stem_summary,
             processing_time_seconds=time.monotonic() - t0,
         )
