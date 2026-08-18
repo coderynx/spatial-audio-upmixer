@@ -56,6 +56,14 @@ export type BassProfile = {
   decorrelate: number;
 };
 
+/** One named delivery specification. `tolerance_lu` is null where the spec
+ * publishes a target without one. */
+export type DeliveryTarget = {
+  target_lkfs: number;
+  max_tp_dbtp: number;
+  tolerance_lu: number | null;
+};
+
 /** A mastering block as the project stores it: a profile name plus per-field
  * overrides, any of which may be null meaning "use the profile's value".
  *
@@ -256,6 +264,7 @@ export type ServedEngineConstants = {
   speaker_directions: Record<string, { azimuth_rad: number; elevation_rad: number }>;
   comp_profiles: Record<string, CompProfile>;
   bass_profiles: Record<string, BassProfile>;
+  delivery_targets: Record<string, DeliveryTarget>;
   bass_sub_cutoff_hz: number;
   bass_mid_cutoff_hz: number;
   bass_excite_blend: number;

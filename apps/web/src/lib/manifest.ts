@@ -29,7 +29,7 @@ export type Manifest = {
     stem_source_anchor_strength: number;
   };
   mastering: {
-    loudness: { normalize: boolean; target: number; max_tp: number };
+    loudness: { normalize: boolean; target_preset: string | null; target: number; max_tp: number };
     eq: { profile: string | null; strength: number };
     match_reference: {
       strength: number;
@@ -151,7 +151,7 @@ export const defaultManifest: Manifest = {
     stem_source_anchor_strength: 0.5,
   },
   mastering: {
-    loudness: { normalize: true, target: -18, max_tp: -1 },
+    loudness: { normalize: true, target_preset: null, target: -18, max_tp: -1 },
     eq: { profile: null, strength: 1 },
     match_reference: { strength: 0.7, spectrum: true, rms: true, max_db: 6 },
     compressor: {

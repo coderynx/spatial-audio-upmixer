@@ -4,7 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { JobActions } from "./JobActions";
-import { jobDetails, statusLabel, statusVariant } from "./status";
+import { jobDelivery, jobDetails, statusLabel, statusVariant } from "./status";
 import type { JobAction } from "./useJobs";
 
 export function JobTable({
@@ -21,11 +21,12 @@ export function JobTable({
   onRemix: (job: Job) => void;
 }) {
   return (
-    <table className="w-full min-w-[760px] text-left text-[13px]">
+    <table className="w-full min-w-[880px] text-left text-[13px]">
       <thead className="sticky top-0 z-10 border-b bg-card text-[11px] font-semibold uppercase tracking-[.06em] text-muted-foreground">
         <tr>
           <th className="px-3 py-1.5 font-semibold">Job</th>
           <th className="px-3 py-1.5 font-semibold">Render</th>
+          <th className="px-3 py-1.5 font-semibold">Delivered</th>
           <th className="px-3 py-1.5 font-semibold">Status</th>
           <th className="min-w-40 px-3 py-1.5 font-semibold">Progress</th>
           <th className="px-3 py-1.5 font-semibold">Updated</th>
@@ -35,6 +36,7 @@ export function JobTable({
       <tbody>
         {jobs.map((job) => {
           const { layout, mode } = jobDetails(job);
+          const delivery = jobDelivery(job);
           return (
             <tr
               key={job.id}
@@ -53,6 +55,27 @@ export function JobTable({
               <td className="px-3 py-1.5">
                 <p className="tabular-nums">{layout}</p>
                 <p className="text-[11px] capitalize text-muted-foreground">{mode}</p>
+              </td>
+              <td className="whitespace-nowrap px-3 py-1.5">
+                {delivery ? (
+                  <>
+                    <p className="tabular-nums">
+                      {delivery.lkfs.toFixed(1)} LKFS
+                      {delivery.dbtp === null ? "" : ` · ${delivery.dbtp.toFixed(1)} dBTP`}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {delivery.preset ?? "custom"}
+                      {delivery.foldReferenced ? " · 5.1 fold" : ""}
+                      {delivery.compliant === null
+                        ? ""
+                        : delivery.compliant
+                          ? " · pass"
+                          : " · fail"}
+                    </p>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
               </td>
               <td className="px-3 py-1.5">
                 <Badge variant={statusVariant(job.status)} className="capitalize">

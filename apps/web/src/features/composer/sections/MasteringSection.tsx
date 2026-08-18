@@ -135,6 +135,16 @@ function titleCase(value: string) {
     .join(" ");
 }
 
+/** The loudness and ceiling a delivery target carries, as manifest fields.
+ * Empty for "Custom", which leaves whatever the two controls already show. */
+function deliveryTargetValues(
+  preset: string,
+  targets: Record<string, { target_lkfs: number; max_tp_dbtp: number }> | undefined,
+) {
+  const target = preset ? targets?.[preset] : undefined;
+  return target ? { target: target.target_lkfs, max_tp: target.max_tp_dbtp } : {};
+}
+
 export function MasteringSection({
   manifest,
   setManifest,
@@ -315,6 +325,29 @@ export function MasteringSection({
         }
       >
         <div className={FIELD_GRID}>
+          {/* Picking a target writes its numbers into the two controls below,
+              which stay live as overrides — the backend resolves the same way
+              round (preset first, explicit field wins). */}
+          <SelectField
+            label="Delivery target"
+            value={loudness.target_preset ?? ""}
+            onChange={(preset) =>
+              setMastering({
+                loudness: {
+                  ...loudness,
+                  target_preset: preset || null,
+                  ...deliveryTargetValues(preset, configuration?.constants?.delivery_targets),
+                },
+              })
+            }
+            options={[
+              { value: "", label: "Custom" },
+              ...(choices?.delivery_targets || []).map((value) => ({
+                value,
+                label: titleCase(value),
+              })),
+            ]}
+          />
           <SliderField
             label="Target"
             value={loudness.target}
