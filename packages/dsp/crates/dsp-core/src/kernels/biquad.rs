@@ -205,36 +205,3 @@ pub fn lfilter(b: &[f64], a: &[f64], signal: &[f64]) -> Vec<f64> {
     }
     out
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn one_pole_lfilter_matches_closed_form() {
-        let alpha = 0.25;
-        let b = [alpha];
-        let a = [1.0, -(1.0 - alpha)];
-        let x = [1.0, 1.0, 1.0, 1.0];
-        let y = lfilter(&b, &a, &x);
-        let mut expect = 0.0;
-        for (i, v) in y.iter().enumerate() {
-            expect = alpha * 1.0 + (1.0 - alpha) * expect;
-            assert!((v - expect).abs() < 1e-15, "sample {i}");
-        }
-    }
-
-    #[test]
-    fn zi_holds_dc_steady_state() {
-        // A filter seeded with its own step state must pass DC unchanged.
-        let sos = [[0.2, 0.4, 0.2, 1.0, -0.3, 0.1]];
-        let mut f = SosFilter::from_flat(&sos);
-        f.set_step_state(1.0);
-        let mut sig = vec![1.0; 8];
-        f.process(&mut sig);
-        let gain = Sos::new(sos[0]).dc_gain();
-        for v in sig {
-            assert!((v - gain).abs() < 1e-12);
-        }
-    }
-}

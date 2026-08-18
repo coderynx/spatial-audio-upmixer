@@ -151,25 +151,3 @@ impl StreamingCompressor {
 
 /// Streaming SOS filter — a thin alias so call sites read as "carried state".
 pub type StreamingSos = SosFilter;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::kernels::biquad::lfilter;
-
-    #[test]
-    fn one_pole_matches_the_offline_lfilter() {
-        let x: Vec<f64> = (0..2000).map(|i| (i as f64 * 0.03).sin()).collect();
-        let sr = 48_000.0;
-        let ms = 20.0;
-        let mut p = OnePole::new(ms, sr);
-        let got: Vec<f64> = x.iter().map(|v| p.tick(*v)).collect();
-
-        let alpha = 1.0 - (-(1.0 / sr) / (ms / 1000.0)).exp();
-        let want = lfilter(&[alpha], &[1.0, -(1.0 - alpha)], &x);
-        for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
-            assert!((a - b).abs() < 1e-13, "sample {i}: {a} vs {b}");
-        }
-    }
-
-}

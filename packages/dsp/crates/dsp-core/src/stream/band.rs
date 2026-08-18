@@ -34,9 +34,9 @@ pub struct RollingBand {
     fwd_base: usize,
     fwd_pos: usize,
     ready_base: usize,
-    chunk_start: usize,
+    pub chunk_start: usize,
     /// Where the backward pass has come down to, when one is in flight.
-    cursor: Option<usize>,
+    pub cursor: Option<usize>,
     head_done: bool,
     tail_done: bool,
     served: usize,
@@ -137,7 +137,7 @@ impl RollingBand {
     /// than the chunk is consumed: at exactly the chunk's own rate the last
     /// slice lands in the call that needs it, and any rounding there turns
     /// into a synchronous catch-up.
-    fn per_frame(&self) -> usize {
+    pub fn per_frame(&self) -> usize {
         (self.chunk + self.ahead).div_ceil(self.chunk) + 1
     }
 
@@ -247,97 +247,5 @@ impl RollingBand {
         self.fwd_base = next;
         self.chunk_start = next;
         self.cursor = None;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::kernels::butter::{butter_bandpass_sos, butter_sos, BandType};
-    use crate::kernels::filtfilt::sosfiltfilt;
-
-    fn signal(n: usize) -> Vec<f64> {
-        (0..n)
-            .map(|i| {
-                let t = i as f64 / 48_000.0;
-                0.7 + (2.0 * std::f64::consts::PI * 180.0 * t).sin()
-                    + 0.4 * (2.0 * std::f64::consts::PI * 2200.0 * t).sin()
-            })
-            .collect()
-    }
-
-    /// Drive the band the way the engine does: a growing source queue, one
-    /// render quantum of output at a time.
-    fn rolled(sections: Vec<[f64; 6]>, ahead: usize, chunk: usize, x: &[f64], block: usize) -> Vec<f64> {
-        let total = x.len();
-        let mut band = RollingBand::new(sections, ahead, chunk, vec![0], 0);
-        let mut out = Vec::with_capacity(total);
-        let mut start = 0;
-        while start < total {
-            let end = (start + block).min(total);
-            let filled = (end + ahead + 2 * chunk).min(total);
-            let source = vec![x[..filled].to_vec()];
-            band.advance(&source, 0, total, start, end);
-            out.extend_from_slice(band.band(0, start, end));
-            start = end;
-        }
-        out
-    }
-
-    #[test]
-    fn it_reproduces_the_offline_zero_phase_pass() {
-        let x = signal(48_000);
-        let sections = butter_bandpass_sos(4, 100.0 / 24_000.0, 300.0 / 24_000.0);
-        let offline = sosfiltfilt(&sections, &x).expect("signal is long enough");
-        let got = rolled(sections, 14_400, 4_800, &x, 128);
-
-        assert_eq!(got.len(), offline.len());
-        for (i, (a, b)) in got.iter().zip(offline.iter()).enumerate() {
-            assert!((a - b).abs() < 1e-9, "sample {i}: {a} vs {b}");
-        }
-    }
-
-    #[test]
-    fn the_result_does_not_depend_on_the_block_size() {
-        let x = signal(48_000);
-        let sections = butter_sos(2, 120.0 / 24_000.0, BandType::Low);
-        let small = rolled(sections.clone(), 4_800, 2_048, &x, 128);
-        let large = rolled(sections, 4_800, 2_048, &x, 4_096);
-        for (i, (a, b)) in small.iter().zip(large.iter()).enumerate() {
-            assert!((a - b).abs() < 1e-12, "sample {i}: {a} vs {b}");
-        }
-    }
-
-    /// The point of the slicing: no single call may carry a whole warm-up.
-    #[test]
-    fn the_warm_up_is_spread_across_the_calls_that_consume_a_chunk() {
-        let (ahead, chunk, block) = (14_400usize, 4_800usize, 128usize);
-        let x = signal(48_000);
-        let sections = butter_bandpass_sos(4, 100.0 / 24_000.0, 300.0 / 24_000.0);
-        let mut band = RollingBand::new(sections, ahead, chunk, vec![0], 0);
-
-        // Past the cold start, which pays for the first chunk up front.
-        let owed = block * band.per_frame();
-        let mut start = 0;
-        let mut worst = 0;
-        while start + block <= x.len() {
-            let end = start + block;
-            let filled = (end + ahead + 2 * chunk).min(x.len());
-            let source = vec![x[..filled].to_vec()];
-            let before = (band.chunk_start, band.cursor);
-            band.advance(&source, 0, x.len(), start, end);
-            if start > 0 {
-                // A call that lands on a chunk boundary finishes the one in
-                // flight and opens the next, so it can owe two slices.
-                let done = match (before.1, band.cursor) {
-                    (Some(was), Some(now)) if now <= was => was - now,
-                    (Some(was), _) => (was - before.0) + owed,
-                    _ => owed,
-                };
-                worst = worst.max(done);
-            }
-            start = end;
-        }
-        assert!(worst <= 2 * owed, "a call did {worst} samples of warm-up, budget {}", 2 * owed);
     }
 }

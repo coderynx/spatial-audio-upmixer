@@ -47,7 +47,7 @@ fn presence(signal: &[f64], sample_rate: u32, freq_hz: f64, gain_db: f64, q: f64
     signal.iter().zip(filtered.iter()).map(|(x, b)| x + b * gain).collect()
 }
 
-fn crossfeed(
+pub fn crossfeed(
     left: &[f64],
     right: &[f64],
     sample_rate: u32,
@@ -74,7 +74,7 @@ fn crossfeed(
     (out_l, out_r)
 }
 
-fn widen(left: &[f64], right: &[f64], amount: f64) -> (Vec<f64>, Vec<f64>) {
+pub fn widen(left: &[f64], right: &[f64], amount: f64) -> (Vec<f64>, Vec<f64>) {
     if amount == 0.0 {
         return (left.to_vec(), right.to_vec());
     }
@@ -104,42 +104,4 @@ pub fn apply_voicing(
     l = presence(&l, sample_rate, p.presence_hz, p.presence_gain_db, p.presence_q);
     r = presence(&r, sample_rate, p.presence_hz, p.presence_gain_db, p.presence_q);
     widen(&l, &r, p.stereo_widen)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn all_zero_params_are_an_exact_bypass() {
-        let l: Vec<f64> = (0..512).map(|i| (i as f64 * 0.1).sin()).collect();
-        let r: Vec<f64> = (0..512).map(|i| (i as f64 * 0.13).cos()).collect();
-        let p = VoicingParams { crossfeed_cutoff_hz: 700.0, presence_q: 1.0, ..Default::default() };
-        let (out_l, out_r) = apply_voicing(&l, &r, 48_000, &p);
-        assert_eq!(out_l, l);
-        assert_eq!(out_r, r);
-    }
-
-    #[test]
-    fn widen_preserves_the_mid_and_scales_the_side() {
-        let (l, r) = widen(&[1.0], &[-1.0], 1.0);
-        // Pure side content doubles at amount 1.0.
-        assert!((l[0] - 2.0).abs() < 1e-15);
-        assert!((r[0] + 2.0).abs() < 1e-15);
-        let (l, r) = widen(&[1.0], &[1.0], 1.0);
-        assert!((l[0] - 1.0).abs() < 1e-15 && (r[0] - 1.0).abs() < 1e-15);
-    }
-
-    #[test]
-    fn crossfeed_moves_low_frequency_content_across() {
-        let n = 4800;
-        let sr = 48_000;
-        let tone: Vec<f64> = (0..n)
-            .map(|i| (2.0 * std::f64::consts::PI * 100.0 * i as f64 / sr as f64).sin())
-            .collect();
-        let silence = vec![0.0; n];
-        let (_, out_r) = crossfeed(&tone, &silence, sr, 0.3, 700.0);
-        let energy: f64 = out_r[2400..].iter().map(|v| v * v).sum();
-        assert!(energy > 1.0, "expected bleed into the silent channel, got {energy}");
-    }
 }

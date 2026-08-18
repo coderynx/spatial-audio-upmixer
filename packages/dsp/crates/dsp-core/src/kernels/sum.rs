@@ -29,21 +29,3 @@ pub fn rms(values: &[f64]) -> f64 {
     }
     (pairwise_sum_squares(values) / values.len() as f64).sqrt()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pairwise_beats_naive_on_a_long_constant_run() {
-        let values = vec![0.1_f64; 1_000_000];
-        let exact = 100_000.0_f64;
-        let naive = values.iter().fold(0.0, |a: f64, v| a + v);
-        assert!((pairwise_sum(&values) - exact).abs() <= (naive - exact).abs());
-    }
-
-    #[test]
-    fn rms_of_unit_dc_is_one() {
-        assert!((rms(&vec![1.0; 1000]) - 1.0).abs() < 1e-15);
-    }
-}

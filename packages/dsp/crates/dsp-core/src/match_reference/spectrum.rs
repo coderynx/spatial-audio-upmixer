@@ -107,31 +107,3 @@ pub fn weighted_power_spectrum(
 
     (freqs[1..].to_vec(), summed[1..].to_vec())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn gate() -> GateParams {
-        GateParams { absolute_db: -70.0, relative_offset_db: -10.0, epsilon: 1e-20 }
-    }
-
-    #[test]
-    fn zero_weight_channels_are_excluded() {
-        let loud: Vec<f64> = (0..4096).map(|i| (i as f64 * 0.3).sin()).collect();
-        let quiet: Vec<f64> = loud.iter().map(|v| v * 0.001).collect();
-        let (_, only_loud) = weighted_power_spectrum(&[&loud, &quiet], &[1.0, 0.0], 48_000, 1024, &gate());
-        let (_, both) = weighted_power_spectrum(&[&loud], &[1.0], 48_000, 1024, &gate());
-        for (a, b) in only_loud.iter().zip(both.iter()) {
-            assert!((a - b).abs() < 1e-15);
-        }
-    }
-
-    #[test]
-    fn dc_bin_is_stripped() {
-        let signal: Vec<f64> = (0..4096).map(|i| 1.0 + (i as f64 * 0.1).sin()).collect();
-        let (freqs, power) = weighted_power_spectrum(&[&signal], &[1.0], 48_000, 1024, &gate());
-        assert_eq!(freqs.len(), power.len());
-        assert!(freqs[0] > 0.0, "first bin should not be DC");
-    }
-}

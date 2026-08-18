@@ -15,7 +15,7 @@ use super::conv::StreamingConvolver;
 use super::params::{EngineParams, OutputMode};
 
 /// The voicing chain with carried filter state.
-struct StreamingVoicing {
+pub struct StreamingVoicing {
     params: VoicingParams,
     crossfeed: [SosFilter; 2],
     bass: [SosFilter; 2],
@@ -24,7 +24,7 @@ struct StreamingVoicing {
 }
 
 impl StreamingVoicing {
-    fn new(sample_rate: u32, p: VoicingParams) -> Self {
+    pub fn new(sample_rate: u32, p: VoicingParams) -> Self {
         let nyq = sample_rate as f64 / 2.0;
         let crossfeed_sos = butter_sos(1, p.crossfeed_cutoff_hz.max(1.0) / nyq, BandType::Low);
         let bass_sos = butter_sos(2, p.bass_shelf_hz.max(1.0) / nyq, BandType::Low);
@@ -48,7 +48,7 @@ impl StreamingVoicing {
     }
 
     #[inline]
-    fn tick(&mut self, left: f64, right: f64) -> (f64, f64) {
+    pub fn tick(&mut self, left: f64, right: f64) -> (f64, f64) {
         let p = self.params;
         let (mut l, mut r) = (left, right);
 
@@ -314,38 +314,5 @@ impl OutputStage {
             }
         }
         (left, right)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::spatial::voicing::apply_voicing;
-
-    #[test]
-    fn streaming_voicing_matches_the_offline_chain() {
-        let sr = 48_000;
-        let p = VoicingParams {
-            crossfeed_amount: 0.25,
-            crossfeed_cutoff_hz: 700.0,
-            bass_shelf_hz: 120.0,
-            bass_shelf_gain_db: 2.0,
-            air_shelf_hz: 9000.0,
-            air_shelf_gain_db: 1.5,
-            presence_hz: 3000.0,
-            presence_gain_db: 1.0,
-            presence_q: 1.2,
-            stereo_widen: 0.3,
-        };
-        let left: Vec<f64> = (0..4800).map(|i| (i as f64 * 0.05).sin() * 0.4).collect();
-        let right: Vec<f64> = (0..4800).map(|i| (i as f64 * 0.07).cos() * 0.4).collect();
-
-        let (want_l, want_r) = apply_voicing(&left, &right, sr, &p);
-        let mut streaming = StreamingVoicing::new(sr, p);
-        for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
-            let (got_l, got_r) = streaming.tick(*l, *r);
-            assert!((got_l - want_l[i]).abs() < 1e-12, "left sample {i}");
-            assert!((got_r - want_r[i]).abs() < 1e-12, "right sample {i}");
-        }
     }
 }

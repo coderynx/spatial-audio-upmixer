@@ -25,25 +25,3 @@ pub fn upfirdn_up(fir: &[f64], x: &[f64], up: usize) -> Vec<f64> {
     }
     out
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn impulse_reproduces_the_kernel() {
-        let fir = [0.5, 1.0, -0.25];
-        let out = upfirdn_up(&fir, &[1.0], 4);
-        assert_eq!(out.len(), 3);
-        for (a, b) in out.iter().zip(fir.iter()) {
-            assert!((a - b).abs() < 1e-15);
-        }
-    }
-
-    #[test]
-    fn output_length_matches_scipy_formula() {
-        let fir = vec![0.0; 48];
-        let x = vec![0.0; 100];
-        assert_eq!(upfirdn_up(&fir, &x, 4).len(), 99 * 4 + 48);
-    }
-}

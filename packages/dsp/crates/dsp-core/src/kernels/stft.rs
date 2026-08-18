@@ -74,37 +74,3 @@ pub fn frame_frequencies(audio_len: usize, n_fft: usize, sample_rate: u32) -> Ve
         .map(|i| sample_rate as f64 * i as f64 / nperseg as f64)
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hann_periodic_starts_at_zero_and_is_not_symmetric() {
-        let w = hann_periodic(8);
-        assert!(w[0].abs() < 1e-15);
-        // The periodic form omits the closing zero, unlike the symmetric one.
-        assert!(w[7] > 0.0);
-    }
-
-    #[test]
-    fn a_full_scale_tone_lands_on_its_own_bin_at_unit_amplitude() {
-        let n = 1024;
-        let sr = 48_000;
-        let bin = 64;
-        let freq = sr as f64 * bin as f64 / n as f64;
-        let signal: Vec<f64> = (0..n * 4)
-            .map(|i| (2.0 * std::f64::consts::PI * freq * i as f64 / sr as f64).sin())
-            .collect();
-        let fp = frame_power(&signal, n);
-        // "spectrum" scaling puts a unit-amplitude sine at 0.5 per side-bin.
-        let amplitude = fp.at(bin, 1).sqrt();
-        assert!((amplitude - 0.5).abs() < 1e-3, "amplitude {amplitude}");
-    }
-
-    #[test]
-    fn short_signals_produce_no_frames_rather_than_raising() {
-        let fp = frame_power(&[1.0, 2.0], 8);
-        assert_eq!(fp.n_frames, 1, "nperseg is capped to the signal length");
-    }
-}

@@ -30,7 +30,7 @@ fn pad(values: &[f64], left: usize, right: usize, mode: BorderMode) -> Vec<f64> 
 }
 
 /// Index into `[0, n)` under symmetric reflection, for arbitrary distance.
-fn reflect_index(i: i64, n: usize) -> usize {
+pub fn reflect_index(i: i64, n: usize) -> usize {
     if n == 1 {
         return 0;
     }
@@ -114,64 +114,5 @@ impl SlidingMin {
         }
         self.pushed += 1;
         self.deque.front().expect("deque cannot be empty").1
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn brute(values: &[f64], size: usize, mode: BorderMode) -> Vec<f64> {
-        let left = size / 2;
-        let right = size - left - 1;
-        let n = values.len();
-        (0..n)
-            .map(|i| {
-                let mut m = f64::INFINITY;
-                for d in 0..size {
-                    let idx = i as i64 - left as i64 + d as i64;
-                    let v = if idx < 0 || idx >= n as i64 {
-                        match mode {
-                            BorderMode::Nearest => {
-                                if idx < 0 {
-                                    values[0]
-                                } else {
-                                    values[n - 1]
-                                }
-                            }
-                            BorderMode::Reflect => values[reflect_index(idx, n)],
-                        }
-                    } else {
-                        values[idx as usize]
-                    };
-                    m = m.min(v);
-                }
-                let _ = right;
-                m
-            })
-            .collect()
-    }
-
-    #[test]
-    fn matches_brute_force_for_both_modes() {
-        let values: Vec<f64> = (0..64).map(|i| ((i * 37) % 23) as f64 * 0.1).collect();
-        for size in [3usize, 5, 9, 17] {
-            for mode in [BorderMode::Reflect, BorderMode::Nearest] {
-                let got = minimum_filter1d(&values, size, mode);
-                let want = brute(&values, size, mode);
-                assert_eq!(got.len(), want.len());
-                for (i, (a, b)) in got.iter().zip(want.iter()).enumerate() {
-                    assert!((a - b).abs() < 1e-15, "size {size} idx {i}: {a} vs {b}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn sliding_min_tracks_trailing_window() {
-        let values = [5.0, 3.0, 8.0, 1.0, 9.0, 2.0];
-        let mut s = SlidingMin::new(3);
-        let got: Vec<f64> = values.iter().map(|&v| s.push(v)).collect();
-        assert_eq!(got, vec![5.0, 3.0, 3.0, 1.0, 1.0, 1.0]);
     }
 }

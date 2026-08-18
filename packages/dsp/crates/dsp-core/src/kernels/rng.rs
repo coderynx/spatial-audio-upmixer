@@ -24,20 +24,3 @@ pub fn next_sign(state: &mut u64) -> f64 {
         -1.0
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn draws_are_in_range_and_reproducible() {
-        let mut a = 12345;
-        let mut b = 12345;
-        for _ in 0..1000 {
-            let x = next_unit(&mut a);
-            assert!((0.0..1.0).contains(&x));
-            assert_eq!(x, next_unit(&mut b));
-        }
-        assert!(next_sign(&mut a).abs() == 1.0);
-    }
-}

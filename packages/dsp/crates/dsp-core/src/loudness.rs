@@ -15,11 +15,11 @@ pub const REL_GATE_OFFSET: f64 = -10.0;
 pub const LKFS_OFFSET: f64 = -0.691;
 
 /// BS.1770-4 Annex 1 Tables 1-2, exact at 48 kHz.
-const K_STAGE1_48K: [f64; 6] = [
+pub const K_STAGE1_48K: [f64; 6] = [
     1.53512485958697, -2.69169618940638, 1.19839281085285,
     1.0, -1.69065929318241, 0.73248077421585,
 ];
-const K_STAGE2_48K: [f64; 6] = [
+pub const K_STAGE2_48K: [f64; 6] = [
     1.0, -2.0, 1.0,
     1.0, -1.99004745483398, 0.99007225036621,
 ];
@@ -44,7 +44,7 @@ pub const TRUE_PEAK_OVERSAMPLE: usize = 4;
 
 /// Map an exact 48 kHz digital biquad onto another rate by inverting the
 /// bilinear transform and re-applying it, matching `_retarget_biquad`.
-fn retarget_biquad(section: [f64; 6], sample_rate: u32) -> [f64; 6] {
+pub fn retarget_biquad(section: [f64; 6], sample_rate: u32) -> [f64; 6] {
     let k = 2.0 * 48_000.0;
     let to_analog = |c0: f64, c1: f64, c2: f64| {
         [(c0 - c1 + c2) / (k * k), 2.0 * (c0 - c2) / k, c0 + c1 + c2]
@@ -188,49 +188,4 @@ pub fn measure_true_peak(channels: &[&[f64]]) -> f64 {
         .iter()
         .fold(1e-30_f64, |m, ch| m.max(true_peak_channel(ch)));
     20.0 * peak.log10()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn k_weighting_is_exact_at_48k() {
-        let sos = k_weighting_sos(48_000);
-        assert_eq!(sos[0], K_STAGE1_48K);
-        assert_eq!(sos[1], K_STAGE2_48K);
-    }
-
-    #[test]
-    fn retargeting_48k_onto_itself_is_a_fixed_point() {
-        for section in [K_STAGE1_48K, K_STAGE2_48K] {
-            let back = retarget_biquad(section, 48_000);
-            for (a, b) in back.iter().zip(section.iter()) {
-                assert!((a - b).abs() < 1e-12, "{a} vs {b}");
-            }
-        }
-    }
-
-    #[test]
-    fn silence_reports_the_absolute_gate() {
-        let silence = vec![0.0; 48_000];
-        assert_eq!(measure_integrated_loudness(&[(1.0, &silence)], 48_000), ABS_GATE);
-    }
-
-    #[test]
-    fn true_peak_never_reads_below_the_sample_peak() {
-        let sine: Vec<f64> = (0..4096)
-            .map(|i| (i as f64 * 0.37).sin())
-            .collect();
-        let sample_peak = sine.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
-        assert!(true_peak_channel(&sine) >= sample_peak - 1e-12);
-    }
-
-    #[test]
-    fn true_peak_tracks_gain_exactly() {
-        let sine: Vec<f64> = (0..4096).map(|i| 0.5 * (i as f64 * 0.11).sin()).collect();
-        let loud: Vec<f64> = sine.iter().map(|v| v * 2.0).collect();
-        let delta = measure_true_peak(&[&loud]) - measure_true_peak(&[&sine]);
-        assert!((delta - 20.0 * 2.0_f64.log10()).abs() < 1e-12, "{delta} dB");
-    }
 }
