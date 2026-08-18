@@ -140,6 +140,28 @@ True-peak is the maximum absolute value of the **continuous-time waveform**, not
 
 > Higher oversampling ratios are preferred and always acceptable.
 
+**What this project runs.** `TRUE_PEAK_FIR_4X` is applied at 4× for every
+output rate, 96 kHz included. This is compliant: 4× at 96 kHz reaches 384 kHz,
+above the 192 kHz the table asks for, and the standard permits higher ratios.
+The kernel is specified in normalized frequency, so its behaviour is a function
+of `f/fs` alone — measured error at 96 kHz is identical to 48 kHz at the same
+fractional frequency, and *lower* at any fixed physical frequency, because that
+tone sits at half the fractional frequency.
+
+Measured against exact band-limited interpolation of a periodic sine
+(`packages/core/tests/test_master_measurement.py`, audit 3):
+
+| f/fs | Detector error |
+|---|---|
+| 0.02 | +0.01 dB |
+| 0.10 | +0.17 dB |
+| 0.24 | +0.20 dB |
+| 0.45 | +0.64 dB |
+
+The error is always positive — the detector over-reads near Nyquist rather than
+under-reading, so a limiter built on it stays conservative. Full numbers:
+`docs/plans/mastering/phase0_report.md`.
+
 ### FIR Coefficients — order-48, 4-phase interpolating filter (≤48 kHz)
 
 *(BS.1770-5 Annex 2, page 18)*
@@ -177,7 +199,8 @@ bus's filter and level calibration are specified in
 - [ ] Surround channel weight = 1.41 (not 1.0, not sqrt(2) rounded to 1.414 — use 1.41 per spec Table 3)
 - [ ] LFE weight = 0 in LUFS sum
 - [ ] LFE included in true-peak scan
-- [ ] True-peak: 4× oversampling at ≤48 kHz; 2× oversampling at 96 kHz
+- [ ] True-peak: at least 4× oversampling at ≤48 kHz, at least 2× at 96 kHz
+      (this project runs 4× at every rate — see "What this project runs")
 - [ ] True-peak result in dBTP (not dBFS)
 - [ ] 0 dBFS 997 Hz sine on single L/R/C channel reads −3.01 LKFS (calibration check)
 - [ ] Incomplete gating blocks at end of measurement interval not used
