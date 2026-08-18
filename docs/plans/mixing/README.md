@@ -94,8 +94,10 @@ scaling) respects the explicit-control contract.
   `apps/web/src/features/projects/engineParams.ts` and the wasm streaming
   engine. Any send change lands once in `dsp-core` so the PyO3 export path
   and the wasm preview path stay bit-identical; update
-  `docs/contracts/preview_export_parity.md` (ledger entry + contract
-  signature) in the same phase. `packages/dsp` golden tests
+  `docs/contracts/preview_export_parity.md` §1-§3 in the same phase. Its §5
+  index takes a row only when the preview's output can differ from the
+  export's — a bug inside the shared core hits both sides and belongs in the
+  phase report instead. `packages/dsp` golden tests
   (`golden_kernels.rs`, `golden_spatial.rs`, `stream_equivalence.rs`)
   gate the Rust side.
 - The preview worklet must stay inside its 2.67 ms/quantum budget

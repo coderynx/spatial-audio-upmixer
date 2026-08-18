@@ -67,7 +67,8 @@ that path:
 - Curves are bounded (document min/max per parameter) and default-empty:
   no curves = bit-identical to phase 13 head, asserted by test.
 - Parity: new wire surface (breakpoints) goes through the
-  engine-constants/params path with contract ledger entry + re-hash;
+  engine-constants/params path, with the parity contract's §1 table and §5
+  parameter seam updated (a new wire surface is exactly D30's failure mode);
   interpolation golden-tested cross-binding. Bench: interpolation is
   near-free, but run `npm run bench:engine` anyway and report.
 
