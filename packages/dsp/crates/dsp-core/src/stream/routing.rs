@@ -460,8 +460,22 @@ mod tests {
     #[test]
     fn the_duck_trace_covers_the_block_and_dips_on_a_transient() {
         let sr = 48_000;
-        let signal: Vec<f64> = (0..12_000)
-            .map(|i| 0.2 * (i as f64 * 0.04).sin() + if i % 6_000 < 24 { 0.8 } else { 0.0 })
+        // A decaying strike ~30 dB over a quiet bed, spaced past the 250 ms
+        // reference — see `routing::transient`'s `hit_train_over_bed` for why
+        // a weaker or closer-spaced stimulus never reaches the threshold.
+        let signal: Vec<f64> = (0..48_000)
+            .map(|i| {
+                let t = i as f64 / sr as f64;
+                let bed = 0.03 * (2.0 * std::f64::consts::PI * 220.0 * t).sin();
+                let phase = i % 24_000;
+                let hit = if phase < 1_440 {
+                    0.9 * (-(phase as f64) / 240.0).exp()
+                        * (2.0 * std::f64::consts::PI * 1_800.0 * t).sin()
+                } else {
+                    0.0
+                };
+                bed + hit
+            })
             .collect();
 
         let mut off = StemRouteState::new(sr, &send_params(), &[]);
@@ -473,8 +487,10 @@ mod tests {
         on.process(&signal, &signal, true, true);
         let trace = on.duck_trace();
         assert_eq!(trace.len(), signal.len());
-        let deepest = trace.iter().cloned().fold(f64::INFINITY, f64::min);
-        assert!(deepest < 0.9, "trace never dipped: {deepest}");
+        // Past the second hit, so the cold-start sample — where the reference
+        // envelope is still zero and anything saturates — cannot carry this.
+        let deepest = trace[24_000..].iter().cloned().fold(f64::INFINITY, f64::min);
+        assert!(deepest < 0.5, "trace barely dipped: {deepest}");
         assert!(deepest >= 1.0 - p.stem_transient_duck - 1e-12, "trace {deepest} below depth");
     }
 

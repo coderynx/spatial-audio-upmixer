@@ -57,6 +57,19 @@ describe("buildEngineParams", () => {
     expect(fl?.azimuth_rad).toBe(TEST_SERVED_CONSTANTS.speaker_directions.FL.azimuth_rad);
   });
 
+  it("carries a speaker mute as its own flag, leaving the group gain alone", () => {
+    // Folding the mute into `group_gain` took the channel out of the shared
+    // bass bus and the linked compressor, so muting one speaker changed
+    // every other one — see the core's monitor mute in `PreviewEngine::render`.
+    const params = buildEngineParams({ ...input(), speakerEnabled: { C: false } });
+    const speakers = params.speakers as { name: string; group_gain: number; muted: boolean }[];
+    const by = (name: string) => speakers.find((s) => s.name === name)!;
+
+    expect(by("C").muted).toBe(true);
+    expect(by("C").group_gain).toBe(constants.channelGains.center);
+    expect(by("SL").muted).toBe(false);
+  });
+
   it("applies channel group gains, folds heights into the downmix, excludes LFE", () => {
     const params = buildEngineParams(input());
     const speakers = params.speakers as { name: string; group_gain: number; downmix: unknown }[];

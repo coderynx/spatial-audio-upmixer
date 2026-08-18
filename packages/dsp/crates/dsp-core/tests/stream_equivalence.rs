@@ -397,13 +397,19 @@ fn the_duck_readout_lands_with_the_transient_not_ahead_of_it() {
     .expect("engine params");
     let n_channels = params.speakers.len();
 
+    // A decaying strike well over the bed, not a sample-wide spike: the
+    // detector scores against a running mean, and a click that never moves
+    // the 1.5 ms attack envelope reports no duck at all to align. See
+    // `routing::transient`'s `hit_train_over_bed`.
     let clicking = |seed: f64| {
         let mut left: Vec<f32> = deterministic_signal(CLICK * 2, SR, seed)
             .iter()
-            .map(|v| (v * 0.2) as f32)
+            .map(|v| (v * 0.03) as f32)
             .collect();
-        for s in left.iter_mut().skip(CLICK).take(24) {
-            *s += 0.9;
+        for (phase, s) in left.iter_mut().skip(CLICK).take(1_440).enumerate() {
+            let t = (CLICK + phase) as f64 / SR as f64;
+            *s += (0.9 * (-(phase as f64) / 240.0).exp()
+                * (2.0 * std::f64::consts::PI * 1_800.0 * t).sin()) as f32;
         }
         let right = left.clone();
         std::sync::Arc::new(StemSource { left, right })
@@ -419,7 +425,7 @@ fn the_duck_readout_lands_with_the_transient_not_ahead_of_it() {
 
     engine.render(&mut scratch, 4096);
     let during = engine.stem_spectrum()[0].2;
-    assert!(during < 1.0, "no duck reported over the click: {during}");
+    assert!(during < 0.9, "no real duck reported over the click: {during}");
     assert!(during >= 0.2 - 1e-12, "duck {during} below the 0.8 depth");
 }
 

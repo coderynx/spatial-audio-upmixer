@@ -362,3 +362,40 @@ setting that clears it. What it does establish is that **23.58 dB was not the
 split's number** — it was the endpoint's, amplified by the split. A revisit
 would have to re-measure the whole §9.1 table at a floored depth before
 arguing anything from it.
+
+### 9.6 Postscript — the detector never had the selectivity the phase assumed
+
+§9.5 is not the only thing measured at the wrong operating point. The
+detector's own window, `DUCK_THRESHOLD_RATIO`/`DUCK_FULL_RATIO` = 1.25/2.5,
+sits at 1.9 to 8.0 dB over the running mean. Measured over real stems the
+fast/slow ratio of *sustained* material runs p75 ~1.2 and p90 ~1.5, while
+percussive onsets reach 16-45. The threshold was therefore triggering on the
+top quartile of ordinary crest variation, and the stage ducked a ride wash as
+heavily as a snare hit — mean score 0.120 against 0.126.
+
+That is the premise of this whole phase inverted. §3.3's motivating case is
+"a snare hit must not duck the ride wash sharing its moment", and the band
+split was adopted to buy that separation. The detector was never delivering
+it in the first place, at any number of bands.
+
+Moved to **2.5/4.0** (8 to 12 dB over the mean), ledger D39. Duty cycle on
+sustained material: Guitar 9.3% -> 0.9%, Lead Vocals 20.7% -> 3.6%, Ride
+27.6% -> 5.0%; Snare holds 9.5% active and 5.8% saturated. Snare/Ride mean
+score 1.05 -> 2.21, and at depth 0.7 a Snare now loses 7.53 dB against a
+Ride's 1.90 — the 4x transient/wash separation this stage was supposed to
+provide all along.
+
+The threshold and the span turned out to be independent controls, which is
+worth stating because tuning them as one number is how the first attempt at
+this fix went wrong. `active%` depends on the threshold alone (identical at
+2.5/3.5, 2.5/4.0, 2.5/6.0 and 2.5/8.0); the span sets how hard a qualifying
+onset ducks. An intermediate 2.5/8.0 measured as excellent selectivity and
+was inaudible, because a 5.5-wide span drops snare saturation to 2.5% against
+the original window's 9.5%.
+
+**§3.3's 6.8 dB benefit figure is therefore also stale** — it compares one
+band against three at a threshold where both ducked the wash indiscriminately.
+Before this phase is argued either way again, §3.3 and the §9.1 table both
+need re-measuring at the corrected window and a floored depth. The revert
+still stands on its own evidence; what no longer stands is the measurement
+either side of it.

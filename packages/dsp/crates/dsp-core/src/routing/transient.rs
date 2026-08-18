@@ -22,11 +22,28 @@ pub const DUCK_RELEASE_MS: f64 = 60.0;
 pub const DUCK_REFERENCE_MS: f64 = 250.0;
 
 /// Envelope ratio an onset must beat before it ducks at all, and the ratio
-/// that ducks fully. The floor is not sensitivity tuning: a rectify-and-smooth
-/// follower ripples a few percent within every cycle of a low tone, and
-/// without a floor that ripple would amplitude-modulate steady content.
-pub const DUCK_THRESHOLD_RATIO: f64 = 1.25;
-pub const DUCK_FULL_RATIO: f64 = 2.5;
+/// that ducks fully — 8 dB and 12 dB over the running mean.
+///
+/// These are two independent controls, and moving both at once is a mistake
+/// worth not repeating.
+///
+/// The **threshold** decides what counts as an onset. It has to sit above
+/// ordinary crest variation, not inside it: measured over real stems the
+/// fast/slow ratio of sustained material runs p75 ~1.2 and p90 ~1.5 while
+/// percussive onsets reach 16-45, so the original 1.25 fired on the top
+/// quartile of normal peakiness — a ride wash then scored as heavily as a
+/// snare hit (mean 0.120 vs 0.126), the exact opposite of this module's
+/// purpose, and the continuous mid-scale gain motion that produces is heard
+/// as compression rather than as ducking.
+///
+/// The **span** above it decides how hard a qualifying onset ducks. Widening
+/// it leaves the same events triggering but makes each one shallower: at
+/// 2.5/8.0 the duty cycle was right and a snare saturated only 2.5% of the
+/// time against the original's 9.5%, which measures as clean selectivity and
+/// is inaudible. 4.0 keeps the selectivity — `active` depends on the
+/// threshold alone — while restoring 5.8% saturation.
+pub const DUCK_THRESHOLD_RATIO: f64 = 2.5;
+pub const DUCK_FULL_RATIO: f64 = 4.0;
 
 /// Deepest attenuation one band may reach, -20 dB. Not a taste setting: at
 /// depth 1.0 the gain would otherwise land on exactly 0.0 and annihilate the
@@ -268,21 +285,43 @@ mod tests {
 
     const SR: u32 = 48_000;
 
-    /// A click train over a steady bed: the clicks must come out quieter
-    /// relative to the bed than they went in.
-    fn click_train_over_bed(n: usize) -> Vec<f64> {
+    /// Quarter notes at 120 BPM, so a hit's own contribution to the 250 ms
+    /// reference has decayed before the next one lands.
+    const HIT_SPACING: usize = 24_000;
+
+    /// A percussive hit train over a quiet steady bed: the hits must come out
+    /// quieter relative to the bed than they went in.
+    ///
+    /// Three properties are load-bearing, and the detector scores nothing
+    /// without all of them. The hits are 30 ms decaying strikes rather than
+    /// sample-wide spikes, since a sub-millisecond click never moves the
+    /// 1.5 ms attack envelope far; they sit ~30 dB over the bed, because the
+    /// score is a ratio against the running mean and a hit 13 dB up cannot
+    /// reach `DUCK_THRESHOLD_RATIO`; and they are spaced `HIT_SPACING`, since
+    /// hits closer together than the reference envelope's own 250 ms hold
+    /// that reference up and cap the ratio around 6.6 whatever their level.
+    /// Measured on real stems, percussive onsets reach 16-45x the running
+    /// mean — a fixture that cannot get there is testing nothing.
+    fn hit_train_over_bed(n: usize) -> Vec<f64> {
         (0..n)
             .map(|i| {
-                let bed = 0.2 * (2.0 * std::f64::consts::PI * 220.0 * i as f64 / SR as f64).sin();
-                let click = if i % 12_000 < 24 { 0.8 } else { 0.0 };
-                bed + click
+                let t = i as f64 / SR as f64;
+                let bed = 0.03 * (2.0 * std::f64::consts::PI * 220.0 * t).sin();
+                let phase = i % HIT_SPACING;
+                let hit = if phase < 1_440 {
+                    0.9 * (-(phase as f64) / 240.0).exp()
+                        * (2.0 * std::f64::consts::PI * 1_800.0 * t).sin()
+                } else {
+                    0.0
+                };
+                bed + hit
             })
             .collect()
     }
 
     #[test]
     fn zero_depth_is_the_input_bit_for_bit() {
-        let x = click_train_over_bed(48_000);
+        let x = hit_train_over_bed(48_000);
         let (l, r) = transient_duck(&x, &x, SR, 0.0);
         assert_eq!(l, x);
         assert_eq!(r, x);
@@ -290,29 +329,30 @@ mod tests {
 
     #[test]
     fn transients_are_attenuated_and_sustain_is_not() {
-        let x = click_train_over_bed(96_000);
+        let x = hit_train_over_bed(96_000);
         let (out, _) = transient_duck(&x, &x, SR, 0.7);
 
-        // A window on a click, and one deep in the sustain between clicks.
+        // A window over a hit's body, and one deep in the sustain between hits.
         let energy = |v: &[f64], from: usize, to: usize| -> f64 {
             v[from..to].iter().map(|s| s * s).sum::<f64>()
         };
-        let click_in = energy(&x, 12_000, 12_048);
-        let click_out = energy(&out, 12_000, 12_048);
-        let sustain_in = energy(&x, 20_000, 23_000);
-        let sustain_out = energy(&out, 20_000, 23_000);
+        let hit = energy(&out, 24_000, 25_440) / energy(&x, 24_000, 25_440);
+        let sustain = energy(&out, 36_000, 40_000) / energy(&x, 36_000, 40_000);
 
-        let click_db = 10.0 * (click_out / click_in).log10();
-        let sustain_db = 10.0 * (sustain_out / sustain_in).log10();
-        // A 0.5 ms click is the detector's stated worst case, and the
-        // crossover's group delay spreads it further still.
-        assert!(click_db < -4.5, "click only {click_db} dB down");
+        // Stated as the change in the hit-to-sustain ratio, which is the
+        // separation this stage exists to produce. An absolute figure over
+        // the hit window would mostly measure where the window was drawn:
+        // the envelope needs its 1.5 ms attack before the gain is down, and
+        // the crossover's group delay spreads the onset further still.
+        let separation_db = 10.0 * (hit / sustain).log10();
+        let sustain_db = 10.0 * sustain.log10();
+        assert!(separation_db < -2.5, "onset only {separation_db} dB below sustain");
         assert!(sustain_db > -0.5, "sustain moved {sustain_db} dB");
     }
 
     #[test]
     fn gain_never_leaves_the_depth_bound() {
-        let x = click_train_over_bed(48_000);
+        let x = hit_train_over_bed(48_000);
         let depth = 0.6;
         let mut ducker = TransientDucker::new(SR, depth);
         for (l, r) in x.iter().zip(x.iter()) {
@@ -327,18 +367,22 @@ mod tests {
     /// level — the defect `DUCK_MIN_GAIN` exists to prevent.
     #[test]
     fn full_depth_floors_the_gain_instead_of_nulling_the_band() {
-        let x = click_train_over_bed(96_000);
+        let x = hit_train_over_bed(96_000);
         let mut ducker = TransientDucker::new(SR, 1.0);
-        let mut lowest = 1.0_f64;
-        for (l, r) in x.iter().zip(x.iter()) {
-            lowest = lowest.min(ducker.tick(*l, *r));
-        }
+        let gains: Vec<f64> = x.iter().map(|s| ducker.tick(*s, *s)).collect();
+        // From the second hit on: at the very first sample the reference
+        // envelope is still zero, so the ratio is unbounded and every
+        // stimulus saturates. That start-up sample would make this pass
+        // without the signal ever qualifying.
+        let lowest = gains[HIT_SPACING..].iter().cloned().fold(1.0_f64, f64::min);
         assert!(lowest >= DUCK_MIN_GAIN - 1e-12, "gain reached {lowest}");
         assert!(lowest <= DUCK_MIN_GAIN + 1e-9, "floor never exercised: {lowest}");
 
         // And the whole send keeps every band alive through the onset.
         let (out, _) = transient_duck(&x, &x, SR, 1.0);
-        let window = |v: &[f64]| v[12_000..12_600].iter().map(|s| s * s).sum::<f64>();
+        let window = |v: &[f64]| {
+            v[HIT_SPACING..HIT_SPACING + 1_440].iter().map(|s| s * s).sum::<f64>()
+        };
         let kept = 10.0 * (window(&out) / window(&x)).log10();
         assert!(kept > -20.1, "onset lost {kept} dB, below the -20 dB floor");
     }
@@ -348,15 +392,20 @@ mod tests {
     #[test]
     fn one_sided_onset_ducks_both_sides() {
         let bed: Vec<f64> = (0..48_000)
-            .map(|i| 0.2 * (2.0 * std::f64::consts::PI * 220.0 * i as f64 / SR as f64).sin())
+            .map(|i| 0.03 * (2.0 * std::f64::consts::PI * 220.0 * i as f64 / SR as f64).sin())
             .collect();
+        // The same strike `hit_train_over_bed` uses, on the left only. Note
+        // it reaches half the score it would centred, since the detector runs
+        // on the mean magnitude of both sides.
         let mut left = bed.clone();
-        for s in left.iter_mut().skip(24_000).take(240) {
-            *s += 0.9;
+        for (phase, s) in left.iter_mut().skip(HIT_SPACING).take(1_440).enumerate() {
+            let t = (HIT_SPACING + phase) as f64 / SR as f64;
+            *s += 0.9 * (-(phase as f64) / 240.0).exp()
+                * (2.0 * std::f64::consts::PI * 1_800.0 * t).sin();
         }
-        let (_, out_r) = transient_duck(&left, &bed, SR, 0.7);
-        let (_, quiet_r) = transient_duck(&bed, &bed, SR, 0.7);
-        let energy = |v: &[f64]| v[24_000..25_000].iter().map(|s| s * s).sum::<f64>();
+        let (_, out_r) = transient_duck(&left, &bed, SR, 1.0);
+        let (_, quiet_r) = transient_duck(&bed, &bed, SR, 1.0);
+        let energy = |v: &[f64]| v[HIT_SPACING..HIT_SPACING + 1_000].iter().map(|s| s * s).sum::<f64>();
         assert!(
             energy(&out_r) < 0.5 * energy(&quiet_r),
             "right side did not follow the left's onset"
@@ -367,7 +416,7 @@ mod tests {
     /// proportional through the duck.
     #[test]
     fn proportional_sides_stay_proportional() {
-        let left = click_train_over_bed(48_000);
+        let left = hit_train_over_bed(48_000);
         let right: Vec<f64> = left.iter().map(|s| 0.5 * s).collect();
         let (out_l, out_r) = transient_duck(&left, &right, SR, 0.7);
         for i in 0..left.len() {
@@ -379,7 +428,7 @@ mod tests {
     /// the input.
     #[test]
     fn the_bands_sum_back_to_the_input() {
-        let x = click_train_over_bed(48_000);
+        let x = hit_train_over_bed(48_000);
         let mut split = BandSplit::new(SR);
         for (i, s) in x.iter().enumerate() {
             let bands = split.tick(*s);
@@ -436,7 +485,7 @@ mod tests {
     /// and the offline render must not diverge on render-block size.
     #[test]
     fn ticking_in_blocks_matches_one_pass() {
-        let x = click_train_over_bed(48_000);
+        let x = hit_train_over_bed(48_000);
         let (want, _) = transient_duck(&x, &x, SR, 0.5);
 
         let mut ducker = MultibandDucker::new(SR, 0.5);
@@ -455,3 +504,9 @@ mod tests {
         assert_eq!(got, want);
     }
 }
+
+
+
+
+
+

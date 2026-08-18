@@ -339,7 +339,15 @@ def test_front_only_stereo_route_still_matches_raw_energy():
 
 
 def _drum_over_bed(n: int = 96_000, sr: int = 48_000) -> np.ndarray:
-    """Snare-like hits over a steady bed, the transient/sustain test case."""
+    """Snare-like hits over a steady bed, the transient/sustain test case.
+
+    The bed sits ~30 dB under the hits on purpose. The duck scores an onset
+    as a ratio against its own running mean, so a bed within ~17 dB of the
+    hits holds that mean up and nothing reaches ``DUCK_THRESHOLD_RATIO`` --
+    real percussive onsets measure 16-45x their running mean. See
+    ``routing::transient``'s ``hit_train_over_bed`` for the same constraint
+    on the Rust side.
+    """
     rng = np.random.default_rng(11)
     t = np.arange(n) / sr
     hit_len = int(0.06 * sr)
@@ -347,7 +355,7 @@ def _drum_over_bed(n: int = 96_000, sr: int = 48_000) -> np.ndarray:
     shape = shape * np.exp(-np.arange(hit_len) / (0.04 * sr))
     body = (rng.standard_normal(hit_len) * 0.6 + np.sin(2 * np.pi * 200 * np.arange(hit_len) / sr)) * shape
 
-    mono = rng.standard_normal(n) * 0.12 + 0.18 * np.sin(2 * np.pi * 330 * t)
+    mono = rng.standard_normal(n) * 0.012 + 0.018 * np.sin(2 * np.pi * 330 * t)
     starts = [k * sr // 2 for k in range(1, 2 * n // sr)]
     for start in starts:
         mono[start:start + hit_len] += body

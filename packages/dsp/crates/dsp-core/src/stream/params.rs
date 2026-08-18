@@ -31,6 +31,12 @@ pub struct SpeakerParams {
     /// Stereo-downmix contribution; absent for LFE.
     #[serde(default)]
     pub downmix: Option<(f64, f64)>,
+    /// Monitor-only speaker mute. Applied to the finished bed in
+    /// `PreviewEngine::render`, never to the routing gain: folding it in
+    /// earlier would take the channel out of the shared bass bus and the
+    /// linked compressor's detector, changing every other speaker.
+    #[serde(default)]
+    pub muted: bool,
 }
 
 /// Which shaped signal feeds a given speaker.

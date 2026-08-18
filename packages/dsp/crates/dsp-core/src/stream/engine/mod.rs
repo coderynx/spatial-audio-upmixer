@@ -407,8 +407,9 @@ impl PreviewEngine {
         }
 
         if let Some(lfe) = self.params.lfe_index {
+            let group_gain = self.params.speakers[lfe].group_gain;
             for (i, v) in lfe_sum.iter().enumerate() {
-                bed[lfe][i] += self.lfe_bus.tick(*v);
+                bed[lfe][i] += self.lfe_bus.tick(*v) * group_gain;
             }
         }
 
@@ -472,7 +473,14 @@ impl PreviewEngine {
             .collect();
 
         if let Some(unifier) = &mut self.unifier {
-            unifier.process(&self.pre.channels, base, self.total_frames, &mut window, start, end);
+            unifier.process(
+                &self.pre.channels,
+                base,
+                self.total_frames,
+                &mut window,
+                start,
+                end,
+            );
         }
 
         // Reads its band out of `pre`, i.e. from before unification, which is
@@ -525,11 +533,21 @@ impl PreviewEngine {
             limiter.process(&mut self.post.channels, start, end);
         }
 
+        // Monitor mute lands here, on the finished bed: every shared stage
+        // above (bass bus, linked compressor, limiter) has already run, so
+        // silencing one speaker cannot change what the others get.
         let window: Vec<Vec<f64>> = self
             .post
             .channels
             .iter()
-            .map(|c| c[start..end].to_vec())
+            .enumerate()
+            .map(|(channel, c)| {
+                if self.params.speakers.get(channel).is_some_and(|s| s.muted) {
+                    vec![0.0; end - start]
+                } else {
+                    c[start..end].to_vec()
+                }
+            })
             .collect();
         // Block-quantized rather than per-sample smoothing: output_gain is a
         // scalar loudness/true-peak correction that changes rarely (mostly
@@ -576,7 +594,14 @@ impl PreviewEngine {
             .post
             .channels
             .iter()
-            .map(|c| Level::measure(&c[meter_start..end]))
+            .enumerate()
+            .map(|(channel, c)| {
+                if self.params.speakers.get(channel).is_some_and(|s| s.muted) {
+                    Level::default()
+                } else {
+                    Level::measure(&c[meter_start..end])
+                }
+            })
             .collect();
         for (channel, tail) in self.output_meter_tail.iter_mut().enumerate() {
             if let Some(rendered) = self.collapsed.get(channel) {
@@ -621,5 +646,132 @@ impl PreviewEngine {
         self.duck = Queue::new(self.params.stems.len().max(1));
         self.unify_done = 0;
         self.emitted = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stream::params::EngineParams;
+
+    fn engine(mute_lfe: bool) -> PreviewEngine {
+        let params: EngineParams = serde_json::from_str(&format!(
+            r#"{{
+                "speakers": [
+                    {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [1.0, 0.0]}},
+                    {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [0.0, 1.0]}},
+                    {{"name": "LFE", "azimuth_rad": 0.0, "elevation_rad": 0.0,
+                     "group_gain": 1.0, "muted": {mute_lfe}, "downmix": [0.0, 0.0]}}
+                ],
+                "lfe_index": 2,
+                "shapes": ["left", "right", "mono"],
+                "sends": {{"surround_bass_cutoff_hz": 250.0,
+                          "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
+                          "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
+                          "height_directional_band_hz": 8000.0,
+                          "height_directional_band_gain": 1.0,
+                          "lfe_cutoff_hz": 120.0, "lfe_filter_order": 4, "lfe_gain": 1.0}},
+                "stems": [{{"routing": [["FL", 0.9], ["FR", 0.9], ["LFE", 1.0]], "rebalance_db": 0.0,
+                           "enabled": true, "eq_fir": [], "route_scale": 1.0}}],
+                "master": {{}},
+                "output_mode": "native",
+                "bypass_mastering": true,
+                "soft_limit_threshold": 0.0
+            }}"#
+        ))
+        .expect("engine parameters");
+
+        let tone: Vec<f32> = (0..4096)
+            .map(|i| (0.4 * (2.0 * std::f64::consts::PI * 60.0 * i as f64 / 48_000.0).sin()) as f32)
+            .collect();
+        PreviewEngine::new(48_000, params, vec![Arc::new(StemSource { left: tone.clone(), right: tone })])
+    }
+
+    fn probe_engine(mute_fl: bool) -> PreviewEngine {
+        let params: EngineParams = serde_json::from_str(&format!(
+            r#"{{
+                "speakers": [
+                    {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0,
+                     "group_gain": 1.0, "muted": {mute_fl}, "downmix": [1.0, 0.0]}},
+                    {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [0.0, 1.0]}},
+                    {{"name": "SL", "azimuth_rad": 1.9, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [0.3, 0.0]}},
+                    {{"name": "SR", "azimuth_rad": -1.9, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [0.0, 0.3]}},
+                    {{"name": "LFE", "azimuth_rad": 0.0, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [0.0, 0.0]}}
+                ],
+                "lfe_index": 4,
+                "shapes": ["left", "right", "left", "right", "mono"],
+                "sends": {{"surround_bass_cutoff_hz": 250.0,
+                          "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
+                          "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
+                          "height_directional_band_hz": 8000.0,
+                          "height_directional_band_gain": 1.0,
+                          "lfe_cutoff_hz": 120.0, "lfe_filter_order": 4, "lfe_gain": 1.0}},
+                "stems": [{{"routing": [["FL", 0.7], ["FR", 0.7], ["SL", 0.5], ["SR", 0.5], ["LFE", 0.5]],
+                           "rebalance_db": 0.0, "enabled": true, "eq_fir": [], "route_scale": 1.0}}],
+                "master": {{"bass": {{"sub_gain_db": 0.0, "mid_gain_db": 0.0, "unify_hz": 120.0,
+                            "punch": 0.0, "excite": false, "lfe_gain_db": 0.0,
+                            "sub_cutoff_hz": 60.0, "mid_cutoff_hz": 200.0,
+                            "excite_blend": 0.0, "excite_drive": 0.0,
+                            "punch_fast_ms": 5.0, "punch_slow_ms": 50.0, "punch_max_db": 0.0,
+                            "decorrelate": 0.0, "decorr_low_hz": 60.0, "decorr_high_hz": 200.0,
+                            "decorr_sections": 1, "decorr_max_delay_ms": 5.0,
+                            "decorr_fast_ms": 5.0, "decorr_slow_ms": 50.0}},
+                          "lf_targets": [[0, 0.5], [1, 0.5]]}},
+                "output_mode": "native",
+                "soft_limit_threshold": 0.0
+            }}"#,
+        ))
+        .expect("engine parameters");
+
+        let tone: Vec<f32> = (0..8192)
+            .map(|i| (0.4 * (2.0 * std::f64::consts::PI * 80.0 * i as f64 / 48_000.0).sin()) as f32)
+            .collect();
+        PreviewEngine::new(48_000, params, vec![Arc::new(StemSource { left: tone.clone(), right: tone })])
+    }
+
+    /// Speaker mute is a monitor control, so it has to be silent *and* inert:
+    /// carrying it as a routing gain took the channel out of the shared bass
+    /// pool and the linked compressor's detector, so muting `FL` quietly
+    /// changed every other speaker's low end.
+    #[test]
+    fn muting_a_speaker_silences_it_without_touching_any_other_channel() {
+        let mut muted_out = vec![0.0; 5 * 8192];
+        probe_engine(true).render(&mut muted_out, 8192);
+        let mut open_out = vec![0.0; 5 * 8192];
+        probe_engine(false).render(&mut open_out, 8192);
+
+        assert!(
+            muted_out[0..8192].iter().all(|v| *v == 0.0),
+            "muted FL should stay silent through the LF fold",
+        );
+        for channel in 1..5 {
+            let span = channel * 8192..(channel + 1) * 8192;
+            assert_eq!(
+                muted_out[span.clone()],
+                open_out[span],
+                "channel {channel} changed when FL was muted",
+            );
+        }
+    }
+
+    #[test]
+    fn muting_the_lfe_speaker_silences_its_bus() {
+        let mut muted = engine(true);
+        let mut out = vec![0.0; 3 * 4096];
+        muted.render(&mut out, 4096);
+        let lfe = &out[2 * 4096..3 * 4096];
+        assert!(lfe.iter().all(|v| *v == 0.0), "muted LFE bus should be silent");
+
+        let mut unmuted = engine(false);
+        let mut out = vec![0.0; 3 * 4096];
+        unmuted.render(&mut out, 4096);
+        let lfe = &out[2 * 4096..3 * 4096];
+        assert!(lfe.iter().any(|v| v.abs() > 1e-6), "unmuted LFE bus should carry signal");
     }
 }
