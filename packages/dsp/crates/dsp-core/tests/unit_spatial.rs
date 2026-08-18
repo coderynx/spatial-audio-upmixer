@@ -179,3 +179,63 @@ mod ambisonics {
         assert!((r[0] + 0.5).abs() < 1e-15 && (r[2] - 0.125).abs() < 1e-15);
     }
 }
+
+mod fold_to_51 {
+    use upmixer_dsp_core::spatial::downmix::*;
+
+    const K: f64 = std::f64::consts::FRAC_1_SQRT_2;
+
+    fn bed() -> Vec<Vec<f64>> {
+        (0..12).map(|c| (0..8).map(|i| (c * 8 + i) as f64).collect()).collect()
+    }
+
+    const NAMES: [&str; 12] =
+        ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"];
+
+    #[test]
+    fn a_bed_of_five_one_or_narrower_needs_no_fold() {
+        assert!(FoldTo51::new(&["FL", "FR", "C", "LFE", "SL", "SR"]).is_none());
+        assert!(FoldTo51::new(&["FL", "FR"]).is_none());
+        assert!(FoldTo51::new(&["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR"]).is_some());
+    }
+
+    #[test]
+    fn heights_land_on_their_base_layer_and_backs_on_the_surrounds() {
+        let bed = bed();
+        let refs: Vec<&[f64]> = bed.iter().map(|c| c.as_slice()).collect();
+        let mut folded = Vec::new();
+        FoldTo51::new(&NAMES).expect("7.1.4 folds").apply(&refs, 8, &mut folded);
+
+        assert_eq!(folded.len(), FOLD_51_CHANNELS.len());
+        for i in 0..8 {
+            assert!((folded[0][i] - (bed[0][i] + K * bed[8][i])).abs() < 1e-12, "FL");
+            assert!((folded[1][i] - (bed[1][i] + K * bed[9][i])).abs() < 1e-12, "FR");
+            assert!((folded[2][i] - bed[2][i]).abs() < 1e-12, "C");
+            let sl = bed[4][i] + K * bed[6][i] + K * bed[10][i];
+            assert!((folded[3][i] - sl).abs() < 1e-12, "SL");
+            let sr = bed[5][i] + K * bed[7][i] + K * bed[11][i];
+            assert!((folded[4][i] - sr).abs() < 1e-12, "SR");
+        }
+    }
+
+    #[test]
+    fn folding_block_by_block_matches_folding_the_whole_programme() {
+        let bed = bed();
+        let refs: Vec<&[f64]> = bed.iter().map(|c| c.as_slice()).collect();
+        let fold = FoldTo51::new(&NAMES).expect("7.1.4 folds");
+        let mut whole = Vec::new();
+        fold.apply(&refs, 8, &mut whole);
+
+        let mut blocked = vec![Vec::new(); FOLD_51_CHANNELS.len()];
+        let mut block = Vec::new();
+        for start in (0..8).step_by(3) {
+            let end = (start + 3).min(8);
+            let slices: Vec<&[f64]> = bed.iter().map(|c| &c[start..end]).collect();
+            fold.apply(&slices, end - start, &mut block);
+            for (out, part) in blocked.iter_mut().zip(block.iter()) {
+                out.extend_from_slice(part);
+            }
+        }
+        assert_eq!(blocked, whole);
+    }
+}

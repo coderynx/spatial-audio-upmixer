@@ -25,6 +25,110 @@ pub enum DownmixRole {
     Tbr,
 }
 
+impl DownmixRole {
+    /// The channel names `packages/core` uses; anything else (LFE) has no
+    /// downmix contribution.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "FL" => Self::Fl,
+            "FR" => Self::Fr,
+            "C" => Self::C,
+            "SL" => Self::Sl,
+            "SR" => Self::Sr,
+            "BL" => Self::Bl,
+            "BR" => Self::Br,
+            "TFL" => Self::Tfl,
+            "TFR" => Self::Tfr,
+            "TBL" => Self::Tbl,
+            "TBR" => Self::Tbr,
+            _ => return None,
+        })
+    }
+}
+
+/// The five weighted channels of the 5.1 re-render delivery specs measure
+/// integrated loudness on, in order. LFE is absent: BS.1770 weights it zero,
+/// so it never reaches the loudness sum.
+pub const FOLD_51_CHANNELS: [&str; 5] = ["FL", "FR", "C", "SL", "SR"];
+
+/// BS.1770-5 Annex 3 Table 5 weights for [`FOLD_51_CHANNELS`] — only the
+/// ear-level side surrounds carry the +1.5 dB.
+pub const FOLD_51_WEIGHTS: [f64; 5] = [1.0, 1.0, 1.0, 1.41, 1.41];
+
+/// The 5.1 re-render Dolby Atmos Music and Netflix measure integrated
+/// loudness on: heights onto their base-layer channels, the back pair onto
+/// the surround pair. Coefficients are BS.775-4 Annex D's `b₀` for
+/// back→side and the project's `k_h` for heights, both 1/√2 — see
+/// docs/standards/spatial_layouts_bs775_bs2051.md §"5.1 re-render fold".
+///
+/// The fold is memoryless, so the offline and streaming measurement paths run
+/// the same taps a block at a time.
+pub struct FoldTo51 {
+    /// Per [`FOLD_51_CHANNELS`] entry, the `(source index, gain)` taps that
+    /// sum into it.
+    taps: [Vec<(usize, f64)>; 5],
+}
+
+impl FoldTo51 {
+    /// `None` when `names` carries no back or height channel, where the fold
+    /// would be the identity and the delivered bed is already the programme.
+    pub fn new<S: AsRef<str>>(names: &[S]) -> Option<Self> {
+        let roles: Vec<Option<DownmixRole>> =
+            names.iter().map(|n| DownmixRole::from_name(n.as_ref())).collect();
+        let wider_than_51 = roles.iter().flatten().any(|r| {
+            matches!(
+                r,
+                DownmixRole::Bl
+                    | DownmixRole::Br
+                    | DownmixRole::Tfl
+                    | DownmixRole::Tfr
+                    | DownmixRole::Tbl
+                    | DownmixRole::Tbr
+            )
+        });
+        if !wider_than_51 {
+            return None;
+        }
+
+        let k = ITU_CENTER_COEFF;
+        let mut taps: [Vec<(usize, f64)>; 5] = Default::default();
+        for (index, role) in roles.iter().enumerate() {
+            let Some(role) = role else { continue };
+            let (target, gain) = match role {
+                DownmixRole::Fl => (0, 1.0),
+                DownmixRole::Fr => (1, 1.0),
+                DownmixRole::C => (2, 1.0),
+                DownmixRole::Sl => (3, 1.0),
+                DownmixRole::Sr => (4, 1.0),
+                DownmixRole::Bl => (3, k),
+                DownmixRole::Br => (4, k),
+                DownmixRole::Tfl => (0, k),
+                DownmixRole::Tfr => (1, k),
+                DownmixRole::Tbl => (3, k),
+                DownmixRole::Tbr => (4, k),
+            };
+            taps[target].push((index, gain));
+        }
+        Some(Self { taps })
+    }
+
+    /// Fold `frames` of the channel-major bed `src` into `dst`, which is
+    /// resized to the five [`FOLD_51_CHANNELS`].
+    pub fn apply(&self, src: &[&[f64]], frames: usize, dst: &mut Vec<Vec<f64>>) {
+        dst.resize(FOLD_51_CHANNELS.len(), Vec::new());
+        for (out, taps) in dst.iter_mut().zip(self.taps.iter()) {
+            out.clear();
+            out.resize(frames, 0.0);
+            for (index, gain) in taps {
+                let Some(source) = src.get(*index) else { continue };
+                for (o, s) in out.iter_mut().zip(source[..frames].iter()) {
+                    *o += gain * s;
+                }
+            }
+        }
+    }
+}
+
 fn pick<'a>(channels: &[(DownmixRole, &'a [f64])], role: DownmixRole) -> Option<&'a [f64]> {
     channels.iter().find(|(r, _)| *r == role).map(|(_, s)| *s)
 }

@@ -18,6 +18,7 @@
 //! the programme; see `docs/contracts/preview_export_parity.md` P3.
 
 use crate::loudness_stream::{true_peak_dbtp, IntegratedLoudnessMeter, TruePeakMeter};
+use crate::spatial::downmix::{FoldTo51, FOLD_51_WEIGHTS};
 
 use super::engine::PreviewEngine;
 
@@ -36,6 +37,10 @@ pub struct MeasurementPass {
     loudness: IntegratedLoudnessMeter,
     peaks: Vec<TruePeakMeter>,
     channels: usize,
+    /// Set when the loudness meter reads the 5.1 re-render rather than the
+    /// delivered channels, with the block it folds into.
+    fold: Option<FoldTo51>,
+    folded: Vec<Vec<f64>>,
     scratch: Vec<f64>,
     measured: usize,
     total: usize,
@@ -91,13 +96,18 @@ impl MeasurementPass {
         let engine = live.fork();
         let channels = engine.output_channels();
         let sample_rate = engine.sample_rate();
-        let padded: Vec<f64> =
-            (0..channels).map(|i| weights.get(i).copied().unwrap_or(1.0)).collect();
+        let fold = engine.measurement_fold();
+        let meter_weights: Vec<f64> = match &fold {
+            Some(_) => FOLD_51_WEIGHTS.to_vec(),
+            None => (0..channels).map(|i| weights.get(i).copied().unwrap_or(1.0)).collect(),
+        };
         let mut pass = Self {
-            loudness: IntegratedLoudnessMeter::new(&padded, sample_rate),
+            loudness: IntegratedLoudnessMeter::new(&meter_weights, sample_rate),
             peaks: (0..channels).map(|_| TruePeakMeter::new()).collect(),
             engine,
             channels,
+            fold,
+            folded: Vec::new(),
             scratch: Vec::new(),
             measured: 0,
             total,
@@ -140,7 +150,15 @@ impl MeasurementPass {
                 let slices: Vec<&[f64]> = (0..self.channels)
                     .map(|c| &self.scratch[c * frames + skip..c * frames + written])
                     .collect();
-                self.loudness.push(&slices);
+                match &self.fold {
+                    Some(fold) => {
+                        fold.apply(&slices, written - skip, &mut self.folded);
+                        let refs: Vec<&[f64]> =
+                            self.folded.iter().map(|c| c.as_slice()).collect();
+                        self.loudness.push(&refs);
+                    }
+                    None => self.loudness.push(&slices),
+                }
                 for (meter, slice) in self.peaks.iter_mut().zip(slices.iter()) {
                     meter.push(slice);
                 }

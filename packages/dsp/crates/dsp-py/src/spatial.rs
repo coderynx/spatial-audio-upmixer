@@ -6,34 +6,17 @@ use pyo3::prelude::*;
 use upmixer_dsp_core::routing::decorrelate;
 use upmixer_dsp_core::routing::sends;
 use upmixer_dsp_core::routing::transient;
-use upmixer_dsp_core::spatial::downmix::{self, DownmixRole};
+use upmixer_dsp_core::spatial::downmix::{self, DownmixRole, FoldTo51};
 
 use crate::to_bed;
-
-/// Downmix roles cross the boundary as the channel names `packages/core`
-/// already uses; anything else (LFE) has no downmix contribution.
-fn parse_role(name: &str) -> Option<DownmixRole> {
-    Some(match name {
-        "FL" => DownmixRole::Fl,
-        "FR" => DownmixRole::Fr,
-        "C" => DownmixRole::C,
-        "SL" => DownmixRole::Sl,
-        "SR" => DownmixRole::Sr,
-        "BL" => DownmixRole::Bl,
-        "BR" => DownmixRole::Br,
-        "TFL" => DownmixRole::Tfl,
-        "TFR" => DownmixRole::Tfr,
-        "TBL" => DownmixRole::Tbl,
-        "TBR" => DownmixRole::Tbr,
-        _ => return None,
-    })
-}
 
 fn downmix_inputs<'a>(names: &[String], bed: &'a [Vec<f64>]) -> Vec<(DownmixRole, &'a [f64])> {
     names
         .iter()
         .zip(bed.iter())
-        .filter_map(|(name, samples)| parse_role(name).map(|role| (role, samples.as_slice())))
+        .filter_map(|(name, samples)| {
+            DownmixRole::from_name(name).map(|role| (role, samples.as_slice()))
+        })
         .collect()
 }
 
@@ -62,6 +45,24 @@ fn itu_downmix_mono<'py>(
     let bed = to_bed(channels);
     let inputs = downmix_inputs(&names, &bed);
     PyArray1::from_vec(py, downmix::itu_downmix_mono(&inputs, surround_coeff, height_coeff))
+}
+
+/// The 5.1 re-render delivery specs measure integrated loudness on, as the
+/// five weighted channels of `FOLD_51_CHANNELS`. Empty when the bed is
+/// already 5.1 or narrower and the fold would be the identity.
+#[pyfunction]
+fn fold_to_51<'py>(
+    py: Python<'py>,
+    names: Vec<String>,
+    channels: Vec<PyReadonlyArray1<'py, f64>>,
+) -> Vec<Bound<'py, PyArray1<f64>>> {
+    let bed = to_bed(channels);
+    let Some(fold) = FoldTo51::new(&names) else { return Vec::new() };
+    let refs: Vec<&[f64]> = bed.iter().map(|c| c.as_slice()).collect();
+    let frames = refs.first().map(|c| c.len()).unwrap_or(0);
+    let mut folded = Vec::new();
+    fold.apply(&refs, frames, &mut folded);
+    folded.into_iter().map(|c| PyArray1::from_vec(py, c)).collect()
 }
 
 #[pyfunction]
@@ -184,6 +185,8 @@ fn transient_duck<'py>(
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(itu_downmix_stereo, m)?)?;
     m.add_function(wrap_pyfunction!(itu_downmix_mono, m)?)?;
+    m.add_function(wrap_pyfunction!(fold_to_51, m)?)?;
+    m.add("FOLD_51_CHANNELS", downmix::FOLD_51_CHANNELS)?;
     m.add_function(wrap_pyfunction!(soft_limit, m)?)?;
     m.add_function(wrap_pyfunction!(velvet_pair_send, m)?)?;
     m.add_function(wrap_pyfunction!(elevation_eq, m)?)?;

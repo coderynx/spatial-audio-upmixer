@@ -267,6 +267,72 @@ mod measure {
         assert_eq!(pass.progress(), 1.0);
     }
 
+    /// A native bed with a height pair, so the measurement programme is the
+    /// 5.1 re-render rather than the delivered channels.
+    fn immersive_engine(frames: usize) -> PreviewEngine {
+        let params: EngineParams = serde_json::from_str(
+            r#"{
+                "speakers": [
+                    {"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [1.0, 0.0]},
+                    {"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [0.0, 1.0]},
+                    {"name": "TFL", "azimuth_rad": 0.7854, "elevation_rad": 0.7854,
+                     "group_gain": 1.0, "downmix": [0.7071067811865476, 0.0]},
+                    {"name": "TFR", "azimuth_rad": -0.7854, "elevation_rad": 0.7854,
+                     "group_gain": 1.0, "downmix": [0.0, 0.7071067811865476]}
+                ],
+                "lfe_index": null,
+                "shapes": ["left", "right", "height_left", "height_right"],
+                "sends": {"surround_bass_cutoff_hz": 250.0,
+                          "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
+                          "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
+                          "height_directional_band_hz": 8000.0,
+                          "height_directional_band_gain": 1.0,
+                          "lfe_cutoff_hz": 120.0, "lfe_filter_order": 4, "lfe_gain": 0.316},
+                "stems": [{"routing": [["FL", 0.7], ["FR", 0.7], ["TFL", 0.6], ["TFR", 0.6]],
+                           "rebalance_db": 0.0, "enabled": true, "eq_fir": [],
+                           "route_scale": 1.0}],
+                "master": {"lf_targets": [[0, 0.5], [1, 0.5]]},
+                "output_mode": "native",
+                "soft_limit_threshold": 0.0
+            }"#,
+        )
+        .expect("engine parameters");
+
+        let tone: Vec<f32> = (0..frames)
+            .map(|i| {
+                let t = i as f64 / 48_000.0;
+                (0.4 * (2.0 * std::f64::consts::PI * 220.0 * t).sin()
+                    + 0.1 * (2.0 * std::f64::consts::PI * 3300.0 * t).sin()) as f32
+            })
+            .collect();
+        PreviewEngine::new(
+            48_000,
+            params,
+            vec![Arc::new(StemSource { left: tone.clone(), right: tone })],
+        )
+    }
+
+    #[test]
+    fn an_immersive_bed_measures_its_five_one_re_render() {
+        let mut reference = immersive_engine(120_000);
+        assert!(reference.measurement_fold().is_some(), "a height pair must fold");
+        let want = reference.measure(&[]);
+
+        let live = immersive_engine(120_000);
+        let mut pass = MeasurementPass::new(&live, &[]);
+        let (lkfs, dbtp) = run(&mut pass, 1024);
+        assert!((lkfs - want.0).abs() < 1e-9, "sliced fold {lkfs} vs blocking {want:?}");
+        assert!((dbtp - want.1).abs() < 1e-9, "sliced peak {dbtp} vs blocking {want:?}");
+
+        // The heights sum into the fronts, so the folded programme is louder
+        // than the same bed measured as four unity-weighted channels.
+        let mut unfolded = engine(120_000);
+        let flat = unfolded.measure(&[1.0, 1.0]);
+        assert!(lkfs > -70.0 && (lkfs - flat.0).abs() > 0.1, "fold changed nothing: {lkfs}");
+    }
+
     #[test]
     fn a_short_programme_falls_back_to_a_single_excerpt() {
         let mut reference = engine(48_000);

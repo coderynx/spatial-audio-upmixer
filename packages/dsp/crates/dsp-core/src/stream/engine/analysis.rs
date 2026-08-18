@@ -1,9 +1,23 @@
 //! Loudness/true-peak measurement and the meter + spectrum readouts.
 
 use super::{PreviewEngine, METER_WINDOW_FRAMES};
+use crate::spatial::downmix::{FoldTo51, FOLD_51_WEIGHTS};
 use crate::stream::meters::Meters;
+use crate::stream::params::OutputMode;
 
 impl PreviewEngine {
+    /// The 5.1 re-render integrated loudness is measured on, for a native
+    /// output wider than 5.1 — `None` when the delivered output is already
+    /// the programme (see `docs/standards/loudness_dsp_bs1770.md`
+    /// §"Measurement programme").
+    pub fn measurement_fold(&self) -> Option<FoldTo51> {
+        if self.params.output_mode != OutputMode::Native {
+            return None;
+        }
+        let names: Vec<&str> = self.params.speakers.iter().map(|s| s.name.as_str()).collect();
+        FoldTo51::new(&names)
+    }
+
     /// Measure the whole collapsed programme: integrated loudness in LKFS and
     /// true peak in dBTP.
     ///
@@ -12,6 +26,11 @@ impl PreviewEngine {
     /// correction gain the preview applies is the one a bounce would need.
     /// It renders the programme once into memory — two channels for every
     /// collapse mode — and rewinds afterwards, so the transport is untouched.
+    ///
+    /// Loudness comes off the measurement programme (the 5.1 re-render for a
+    /// native bed wider than 5.1, whose weights the fold fixes and `weights`
+    /// no longer describes); true peak stays on the delivered channels, which
+    /// are what the ceiling applies to.
     pub fn measure(&mut self, weights: &[f64]) -> (f64, f64) {
         let out_channels = self.output_channels();
         self.rewind();
@@ -31,13 +50,21 @@ impl PreviewEngine {
         self.rewind();
 
         let refs: Vec<&[f64]> = collected.iter().map(|c| c.as_slice()).collect();
-        let weighted: Vec<(f64, &[f64])> = refs
-            .iter()
-            .enumerate()
-            .map(|(i, samples)| (weights.get(i).copied().unwrap_or(1.0), *samples))
-            .collect();
+        let mut folded = Vec::new();
+        let programme: Vec<(f64, &[f64])> = match self.measurement_fold() {
+            Some(fold) => {
+                let frames = refs.first().map(|c| c.len()).unwrap_or(0);
+                fold.apply(&refs, frames, &mut folded);
+                FOLD_51_WEIGHTS.iter().copied().zip(folded.iter().map(|c| c.as_slice())).collect()
+            }
+            None => refs
+                .iter()
+                .enumerate()
+                .map(|(i, samples)| (weights.get(i).copied().unwrap_or(1.0), *samples))
+                .collect(),
+        };
         (
-            crate::loudness::measure_integrated_loudness(&weighted, self.sample_rate),
+            crate::loudness::measure_integrated_loudness(&programme, self.sample_rate),
             crate::loudness::measure_true_peak(&refs),
         )
     }
