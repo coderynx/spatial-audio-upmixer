@@ -51,6 +51,7 @@ Every stage below is one function, called from both sides:
 | Chain head (subsonic / DC) | `mastering::head` | `mastering/head.py` | `stream::master` |
 | Reference match | `match_reference::{spectrum,curve}` | `mastering/match_reference/` | `stream::master` |
 | Spectral EQ | `mastering::eq` | `mastering/eq.py` | `stream::master` |
+| Dynamic EQ | `mastering::dyneq` | `mastering/dyneq.py` | `stream::engine::render` |
 | Bus compression | `mastering::compressor` | `mastering/compressor.py` | `stream::master` |
 | Bass management | `mastering::bass` | `mastering/bass.py` | `stream::master` |
 | BS.1770 loudness / true peak | `loudness` | `loudness.py` | `stream::engine::measure` |
@@ -117,9 +118,18 @@ FL/FR (see `docs/project_manifest_parity.md`): both sides then normalize over
 the same channel set.
 
 **Processing order is contracted** and lives in one place — chain head →
-reference match → EQ → compression → bass → BS.1770 loudness → soft clip →
-limiter *last*. Soft limiting after loudness rather than before is deliberate;
-see `packages/core/src/mastering/chain.py`'s module docstring.
+reference match → EQ → dynamic EQ → compression → bass → BS.1770 loudness →
+soft clip → limiter *last*. Soft limiting after loudness rather than before is
+deliberate; see `packages/core/src/mastering/chain.py`'s module docstring.
+
+The dynamic EQ is the one stage whose two halves are literally the same loop
+rather than two implementations of one algorithm: `DynamicEq::process` is
+called on the whole bed offline and on each block of `fill_pre` in the
+preview, and because every band's state is per-sample and carried, the two
+agree exactly rather than to a tolerance. It runs in `fill_pre` between the
+causal chain's output and the linked compressor — the same place the offline
+chain puts it, and the only place a stage linked *across* channels can go,
+since `CausalChain` is per channel.
 
 The two ends added in mastering phase 4 are both optional and both off by
 default. The head runs *before* reference matching so the matcher never
@@ -154,6 +164,16 @@ none is obvious from the code:
   filtering that commutes with the LF sum. LFE's DC blocker is a different
   filter, which is allowed for the same reason the limiter's separate LFE
   curve is — LFE is not part of the mains' shared low bus.
+- **The dynamic EQ commutes for the same reason the compressor does.** Its
+  detection is per band and linked across channels — one band-pass per bed
+  channel summed into a single RMS, exactly `bus_compress`'s sidechain — so a
+  band produces *one* gain trajectory, realized as *one* bell design applied
+  identically to every non-LFE channel. That makes it a shared time-varying
+  filter `H_t{}`, and `H_t{Σ lowᵢ} = Σ H_t{lowᵢ}` holds sample by sample the
+  same way the linked gain's does, so it can sit ahead of bass management.
+  What would break it is a per-channel detector, which is also what would
+  break imaging; the two failure modes are the same one, and
+  `every_channel_rides_the_same_curve` pins it.
 - **The soft clipper is the one pre-limiter stage that breaks commutation.**
   It is linked in the only sense a memoryless nonlinearity can be — one curve,
   one set of parameters, every non-LFE channel, sample by sample — but
@@ -245,6 +265,17 @@ preset's numbers into the manifest instead would make them explicit
 overrides, which is how a preset gets silently defeated the next time the
 manifest is normalized and saved. **Change one resolver and change the
 other.**
+
+Mastering phase 5's dynamic EQ adds exactly one entry, `dyneq_max_bands`, and
+it is a structural cap rather than an acoustic value: the panel needs to know
+when to stop offering an "Add band" button, and hardcoding four in the web
+would be a second copy of `mastering::dyneq`'s `MAX_BANDS`. Everything else a
+band carries is a user value from `mastering.dynamic_eq.bands[]`, and its
+gain computer's soft knee stays structural in `mastering::dyneq`'s `KNEE_DB`,
+like the duck's time constants. Band bounds are enforced once, in
+`manifest/validate.py`'s `_DYNEQ_BOUNDS`, and the panel's slider ranges
+mirror them — a control that could author a value the export rejects is a
+broken control.
 
 Mastering phase 4's two stages add nothing to that block, deliberately. Both
 carry only user values from the manifest (`mastering.highpass.cutoff_hz`,

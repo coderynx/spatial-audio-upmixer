@@ -100,16 +100,17 @@ validation; a phase must be green before the next starts.
 | 2 | `phase2_limiter_linking.md` → `phase2_report.md` | **Done.** LFE out of the limiter's shared gain engine (independent TP cap), per-curve GR telemetry, offline + streaming. Partial link not shipped — LFE unlinking closed the whole measured duck. |
 | 3 | `phase3_preview_metering_ab.md` → `phase3_report.md` | **Done.** Momentary/short-term loudness + TP + GR meters in the preview, PLR/PSR readout, and a loudness-matched master bypass (measured per chain state, monitor-only). |
 | 4 | `phase4_chain_head_tail.md` → `phase4_report.md` | **Done.** Chain head (subsonic HPF + DC block) and pre-limiter soft clip, offline + streaming, default off. The clipper deliberately breaks the commutation invariant and sits after bass management for it; its aliasing is measured and an oversampled variant is scoped as a follow-up. |
-| 5 | `phase5_dynamic_eq.md` | Linked-detection dynamic EQ stage (threshold-triggered bands), default off — the surgical tool the static profile EQ can't be. |
+| 5 | `phase5_dynamic_eq.md` → `phase5_report.md` | **Done.** Up to four linked-detection bells between the static EQ and the compressor, default off. The decaying-broadband gate phase 13 failed is measured and passed; the stage commutes with the LF sum, so it needed no exception. |
 | 6 | `phase6_dither_export.md` | TPDF dither (+ optional noise shaping) at bit-depth reduction, dither-last ordering guarantee, SRC quality audit. |
 | 7 | `phase7_reference_match_usability.md` | Match smoothing control, frequency-range masks, loudness-matched audition. |
 | 8 | `phase8_downmix_qc.md` | Fold/render QC: loudness + TP of the BS.775 stereo fold and binaural render measured and reported against the native bed, with UI warnings. |
 
-Phase 5 is the highest-risk phase (multiband detectors diverging through
+Phase 5 was the highest-risk phase (multiband detectors diverging through
 decaying broadband material is exactly what killed mixing phase 13 — read
-`docs/plans/mixing/phase13_report.md` §9 before starting) and the plan
-survives without it. Phases 6–8 are independent of each other and of 5;
-if priorities force a cut, cut from 5 first, never from 0–2.
+`docs/plans/mixing/phase13_report.md` §9). It shipped: the design that
+avoided the failure is that detection is per band but never per channel, so
+there is nothing to diverge. Phases 6–8 are independent of each other and of
+5; if priorities force a cut, never cut from 0–2.
 
 A codec-preview stage (post-AAC/Opus true-peak check, NUGEN
 MasterCheck-style) was considered and deferred: it needs an encoder
