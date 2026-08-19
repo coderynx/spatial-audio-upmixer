@@ -18,6 +18,12 @@ Processing order
 1. **Spectral shaping** (optional) — minimum-phase FIR tonal curve applied to
    all channels except LFE.  Controlled by ``config.mastering_eq_profile`` and
    ``config.mastering_eq_strength``.  Disabled when profile is ``None``.
+1.5 **Dynamic EQ** (optional) — up to four parametric bells that act only when
+   their own band crosses its threshold, each driven by one detector linked
+   across every non-LFE channel.  Surgical correction ahead of glue, and still
+   a shared time-varying filter across the bed, so it commutes with the LF sum
+   like the stages either side of it.  Controlled by
+   ``config.mastering_dyneq_bands`` (empty or ``None`` = disabled).
 2. **Bus compression** (optional) — linked-sidechain RMS glue compressor.
    Cosmetic only; does not substitute for loudness normalization.  Controlled
    by ``config.mastering_comp_profile`` (``None`` = disabled).  Individual
@@ -283,6 +289,12 @@ class MasteringChain:
                 sample_rate=sample_rate,
             )
             channels = shaper.process(channels)
+
+        if cfg.mastering_dyneq_bands:
+            from .dyneq import apply_dynamic_eq
+            channels = apply_dynamic_eq(
+                channels, sample_rate, cfg.mastering_dyneq_bands
+            )
 
         if cfg.mastering_comp_profile is not None:
             from .compressor import BusCompressor, COMP_PROFILES

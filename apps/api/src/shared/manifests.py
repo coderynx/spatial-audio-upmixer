@@ -16,6 +16,7 @@ from upmixer_web.shared.models import Job
 import upmixer.mastering.bass  # noqa: F401 E402
 import upmixer.mastering.clip  # noqa: F401 E402
 import upmixer.mastering.compressor  # noqa: F401 E402
+import upmixer.mastering.dyneq  # noqa: F401 E402
 import upmixer.mastering.eq  # noqa: F401 E402
 import upmixer.mastering.head  # noqa: F401 E402
 import upmixer.mastering.match_reference  # noqa: F401 E402

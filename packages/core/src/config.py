@@ -116,6 +116,10 @@ class UpmixConfig:
     mastering_eq_profile: str | None = None
     mastering_eq_strength: float = 1.0
 
+    # One dict per bell band: freq_hz, q, threshold_db, ratio, attack_ms,
+    # release_ms.  None or empty leaves the stage out of the chain entirely.
+    mastering_dyneq_bands: list[dict] | None = None
+
     mastering_comp_profile: str | None = None
     mastering_comp_threshold_db: float | None = None
     mastering_comp_ratio: float | None = None

@@ -226,6 +226,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "mastering_clip_knee":        ("mastering_clip_knee",        float),
     "mastering_eq_profile":       ("mastering_eq_profile",     str),
     "mastering_eq_strength":      ("mastering_eq_strength",    float),
+    "mastering_dyneq_bands":      ("mastering_dyneq_bands",    list),
     "mastering_comp_profile":     ("mastering_comp_profile",      str),
     "mastering_comp_threshold_db":("mastering_comp_threshold_db", float),
     "mastering_comp_ratio":       ("mastering_comp_ratio",        float),

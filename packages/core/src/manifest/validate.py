@@ -29,6 +29,58 @@ def _transaural_profile_choices() -> tuple[str, ...]:
     return CROSSTALK_PROFILES
 
 
+#: Bounds every dynamic-EQ band field is held to, as ``(minimum, maximum)``.
+_DYNEQ_BOUNDS: dict[str, tuple[float, float]] = {
+    "freq_hz": (20.0, 20000.0),
+    "q": (0.3, 12.0),
+    "threshold_db": (-80.0, 0.0),
+    "ratio": (1.0, 20.0),
+    "attack_ms": (0.1, 200.0),
+    "release_ms": (1.0, 2000.0),
+}
+
+
+def _validate_dyneq_bands(blocks: dict, location: str) -> None:
+    """Check ``mastering.dynamic_eq.bands`` — a list of fully specified bands.
+
+    The generic block walker only knows the leaf is a list; the band dicts
+    inside it are a trust boundary of their own.
+    """
+    # Deferred import: upmixer.mastering.dyneq registers its manifest block at
+    # import time, which needs this module already loaded.
+    from upmixer.mastering.dyneq import BAND_FIELDS, MAX_BANDS
+
+    mastering = blocks.get("mastering")
+    if not isinstance(mastering, dict):
+        return
+    dynamic_eq = mastering.get("dynamic_eq")
+    if not isinstance(dynamic_eq, dict):
+        return
+    bands = dynamic_eq.get("bands")
+    if bands is None:
+        return
+    prefix = f"{location}.mastering.dynamic_eq.bands"
+    if not isinstance(bands, list):
+        raise ManifestError(f"{prefix} must be a list of bands.")
+    if len(bands) > MAX_BANDS:
+        raise ManifestError(f"{prefix} takes at most {MAX_BANDS} bands.")
+    for index, band in enumerate(bands):
+        if not isinstance(band, dict):
+            raise ManifestError(f"{prefix}[{index}] must be a mapping.")
+        for key in band:
+            if key not in BAND_FIELDS:
+                raise ManifestError(f"Unknown manifest field '{prefix}[{index}].{key}'.")
+        for field in BAND_FIELDS:
+            value = band.get(field)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ManifestError(f"{prefix}[{index}].{field} must be a number.")
+            low, high = _DYNEQ_BOUNDS[field]
+            if not math.isfinite(float(value)) or not low <= float(value) <= high:
+                raise ManifestError(
+                    f"{prefix}[{index}].{field} must be between {low} and {high}."
+                )
+
+
 def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
     if value is None:
         return
@@ -303,5 +355,7 @@ def validate_manifest(data: dict) -> None:
                     )
 
     _validate_stem_mix(data, "manifest")
+    _validate_dyneq_bands(data, "manifest")
     for index, asset in enumerate(assets):
         _validate_stem_mix(asset, f"assets[{index}]")
+        _validate_dyneq_bands(asset, f"assets[{index}]")
