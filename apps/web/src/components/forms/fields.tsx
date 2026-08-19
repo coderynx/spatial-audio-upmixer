@@ -107,6 +107,7 @@ export function SliderField({
         </span>
       </div>
       <Slider
+        aria-label={label}
         value={[value]}
         min={min}
         max={max}

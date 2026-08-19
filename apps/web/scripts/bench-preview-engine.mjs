@@ -145,6 +145,9 @@ function params(mode, decodeTaps) {
       rebalance_db: 0, enabled: true, eq_fir: [], route_scale: 1,
     })),
     master: {
+      // Both default-off stages benched on, per parity contract §4.
+      head: { cutoff_hz: 20 },
+      clip: { ceiling_dbtp: -1, clip_db: 1, knee: 0.5 },
       reference_gain: 1, reference_fir: [],
       eq_fir: Array.from({ length: 1023 }, (_, i) => (i === 511 ? 1 : Math.sin(i * 0.01) * 1e-3)),
       eq_strength: 1,

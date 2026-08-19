@@ -187,6 +187,26 @@ describe("buildEngineParams", () => {
     expect(params.bass.excite).toBe(constants.bassProfiles.enhance.excite);
   });
 
+  it("leaves the head and the clipper out unless the project asks for them", () => {
+    const off = buildEngineParams(input()).master as { head: unknown; clip: unknown };
+    expect(off.head).toBeNull();
+    expect(off.clip).toBeNull();
+  });
+
+  it("gives the clipper the limiter's ceiling, on every output mode", () => {
+    const master = { clip: { clip_db: 0.8, knee: 0.5 }, limiterCeilingDbtp: -2, highpassHz: 24 };
+    for (const outputMode of ["native", "binaural"] as const) {
+      const params = buildEngineParams(input({ outputMode, master })).master as {
+        head: { cutoff_hz: number };
+        clip: { ceiling_dbtp: number; clip_db: number; knee: number };
+      };
+      expect(params.head.cutoff_hz).toBe(24);
+      // The collapse paths drop the limiter but still master the bed, so the
+      // clipper stays — and takes its asymptote from the same ceiling.
+      expect(params.clip).toEqual({ ceiling_dbtp: -2, clip_db: 0.8, knee: 0.5 });
+    }
+  });
+
   it("produces a block the core accepts", () => {
     const wasmPath = resolve(process.cwd(), "public/wasm/upmixer_dsp.wasm");
     const wasm = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmPath)))

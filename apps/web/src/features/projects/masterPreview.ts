@@ -11,6 +11,8 @@ export type MasterPreview = {
     target?: number | null;
     max_tp?: number | null;
   };
+  highpass?: { enabled?: boolean; cutoff_hz?: number };
+  clip?: { enabled?: boolean; clip_db?: number; knee?: number };
   eq?: { profile?: string | null; strength?: number };
   // Server-precomputed correction curve, realized into a FIR on demand at
   // this config's strength/max_db — see docs/contracts/preview_export_parity.md

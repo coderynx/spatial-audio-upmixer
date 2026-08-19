@@ -419,6 +419,15 @@ export class PreviewAudioEngine {
       master: {
         comp,
         bass,
+        highpassHz: this.mastering?.highpass?.enabled
+          ? this.mastering.highpass.cutoff_hz ?? 20
+          : null,
+        clip: this.mastering?.clip?.enabled
+          ? {
+              clip_db: this.mastering.clip.clip_db ?? 0.5,
+              knee: this.mastering.clip.knee ?? 1,
+            }
+          : null,
         eqFir: this.taps.masterEqTaps ?? undefined,
         eqStrength: this.mastering?.eq?.strength ?? 1,
         referenceFir: this.taps.referenceTaps ?? undefined,

@@ -83,7 +83,7 @@ describe("MasteringSection", () => {
     );
 
     expect(screen.getByText("reference.flac")).toBeInTheDocument();
-    expect(screen.getAllByRole("slider")[0]).not.toHaveAttribute(
+    expect(screen.getByRole("slider", { name: "Max correction" })).not.toHaveAttribute(
       "data-disabled",
     );
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
@@ -111,6 +111,37 @@ describe("MasteringSection", () => {
     fireEvent.click(compressor);
     const [patch] = setManifest.mock.calls.at(-1)!;
     expect(patch.mastering.compressor.profile).toBeNull();
+  });
+
+  it("ships the head and the clipper off, and keeps their settings across the switch", () => {
+    const setManifest = vi.fn();
+    render(
+      <MasteringSection
+        manifest={defaultManifest}
+        setManifest={setManifest}
+        configuration={null}
+        masteringReference={null}
+        referenceUploading={false}
+        referenceError={null}
+        onReferenceUpload={vi.fn()}
+        onReferenceClear={vi.fn()}
+      />,
+    );
+
+    for (const [name, block] of [
+      ["Subsonic filter", "highpass"],
+      ["Soft clip", "clip"],
+    ] as const) {
+      const control = screen.getByRole("switch", { name });
+      expect(control).not.toBeChecked();
+      fireEvent.click(control);
+      const [patch] = setManifest.mock.calls.at(-1)!;
+      expect(patch.mastering[block]).toEqual({
+        ...defaultManifest.mastering[block],
+        enabled: true,
+      });
+    }
+    expect(screen.getByRole("slider", { name: "Cutoff" })).toHaveAttribute("data-disabled");
   });
 
   it("restores the previous profile when an effect is switched back on", () => {

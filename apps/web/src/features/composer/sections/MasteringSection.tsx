@@ -156,7 +156,7 @@ export function MasteringSection({
   const referenceInput = React.useRef<HTMLInputElement>(null);
   const match = manifest.mastering.match_reference;
   const hasReference = masteringReference !== null;
-  const { eq, compressor, bass, loudness } = manifest.mastering;
+  const { eq, compressor, bass, loudness, highpass, clip } = manifest.mastering;
   // What the two loudness controls show while unset — the named target's own
   // numbers, resolved the same way the export resolves them. The placeholder
   // only stands in before the constants land, like the bass pots' defaults;
@@ -216,6 +216,28 @@ export function MasteringSection({
 
   return (
     <div className="space-y-3">
+      {/* First in the chain: nothing downstream should be matching, shaping
+          or measuring rumble. The subwoofer keeps its sub content and loses
+          only DC. */}
+      <EffectPanel
+        title="Subsonic filter"
+        enabled={highpass.enabled}
+        onEnabledChange={(enabled) => setMastering({ highpass: { ...highpass, enabled } })}
+      >
+        <div className={FIELD_GRID}>
+          <SliderField
+            label="Cutoff"
+            value={highpass.cutoff_hz}
+            min={10}
+            max={30}
+            step={1}
+            suffix=" Hz"
+            disabled={!highpass.enabled}
+            onChange={(cutoff_hz) => setMastering({ highpass: { ...highpass, cutoff_hz } })}
+          />
+        </div>
+      </EffectPanel>
+
       <EffectPanel
         title="Reference EQ match"
         enabled={match.spectrum}
@@ -595,6 +617,37 @@ export function MasteringSection({
               />
             </div>
           </FieldGroup>
+      </EffectPanel>
+
+      {/* Last before the true-peak limiter, which is what the depth is
+          measured down from. Off by default: it trades distortion for
+          headroom, which is a choice, not a default. */}
+      <EffectPanel
+        title="Soft clip"
+        enabled={clip.enabled}
+        onEnabledChange={(enabled) => setMastering({ clip: { ...clip, enabled } })}
+      >
+        <div className={FIELD_GRID}>
+          <SliderField
+            label="Depth below ceiling"
+            value={clip.clip_db}
+            min={0}
+            max={6}
+            step={0.1}
+            suffix=" dB"
+            disabled={!clip.enabled}
+            onChange={(clip_db) => setMastering({ clip: { ...clip, clip_db } })}
+          />
+          <SliderField
+            label="Softness"
+            value={clip.knee}
+            min={0}
+            max={1}
+            step={0.01}
+            disabled={!clip.enabled}
+            onChange={(knee) => setMastering({ clip: { ...clip, knee } })}
+          />
+        </div>
       </EffectPanel>
     </div>
   );

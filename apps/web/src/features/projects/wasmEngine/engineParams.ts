@@ -113,6 +113,11 @@ export type MasterMix = {
    * dropped between the UI and the worklet (ledger D30). */
   comp?: CompProfile | null;
   bass?: BassProfile | null;
+  /** Subsonic corner for the chain head, or null with the stage off. */
+  highpassHz?: number | null;
+  /** Soft-clip depth and knee, or null with the stage off. The curve's
+   * asymptote is the limiter's ceiling, so it is not carried here. */
+  clip?: { clip_db: number; knee: number } | null;
   eqFir?: Float64Array | number[];
   eqStrength?: number;
   referenceFir?: Float64Array | number[];
@@ -204,6 +209,7 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
       route_scale: stem.routeScale ?? 1,
     })),
     master: {
+      head: master.highpassHz != null ? { cutoff_hz: master.highpassHz } : null,
       reference_gain: master.referenceGain ?? 1,
       reference_fir: master.referenceFir ? Array.from(master.referenceFir) : [],
       eq_fir: master.eqFir ? Array.from(master.eqFir) : [],
@@ -232,6 +238,11 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
             decorr_fast_ms: c.decorrFastMs,
             decorr_slow_ms: c.decorrSlowMs,
           }
+        : null,
+      // On the bed in every output mode, matching `MasteringChain` — unlike
+      // the limiter below, which is native-only.
+      clip: master.clip
+        ? { ceiling_dbtp: master.limiterCeilingDbtp ?? -1, ...master.clip }
         : null,
       limiter:
         outputMode === "native"

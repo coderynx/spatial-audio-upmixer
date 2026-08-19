@@ -37,6 +37,8 @@ export type Manifest = {
       target: number | null;
       max_tp: number | null;
     };
+    highpass: { enabled: boolean; cutoff_hz: number };
+    clip: { enabled: boolean; clip_db: number; knee: number };
     eq: { profile: string | null; strength: number };
     match_reference: {
       strength: number;
@@ -159,6 +161,8 @@ export const defaultManifest: Manifest = {
   },
   mastering: {
     loudness: { normalize: true, target_preset: null, target: null, max_tp: null },
+    highpass: { enabled: false, cutoff_hz: 20 },
+    clip: { enabled: false, clip_db: 0.5, knee: 1 },
     eq: { profile: null, strength: 1 },
     match_reference: { strength: 0.7, spectrum: true, rms: true, max_db: 6 },
     compressor: {
@@ -243,6 +247,8 @@ export function normalizeManifest(source: Record<string, unknown>): Manifest {
         ...defaultManifest.mastering.loudness,
         ...value.mastering?.loudness,
       },
+      highpass: { ...defaultManifest.mastering.highpass, ...value.mastering?.highpass },
+      clip: { ...defaultManifest.mastering.clip, ...value.mastering?.clip },
       eq: { ...defaultManifest.mastering.eq, ...value.mastering?.eq },
       match_reference: {
         ...defaultManifest.mastering.match_reference,
