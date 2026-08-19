@@ -14,8 +14,10 @@ from upmixer_web.shared.models import Job
 # imports these lazily inside process(), so without this validate_manifest
 # rejects mastering.*/match_reference.* fields as "Unknown manifest field".
 import upmixer.mastering.bass  # noqa: F401 E402
+import upmixer.mastering.clip  # noqa: F401 E402
 import upmixer.mastering.compressor  # noqa: F401 E402
 import upmixer.mastering.eq  # noqa: F401 E402
+import upmixer.mastering.head  # noqa: F401 E402
 import upmixer.mastering.match_reference  # noqa: F401 E402
 
 

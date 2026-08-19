@@ -7,6 +7,10 @@ that shapes the final tone, dynamics, loudness, and peak ceiling.
 
 Processing order
 ----------------
+-1. **Chain head** (optional) — subsonic high-pass on every non-LFE channel
+   plus a DC blocker on LFE.  Runs before everything else so no later stage
+   matches, shapes or measures DC and sub-20 Hz rumble.  Controlled by
+   ``config.mastering_highpass_enabled`` / ``mastering_highpass_hz``.
 0. **Reference matching** (optional) — spectral envelope ratio EQ + global RMS
    scalar derived from a reference audio file.  Runs first to imprint the
    reference's "feel" before any other mastering stage.  Controlled by
@@ -48,6 +52,15 @@ Processing order
    wider than 5.1 both the normalization and the reported number are measured
    on the 5.1 re-render the delivery specs read
    (``docs/standards/loudness_dsp_bs1770.md`` §"Measurement programme").
+3.5 **Soft clip** (optional) — one shared memoryless transfer curve on every
+   non-LFE channel, shaving transients so the limiter is not left doing all
+   the peak control alone.  Runs after loudness normalization, since
+   normalizing an already-clipped signal would make the clip depth depend on
+   the loudness target.  Controlled by ``config.mastering_clip_enabled`` /
+   ``mastering_clip_db`` / ``mastering_clip_knee``.  This is the one
+   pre-limiter stage that does *not* commute with the LF sum, which is why it
+   sits after bass management — see
+   ``docs/contracts/preview_export_parity.md`` §1.
 4. **Look-ahead true-peak limiter** — a look-ahead brickwall limiter
    (:class:`~upmixer.mastering.limiter.LookAheadLimiter`), linked across the
    mains and capping LFE on its own curve, reduces gain ahead of any
@@ -240,6 +253,12 @@ class MasteringChain:
         result = MasteringResult()
         comp_gr: tuple[float, float] | None = None
 
+        if cfg.mastering_highpass_enabled:
+            from .head import apply_chain_head
+            channels = apply_chain_head(
+                channels, sample_rate, cfg.mastering_highpass_hz
+            )
+
         if cfg.mastering_match_ref_path is not None:
             from .match_reference import ReferenceMatchProcessor
             _log.info(
@@ -365,6 +384,15 @@ class MasteringChain:
                 ln_info["applied_gain_db"],
                 ln_info["measured_tp_dbtp"],
                 "  [TP limited]" if ln_info["tp_limited"] else "",
+            )
+
+        if cfg.mastering_clip_enabled:
+            from .clip import apply_soft_clip
+            channels = apply_soft_clip(
+                channels,
+                delivery.max_tp_dbtp,
+                cfg.mastering_clip_db,
+                cfg.mastering_clip_knee,
             )
 
         # The look-ahead limiter runs last, after loudness/true-peak

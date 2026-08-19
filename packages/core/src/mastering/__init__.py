@@ -7,8 +7,10 @@ Public API::
 
 Sub-modules:
     chain            — MasteringChain orchestrator
+    head             — subsonic high-pass + LFE DC blocker (chain head)
     match_reference  — ReferenceMatchProcessor (spectral + RMS reference matching)
     eq               — SpectralShaper + EQ_PROFILES
+    clip             — pre-limiter soft clipper
     compressor       — BusCompressor + COMP_PROFILES
     bass             — BassController + BASS_PROFILES
     limiter          — LookAheadLimiter (look-ahead true-peak brickwall limiter)

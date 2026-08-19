@@ -106,6 +106,13 @@ class UpmixConfig:
     preview_duration_s: float = 30.0
     preview_start_s: float | None = None
 
+    mastering_highpass_enabled: bool = False
+    mastering_highpass_hz: float = 20.0
+
+    mastering_clip_enabled: bool = False
+    mastering_clip_db: float = 0.5
+    mastering_clip_knee: float = 1.0
+
     mastering_eq_profile: str | None = None
     mastering_eq_strength: float = 1.0
 
