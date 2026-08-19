@@ -1,8 +1,8 @@
 # Phase 5 report — Linked dynamic EQ
 
 Plan: `docs/plans/mastering/phase5_dynamic_eq.md`.
-Date: 2026-08-19. Suites: Rust **214 → 222 passed**, Python **1182 → 1193
-passed / 44 deselected**, web **286 → 295 passed**.
+Date: 2026-08-19. Suites: Rust **214 → 222 passed**, Python **1182 → 1202
+passed / 44 deselected**, web **286 → 292 passed**.
 
 ## What shipped
 
@@ -26,12 +26,10 @@ Manifest and config: `mastering.dynamic_eq.bands[]` →
 `threshold_db`, `ratio`, `attack_ms`, `release_ms`. All six are required and
 bounded in `manifest/validate.py`'s `_DYNEQ_BOUNDS`; the band list is a leaf
 of type `list`, so the generic block walker cannot check inside it and
-`_validate_dyneq_bands` does that as its own trust boundary. A
-`DynamicEqPanel` in `MasteringSection.tsx` adds and removes bands up to the
-served `dyneq_max_bands`, with slider ranges mirroring the same bounds.
-
-`SliderField` gained a `scale: "log"` option, which the frequency control
-needs: 20-20000 Hz on a linear slider is unusable below about 2 kHz.
+`_validate_dyneq_bands` does that as its own trust boundary.
+`mastering.dynamic_eq.profile` names a preset in `DYNEQ_PROFILES`, which
+explicit bands override — see the addendum below, which is what the
+`DynamicEqPanel` in `MasteringSection.tsx` actually exposes.
 
 ## Why this is not mixing phase 13
 
@@ -97,9 +95,9 @@ A band at `ratio` 1.0 is not built at all, so it costs nothing.
 ```
 cd packages/dsp && cargo test -p upmixer-dsp-core     # 222 passed, 0 failed
 uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q
-                                                      # 1193 passed / 44 deselected
+                                                      # 1202 passed / 44 deselected
 cd apps/web && npm run build:wasm && npm test && npm run build
-                                                      # 295 passed, build ok
+                                                      # 292 passed, build ok
 cd apps/web && npm run bench:engine
 ```
 
@@ -109,9 +107,11 @@ ratio cutting harder, attack ordering, the shared-curve channel test, LFE
 excluded from both the detector and the bells, and the decaying strike above);
 `stream_equivalence.rs`'s offline-vs-streaming test extended with two active
 bands in the fixture, which is the parity check that matters most here;
-`test_mastering_dyneq.py` (11 tests — chain wiring, absence when unset, LFE
-untouched, running ahead of the compressor, the manifest round-trip, and five
-malformed-band rejections); `DynamicEqPanel.test.tsx` (8 tests);
+`test_mastering_dyneq.py` (18 tests — chain wiring, absence when unset, LFE
+untouched, running ahead of the compressor, the manifest round-trip, five
+malformed-band rejections, and the preset group: resolution precedence, every
+preset validating against the bounds a user's own bands face, and the
+calibration table below); `DynamicEqPanel.test.tsx` (5 tests);
 `engineParams.test.ts` (bands verbatim on the wire, none by default).
 
 ## Realtime budget
@@ -170,6 +170,58 @@ What needs ears, specifically:
   bands, since a detector faster than the period it is tracking modulates
   within the waveform. The bounds allow it deliberately (a 10 kHz de-esser
   wants it); nothing warns about it at 100 Hz.
+
+## Addendum — presets, and why they landed straight away
+
+The plan said "no profiles in v1 … presets can come once usage shows which
+moves recur". Usage showed something simpler on first contact: six sliders per
+band, four bands, is not a control surface anyone reaches for. `DYNEQ_PROFILES`
+now ships five named band sets and the panel is a profile picker like Spectral
+EQ's. Explicit `bands[]` still override a profile, so the manifest and CLI keep
+the full surface — only the panel narrowed.
+
+The presets target what *this* pipeline does to a bed rather than generic
+mastering moves. `clear-low-mid` / `tighten-low-end` address coherent summing
+between the bass crossover and ~400 Hz, which nothing else in the chain
+touches; `tame-harshness` and `immersive-polish`'s middle band address the
+presence region the height sends' high shelf pushes on. `tame-sibilance` is the
+one move the knowledge base argues against at bus level
+(`techniques/mastering_restoration.md` §"de-ess the vocal stem instead") — it
+ships because the realtime pipeline has no stems to fix at stem level, and the
+docstring says so rather than pretending otherwise.
+
+**Thresholds are absolute dBFS on the pre-normalization bed**, the same
+convention and chain position as `COMP_PROFILES`. They were measured, not
+guessed: on a dense bed scaled to the −20 dBFS full-band linked RMS those
+profiles assume,
+
+| band | p50 | p90 | p99 |
+|---|---|---|---|
+| 75 Hz Q1.0 | −23.1 | −21.1 | −20.9 |
+| 250 Hz Q1.2 | −25.2 | −23.1 | −22.9 |
+| 3.5 kHz Q1.8 | −50.1 | −38.9 | −25.8 |
+| 7.5 kHz Q3.0 | −55.6 | −38.3 | −25.1 |
+
+The two families needed opposite treatment, which is the finding worth keeping:
+high bands swing ~25 dB p50→p99 and are set near the flares, but **low bands
+vary by under a dB within a passage** — there is nothing transient to catch
+there, so they sit near their median and ride the 6-10 dB a mix moves between a
+quiet passage and a loud one instead.
+
+That was only visible because the first fixture was wrong. Built stationary, it
+made both low-band presets look inert (0.00 dB), which said nothing about the
+stage and everything about the fixture — the phase 13 §9.3 mistake in new
+clothes. Adding a passage envelope is what made the calibration testable.
+Resulting peak cuts: 2.95 dB (`tame-harshness`), 7.81 (`tame-sibilance`), 0.77
+(`clear-low-mid`), 1.14 (`tighten-low-end`), 0.64 / 2.05 / 4.80
+(`immersive-polish`). `test_every_profile_engages_without_crushing_a_dense_bed`
+pins every one of them inside 0.5-12 dB, so a preset that stops engaging is a
+test failure rather than a silent no-op.
+
+Dropped in the same change: `dyneq_max_bands` (served for an "Add band" button
+that no longer exists) and `SliderField`'s `scale="log"` (added for the
+frequency slider, now unused). The listening pass owed below is unchanged and
+now has five concrete starting points.
 
 ## Notes
 

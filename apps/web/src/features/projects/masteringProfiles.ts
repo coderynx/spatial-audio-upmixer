@@ -10,6 +10,8 @@
 // profile to its precomputed `/eq_fir/<name>.wav`. These are backend-owned and
 // fetched, not hardcoded here — see resolveEngineConstants and
 // docs/contracts/preview_export_parity.md §2.
+import type { DynamicEqBand } from "@/lib/manifest";
+
 export type EqProfileName =
   | "spatial-transparent"
   | "spatial-air"
@@ -124,6 +126,18 @@ export const resolveCompParams = (
   block: Overrides<CompProfile> | null | undefined,
   presets: Record<string, CompProfile>,
 ) => resolveProfile(block, presets);
+
+/** Mirror of `dyneq.py`'s `resolve_dyneq_bands`: explicit bands beat the
+ * profile, which is the precedence every other stage applies. Change one and
+ * change the other. */
+export function resolveDyneqBands(
+  block: { profile?: string | null; bands?: DynamicEqBand[] } | null | undefined,
+  presets: Record<string, DynamicEqBand[]>,
+): DynamicEqBand[] {
+  if (block?.bands?.length) return block.bands;
+  if (!block?.profile) return [];
+  return presets[block.profile] ?? [];
+}
 
 /** Mirror of `bass.py`'s `resolve_lf_targets`: `(speaker index, weight)` pairs
  * for the LF redistribution. Non-LFE weights sum to 1 in `off`/`add` and to
@@ -292,7 +306,7 @@ export type ServedEngineConstants = {
   height_downmix_coeff: number;
   itu_center_coeff: number;
   speaker_directions: Record<string, { azimuth_rad: number; elevation_rad: number }>;
-  dyneq_max_bands: number;
+  dyneq_profiles: Record<string, DynamicEqBand[]>;
   comp_profiles: Record<string, CompProfile>;
   bass_profiles: Record<string, BassProfile>;
   delivery_targets: Record<string, DeliveryTarget>;
@@ -339,8 +353,9 @@ export type EngineConstants = {
   ituCenterCoeff: number;
   /** Ambisonic encode angles, served so the browser never re-derives them. */
   speakerDirections: Record<string, { azimuth_rad: number; elevation_rad: number }>;
-  /** Bands the dynamic EQ accepts, so the panel never hardcodes the cap. */
-  dyneqMaxBands: number;
+  /** Named dynamic-EQ band sets, resolved here so the preview runs the same
+   * bands the export does — the pattern the compressor and bass presets use. */
+  dyneqProfiles: Record<string, DynamicEqBand[]>;
   compProfiles: Record<CompProfileName, CompProfile>;
   bassProfiles: Record<BassProfileName, BassProfile>;
   deliveryTargets: Record<string, DeliveryTarget>;
@@ -416,7 +431,7 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     heightDownmixCoeff: s.height_downmix_coeff,
     ituCenterCoeff: s.itu_center_coeff,
     speakerDirections: s.speaker_directions,
-    dyneqMaxBands: s.dyneq_max_bands,
+    dyneqProfiles: s.dyneq_profiles,
     compProfiles: s.comp_profiles as Record<CompProfileName, CompProfile>,
     bassProfiles: s.bass_profiles as Record<BassProfileName, BassProfile>,
     deliveryTargets: s.delivery_targets,

@@ -266,16 +266,26 @@ overrides, which is how a preset gets silently defeated the next time the
 manifest is normalized and saved. **Change one resolver and change the
 other.**
 
-Mastering phase 5's dynamic EQ adds exactly one entry, `dyneq_max_bands`, and
-it is a structural cap rather than an acoustic value: the panel needs to know
-when to stop offering an "Add band" button, and hardcoding four in the web
-would be a second copy of `mastering::dyneq`'s `MAX_BANDS`. Everything else a
-band carries is a user value from `mastering.dynamic_eq.bands[]`, and its
-gain computer's soft knee stays structural in `mastering::dyneq`'s `KNEE_DB`,
-like the duck's time constants. Band bounds are enforced once, in
-`manifest/validate.py`'s `_DYNEQ_BOUNDS`, and the panel's slider ranges
-mirror them — a control that could author a value the export rejects is a
-broken control.
+Mastering phase 5's dynamic EQ is served as `dyneq_profiles` — the whole
+`DYNEQ_PROFILES` table, exactly as `comp_profiles` and `bass_profiles` are
+served — plus a `choices.dyneq_profiles` name list. The web resolves a profile
+name to bands through `resolveDyneqBands` and puts the resolved bands on the
+wire, mirroring `dyneq.py`'s `resolve_dyneq_bands`; **change one resolver and
+change the other**, the same standing rule the delivery-target pair carries.
+Both apply the same precedence — explicit `mastering.dynamic_eq.bands[]` beat
+the profile.
+
+Nothing else about the stage is served. Its soft knee stays structural in
+`mastering::dyneq`'s `KNEE_DB`, like the duck's time constants, and band
+bounds are enforced once in `manifest/validate.py`'s `_DYNEQ_BOUNDS`.
+
+The preset thresholds are the one place in this contract where a served value
+depends on *level* rather than being level-free: they are absolute dBFS on the
+pre-normalization bed, which is the same convention and the same chain
+position as `COMP_PROFILES`'s thresholds. A bed arriving far from the ~−20
+dBFS those profiles assume will engage them differently — that is inherent to
+where both stages sit, not a preview/export divergence, and the two sides
+still run identical bands.
 
 Mastering phase 4's two stages add nothing to that block, deliberately. Both
 carry only user values from the manifest (`mastering.highpass.cutoff_hz`,

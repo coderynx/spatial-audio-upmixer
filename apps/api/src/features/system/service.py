@@ -48,7 +48,7 @@ def engine_constants() -> dict[str, Any]:
         DEFAULT_TARGET_LKFS,
         DELIVERY_TARGETS,
     )
-    from upmixer.mastering.dyneq import MAX_BANDS as DYNEQ_MAX_BANDS
+    from upmixer.mastering.dyneq import DYNEQ_PROFILES
     from upmixer.mastering.limiter import _SAFETY_MARGIN_DB
     from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
     from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
@@ -89,7 +89,7 @@ def engine_constants() -> dict[str, Any]:
             }
             for label, position in SPEAKER_AZIMUTH_ELEVATION.items()
         },
-        "dyneq_max_bands": DYNEQ_MAX_BANDS,
+        "dyneq_profiles": DYNEQ_PROFILES,
         "comp_profiles": COMP_PROFILES,
         "bass_profiles": BASS_PROFILES,
         "delivery_targets": DELIVERY_TARGETS,
@@ -132,6 +132,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     from upmixer.mastering.bass import BASS_PROFILES, LFE_MODES, LF_SPREAD_NAMES
     from upmixer.mastering.compressor import COMP_PROFILES
     from upmixer.mastering.delivery import DELIVERY_TARGETS
+    from upmixer.mastering.dyneq import DYNEQ_PROFILE_NAMES
     from upmixer.mastering.eq import EQ_PROFILES
     from upmixer.separation.bleed_reduction import DEBLEED_MODELS, PHASE_FIX_REFERENCE_MODELS
     from upmixer.separation.stem_eq import STEM_EQ_PROFILES
@@ -168,6 +169,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
             "transaural_profiles": list(CROSSTALK_PROFILES),
             "transaural_beds": list(TRANSAURAL_BED_FORMATS),
             "eq_profiles": sorted(EQ_PROFILES),
+            "dyneq_profiles": list(DYNEQ_PROFILE_NAMES),
             "compressor_profiles": sorted(COMP_PROFILES),
             "bass_profiles": sorted(BASS_PROFILES),
             "delivery_targets": list(DELIVERY_TARGETS),

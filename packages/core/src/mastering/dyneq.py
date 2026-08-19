@@ -32,7 +32,8 @@ _log = logging.getLogger("upmixer")
 from upmixer.manifest import register_block_keys as _rbk
 _rbk("mastering", {
     "dynamic_eq": {
-        "bands": ("config", "mastering_dyneq_bands"),
+        "profile": ("config", "mastering_dyneq_profile"),
+        "bands":   ("config", "mastering_dyneq_bands"),
     },
 })
 del _rbk
@@ -48,6 +49,78 @@ BAND_FIELDS: tuple[str, ...] = (
 
 #: Bands a chain may carry, mirroring ``mastering::dyneq``'s ``MAX_BANDS``.
 MAX_BANDS = 4
+
+DYNEQ_PROFILES: dict[str, list[dict]] = {
+    "tame-harshness": [
+        dict(freq_hz=3500.0, q=1.8, threshold_db=-32.0, ratio=3.0,
+             attack_ms=15.0, release_ms=180.0),
+    ],
+    "tame-sibilance": [
+        dict(freq_hz=7500.0, q=3.0, threshold_db=-31.0, ratio=4.0,
+             attack_ms=2.0, release_ms=80.0),
+    ],
+    "clear-low-mid": [
+        dict(freq_hz=250.0, q=1.2, threshold_db=-25.0, ratio=2.5,
+             attack_ms=30.0, release_ms=250.0),
+    ],
+    "tighten-low-end": [
+        dict(freq_hz=75.0, q=1.0, threshold_db=-23.0, ratio=3.0,
+             attack_ms=20.0, release_ms=200.0),
+    ],
+    "immersive-polish": [
+        dict(freq_hz=250.0, q=1.2, threshold_db=-25.0, ratio=2.0,
+             attack_ms=30.0, release_ms=250.0),
+        dict(freq_hz=3500.0, q=1.8, threshold_db=-31.0, ratio=2.5,
+             attack_ms=15.0, release_ms=180.0),
+        dict(freq_hz=11000.0, q=2.0, threshold_db=-29.0, ratio=2.5,
+             attack_ms=5.0, release_ms=120.0),
+    ],
+}
+"""Named band sets, chosen for what *this* pipeline does to a bed rather than
+for generic mastering moves.
+
+``clear-low-mid`` and ``tighten-low-end`` target coherent summing: bass
+management unifies below its crossover, but from there to ~400 Hz every bed
+channel still carries correlated content that sums at up to 10·log₁₀(N) dB, and
+nothing else in the chain addresses it.  ``tame-harshness`` and
+``immersive-polish``'s middle band target the presence region, which the height
+sends' high shelf and the surround/height decorrelation both push on.
+``tame-sibilance`` is the one bus-level move the knowledge base argues against
+(``techniques/mastering_restoration.md``: de-ess the vocal stem instead) — it
+is here because the realtime pipeline has no stems to fix at stem level, and in
+stem mode it is a safety net rather than the first tool.
+
+Thresholds are absolute dBFS on the *pre*-normalization bed, the same
+convention and the same chain position as :data:`COMP_PROFILES`.  They are
+calibrated for a bed whose full-band linked RMS sits near −20 dBFS, which is
+what those profiles also assume.
+
+The two families are set differently because they catch different things.  The
+high bands sit well above their band's median, near where a dense programme's
+transient flares reach, so they act on those and are inert between them.  The
+low bands sit near their median: correlated low-frequency content varies by
+under a dB within a passage, so there are no flares to catch there — what a low
+band is for is the 6-10 dB a mix moves between a quiet passage and a loud one,
+which means engaging through the loud one and relaxing through the quiet one.
+"""
+
+DYNEQ_PROFILE_NAMES: tuple[str, ...] = tuple(sorted(DYNEQ_PROFILES))
+
+
+def resolve_dyneq_bands(
+    profile: str | None,
+    bands: list[dict] | None,
+) -> list[dict]:
+    """Bands the chain should run: explicit *bands* win over *profile*.
+
+    Manifest values beat profile defaults, the same precedence every other
+    stage applies.  An unknown profile name resolves to no bands.
+    """
+    if bands:
+        return bands
+    if profile is None:
+        return []
+    return [dict(band) for band in DYNEQ_PROFILES.get(profile, ())]
 
 
 def apply_dynamic_eq(

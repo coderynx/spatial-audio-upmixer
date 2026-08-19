@@ -23,7 +23,9 @@ Processing order
    across every non-LFE channel.  Surgical correction ahead of glue, and still
    a shared time-varying filter across the bed, so it commutes with the LF sum
    like the stages either side of it.  Controlled by
-   ``config.mastering_dyneq_bands`` (empty or ``None`` = disabled).
+   ``config.mastering_dyneq_profile`` (a name in ``DYNEQ_PROFILES``), with
+   ``config.mastering_dyneq_bands`` overriding it outright for explicit
+   control.  Disabled when both are unset.
 2. **Bus compression** (optional) — linked-sidechain RMS glue compressor.
    Cosmetic only; does not substitute for loudness normalization.  Controlled
    by ``config.mastering_comp_profile`` (``None`` = disabled).  Individual
@@ -290,10 +292,14 @@ class MasteringChain:
             )
             channels = shaper.process(channels)
 
-        if cfg.mastering_dyneq_bands:
-            from .dyneq import apply_dynamic_eq
+        if cfg.mastering_dyneq_profile or cfg.mastering_dyneq_bands:
+            from .dyneq import apply_dynamic_eq, resolve_dyneq_bands
             channels = apply_dynamic_eq(
-                channels, sample_rate, cfg.mastering_dyneq_bands
+                channels,
+                sample_rate,
+                resolve_dyneq_bands(
+                    cfg.mastering_dyneq_profile, cfg.mastering_dyneq_bands
+                ),
             )
 
         if cfg.mastering_comp_profile is not None:

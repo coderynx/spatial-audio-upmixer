@@ -195,6 +195,7 @@ export type Configuration = {
     transaural_profiles?: string[]
     transaural_beds?: string[]
     eq_profiles: string[]
+    dyneq_profiles?: string[]
     compressor_profiles: string[]
     bass_profiles: string[]
     delivery_targets?: string[]

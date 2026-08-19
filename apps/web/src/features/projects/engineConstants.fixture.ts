@@ -53,7 +53,11 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
     TBL: { azimuth_rad: 2.356194490192345, elevation_rad: 0.6154797086703874 },
     TBR: { azimuth_rad: -2.356194490192345, elevation_rad: 0.6154797086703874 },
   },
-  dyneq_max_bands: 4,
+  dyneq_profiles: {
+    "tame-harshness": [
+      { freq_hz: 3500, q: 1.8, threshold_db: -32, ratio: 3, attack_ms: 15, release_ms: 180 },
+    ],
+  },
   comp_profiles: {
     transparent: { threshold_db: -22.0, ratio: 1.5, attack_ms: 30.0, release_ms: 300.0, knee_db: 9.0, makeup_db: 0.0, sidechain_hpf_hz: null },
     glue: { threshold_db: -18.0, ratio: 2.0, attack_ms: 20.0, release_ms: 200.0, knee_db: 6.0, makeup_db: 0.0, sidechain_hpf_hz: null },

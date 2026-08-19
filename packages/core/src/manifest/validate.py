@@ -21,6 +21,14 @@ def _binaural_profile_choices() -> tuple[str, ...]:
     return BINAURAL_PROFILES
 
 
+def _dyneq_profile_choices() -> tuple[str, ...]:
+    # Deferred for the same reason as the two below: upmixer.mastering.dyneq
+    # registers its manifest block at import time, which needs this module
+    # already loaded.
+    from upmixer.mastering.dyneq import DYNEQ_PROFILE_NAMES
+    return DYNEQ_PROFILE_NAMES
+
+
 def _transaural_profile_choices() -> tuple[str, ...]:
     # Deferred import: upmixer.crosstalk imports upmixer.binaural.renderer,
     # which imports upmixer.mastering.chain, which imports this module at
@@ -156,6 +164,7 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
         "format.subtype": set(WAV_SUBTYPES),
         "format.downmix.surround_coeff": {0.7071, 0.5, 0.0},
         "mixing.spatial.profile": {"auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"},
+        "mastering.dynamic_eq.profile": set(_dyneq_profile_choices()),
         "format.binaural.profile": set(_binaural_profile_choices()),
         "format.transaural.profile": set(_transaural_profile_choices()),
         "engine.stem_phase_fix_reference_model": set(PHASE_FIX_REFERENCE_MODELS),

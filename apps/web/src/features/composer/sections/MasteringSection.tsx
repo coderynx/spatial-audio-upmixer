@@ -374,9 +374,9 @@ export function MasteringSection({
       {/* Surgical correction before glue: it runs between the profile curve
           above and the compressor below, which is where it sits in the chain. */}
       <DynamicEqPanel
-        bands={dynamic_eq.bands}
-        maxBands={configuration?.constants?.dyneq_max_bands}
-        onChange={(bands) => setMastering({ dynamic_eq: { bands } })}
+        profile={dynamic_eq.profile}
+        profiles={choices?.dyneq_profiles}
+        onChange={(profile) => setMastering({ dynamic_eq: { ...dynamic_eq, profile } })}
       />
 
       <EffectPanel

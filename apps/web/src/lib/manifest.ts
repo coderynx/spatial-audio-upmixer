@@ -50,7 +50,7 @@ export type Manifest = {
     highpass: { enabled: boolean; cutoff_hz: number };
     clip: { enabled: boolean; clip_db: number; knee: number };
     eq: { profile: string | null; strength: number };
-    dynamic_eq: { bands: DynamicEqBand[] };
+    dynamic_eq: { profile: string | null; bands: DynamicEqBand[] };
     match_reference: {
       strength: number;
       spectrum: boolean;
@@ -175,7 +175,7 @@ export const defaultManifest: Manifest = {
     highpass: { enabled: false, cutoff_hz: 20 },
     clip: { enabled: false, clip_db: 0.5, knee: 1 },
     eq: { profile: null, strength: 1 },
-    dynamic_eq: { bands: [] },
+    dynamic_eq: { profile: null, bands: [] },
     match_reference: { strength: 0.7, spectrum: true, rms: true, max_db: 6 },
     compressor: {
       profile: "transparent",
@@ -263,6 +263,7 @@ export function normalizeManifest(source: Record<string, unknown>): Manifest {
       clip: { ...defaultManifest.mastering.clip, ...value.mastering?.clip },
       eq: { ...defaultManifest.mastering.eq, ...value.mastering?.eq },
       dynamic_eq: {
+        profile: value.mastering?.dynamic_eq?.profile ?? null,
         bands: Array.isArray(value.mastering?.dynamic_eq?.bands)
           ? value.mastering.dynamic_eq.bands
           : [],
