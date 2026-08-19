@@ -8,7 +8,9 @@ mod common;
 use common::deterministic_signal;
 use upmixer_dsp_core::mastering::{
     bass::{bass_control, BassParams},
+    clip::{soft_clip, ClipParams},
     compressor::{bus_compress, CompParams},
+    head::{chain_head, HeadParams},
     limiter::{lookahead_limit, LimiterParams},
 };
 use upmixer_dsp_core::stream::engine::{PreviewEngine, StemSource};
@@ -23,6 +25,8 @@ fn params_json(with_master: bool) -> String {
     let master = if with_master {
         r#"
         "master": {
+            "head": {"cutoff_hz": 22.0},
+            "clip": {"ceiling_dbtp": -1.0, "clip_db": 1.0, "knee": 0.8},
             "compressor": {"threshold_db": -18.0, "ratio": 2.0, "attack_ms": 20.0,
                            "release_ms": 200.0, "knee_db": 6.0, "makeup_db": 0.0,
                            "sidechain_hpf_hz": 100.0},
@@ -159,6 +163,7 @@ fn streaming_mastering_matches_the_offline_chain() {
     let mut offline = bed.clone();
     let lfe = Some(3usize);
 
+    chain_head(&mut offline, lfe, SR, &HeadParams { cutoff_hz: 22.0 });
     bus_compress(
         &mut offline,
         lfe,
@@ -201,6 +206,7 @@ fn streaming_mastering_matches_the_offline_chain() {
             decorr_slow_ms: 300.0,
         },
     );
+    soft_clip(&mut offline, lfe, &ClipParams { ceiling_dbtp: -1.0, clip_db: 1.0, knee: 0.8 });
     lookahead_limit(
         &mut offline,
         lfe,
@@ -544,6 +550,9 @@ fn clearing_the_limiter_through_update_params_actually_removes_it() {
     // freed to exceed that ceiling.
     let ceiling_linear = 10.0_f64.powf((-6.0 - 0.1) / 20.0);
     let hot_params = params_json(true)
+        // The clipper caps at a ceiling of its own, which would hold the peak
+        // down after the limiter goes; this test is about the limiter.
+        .replace(r#""clip": {"ceiling_dbtp": -1.0, "clip_db": 1.0, "knee": 0.8},"#, "")
         .replace(r#""rebalance_db": 0.0, "enabled": true"#, r#""rebalance_db": 24.0, "enabled": true"#)
         .replace(r#""ceiling_dbtp": -1.0"#, r#""ceiling_dbtp": -6.0"#);
     let params: EngineParams = serde_json::from_str(&hot_params).expect("engine params");

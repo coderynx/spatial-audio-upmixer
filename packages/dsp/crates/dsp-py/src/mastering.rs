@@ -3,7 +3,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
-use upmixer_dsp_core::mastering::{bass, compressor, eq, limiter};
+use upmixer_dsp_core::mastering::{bass, clip, compressor, eq, head, limiter};
 
 use crate::{from_bed, to_bed};
 
@@ -134,6 +134,37 @@ fn bass_control<'py>(
 }
 
 #[pyfunction]
+#[pyo3(signature = (channels, lfe_index, sample_rate, cutoff_hz))]
+fn chain_head<'py>(
+    py: Python<'py>,
+    channels: Vec<PyReadonlyArray1<'py, f64>>,
+    lfe_index: Option<usize>,
+    sample_rate: u32,
+    cutoff_hz: f64,
+) -> Vec<Bound<'py, PyArray1<f64>>> {
+    let mut bed = to_bed(channels);
+    py.detach(|| head::chain_head(&mut bed, lfe_index, sample_rate, &head::HeadParams { cutoff_hz }));
+    from_bed(py, bed)
+}
+
+#[pyfunction]
+#[pyo3(signature = (channels, lfe_index, ceiling_dbtp, clip_db, knee))]
+fn soft_clip<'py>(
+    py: Python<'py>,
+    channels: Vec<PyReadonlyArray1<'py, f64>>,
+    lfe_index: Option<usize>,
+    ceiling_dbtp: f64,
+    clip_db: f64,
+    knee: f64,
+) -> Vec<Bound<'py, PyArray1<f64>>> {
+    let mut bed = to_bed(channels);
+    py.detach(|| {
+        clip::soft_clip(&mut bed, lfe_index, &clip::ClipParams { ceiling_dbtp, clip_db, knee })
+    });
+    from_bed(py, bed)
+}
+
+#[pyfunction]
 fn forward_window_min<'py>(
     py: Python<'py>,
     values: PyReadonlyArray1<'py, f64>,
@@ -177,6 +208,8 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(apply_fir, m)?)?;
     m.add_function(wrap_pyfunction!(bus_compress, m)?)?;
     m.add_function(wrap_pyfunction!(bass_control, m)?)?;
+    m.add_function(wrap_pyfunction!(chain_head, m)?)?;
+    m.add_function(wrap_pyfunction!(soft_clip, m)?)?;
     m.add_function(wrap_pyfunction!(forward_window_min, m)?)?;
     m.add_function(wrap_pyfunction!(lookahead_limit, m)?)?;
     Ok(())

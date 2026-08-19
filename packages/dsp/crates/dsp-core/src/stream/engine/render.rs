@@ -8,6 +8,7 @@
 //! than a causal approximation of one.
 
 use super::{PreviewEngine, METER_WINDOW_FRAMES, UNIFY_STRIDE};
+use crate::mastering::clip::ClipCurve;
 use crate::stream::meters::Level;
 use crate::stream::params::SendShape;
 use crate::stream::routing::shape_index;
@@ -204,9 +205,17 @@ impl PreviewEngine {
         // The LFE trim follows the LF unifier, so it runs here rather than in
         // the causal front — see `CausalChain::lfe_trim`.
         let lfe_gain_db = self.params.master.bass.map(|b| b.lfe_gain_db).unwrap_or(0.0);
+        // Clipped on the way into `post`, not at the emit point: the limiter
+        // detects a whole look-ahead past what it emits, and that window has
+        // to be clipped too (parity contract §1).
+        let clip = self.params.master.clip.map(|c| ClipCurve::new(&c));
         for (channel, mut block) in window.into_iter().enumerate() {
             if !self.params.bypass_mastering {
                 self.causal[channel].lfe_trim(&mut block, lfe_gain_db);
+                if let Some(curve) = clip.as_ref().filter(|_| self.params.lfe_index != Some(channel))
+                {
+                    curve.apply(&mut block);
+                }
             }
             self.post.channels[channel].extend(block);
         }

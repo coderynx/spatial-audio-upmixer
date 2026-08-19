@@ -7,7 +7,10 @@
 
 use serde::Deserialize;
 
-use crate::mastering::{bass::BassParams, compressor::CompParams, limiter::LimiterParams};
+use crate::mastering::{
+    bass::BassParams, clip::ClipParams, compressor::CompParams, head::HeadParams,
+    limiter::LimiterParams,
+};
 use crate::spatial::voicing::VoicingParams;
 
 /// How the mastered bed reaches the listener.
@@ -105,6 +108,9 @@ fn unit_scale() -> f64 {
 /// off, matching how `MasteringChain` skips an unset profile.
 #[derive(Clone, Debug, PartialEq, Deserialize, Default)]
 pub struct MasterParams {
+    /// Subsonic high-pass at the head of the chain, ahead of everything else.
+    #[serde(default)]
+    pub head: Option<HeadParams>,
     /// Reference-match level gain, applied before the curve.
     #[serde(default = "unit_scale")]
     pub reference_gain: f64,
@@ -119,6 +125,9 @@ pub struct MasterParams {
     pub compressor: Option<CompParams>,
     #[serde(default)]
     pub bass: Option<BassParams>,
+    /// Soft clip between loudness normalization and the limiter.
+    #[serde(default)]
+    pub clip: Option<ClipParams>,
     #[serde(default)]
     pub limiter: Option<LimiterParams>,
     /// Where the LF unifier hands the low band back, as

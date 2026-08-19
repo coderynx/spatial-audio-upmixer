@@ -13,6 +13,7 @@ use crate::kernels::upfirdn::upfirdn_up;
 use crate::loudness::{TRUE_PEAK_FIR_4X, TRUE_PEAK_OVERSAMPLE};
 use crate::mastering::bass::{excite_harmonics, BassParams, PunchState};
 use crate::mastering::decorrelate::Decorrelator;
+use crate::mastering::head::head_sos;
 use crate::mastering::limiter::{LimiterParams, FIR_DELAY, FIR_MARGIN_SAMPLES};
 use crate::mastering::non_lfe;
 
@@ -44,6 +45,7 @@ pub const DECORR_CHUNK_MS: f64 = 50.0;
 
 /// Causal, per-channel front of the chain.
 pub struct CausalChain {
+    head: Option<SosFilter>,
     reference: Option<StreamingConvolver>,
     eq: Option<StreamingConvolver>,
     reference_gain: f64,
@@ -58,6 +60,9 @@ impl CausalChain {
         let nyq = sample_rate as f64 / 2.0;
         let bass = p.bass.as_ref();
         Self {
+            head: p
+                .head
+                .map(|h| SosFilter::from_flat(&head_sos(sample_rate, &h, is_lfe))),
             reference: (!p.reference_fir.is_empty() && !is_lfe)
                 .then(|| StreamingConvolver::new(p.reference_fir.clone())),
             eq: (!p.eq_fir.is_empty() && !is_lfe)
@@ -91,6 +96,12 @@ impl CausalChain {
     pub fn retune(&mut self, sample_rate: u32, old: &MasterParams, new: &MasterParams) {
         self.reference_gain = new.reference_gain;
         self.eq_strength = new.eq_strength;
+
+        if old.head != new.head {
+            self.head = new
+                .head
+                .map(|h| SosFilter::from_flat(&head_sos(sample_rate, &h, self.is_lfe)));
+        }
 
         if !self.is_lfe && old.reference_fir != new.reference_fir {
             if new.reference_fir.is_empty() {
@@ -132,8 +143,16 @@ impl CausalChain {
     }
 
     /// Everything before the compressor, which needs the linked bus first.
+    /// The head stage leads: nothing downstream should be matching, shaping
+    /// or measuring DC and sub-20 Hz rumble.
     pub fn pre_compressor(&mut self, block: &[f64]) -> Vec<f64> {
-        let mut out: Vec<f64> = block.iter().map(|v| v * self.reference_gain).collect();
+        let mut out: Vec<f64> = block.to_vec();
+        if let Some(head) = &mut self.head {
+            head.process(&mut out);
+        }
+        for v in out.iter_mut() {
+            *v *= self.reference_gain;
+        }
         if let Some(conv) = &mut self.reference {
             out = conv.process(&out);
         }
