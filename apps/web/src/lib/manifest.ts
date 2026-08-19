@@ -1,3 +1,13 @@
+/** One dynamic-EQ bell, exactly as `mastering.dynamic_eq.bands[]` carries it. */
+export type DynamicEqBand = {
+  freq_hz: number;
+  q: number;
+  threshold_db: number;
+  ratio: number;
+  attack_ms: number;
+  release_ms: number;
+};
+
 export type Manifest = {
   version: string;
   metadata: { name: string; author?: string; description?: string };
@@ -40,6 +50,7 @@ export type Manifest = {
     highpass: { enabled: boolean; cutoff_hz: number };
     clip: { enabled: boolean; clip_db: number; knee: number };
     eq: { profile: string | null; strength: number };
+    dynamic_eq: { bands: DynamicEqBand[] };
     match_reference: {
       strength: number;
       spectrum: boolean;
@@ -164,6 +175,7 @@ export const defaultManifest: Manifest = {
     highpass: { enabled: false, cutoff_hz: 20 },
     clip: { enabled: false, clip_db: 0.5, knee: 1 },
     eq: { profile: null, strength: 1 },
+    dynamic_eq: { bands: [] },
     match_reference: { strength: 0.7, spectrum: true, rms: true, max_db: 6 },
     compressor: {
       profile: "transparent",
@@ -250,6 +262,11 @@ export function normalizeManifest(source: Record<string, unknown>): Manifest {
       highpass: { ...defaultManifest.mastering.highpass, ...value.mastering?.highpass },
       clip: { ...defaultManifest.mastering.clip, ...value.mastering?.clip },
       eq: { ...defaultManifest.mastering.eq, ...value.mastering?.eq },
+      dynamic_eq: {
+        bands: Array.isArray(value.mastering?.dynamic_eq?.bands)
+          ? value.mastering.dynamic_eq.bands
+          : [],
+      },
       match_reference: {
         ...defaultManifest.mastering.match_reference,
         ...value.mastering?.match_reference,

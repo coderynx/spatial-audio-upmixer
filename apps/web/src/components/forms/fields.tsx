@@ -87,6 +87,7 @@ export function SliderField({
   onChange,
   suffix = "",
   disabled = false,
+  scale = "linear",
 }: {
   label: string;
   value: number;
@@ -96,24 +97,29 @@ export function SliderField({
   onChange: (value: number) => void;
   suffix?: string;
   disabled?: boolean;
+  /** "log" tracks the slider in decades and reports whole units — what a
+   * frequency spanning the audible band needs to be usable at either end. */
+  scale?: "linear" | "log";
 }) {
+  const log = scale === "log";
+  const position = (v: number) => (log ? Math.log10(v) : v);
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
         <Label>{label}</Label>
         <span className="rounded bg-secondary px-1.5 py-0.5 font-mono text-[11px] tabular-nums">
-          {value.toFixed(step < 0.1 ? 2 : 1)}
+          {log ? Math.round(value) : value.toFixed(step < 0.1 ? 2 : 1)}
           {suffix}
         </span>
       </div>
       <Slider
         aria-label={label}
-        value={[value]}
-        min={min}
-        max={max}
-        step={step}
+        value={[position(value)]}
+        min={position(min)}
+        max={position(max)}
+        step={log ? 0.002 : step}
         disabled={disabled}
-        onValueChange={([next]) => onChange(next)}
+        onValueChange={([next]) => onChange(log ? Math.round(10 ** next) : next)}
       />
     </div>
   );

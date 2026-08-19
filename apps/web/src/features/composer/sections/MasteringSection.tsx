@@ -3,7 +3,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   FileAudio, Loader2, Minimize2, Sparkles, Speaker, TrendingDown, TrendingUp, Upload, Waves, X,
 } from "lucide-react";
-import { Panel, PanelBody, PanelHeader } from "@/app/Panel";
 import {
   FIELD_GRID,
   NullablePotField,
@@ -14,11 +13,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { formatBytes } from "@/lib/format";
 import { resolveDeliveryTarget } from "@/features/projects/masteringProfiles";
 import type { MasteringReference } from "@/api";
 import type { ManifestSectionProps } from "./types";
+import { DynamicEqPanel } from "./DynamicEqPanel";
+import { EffectPanel, FieldGroup, POT_GRID, titleCase } from "./EffectPanel";
 
 type MasteringSectionProps = ManifestSectionProps & {
   masteringReference: MasteringReference | null;
@@ -32,49 +32,6 @@ type MasteringSectionProps = ManifestSectionProps & {
    * so surface that instead of letting the attached reference imply it is. */
   referencePending?: boolean;
 };
-
-/** One mastering effect. The header switch is the effect's power button, the
- * way a plug-in bypasses: it replaces the "None" entry every profile picker
- * used to carry and the standalone enable toggles that used to sit in the
- * body. Placed on the trailing edge, matching Apple's settings rows and the
- * `Switch` position in `ToggleField`. */
-function EffectPanel({
-  title,
-  enabled,
-  onEnabledChange,
-  toggleDisabled = false,
-  status,
-  children,
-}: {
-  title: string;
-  enabled: boolean;
-  onEnabledChange: (enabled: boolean) => void;
-  toggleDisabled?: boolean;
-  status?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <Panel>
-      <PanelHeader
-        title={title}
-        actions={
-          <>
-            {status}
-            <Switch
-              aria-label={title}
-              checked={enabled}
-              disabled={toggleDisabled}
-              onCheckedChange={onEnabledChange}
-            />
-          </>
-        }
-      />
-      <PanelBody className="space-y-2.5 overflow-visible">{children}</PanelBody>
-    </Panel>
-  );
-}
-
-const POT_GRID = "grid grid-cols-[repeat(auto-fit,minmax(76px,1fr))] gap-3";
 
 /** What each bass profile does, in the terms someone picking one thinks in.
  * The note is the documentation — §6.3 puts it on the option rather than as
@@ -116,30 +73,10 @@ function BassOption({ value }: { value: string }) {
   );
 }
 
-/** Splits a panel body into named runs of controls. Reuses the table-header
- * micro-label rather than introducing a heading style of its own. */
-function FieldGroup({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-2.5 border-t pt-2.5 first:border-t-0 first:pt-0">
-      <p className="text-[11px] font-semibold uppercase tracking-[.06em] text-muted-foreground">
-        {title}
-      </p>
-      {children}
-    </div>
-  );
-}
-
 /** Shown by the loudness pots only until `GET /api/v1/configuration` lands,
  * the way the bass pots' literal defaults do. The real numbers are served
  * (`delivery_default`); this never reaches the preview or the export. */
 const PRE_BOOTSTRAP_DELIVERY = { target_lkfs: -18, max_tp_dbtp: -1, tolerance_lu: null };
-
-function titleCase(value: string) {
-  return value
-    .split("-")
-    .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join(" ");
-}
 
 export function MasteringSection({
   manifest,
@@ -156,7 +93,7 @@ export function MasteringSection({
   const referenceInput = React.useRef<HTMLInputElement>(null);
   const match = manifest.mastering.match_reference;
   const hasReference = masteringReference !== null;
-  const { eq, compressor, bass, loudness, highpass, clip } = manifest.mastering;
+  const { eq, compressor, bass, loudness, highpass, clip, dynamic_eq } = manifest.mastering;
   // What the two loudness controls show while unset — the named target's own
   // numbers, resolved the same way the export resolves them. The placeholder
   // only stands in before the constants land, like the bass pots' defaults;
@@ -433,6 +370,14 @@ export function MasteringSection({
           />
         </div>
       </EffectPanel>
+
+      {/* Surgical correction before glue: it runs between the profile curve
+          above and the compressor below, which is where it sits in the chain. */}
+      <DynamicEqPanel
+        bands={dynamic_eq.bands}
+        maxBands={configuration?.constants?.dyneq_max_bands}
+        onChange={(bands) => setMastering({ dynamic_eq: { bands } })}
+      />
 
       <EffectPanel
         title="Bus compressor"

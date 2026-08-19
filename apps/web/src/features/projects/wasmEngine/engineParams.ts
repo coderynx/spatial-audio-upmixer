@@ -14,6 +14,7 @@ import type {
   VoicingParams,
 } from "../masteringProfiles";
 import { resolveLfTargets } from "../masteringProfiles";
+import type { DynamicEqBand } from "@/lib/manifest";
 
 export type OutputMode = "binaural" | "transaural" | "stereo" | "native";
 
@@ -120,6 +121,8 @@ export type MasterMix = {
   clip?: { clip_db: number; knee: number } | null;
   eqFir?: Float64Array | number[];
   eqStrength?: number;
+  /** Dynamic-EQ bells; empty is the stage absent, not a stage doing nothing. */
+  dynamicEq?: DynamicEqBand[];
   referenceFir?: Float64Array | number[];
   referenceGain?: number;
   /** Loudness/true-peak correction from the offline precompute pass. */
@@ -214,6 +217,7 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
       reference_fir: master.referenceFir ? Array.from(master.referenceFir) : [],
       eq_fir: master.eqFir ? Array.from(master.eqFir) : [],
       eq_strength: master.eqStrength ?? 1,
+      dynamic_eq: master.dynamicEq ?? [],
       compressor: comp ?? null,
       bass: bass
         ? {

@@ -151,6 +151,14 @@ function params(mode, decodeTaps) {
       reference_gain: 1, reference_fir: [],
       eq_fir: Array.from({ length: 1023 }, (_, i) => (i === 511 ? 1 : Math.sin(i * 0.01) * 1e-3)),
       eq_strength: 1,
+      // Every band the stage accepts, all of them driven into gain reduction
+      // so none of them coasts on the redesign-only-when-the-gain-moves path.
+      dynamic_eq: [
+        { freq_hz: 3800, q: 2, threshold_db: -60, ratio: 4, attack_ms: 10, release_ms: 150 },
+        { freq_hz: 220, q: 1.4, threshold_db: -60, ratio: 3, attack_ms: 30, release_ms: 250 },
+        { freq_hz: 900, q: 3, threshold_db: -60, ratio: 2, attack_ms: 5, release_ms: 100 },
+        { freq_hz: 8000, q: 4, threshold_db: -60, ratio: 6, attack_ms: 1, release_ms: 60 },
+      ],
       compressor: {
         threshold_db: -18, ratio: 2, attack_ms: 20, release_ms: 200, knee_db: 6, makeup_db: 0,
         sidechain_hpf_hz: 100,

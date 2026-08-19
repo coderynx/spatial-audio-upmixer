@@ -292,6 +292,7 @@ export type ServedEngineConstants = {
   height_downmix_coeff: number;
   itu_center_coeff: number;
   speaker_directions: Record<string, { azimuth_rad: number; elevation_rad: number }>;
+  dyneq_max_bands: number;
   comp_profiles: Record<string, CompProfile>;
   bass_profiles: Record<string, BassProfile>;
   delivery_targets: Record<string, DeliveryTarget>;
@@ -338,6 +339,8 @@ export type EngineConstants = {
   ituCenterCoeff: number;
   /** Ambisonic encode angles, served so the browser never re-derives them. */
   speakerDirections: Record<string, { azimuth_rad: number; elevation_rad: number }>;
+  /** Bands the dynamic EQ accepts, so the panel never hardcodes the cap. */
+  dyneqMaxBands: number;
   compProfiles: Record<CompProfileName, CompProfile>;
   bassProfiles: Record<BassProfileName, BassProfile>;
   deliveryTargets: Record<string, DeliveryTarget>;
@@ -413,6 +416,7 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     heightDownmixCoeff: s.height_downmix_coeff,
     ituCenterCoeff: s.itu_center_coeff,
     speakerDirections: s.speaker_directions,
+    dyneqMaxBands: s.dyneq_max_bands,
     compProfiles: s.comp_profiles as Record<CompProfileName, CompProfile>,
     bassProfiles: s.bass_profiles as Record<BassProfileName, BassProfile>,
     deliveryTargets: s.delivery_targets,

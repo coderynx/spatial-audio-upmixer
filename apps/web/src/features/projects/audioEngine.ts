@@ -430,6 +430,7 @@ export class PreviewAudioEngine {
           : null,
         eqFir: this.taps.masterEqTaps ?? undefined,
         eqStrength: this.mastering?.eq?.strength ?? 1,
+        dynamicEq: this.mastering?.dynamic_eq?.bands ?? [],
         referenceFir: this.taps.referenceTaps ?? undefined,
         referenceGain: this.mastering?.match_reference?.rms
           ? 10 ** ((this.mastering.match_reference.rms_gain_db ?? 0) / 20)

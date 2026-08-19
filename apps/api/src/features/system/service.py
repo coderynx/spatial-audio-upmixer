@@ -48,6 +48,7 @@ def engine_constants() -> dict[str, Any]:
         DEFAULT_TARGET_LKFS,
         DELIVERY_TARGETS,
     )
+    from upmixer.mastering.dyneq import MAX_BANDS as DYNEQ_MAX_BANDS
     from upmixer.mastering.limiter import _SAFETY_MARGIN_DB
     from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
     from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
@@ -88,6 +89,7 @@ def engine_constants() -> dict[str, Any]:
             }
             for label, position in SPEAKER_AZIMUTH_ELEVATION.items()
         },
+        "dyneq_max_bands": DYNEQ_MAX_BANDS,
         "comp_profiles": COMP_PROFILES,
         "bass_profiles": BASS_PROFILES,
         "delivery_targets": DELIVERY_TARGETS,

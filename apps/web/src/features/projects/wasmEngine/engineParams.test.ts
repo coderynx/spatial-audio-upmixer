@@ -193,6 +193,18 @@ describe("buildEngineParams", () => {
     expect(off.clip).toBeNull();
   });
 
+  it("carries dynamic-EQ bands through verbatim, and none by default", () => {
+    expect((buildEngineParams(input()).master as { dynamic_eq: unknown[] }).dynamic_eq).toEqual([]);
+
+    const bands = [
+      { freq_hz: 3800, q: 2, threshold_db: -30, ratio: 3, attack_ms: 10, release_ms: 150 },
+    ];
+    const params = buildEngineParams(input({ master: { dynamicEq: bands } })).master as {
+      dynamic_eq: unknown[];
+    };
+    expect(params.dynamic_eq).toEqual(bands);
+  });
+
   it("gives the clipper the limiter's ceiling, on every output mode", () => {
     const master = { clip: { clip_db: 0.8, knee: 0.5 }, limiterCeilingDbtp: -2, highpassHz: 24 };
     for (const outputMode of ["native", "binaural"] as const) {

@@ -4,6 +4,8 @@
 // This is the manifest's shape, not a DSP surface — the stages themselves
 // live in the shared Rust core (packages/dsp).
 
+import type { DynamicEqBand } from "@/lib/manifest";
+
 export type MasterPreview = {
   loudness?: {
     normalize?: boolean;
@@ -14,6 +16,7 @@ export type MasterPreview = {
   highpass?: { enabled?: boolean; cutoff_hz?: number };
   clip?: { enabled?: boolean; clip_db?: number; knee?: number };
   eq?: { profile?: string | null; strength?: number };
+  dynamic_eq?: { bands?: DynamicEqBand[] };
   // Server-precomputed correction curve, realized into a FIR on demand at
   // this config's strength/max_db — see docs/contracts/preview_export_parity.md
   // ledgers D12/D21. One shared FIR for every non-LFE channel, not a
