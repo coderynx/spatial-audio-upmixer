@@ -168,7 +168,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     () => monitorMastering(previewMastering, masteringBypassed),
     [previewMastering, masteringBypassed],
   );
-  const preview = useStemPreview(previewStems, {}, trackManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants, trackManifest?.routing);
+  const preview = useStemPreview(previewStems, {}, trackManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants, trackManifest?.routing, masteringBypassed);
   const previousRoutingLayoutRef = React.useRef(routingLayout);
   React.useEffect(() => { previousRoutingLayoutRef.current = routingLayout; }, [projectId]);
   React.useEffect(() => {

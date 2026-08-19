@@ -17,3 +17,45 @@ export function applyTruePeakCeiling(preGainTpDbtp: number, loudnessGain: number
   if (postGainTpDbtp <= maxTpDbtp) return loudnessGain;
   return loudnessGain * 10 ** ((maxTpDbtp - postGainTpDbtp) / 20);
 }
+
+/** One programme's BS.1770 measurement: integrated loudness and true peak. */
+export type Measured = { lkfs: number; dbtp: number };
+export type DeliveryTarget = { target_lkfs: number; max_tp_dbtp: number };
+
+/** The correction gain a measurement asks for: the loudness move, then the
+ * ceiling's veto over it. Unity when normalization is off. */
+export function correctionGain(
+  measured: Measured,
+  delivery: DeliveryTarget,
+  maxGainDb: number,
+  normalize: boolean,
+): number {
+  if (!normalize) return 1;
+  const gain = loudnessGainFor(measured.lkfs, delivery.target_lkfs, maxGainDb);
+  return applyTruePeakCeiling(measured.dbtp, gain, delivery.max_tp_dbtp);
+}
+
+/**
+ * Monitor gain, in dB, that puts a bypassed programme at the mastered one's
+ * delivered loudness, so the A/B compares tone and dynamics rather than
+ * level.
+ *
+ * Both sides are normalized as far as their own true-peak ceiling allows —
+ * the unmastered side has no limiter, so its ceiling clamp usually bites
+ * first and leaves it quieter. What is left over is the difference between
+ * the two *delivered* loudnesses, which is what this closes. Zero until both
+ * measurements exist, so a caller with only one shows its calibrating state
+ * rather than monitoring an unmatched pair.
+ */
+export function bypassMatchDb(
+  mastered: Measured | undefined,
+  bypassed: Measured | undefined,
+  delivery: DeliveryTarget,
+  maxGainDb: number,
+  normalize: boolean,
+): number {
+  if (!mastered || !bypassed) return 0;
+  const delivered = (m: Measured) =>
+    m.lkfs + 20 * Math.log10(correctionGain(m, delivery, maxGainDb, normalize));
+  return delivered(mastered) - delivered(bypassed);
+}

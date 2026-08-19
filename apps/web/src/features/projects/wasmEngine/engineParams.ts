@@ -141,6 +141,9 @@ export type BuildEngineParamsInput = {
   speakerEnabled?: Record<string, boolean>;
   /** Transport A/B: render the bed without any mastering stage. */
   bypassMastering?: boolean;
+  /** BS.1770 weights for the live loudness meters, in delivered-channel
+   * order — the same set the measurement pass is given. */
+  meterWeights?: number[];
 };
 
 /** Build the JSON parameter block the worklet hands to the core. */
@@ -254,5 +257,6 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
     // limiter as its safety net instead.
     soft_limit_threshold: outputMode === "native" ? 0 : c.softLimitThreshold,
     bypass_mastering: input.bypassMastering ?? false,
+    meter_weights: input.meterWeights ?? [],
   };
 }

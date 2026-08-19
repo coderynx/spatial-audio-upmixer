@@ -198,7 +198,7 @@ describe("shared DSP core (wasm)", () => {
     }
   });
 
-  it("reports levels for each stem, bed channel, and the output pair", () => {
+  it("reports levels for each stem, bed channel, the output pair, and the master", () => {
     const wasm = instantiate();
     const engine = createEngine(wasm, PARAMS);
     const left = writeStem(wasm, tone(FRAMES));
@@ -206,17 +206,26 @@ describe("shared DSP core (wasm)", () => {
     wasm.dsp_engine_add_stem(engine, left.ptr, right.ptr, FRAMES);
 
     const outPtr = wasm.dsp_alloc(CHANNELS * 512 * 4);
-    wasm.dsp_engine_render(engine, outPtr, CHANNELS, 512);
+    // Render the whole fixture: the loudness windows close on a 100 ms grid,
+    // so one 512-frame render would leave them at the absolute gate.
+    for (let i = 0; i < 20; i += 1) {
+      wasm.dsp_engine_render(engine, outPtr, CHANNELS, 512);
+    }
 
     const meterPtr = wasm.dsp_alloc(256 * 4);
     const written = wasm.dsp_engine_meters(engine, meterPtr, 256);
     // One stem (left/right pair), three bed channels, one output pair — two
-    // floats each.
-    expect(written).toBe(2 * (2 + CHANNELS + 2));
+    // floats each — then the master block's five.
+    expect(written).toBe(2 * (2 + CHANNELS + 2) + 5);
 
     const meters = new Float32Array(wasm.memory.buffer, meterPtr, written);
     expect(meters[1]).toBeGreaterThan(0);
-    expect(wasm.dsp_engine_position(engine)).toBe(512);
+    // Momentary loudness of a rendered tone reads a real level, and nothing
+    // in this fixture's chain reduces gain.
+    expect(meters[written - 5]).toBeGreaterThan(-70);
+    expect(meters[written - 3]).toBe(0);
+    // The whole (short) fixture, which is what twenty quanta exhausts.
+    expect(wasm.dsp_engine_position(engine)).toBe(FRAMES);
   });
 
   it("reports a [level, centroid, duck] triple for the haze/elevation displays", () => {

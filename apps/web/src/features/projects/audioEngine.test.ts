@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { withReferenceMatchParams } from "./audioEngine";
+import { bypassMatchDb, correctionGain } from "./audioAnalysis";
 import { resolveDeliveryTarget } from "./masteringProfiles";
 import { TEST_ENGINE_CONSTANTS } from "./engineConstants.fixture";
 
@@ -36,6 +37,39 @@ describe("resolveDeliveryTarget", () => {
     expect(resolveDeliveryTarget({ target_preset: "atmos" }, TARGETS, FALLBACK)).toEqual(
       FALLBACK,
     );
+  });
+});
+
+describe("loudness-matched bypass", () => {
+  const DELIVERY = { target_lkfs: -18, max_tp_dbtp: -1 };
+  const MAX_GAIN_DB = 30;
+  // Normalizes cleanly to the target: +2 dB of gain still leaves 2 dB of
+  // true-peak headroom.
+  const MASTERED = { lkfs: -20, dbtp: -3 };
+  // The unmastered side has no limiter, so its ceiling clamp bites first and
+  // leaves it 5 LU quiet even after normalization.
+  const BYPASSED = { lkfs: -24, dbtp: -2 };
+
+  it("stays at unity until both sides are measured", () => {
+    expect(bypassMatchDb(MASTERED, undefined, DELIVERY, MAX_GAIN_DB, true)).toBe(0);
+    expect(bypassMatchDb(undefined, BYPASSED, DELIVERY, MAX_GAIN_DB, true)).toBe(0);
+  });
+
+  it("closes the gap the true-peak ceiling leaves between the two sides", () => {
+    const mastered = -20 + 20 * Math.log10(correctionGain(MASTERED, DELIVERY, MAX_GAIN_DB, true));
+    const bypassed = -24 + 20 * Math.log10(correctionGain(BYPASSED, DELIVERY, MAX_GAIN_DB, true));
+    expect(mastered).toBeCloseTo(-18, 6);
+    expect(bypassed).toBeCloseTo(-23, 6);
+    expect(bypassMatchDb(MASTERED, BYPASSED, DELIVERY, MAX_GAIN_DB, true)).toBeCloseTo(5, 6);
+  });
+
+  it("matches the raw measurements when normalization is off", () => {
+    expect(bypassMatchDb(MASTERED, BYPASSED, DELIVERY, MAX_GAIN_DB, false)).toBeCloseTo(4, 6);
+  });
+
+  it("is a no-op when both sides land on the target", () => {
+    const same = { lkfs: -20, dbtp: -6 };
+    expect(bypassMatchDb(same, same, DELIVERY, MAX_GAIN_DB, true)).toBeCloseTo(0, 12);
   });
 });
 

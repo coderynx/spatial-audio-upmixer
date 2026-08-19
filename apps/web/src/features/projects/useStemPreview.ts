@@ -6,12 +6,14 @@ import type { MasterPreview } from "./masterPreview";
 import {
   PreviewAudioEngine,
   POSITIONAL_CHANNELS,
+  SILENT_LOUDNESS,
   type EngineCallbacks,
   type MixPreview,
   type OutputMode,
 } from "./audioEngine";
 
-export type { OutputMode, MeterLevel, MixPreview } from "./audioEngine";
+export type { OutputMode, MasterMeters, MeterLevel, MixPreview } from "./audioEngine";
+export type { LoudnessSummary } from "./audioEngine";
 export type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 export { applyTruePeakCeiling } from "./audioEngine";
 
@@ -50,6 +52,11 @@ export function useStemPreview(
   // per-track and must reach the worklet, or a track previews with the
   // served default while the export uses its own value.
   routing?: { stem_transient_duck?: number; height_directional_band_gain?: number },
+  // Transport A/B state. Session-only, like outputMode — the caller has
+  // already stripped the mastering block it passes above; this tells the
+  // engine which of the two programmes it is rendering so it can measure and
+  // loudness-match them separately.
+  masteringBypassed = false,
 ) {
   const layoutChannelsKey = layoutChannels.join(",");
   // Stable-identity, layout-scoped speaker list: drives the ambisonic
@@ -83,6 +90,9 @@ export function useStemPreview(
   // runs in the background and does not reopen this.
   const [measuring, setMeasuring] = React.useState(false);
   const [measureProgress, setMeasureProgress] = React.useState(0);
+  // Measured loudness and the target it is normalized to. React state rather
+  // than a meter ref: it moves when a measurement lands, not per frame.
+  const [loudness, setLoudness] = React.useState(SILENT_LOUDNESS);
   const [maxChannels, setMaxChannels] = React.useState(2);
   const [outputDevices, setOutputDevices] = React.useState<MediaDeviceInfo[]>([]);
   const [outputDeviceId, setOutputDeviceIdState] = React.useState("");
@@ -107,6 +117,7 @@ export function useStemPreview(
       onDuration: setDuration,
       onMeasuring: setMeasuring,
       onMeasureProgress: setMeasureProgress,
+      onLoudness: setLoudness,
       onMaxChannels: setMaxChannels,
       onVolume: setVolumeState,
       onMuted: setMutedState,
@@ -134,6 +145,7 @@ export function useStemPreview(
   if (constants) engine.constants = constants;
   engine.positionalChannels = positionalChannels;
   engine.speakerEnabled = speakerEnabled;
+  engine.masteringBypassed = masteringBypassed;
 
   // Layout changed (not just the initial mount): drop mute state for
   // speakers the new layout no longer has and default any newly-added ones
@@ -174,6 +186,14 @@ export function useStemPreview(
   const toggleSpeaker = React.useCallback((channel: string) => {
     setSpeakerEnabled((current) => ({ ...current, [channel]: current[channel] === false }));
   }, []);
+
+  // The A/B's two sides are separate programmes with separate loudness, so
+  // this recalibrates like an output-mode switch does.
+  React.useEffect(() => {
+    if (!constants) return;
+    engine.applyMasteringBypass(masteringBypassed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
+  }, [masteringBypassed, ready, constants]);
 
   React.useEffect(() => {
     if (!constants) return;
@@ -266,6 +286,7 @@ export function useStemPreview(
     loadProgress,
     measuring,
     measureProgress,
+    loudness,
     playing,
     currentTime,
     duration,
@@ -286,6 +307,7 @@ export function useStemPreview(
     stemLevels: engine.stemLevels,
     channelLevels: engine.channelLevels,
     headphoneLevels: engine.headphoneLevels,
+    masterMeters: engine.masterMeters,
     currentTimeRef: engine.currentTimeRef,
     speakerEnabled,
     toggleSpeaker,

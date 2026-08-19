@@ -12,7 +12,12 @@
 // method from the appropriate effect.
 
 import type { ProjectStem, StemScene } from "@/api";
-import { applyTruePeakCeiling, loudnessGainFor } from "./audioAnalysis";
+import {
+  applyTruePeakCeiling,
+  bypassMatchDb,
+  correctionGain,
+  type DeliveryTarget,
+} from "./audioAnalysis";
 import type {
   EngineConstants,
   SpatialProfile,
@@ -27,15 +32,26 @@ import {
 import type { MasterPreview } from "./masterPreview";
 import { DspEngineClient } from "./wasmEngine/engineClient";
 import { buildEngineParams } from "./wasmEngine/engineParams";
+import { LoudnessCalibration } from "./wasmEngine/calibration";
 import { FilterTapCache } from "./wasmEngine/filterTaps";
-import { SILENT_METER_LEVEL, decodeMeterFrame, type MeterFrame, type MeterLevel, type StemSpectrum } from "./wasmEngine/meters";
+import {
+  SILENT_MASTER_METERS,
+  SILENT_METER_LEVEL,
+  decodeMeterFrame,
+  type MasterMeters,
+  type MeterFrame,
+  type MeterLevel,
+  type StemSpectrum,
+} from "./wasmEngine/meters";
 import { loadStemsInto } from "./wasmEngine/stemLoader";
 import { resolveStemMixes } from "./wasmEngine/stemMix";
 import {
   POSITIONAL_CHANNELS,
+  SILENT_LOUDNESS,
   engineRef,
   type EngineCallbacks,
   type EngineRef,
+  type LoudnessSummary,
   type MixPreview,
   type OutputMode,
 } from "./wasmEngine/engineTypes";
@@ -43,14 +59,16 @@ import {
 export { applyTruePeakCeiling } from "./audioAnalysis";
 export {
   POSITIONAL_CHANNELS,
+  SILENT_LOUDNESS,
   engineRef,
   type EngineCallbacks,
   type EngineRef,
+  type LoudnessSummary,
   type MixPreview,
   type OutputMode,
 } from "./wasmEngine/engineTypes";
 export { withReferenceMatchParams } from "./wasmEngine/filterTaps";
-export type { MeterLevel, StemSpectrum } from "./wasmEngine/meters";
+export type { MasterMeters, MeterLevel, StemSpectrum } from "./wasmEngine/meters";
 
 const CONTEXT_SAMPLE_RATE = 48000;
 
@@ -75,6 +93,9 @@ export class PreviewAudioEngine {
   constants!: EngineConstants;
   positionalChannels: string[] = [];
   speakerEnabled: Record<string, boolean> = {};
+  /** Transport A/B. The bypassed programme is measured on its own and
+   * monitored at the mastered side's loudness — see `matchDb`. */
+  masteringBypassed = false;
 
   volume = 1;
   muted = false;
@@ -90,20 +111,23 @@ export class PreviewAudioEngine {
   private loadToken = 0;
 
   private readonly taps = new FilterTapCache();
-  private measuredLkfs = -70;
-  private measuredTpDbtp = -70;
-  private measuredForMode: string | null = null;
-  /** Mode key the in-flight exact measurement's refinement belongs to. */
-  private exactMeasureKey: string | null = null;
-  /** While set, render uncorrected so the measurement sees the raw program. */
-  private measuringRaw = false;
-  private measureToken = 0;
+  private readonly calibration = new LoudnessCalibration({
+    measure: (weights) => this.client?.measure(weights) ?? Promise.resolve(null),
+    apply: () => this.apply(),
+    onMeasuring: (measuring) => this.callbacks.onMeasuring(measuring),
+    onProgress: (progress) => this.callbacks.onMeasureProgress(progress),
+    pause: () => {
+      const wasPlaying = this.playing;
+      if (wasPlaying) this.pause();
+      return wasPlaying;
+    },
+    resume: () => void this.playFrom(this.currentTimeRef.current),
+  });
+  private loudness: LoudnessSummary = SILENT_LOUDNESS;
   /** Stems and filter sets are all in the engine. A measurement before this
       would calibrate against a half-built engine — and stamp the mode as
       measured, so the real one never runs. */
   private loaded = false;
-  /** Transport was playing when a profile switch forced the pause below — resume once the winning pass lands. */
-  private resumeAfterMeasure = false;
   private resumeOnGesture: (() => void) | null = null;
   private stemOrder: string[] = [];
   /** Parallel to `stemOrder` — how many bars each stem's meter shows. */
@@ -116,6 +140,7 @@ export class PreviewAudioEngine {
     left: SILENT_METER_LEVEL,
     right: SILENT_METER_LEVEL,
   });
+  readonly masterMeters: EngineRef<MasterMeters> = engineRef(SILENT_MASTER_METERS);
   readonly currentTimeRef: EngineRef<number> = engineRef(0);
 
   constructor(private readonly callbacks: EngineCallbacks) {}
@@ -159,7 +184,7 @@ export class PreviewAudioEngine {
     // rather than play at whatever gain happened to be left over from a
     // previous mode. `measureIfNeeded()` always re-fires on the state changes
     // that invalidate this (see its callers), so the gate lifts on its own.
-    if (this.measuredForMode !== this.measureKey()) return false;
+    if (!this.calibration.covers(this.measureKey())) return false;
     if (this.context.state === "suspended") await this.context.resume();
     if (time !== this.currentTimeRef.current) this.moveTo(time);
     this.playing = true;
@@ -187,6 +212,7 @@ export class PreviewAudioEngine {
       this.channelLevels.current.set(key, SILENT_METER_LEVEL);
     }
     this.headphoneLevels.current = { left: SILENT_METER_LEVEL, right: SILENT_METER_LEVEL };
+    this.masterMeters.current = SILENT_MASTER_METERS;
     for (const [key, spectrum] of this.stemSpectrum.current) {
       this.stemSpectrum.current.set(key, { ...spectrum, level: 0 });
     }
@@ -248,6 +274,15 @@ export class PreviewAudioEngine {
 
   applyOutputMode(mode: OutputMode) {
     this.outputMode = mode;
+    this.apply();
+    void this.measureIfNeeded();
+  }
+
+  /** A/B the master chain. The two sides are different programmes, so this
+   * measures the new one before it plays — the same calibration gate a mode
+   * switch goes through — and matches their loudness once it has both. */
+  applyMasteringBypass(bypassed: boolean) {
+    this.masteringBypassed = bypassed;
     this.apply();
     void this.measureIfNeeded();
   }
@@ -337,17 +372,31 @@ export class PreviewAudioEngine {
     // One gain stage covers the whole job here, unlike the export chain's two,
     // so every mode gets the full budget — see
     // docs/contracts/preview_export_parity.md.
-    const loudnessGain = normalize
-      ? loudnessGainFor(this.measuredLkfs, target, this.constants.loudnessMaxGainDb)
-      : 1;
-    const outputGain =
-      this.measuringRaw || !normalize
-        ? 1
-        : applyTruePeakCeiling(
-            this.measuredTpDbtp,
-            loudnessGain,
-            delivery.max_tp_dbtp,
-          );
+    const measured = this.calibration.measured;
+    const correction = correctionGain(
+      measured,
+      delivery,
+      this.constants.loudnessMaxGainDb,
+      normalize,
+    );
+    // MONITOR domain, folded into the same ramp: the A/B match never reaches
+    // an export or the manifest, unlike `master.output_gain`'s own meaning.
+    const matchDb = this.matchDb(delivery, normalize);
+    const matched = correction * 10 ** (matchDb / 20);
+    // A match that boosts is still bound by the ceiling: the bypassed side
+    // has no limiter of its own, so the compensation must not clip the DAC.
+    const outputGain = this.calibration.raw
+      ? 1
+      : matchDb > 0
+        ? applyTruePeakCeiling(measured.dbtp, matched, delivery.max_tp_dbtp)
+        : matched;
+    this.publishLoudness({
+      integratedLkfs: measured.lkfs + 20 * Math.log10(correction),
+      truePeakDbtp: measured.dbtp + 20 * Math.log10(correction),
+      targetLkfs: target,
+      ceilingDbtp: delivery.max_tp_dbtp,
+      bypassMatchDb: matchDb,
+    });
 
     const previewable = this.previewableStems();
     this.stemOrder = previewable.map((stem) => stem.stem_key.split("@", 1)[0]);
@@ -382,18 +431,42 @@ export class PreviewAudioEngine {
       outputMode: this.outputMode,
       spatialProfile: this.spatialProfile,
       transauralProfile: this.transauralProfile,
+      meterWeights: this.measureWeights(),
     });
   }
 
+  /** The A/B's compensating monitor gain, once both sides are measured. */
+  private matchDb(delivery: DeliveryTarget, normalize: boolean): number {
+    if (!this.masteringBypassed) return 0;
+    return bypassMatchDb(
+      this.calibration.get(this.measureKey(false)),
+      this.calibration.get(this.measureKey()),
+      delivery,
+      this.constants.loudnessMaxGainDb,
+      normalize,
+    );
+  }
+
+  private publishLoudness(summary: LoudnessSummary) {
+    const changed = (Object.keys(summary) as (keyof LoudnessSummary)[]).some(
+      (field) => Math.abs(summary[field] - this.loudness[field]) > 1e-6,
+    );
+    if (!changed) return;
+    this.loudness = summary;
+    this.callbacks.onLoudness(summary);
+  }
+
   /**
-   * Measure the programme once per output mode/profile combination, so a mode
-   * switch re-measures rather than reusing a stale correction. The pass walks
-   * the whole programme, so it resolves minutes later on a long track and
-   * pauses transport meanwhile (playback is mandatory-calibrated, see
+   * Measure the programme once per output mode/profile/bypass combination, so
+   * a mode switch — or the A/B toggle, whose two sides are different
+   * programmes — re-measures rather than reusing a stale correction. The pass
+   * walks the whole programme, so it resolves minutes later on a long track
+   * and pauses transport meanwhile (playback is mandatory-calibrated, see
    * `playFrom`).
    */
-  private measureKey(): string {
-    return `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}`;
+  private measureKey(bypassed = this.masteringBypassed): string {
+    const chain = bypassed ? "bypassed" : "mastered";
+    return `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}:${chain}`;
   }
 
   /** BS.1770 weights for the channels the measurement sees. Every collapse
@@ -408,41 +481,7 @@ export class PreviewAudioEngine {
 
   private async measureIfNeeded() {
     if (!this.client || !this.loaded) return;
-    const key = this.measureKey();
-    // While a pass is in flight (`measuringRaw`), `measuredForMode` still
-    // names the mode being replaced — switching back to it is not "already
-    // calibrated", because the pass in flight is about to overwrite the one
-    // measurement both modes share.
-    const covered = this.measuringRaw ? this.exactMeasureKey : this.measuredForMode;
-    if (covered === key) return;
-
-    if (this.playing) {
-      this.pause();
-      this.resumeAfterMeasure = true;
-    }
-    const token = ++this.measureToken;
-    this.exactMeasureKey = key;
-    this.callbacks.onMeasuring(true);
-    this.callbacks.onMeasureProgress(0);
-    this.measuringRaw = true;
-    this.apply();
-    const result = await this.client.measure(this.measureWeights());
-    // A mode switch mid-measurement supersedes this pass; the newer one owns
-    // the measuring state from here.
-    if (token !== this.measureToken) return;
-
-    if (result) {
-      this.measuredLkfs = result.lkfs;
-      this.measuredTpDbtp = result.dbtp;
-      this.measuredForMode = key;
-    }
-    this.measuringRaw = false;
-    this.callbacks.onMeasuring(false);
-    this.apply();
-    if (this.resumeAfterMeasure) {
-      this.resumeAfterMeasure = false;
-      void this.playFrom(this.currentTimeRef.current);
-    }
+    await this.calibration.ensure(this.measureKey(), this.measureWeights());
   }
 
   async initialize(): Promise<void> {
@@ -476,14 +515,7 @@ export class PreviewAudioEngine {
         onEnded: () => this.onEnded(),
         onMeasureProgress: (progress) => this.callbacks.onMeasureProgress(progress),
         onMeasured: (result) => {
-          // `measuringRaw` means a newer fast pass is in flight, so this
-          // refinement was posted for the mode/profile that pass replaced —
-          // the worklet dropped it, but its result was already on the wire.
-          if (!this.exactMeasureKey || this.measuringRaw) return;
-          this.measuredLkfs = result.lkfs;
-          this.measuredTpDbtp = result.dbtp;
-          this.measuredForMode = this.exactMeasureKey;
-          this.apply();
+          if (this.calibration.refine(result)) this.apply();
         },
         onError: (message) => this.callbacks.onError(message),
       });
@@ -557,6 +589,7 @@ export class PreviewAudioEngine {
     this.stemSpectrum.current = decoded.stemSpectrum;
     this.channelLevels.current = decoded.channelLevels;
     this.headphoneLevels.current = decoded.headphoneLevels;
+    this.masterMeters.current = decoded.master;
   }
 
   /**
@@ -594,10 +627,7 @@ export class PreviewAudioEngine {
     this.playing = false;
     this.duration = 0;
     this.currentTimeRef.current = 0;
-    this.measuredForMode = null;
-    this.exactMeasureKey = null;
-    this.measureToken += 1;
-    this.measuringRaw = false;
+    this.calibration.reset();
     this.taps.resetPerProject();
     this.client?.dispose();
     this.client = null;

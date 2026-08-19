@@ -15,17 +15,36 @@ export type MeterFrame = { position: number; meters: number[]; spectrum: number[
  * no reduction — see `PreviewEngine::stem_spectrum`. */
 export type StemSpectrum = { level: number; centroid: number; duck: number };
 
+/** The master strip's readouts — see `MasterMeters` in the core. Loudness is
+ * LKFS over the delivered programme, gain reduction is dB downward. */
+export type MasterMeters = {
+  momentaryLkfs: number;
+  shortTermLkfs: number;
+  compGrDb: number;
+  limiterGrDb: number;
+  limiterLfeGrDb: number;
+};
+
+export const SILENT_MASTER_METERS: MasterMeters = {
+  momentaryLkfs: -70,
+  shortTermLkfs: -70,
+  compGrDb: 0,
+  limiterGrDb: 0,
+  limiterLfeGrDb: 0,
+};
+
 export type DecodedMeters = {
   stemLevels: Map<string, MeterLevel[]>;
   stemSpectrum: Map<string, StemSpectrum>;
   channelLevels: Map<string, MeterLevel>;
   headphoneLevels: { left: MeterLevel; right: MeterLevel };
+  master: MasterMeters;
 };
 
 /**
  * Unpack one render-callback frame. The meter array is laid out as
- * `[stems…][channels…][headphone L/R]`, four values per stem (two per
- * channel of the stem) and two per output channel.
+ * `[stems…][channels…][headphone L/R][master]`, four values per stem (two per
+ * channel of the stem), two per output channel, and five for the master.
  */
 export function decodeMeterFrame(
   frame: MeterFrame,
@@ -57,6 +76,7 @@ export function decodeMeterFrame(
   }
 
   const outBase = base + channels.length * 2;
+  const masterBase = outBase + 4;
   return {
     stemLevels,
     stemSpectrum,
@@ -64,6 +84,13 @@ export function decodeMeterFrame(
     headphoneLevels: {
       left: level(meters[outBase] ?? 0, meters[outBase + 1] ?? 0),
       right: level(meters[outBase + 2] ?? 0, meters[outBase + 3] ?? 0),
+    },
+    master: {
+      momentaryLkfs: meters[masterBase] ?? -70,
+      shortTermLkfs: meters[masterBase + 1] ?? -70,
+      compGrDb: meters[masterBase + 2] ?? 0,
+      limiterGrDb: meters[masterBase + 3] ?? 0,
+      limiterLfeGrDb: meters[masterBase + 4] ?? 0,
     },
   };
 }
