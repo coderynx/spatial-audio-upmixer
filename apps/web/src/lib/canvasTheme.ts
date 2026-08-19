@@ -46,6 +46,10 @@ export const canvasTheme = {
   meterSafe: "#3E9BC7",
   meterWarn: "#FFD60A",
   meterHot: "#FF453A",
+  /** The loudness meter's own hue, distinguishing its LKFS bars from the
+   * level meters' blue at a glance. Apple systemPurple; warn/hot zones stay
+   * shared with the other meters so "hot" still means the same thing everywhere. */
+  meterLoudness: "#BF5AF2",
   /** A mixer channel strip's meter runs green rather than the Level Meter's
    * blue — Logic uses both, one per host, and the strip is where the green
    * one belongs. systemGreen, so it sits with the rest of the Apple palette.

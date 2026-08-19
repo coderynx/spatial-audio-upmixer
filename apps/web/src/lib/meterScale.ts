@@ -109,6 +109,14 @@ export const STRIP_METER_PALETTE: MeterPalette = {
   hot: canvasTheme.meterHot,
 };
 
+/** The loudness meter's palette — same warn/hot zones as the level meters,
+ * but its own safe-zone hue so an LKFS bar never reads as another level bar. */
+export const LOUDNESS_METER_PALETTE: MeterPalette = {
+  safe: canvasTheme.meterLoudness,
+  warn: canvasTheme.meterWarn,
+  hot: canvasTheme.meterHot,
+};
+
 /** Colour a lit bar takes at a given dB — `safe` below the yellow zone,
  * `warn` through it, `hot` above the red zone. `yellowZoneDb` defaults to the
  * single-channel floor; pass `MULTI_CHANNEL_YELLOW_ZONE_DB` for a meter that

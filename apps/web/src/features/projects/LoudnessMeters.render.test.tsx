@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { GainReductionMeters, LoudnessReadout } from "./LoudnessMeters";
+import { GainReductionMeters, LoudnessMeterPanel } from "./LoudnessMeters";
 import { SILENT_MASTER_METERS } from "./wasmEngine/meters";
 
 const SILENT_PAIR = {
@@ -19,10 +19,10 @@ const LOUDNESS = {
   bypassMatchDb: 3.25,
 };
 
-describe("LoudnessReadout", () => {
+describe("LoudnessMeterPanel", () => {
   it("shows the measured programme against its delivery target", () => {
     render(
-      <LoudnessReadout
+      <LoudnessMeterPanel
         loudness={LOUDNESS}
         masterMeters={{ current: SILENT_MASTER_METERS }}
         headphoneLevels={SILENT_PAIR}
@@ -34,7 +34,8 @@ describe("LoudnessReadout", () => {
     );
     expect(screen.getByText("-17.4")).toBeTruthy();
     expect(screen.getByText("-1.2")).toBeTruthy();
-    expect(screen.getByText("-18 / -1.0")).toBeTruthy();
+    expect(screen.getByText("-18")).toBeTruthy();
+    expect(screen.getByText("-1.0")).toBeTruthy();
     // PLR: -1.2 dBTP over -17.4 LKFS.
     expect(screen.getByText("16.2")).toBeTruthy();
     expect(screen.queryByText("A/B")).toBeNull();
@@ -42,7 +43,7 @@ describe("LoudnessReadout", () => {
 
   it("names the programme the numbers were measured on", () => {
     const { rerender } = render(
-      <LoudnessReadout
+      <LoudnessMeterPanel
         loudness={LOUDNESS}
         masterMeters={{ current: SILENT_MASTER_METERS }}
         headphoneLevels={SILENT_PAIR}
@@ -55,7 +56,7 @@ describe("LoudnessReadout", () => {
     expect(screen.getByText("5.1 re-render")).toBeTruthy();
 
     rerender(
-      <LoudnessReadout
+      <LoudnessMeterPanel
         loudness={LOUDNESS}
         masterMeters={{ current: SILENT_MASTER_METERS }}
         headphoneLevels={SILENT_PAIR}
@@ -71,7 +72,7 @@ describe("LoudnessReadout", () => {
 
   it("names the monitor match only while the chain is bypassed", () => {
     render(
-      <LoudnessReadout
+      <LoudnessMeterPanel
         loudness={LOUDNESS}
         masterMeters={{ current: SILENT_MASTER_METERS }}
         headphoneLevels={SILENT_PAIR}
