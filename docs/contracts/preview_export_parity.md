@@ -331,7 +331,7 @@ ceremony beyond staying shaped like that response.
 
 ## 3. What can still differ
 
-Four behaviours are genuinely different by nature, not by drift. Nothing else
+Five behaviours are genuinely different by nature, not by drift. Nothing else
 should be.
 
 | # | Difference | Bound |
@@ -340,6 +340,7 @@ should be.
 | P2 | **Seek warm-up.** A seek renders a discarded run-up so the filter states settle; without it the Haas-delayed sends would drop out and the compressor would re-attack. Inside the run-up the states are still converging. | 500 ms run-up; lands within 1e-6 of a straight play-through |
 | P3 | **Correction latency, in two stages.** The loudness/true-peak correction is a real BS.1770 measurement. A fast pass over a handful of excerpts lands first and is what the "calibrating loudness" UI waits for; an exact pass over the whole programme then keeps running in the background and refines the gain once it lands. Both are advanced in slices from the render callback (`stream::measure`), and the transport stays gated until the fast pass lands, so the preview never plays uncorrected; between the two, it plays on the fast pass's gain. Whatever the pass is meant to measure — parameter block and filter set both — has to reach the worklet before the `measure` message does, since the pass forks the engine as it stands (D29). | Fast pass: a few seconds, advances while paused or playing. Exact pass: ~2-3 min for an eight-minute track, only advances while paused (§4) |
 | P4 | **Monitor-only A/B compensation.** Bypassing the master chain measures the unmastered programme on its own key and applies a compensating scalar so both sides monitor at the same delivered loudness. It lives in the preview's `master.output_gain` ramp (`audioEngine.ts`), never in a manifest or an export, and is zero whenever the chain is not bypassed. The bypassed side is gated by the same calibration rule as a mode switch, so it never plays unmatched. | 0 dB unbypassed; the two sides' delivered-loudness difference otherwise, itself capped by the true-peak ceiling |
+| P5 | **The export's dithered tail.** Bit-depth reduction (`io.writer.dither_channels`, `dsp-core/src/dither.rs`) runs only on the export, after every stage in §1, because only the writer knows the delivery subtype. The preview plays float32 and has no such stage. The divergence is inaudible by construction: ±1 LSB of TPDF at 24-bit is ≈ −138 dBFS, below the float32 mantissa's own quantization of the same programme, and it is the last operation in the export — nothing in §1 sees it. See `docs/standards/loudness_dsp_bs1770.md` §"Export tail". | ≤ 1.5 LSB of the delivery subtype; ≈ −138 dBFS at PCM_24, ≈ −90 dBFS at PCM_16 |
 
 Switching speaker layout is deliberately **not** a fifth entry. Selecting a
 different layout in the tracks panel rebuilds the preview from scratch — new

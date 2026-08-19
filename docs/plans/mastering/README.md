@@ -101,7 +101,7 @@ validation; a phase must be green before the next starts.
 | 3 | `phase3_preview_metering_ab.md` → `phase3_report.md` | **Done.** Momentary/short-term loudness + TP + GR meters in the preview, PLR/PSR readout, and a loudness-matched master bypass (measured per chain state, monitor-only). |
 | 4 | `phase4_chain_head_tail.md` → `phase4_report.md` | **Done.** Chain head (subsonic HPF + DC block) and pre-limiter soft clip, offline + streaming, default off. The clipper deliberately breaks the commutation invariant and sits after bass management for it; its aliasing is measured and an oversampled variant is scoped as a follow-up. |
 | 5 | `phase5_dynamic_eq.md` → `phase5_report.md` | **Done.** Up to four linked-detection bells between the static EQ and the compressor, default off. The decaying-broadband gate phase 13 failed is measured and passed; the stage commutes with the LF sum, so it needed no exception. |
-| 6 | `phase6_dither_export.md` | TPDF dither (+ optional noise shaping) at bit-depth reduction, dither-last ordering guarantee, SRC quality audit. |
+| 6 | `phase6_dither_export.md` → `phase6_report.md` | **Done.** TPDF dither (+ optional shaping) as the export's last operation, seeded for byte-identical re-renders; ordering pinned; the SRC audit failed its −120 dBFS bar, so the delivery resampler was upgraded (images 65–90 dB lower, passband flat to 20 kHz). |
 | 7 | `phase7_reference_match_usability.md` | Match smoothing control, frequency-range masks, loudness-matched audition. |
 | 8 | `phase8_downmix_qc.md` | Fold/render QC: loudness + TP of the BS.775 stereo fold and binaural render measured and reported against the native bed, with UI warnings. |
 

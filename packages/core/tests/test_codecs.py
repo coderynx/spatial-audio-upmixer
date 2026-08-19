@@ -101,7 +101,7 @@ class TestWriteAudio:
             2 * np.pi * 440.0 * np.arange(sample_rate) / sample_rate
         )
         destination = tmp_path / f"out{codec_extension(codec)}"
-        write_audio(destination, audio, sample_rate, codec, "PCM_24")
+        write_audio(destination, audio, sample_rate, codec, "PCM_24", "tpdf", 1)
 
         info = sf.info(str(destination))
         assert info.channels == channels
@@ -110,7 +110,10 @@ class TestWriteAudio:
 
     def test_publishes_atomically_and_leaves_no_temporary(self, tmp_path):
         destination = tmp_path / "out.flac"
-        write_audio(destination, np.zeros((480, 2), dtype=np.float32), 48_000, "flac", "PCM_24")
+        write_audio(
+            destination, np.zeros((480, 2), dtype=np.float32), 48_000, "flac",
+            "PCM_24", "tpdf", 1,
+        )
         assert [p.name for p in tmp_path.iterdir()] == ["out.flac"]
 
 

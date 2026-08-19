@@ -407,8 +407,8 @@ def test_audit_quantization_floor() -> None:
                 lsb = 2.0 ** -(bits - 1)
                 # Round-to-nearest error is uniform over ±lsb/2 (RMS lsb/√12);
                 # truncation is uniform over one lsb *offset by half of it*, so
-                # it reads 2x that and carries a DC term. TPDF dither reads √2x
-                # and decorrelates.
+                # it reads 2x that and carries a DC term. Non-subtractive TPDF
+                # dither reads √3x (phase 6, measured) and decorrelates.
                 rows.append((
                     label,
                     subtype,

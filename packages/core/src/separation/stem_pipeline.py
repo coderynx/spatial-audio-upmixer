@@ -287,7 +287,8 @@ class StemUpmixPipeline:
         if tp > ceiling:
             stereo *= 10.0 ** ((ceiling - tp) / 20.0)
         write_audio(
-            cfg.downmix_output_path, stereo, out_sr, cfg.output_codec, cfg.output_subtype
+            cfg.downmix_output_path, stereo, out_sr, cfg.output_codec,
+            cfg.output_subtype, cfg.output_dither, cfg.output_dither_seed,
         )
         _log.info("  Downmix: %s", cfg.downmix_output_path)
 
@@ -390,21 +391,12 @@ class StemUpmixPipeline:
         del all_stems, audio_full, source_zones, passthrough_resampled
 
         if pre_master_hook is not None:
-            pre_master_hook(channels, sep_sr, output_fmt)
+            pre_master_hook(channels, out_sr, output_fmt)
 
         _progress("  Mastering...", 0.90)
         channels, mastering_result = MasteringChain(cfg).process(
-            channels, sep_sr, output_fmt
+            channels, out_sr, output_fmt
         )
-
-        if out_sr != sep_sr:
-            g = math.gcd(out_sr, sep_sr)
-            up, down = out_sr // g, sep_sr // g
-            channels = {
-                name: resample_poly(ch, up, down).astype(np.float64)
-                for name, ch in channels.items()
-            }
-            _log.info("  Resampled: %d Hz → %d Hz", sep_sr, out_sr)
 
         channels, output_fmt, mastering_result = self._write_delivery(
             channels, output_path, output_fmt, out_sr, mastering_result

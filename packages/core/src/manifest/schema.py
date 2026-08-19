@@ -93,6 +93,7 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "type":        ("config", "output_type"),
         "codec":       ("config", "output_codec"),
         "subtype":     ("config", "output_subtype"),
+        "dither":      ("config", "output_dither"),
         "sample_rate": ("config", "output_sample_rate"),
         "downmix": {
             "enabled":        ("config", "downmix_enabled"),
@@ -190,6 +191,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "output_type":                ("output_type",              str),
     "output_codec":               ("output_codec",             str),
     "output_subtype":             ("output_subtype",           str),
+    "output_dither":              ("output_dither",            str),
     "output_sample_rate":         ("output_sample_rate",       int),
     "center_gain":                ("center_gain",              float),
     "surround_gain":              ("surround_gain",            float),

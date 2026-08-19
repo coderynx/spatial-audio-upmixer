@@ -1,7 +1,9 @@
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
+import upmixer_dsp
 
 from upmixer.codecs import get_codec
 from upmixer.config import UpmixConfig
@@ -10,6 +12,33 @@ from upmixer.io.atomic import atomic_output_path
 
 _OGG_WRITE_CHUNK_SECONDS = 10
 
+DITHER_MODES: tuple[str, ...] = ("off", "tpdf", "shaped")
+
+SUBTYPE_BITS: dict[str, int] = {"PCM_16": 16, "PCM_24": 24, "PCM_32": 32}
+"""Integer PCM subtypes, by bit depth. Float and lossy subtypes are absent."""
+
+
+def dither_channels(
+    channels: Sequence[np.ndarray],
+    output_subtype: str,
+    mode: str,
+    seed: int,
+) -> list[np.ndarray]:
+    """Quantize float channels onto the delivery subtype's integer lattice.
+
+    The last operation of the export: nothing may scale the result afterwards.
+    Subtypes with no integer bit depth (float, lossy) pass through unchanged.
+    """
+    if mode not in DITHER_MODES:
+        raise ValueError(
+            f"Unknown output_dither '{mode}'; choose one of {list(DITHER_MODES)}"
+        )
+    bits = SUBTYPE_BITS.get(output_subtype)
+    if bits is None:
+        return [np.asarray(channel) for channel in channels]
+    prepared = [np.ascontiguousarray(channel, dtype=np.float64) for channel in channels]
+    return upmixer_dsp.quantize_pcm(prepared, bits, mode, seed)
+
 
 def write_audio(
     path: str | Path,
@@ -17,10 +46,13 @@ def write_audio(
     sample_rate: int,
     codec_name: str,
     output_subtype: str,
+    dither: str,
+    dither_seed: int,
 ) -> None:
     """Write interleaved audio through a codec, publishing atomically."""
     codec = get_codec(codec_name)
     subtype = codec.fixed_subtype or output_subtype
+    audio = np.column_stack(dither_channels(list(audio.T), subtype, dither, dither_seed))
     with atomic_output_path(Path(path)) as temporary:
         if codec.container == "OGG":
             # libsndfile's OGG encoders need stack proportional to the whole
@@ -80,4 +112,6 @@ class AudioWriter:
             self._sample_rate,
             self._config.output_codec,
             self._config.output_subtype,
+            self._config.output_dither,
+            self._config.output_dither_seed,
         )

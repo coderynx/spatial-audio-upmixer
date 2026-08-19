@@ -7,6 +7,7 @@ import re
 from upmixer.codecs import CODECS, WAV_SUBTYPES, validate_codec
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel, validate_delivery
+from upmixer.io.writer import DITHER_MODES
 from upmixer.manifest.schema import _BLOCK_REGISTRY, BlockMapping, ManifestError, _leaf_type
 from upmixer.separation.bleed_reduction import DEBLEED_MODELS, PHASE_FIX_REFERENCE_MODELS
 from upmixer.separation.stem_plan import DEREVERB_MODELS, MANIFEST_TO_CANONICAL
@@ -162,6 +163,7 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
         "format.type": {"multichannel", "adm-bwf", "binaural", "transaural"},
         "format.codec": set(CODECS),
         "format.subtype": set(WAV_SUBTYPES),
+        "format.dither": set(DITHER_MODES),
         "format.downmix.surround_coeff": {0.7071, 0.5, 0.0},
         "mixing.spatial.profile": {"auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"},
         "mastering.dynamic_eq.profile": set(_dyneq_profile_choices()),

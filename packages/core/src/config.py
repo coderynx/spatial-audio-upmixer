@@ -60,6 +60,11 @@ class UpmixConfig:
 
     output_format: str = "5.1"
     output_subtype: str = "PCM_24"
+    # Export-tail bit-depth reduction: off (round only), tpdf, or shaped.
+    # Integer PCM subtypes only; see docs/standards/loudness_dsp_bs1770.md.
+    output_dither: str = "tpdf"
+    # Fixed so two renders of the same job are byte-identical.
+    output_dither_seed: int = 20260819
     output_type: str = "multichannel"
     output_codec: str = "wav_pcm"
     sample_rate: int | None = None

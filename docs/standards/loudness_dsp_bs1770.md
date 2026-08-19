@@ -326,6 +326,58 @@ does not oversample in v1, so its odd harmonics past Nyquist fold back.
 
 ---
 
+## Export Tail
+
+The dBTP ceiling is only a delivery guarantee if nothing after the limiter can
+raise a peak or move a sample. Three rules make that so, in this order:
+
+**1. Master at the delivery rate.** Sample-rate conversion runs *before*
+`MasteringChain`, never after (`pipeline.py`, and the stem path separates at
+the delivery rate so the question does not arise). A resampler after the
+limiter would reconstruct new inter-sample peaks above the ceiling the limiter
+just enforced, and the loudness measurement written to the BWF `bext` chunk
+would describe a programme the file no longer contains. Pinned by
+`packages/core/tests/test_export_tail.py`.
+
+The conversion itself is `upmixer.resample`: a polyphase stage whose
+anti-imaging FIR is a Kaiser design at a 120 dB stopband with the transition
+spanning 10% of the lower of the two rates. SciPy's `resample_poly` default
+window is not adequate for delivery — measurements for both in
+`docs/plans/mastering/phase6_report.md`.
+
+**2. Quantize last, with dither.** Bit-depth reduction is the final operation
+before samples leave the process, and it is the only place rounding happens.
+`io.writer.dither_channels` maps float64 onto the target subtype's integer
+lattice with ±1 LSB TPDF dither (`dsp-core/src/dither.rs`), for integer PCM
+subtypes only; float and lossy subtypes pass through. `output_dither` selects
+`off` (round to nearest), `tpdf` (the default) or `shaped` (TPDF plus
+second-order `(1 - z⁻¹)²` error feedback, which trades ~7 dB of total noise
+power for a much quieter low band).
+
+Undithered reduction is not merely noisy: without dither the error correlates
+with the signal, which is distortion rather than noise, and libsndfile's own
+float→integer conversion truncates rather than rounds, adding a −½ LSB DC
+offset and 6 dB of avoidable error power. Non-subtractive TPDF costs √3 of the
+round-to-nearest error RMS and removes both.
+
+The dither is below the ceiling by construction — ±1 LSB at 24-bit is about
+−138 dBFS, at 16-bit about −90 dBFS — so true peak is **not** re-measured
+after quantization.
+
+**3. Nothing after.** No gain, no normalization, no fade may run once the bed
+is quantized; a scalar applied afterwards moves every sample off the code
+lattice and libsndfile re-quantizes it undithered. `write_audio` therefore
+performs the quantization itself, as its last act before handing bytes to the
+container, and `AdmBwfWriter` uses the same helper for its PCM payload.
+
+Dither streams are independent per channel (seeded from
+`output_dither_seed + channel_index`), so two identical channels do not
+deliver identical samples — correlated dither would place its noise in the
+centre image. The seed is fixed in config, so re-rendering the same job is
+byte-identical.
+
+---
+
 ## Validation Checklist
 
 - [ ] Stage 1 coefficients match Table 1 values exactly at 48 kHz
@@ -343,3 +395,5 @@ does not oversample in v1, so its odd harmonics past Nyquist fold back.
 - [ ] True-peak result in dBTP (not dBFS)
 - [ ] 0 dBFS 997 Hz sine on single L/R/C channel reads −3.01 LKFS (calibration check)
 - [ ] Incomplete gating blocks at end of measurement interval not used
+- [ ] Sample-rate conversion runs before mastering, never after the limiter
+- [ ] Bit-depth reduction is dithered, happens once, and is the last operation

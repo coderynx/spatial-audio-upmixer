@@ -253,7 +253,9 @@ def test_stereo_output_duplicates_a_mono_source(sample_rate):
 
         output, _ = sf.read(output_path)
         assert output.shape == (len(mono), 2)
-        assert np.allclose(output[:, 0], output[:, 1])
+        # Each channel carries its own dither stream, so identical sources
+        # deliver within the 24-bit LSB rather than sample-for-sample.
+        assert np.allclose(output[:, 0], output[:, 1], atol=2 * 2.0 ** -23)
 
 
 def test_stereo_output_folds_a_multichannel_source(sample_rate):

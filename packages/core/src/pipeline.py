@@ -4,7 +4,7 @@ import time
 from typing import Callable
 
 import numpy as np
-from scipy.signal import lfilter, resample_poly
+from scipy.signal import lfilter
 
 from upmixer.analysis.coherence import CoherenceEstimator
 from upmixer.analysis.spatial import SpatialPlan, analyze_spatial_plan
@@ -28,6 +28,7 @@ from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.reader import AudioReader
 from upmixer.io.writer import AudioWriter, write_audio
 from upmixer.mastering import MasteringChain
+from upmixer.resample import resample_channels
 from upmixer.result import UpmixResult
 from upmixer.routing.channel_router import ChannelRouter
 from upmixer.utils import preview_slice, itu_downmix_stereo
@@ -401,7 +402,7 @@ class UpmixPipeline:
             if cfg.output_subtype != "PCM_24":
                 raise ValueError("Dolby ADM-BWF requires output_subtype='PCM_24'")
         if out_sr != sr:
-            channels = self._resample_channels(channels, sr, out_sr)
+            channels = resample_channels(channels, sr, out_sr)
             _log.info("  Resampled: %d Hz → %d Hz", sr, out_sr)
 
         _progress("  Mastering...", 0.93)
@@ -546,18 +547,6 @@ class UpmixPipeline:
         return channels
 
     @staticmethod
-    def _resample_channels(
-        channels: dict[str, np.ndarray], src_sr: int, dst_sr: int
-    ) -> dict[str, np.ndarray]:
-        """Resample all channels from src_sr to dst_sr using polyphase filter."""
-        g = math.gcd(dst_sr, src_sr)
-        up, down = dst_sr // g, src_sr // g
-        return {
-            name: resample_poly(ch, up, down).astype(np.float64)
-            for name, ch in channels.items()
-        }
-
-    @staticmethod
     def _write_downmix(
         channels: dict[str, np.ndarray], sample_rate: int, cfg: UpmixConfig
     ) -> None:
@@ -577,6 +566,7 @@ class UpmixPipeline:
             stereo *= 10.0 ** ((ceiling - tp) / 20.0)
             _log.warning("  Downmix gain reduced %.2f dB to protect true peak", ceiling - tp)
         write_audio(
-            cfg.downmix_output_path, stereo, sample_rate, cfg.output_codec, cfg.output_subtype
+            cfg.downmix_output_path, stereo, sample_rate, cfg.output_codec,
+            cfg.output_subtype, cfg.output_dither, cfg.output_dither_seed,
         )
         _log.info("  Downmix: %s", cfg.downmix_output_path)

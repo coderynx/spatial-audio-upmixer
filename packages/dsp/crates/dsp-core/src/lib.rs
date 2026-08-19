@@ -2,6 +2,7 @@
 //! preview (via WASM). Every stage here is the single implementation both
 //! sides execute; see `docs/contracts/preview_export_parity.md`.
 
+pub mod dither;
 pub mod kernels;
 pub mod loudness;
 pub mod loudness_stream;

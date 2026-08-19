@@ -25,6 +25,7 @@ from upmixer.io.adm_chunks import (
     _write_chunk,
 )
 from upmixer.io.atomic import atomic_output_path
+from upmixer.io.writer import dither_channels
 
 _DOLBY_ENGINE_ALLOWED_FORMATS = frozenset({"5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"})
 
@@ -84,6 +85,12 @@ class AdmBwfWriter:
         n_samples = len(ordered[0])
         if any(len(channel) != n_samples for channel in ordered):
             raise ValueError("All ADM-BWF channels must have identical sample counts")
+        ordered = dither_channels(
+            ordered,
+            self._config.output_subtype,
+            self._config.output_dither,
+            self._config.output_dither_seed,
+        )
         duration_s = n_samples / sr
 
         fmt_bytes  = _fmt_chunk(fmt, sr, bit_depth)

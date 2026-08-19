@@ -312,14 +312,20 @@ def _dbmd_chunk() -> bytes:
 
 
 def _audio_to_pcm(audio: np.ndarray, bit_depth: int) -> bytes:
-    """Convert float64 [-1, 1] to interleaved little-endian PCM bytes."""
-    scale = 2 ** (bit_depth - 1) - 1
-    clipped = np.clip(audio, -1.0, 1.0)
+    """Convert float64 [-1, 1] to interleaved little-endian PCM bytes.
+
+    Scaling is by ``2 ** (bit_depth - 1)`` with the codes clipped to the
+    asymmetric two's-complement range, which is libsndfile's mapping — so a
+    bed already quantized by ``io.writer.dither_channels`` reproduces its own
+    codes exactly here.
+    """
+    scale = 2 ** (bit_depth - 1)
+    codes = np.clip(np.round(audio * scale), -scale, scale - 1)
     if bit_depth == 16:
-        return np.round(clipped * scale).astype("<i2").tobytes()
+        return codes.astype("<i2").tobytes()
     if bit_depth == 24:
-        flat = np.ascontiguousarray(np.round(clipped * scale).astype("<i4"))
+        flat = np.ascontiguousarray(codes.astype("<i4"))
         return flat.view(np.uint8).reshape(-1, 4)[:, :3].tobytes()
     if bit_depth == 32:
-        return np.round(clipped * scale).astype("<i4").tobytes()
+        return codes.astype("<i4").tobytes()
     raise ValueError(f"Unsupported bit depth for ADM BWF: {bit_depth}")
