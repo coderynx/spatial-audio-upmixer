@@ -274,6 +274,111 @@ def test_audit_five_one_fold_loudness_delta() -> None:
     )
 
 
+def _fold_rows(label: str, result: MasteringResult) -> list[tuple]:
+    """One row per measured fold of *result*, for the phase 8 tables."""
+    if result.folds is None:
+        return [(label, "—", "—", "—", "—", "—", "—", "—")]
+    rows = []
+    for name, fold in result.folds.measurements().items():
+        rows.append((
+            label,
+            name,
+            f"{result.folds.native_lkfs:.2f}",
+            f"{fold.lkfs:.2f}",
+            f"{fold.lkfs_delta_lu:+.2f}",
+            f"{fold.tp_dbtp:.2f}",
+            f"{fold.plr_db:.1f}",
+            "OK" if fold.tp_compliant and not fold.loudness_divergent else "WARN",
+        ))
+    return rows
+
+
+def test_fold_qc_tables() -> None:
+    """Phase 8's tables — every fold of every programme, plus the worst case.
+
+    The height-only row is the same bound audit 1 uses: material that lives
+    entirely overhead is what makes a fold diverge from the bed it came from.
+    """
+    for kind in _PROGRAMMES:
+        rows = []
+        for layout in _LAYOUTS:
+            _, result = _master(_bed(kind, layout), layout)
+            rows.extend(_fold_rows(layout, result))
+        _print_table(
+            f"Fold QC — {kind} programme, atmos-music defaults",
+            (
+                "render", "fold", "native LKFS", "fold LKFS", "Δ LU",
+                "fold dBTP", "PLR", "flag",
+            ),
+            rows,
+        )
+
+    bed = _bed("dense", "7.1.4")
+    height_only = {
+        k: (v if k in ("TFL", "TFR", "TBL", "TBR") else np.zeros_like(v))
+        for k, v in bed.items()
+    }
+    correlated = {k: np.zeros_like(v) for k, v in bed.items()}
+    shared = bed["FL"]
+    for name in ("FL", "FR", "SL", "SR"):
+        correlated[name] = shared.copy()
+
+    rows = []
+    _, result = _master(height_only, "7.1.4")
+    rows.extend(_fold_rows("height-only", result))
+    _, result = _master(correlated, "7.1.4", target_lkfs=-5.0)
+    rows.extend(_fold_rows("correlated FL/FR/SL/SR @ −5 LKFS", result))
+    _print_table(
+        "Fold QC — worst cases (7.1.4)",
+        (
+            "render", "fold", "native LKFS", "fold LKFS", "Δ LU",
+            "fold dBTP", "PLR", "flag",
+        ),
+        rows,
+    )
+
+
+def test_audit_binaural_qc_programme() -> None:
+    """Why the binaural QC row measures the finished render, not the raw one.
+
+    ``render_binaural`` has no level calibration for the number of speakers it
+    collapses: twelve decorrelated channels sum into two ears at roughly their
+    energy sum. Measuring *that* against the bed reports the renderer's own
+    constant on every export, which is why the QC row measures the artifact
+    ``render_binaural_delivery`` produces instead.
+    """
+    from upmixer.binaural.renderer import render_binaural, render_binaural_delivery
+    from upmixer.formats import BINAURAL
+    from upmixer.loudness import measure_integrated_loudness
+
+    fmt = FORMAT_MAP["7.1.4"]
+    rows = []
+    for kind in _PROGRAMMES:
+        mastered, result = _master(_bed(kind, "7.1.4"), "7.1.4")
+        native = result.full_bed_lkfs
+        left, right = render_binaural(mastered, fmt, _SR, "studio")
+        raw = {"FL": left, "FR": right}
+        raw_lkfs = measure_integrated_loudness(raw, _SR, BINAURAL)
+        rows.append((
+            kind,
+            f"{native:.2f}",
+            f"{raw_lkfs:.2f}",
+            f"{raw_lkfs - native:+.2f}",
+            f"{measure_true_peak(raw):.2f}",
+            f"{result.folds.binaural.lkfs:.2f}",
+            f"{result.folds.binaural.lkfs_delta_lu:+.2f}",
+            f"{result.folds.binaural.tp_dbtp:.2f}",
+        ))
+    _print_table(
+        "Binaural QC programme — raw render vs delivered render (7.1.4)",
+        (
+            "programme", "native LKFS", "raw LKFS", "raw Δ", "raw dBTP",
+            "delivered LKFS", "delivered Δ", "delivered dBTP",
+        ),
+        rows,
+    )
+
+
 def test_audit_lfe_link_duck_depth() -> None:
     """Audit 2 — how much gain reduction the mains take from an LFE-only peak.
 

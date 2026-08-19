@@ -15,14 +15,19 @@ Sub-modules:
     bass             — BassController + BASS_PROFILES
     limiter          — LookAheadLimiter (look-ahead true-peak brickwall limiter)
     delivery         — DELIVERY_TARGETS (named loudness/ceiling specifications)
+    foldqc           — FoldQC (post-limiter downmix/render measurement)
 """
 from .chain import MasteringChain, MasteringResult
 from .delivery import DELIVERY_TARGETS, DeliveryTarget, resolve_delivery_target
+from .foldqc import FOLD_DIVERGENCE_LU, FoldMeasurement, FoldQC
 from .match_reference import ReferenceMatchProcessor
 
 __all__ = [
     "DELIVERY_TARGETS",
+    "FOLD_DIVERGENCE_LU",
     "DeliveryTarget",
+    "FoldMeasurement",
+    "FoldQC",
     "MasteringChain",
     "MasteringResult",
     "ReferenceMatchProcessor",

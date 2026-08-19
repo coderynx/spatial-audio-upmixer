@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 
+from upmixer.mastering.foldqc import FoldQC
+
 
 @dataclass
 class UpmixResult:
@@ -45,6 +47,10 @@ class UpmixResult:
         fold_referenced: Whether ``measured_lkfs`` is the 5.1 re-render's.
         full_bed_lkfs: Integrated loudness of the delivered bed itself, the
             secondary diagnostic beside a fold-referenced measurement.
+        folds: Loudness/True-Peak QC of the master's BS.775 stereo downmix,
+            5.1 re-render and binaural render
+            (:class:`~upmixer.mastering.foldqc.FoldQC`), or *None* where the
+            delivery has no fold to measure.
         stems: Canonical stem names used during separation (stem mode only),
             or *None* in realtime mode.
         processing_time_seconds: Wall-clock time for the full operation.
@@ -71,6 +77,7 @@ class UpmixResult:
     tp_compliant: bool | None = None
     fold_referenced: bool = False
     full_bed_lkfs: float | None = None
+    folds: FoldQC | None = None
     stems: list[str] | None = None
     spatial_profile: str | None = None
     spatial_profile_confidence: float | None = None

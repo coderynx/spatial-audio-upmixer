@@ -219,6 +219,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "loudness_target_preset":     ("loudness_target_preset",   str),
     "loudness_target":            ("loudness_target_lkfs",     float),
     "loudness_max_tp":            ("loudness_max_tp",          float),
+    "qc_measure_binaural":        ("qc_measure_binaural",      bool),
     "limiter_lookahead_ms":       ("limiter_lookahead_ms",     float),
     "limiter_release_ms":         ("limiter_release_ms",       float),
     "mastering_highpass_enabled": ("mastering_highpass_enabled", bool),

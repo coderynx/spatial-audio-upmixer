@@ -103,7 +103,7 @@ validation; a phase must be green before the next starts.
 | 5 | `phase5_dynamic_eq.md` → `phase5_report.md` | **Done.** Up to four linked-detection bells between the static EQ and the compressor, default off. The decaying-broadband gate phase 13 failed is measured and passed; the stage commutes with the LF sum, so it needed no exception. |
 | 6 | `phase6_dither_export.md` → `phase6_report.md` | **Done.** TPDF dither (+ optional shaping) as the export's last operation, seeded for byte-identical re-renders; ordering pinned; the SRC audit failed its −120 dBFS bar, so the delivery resampler was upgraded (images 65–90 dB lower, passband flat to 20 kHz). |
 | 7 | `phase7_reference_match_usability.md` → `phase7_report.md` | **Done.** Smoothing bandwidth (1/12–1 oct), raised-cosine frequency-range masks, and a stage-scoped loudness-matched audition. Every control acts at curve realization, so the persisted curve is now raw and no knob re-analyses; the tapers moving ahead of the smoothing costs 0.02 dB RMS on a broadband reference and re-pinned the tonal golden. |
-| 8 | `phase8_downmix_qc.md` | Fold/render QC: loudness + TP of the BS.775 stereo fold and binaural render measured and reported against the native bed, with UI warnings. |
+| 8 | `phase8_downmix_qc.md` → `phase8_report.md` | **Done.** Loudness/TP/PLR of the BS.775 stereo fold, the 5.1 re-render and the binaural render, measured after the limiter and reported against the native bed, with ±1.5 LU and over-ceiling warnings through the jobs API and the web. Measurement only — a master that passes on its own bed folds 4.55 dB over the ceiling on correlated content, and the phase warns rather than re-limits. |
 
 Phase 5 was the highest-risk phase (multiband detectors diverging through
 decaying broadband material is exactly what killed mixing phase 13 — read
@@ -111,6 +111,30 @@ decaying broadband material is exactly what killed mixing phase 13 — read
 avoided the failure is that detection is per band but never per channel, so
 there is nothing to diverge. Phases 6–8 are independent of each other and of
 5; if priorities force a cut, never cut from 0–2.
+
+**The plan is complete.** All nine phases (0–8) shipped, in order, each green
+before the next started; the Python suite went from 1157 to 1242 tests, Rust
+stands at 235 and web at 306, with no phase regressing another's numbers. What is
+left open, across all of them, is deliberately small and each item is recorded
+in the report that found it: the **+0.0636 dB true-peak ceiling overshoot**
+under deep, fast gain reduction (phase 0's own audit, handed to phase 2,
+passed on to phase 3 on the grounds that the meters now make deep-GR operation
+visible — still pinned under the limiter's 0.1 dB safety margin by
+`test_compliance_baseline`, still unfixed); **phase 4's oversampled soft
+clipper**, scoped and measured but not built, the clipper shipping default-off
+with its aliasing documented instead; the **A/B listening passes phases 3 and
+6 owe** — every phase ran in an agent session with no audio output, so
+"measured, not listened to" is the honest state of the tonal work, and phase
+3's gain-matched A/B is what makes those passes worth running now;
+**Netflix's dialog-gated −27 LKFS** delivered as ungated BS.1770
+because the chain has no dialog gate (recorded as a deviation in
+`standards/loudness_dsp_bs1770.md`); the pre-existing
+`measuring (fast excerpt, playing)` bench overrun, present at HEAD before
+phase 1 and unrelated to anything this plan touched; and the fold-loudness
+gap phase 8 hands to the **mixing** plan — nothing there measures what a
+height-forward preset does to the stereo fold, which is a routing decision no
+mastering stage should be correcting. Also still deferred by choice: the
+codec-preview stage below, and the non-goals listed above.
 
 A codec-preview stage (post-AAC/Opus true-peak check, NUGEN
 MasterCheck-style) was considered and deferred: it needs an encoder

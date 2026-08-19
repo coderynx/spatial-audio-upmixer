@@ -27,6 +27,8 @@ describe("LoudnessReadout", () => {
         masterMeters={{ current: SILENT_MASTER_METERS }}
         headphoneLevels={SILENT_PAIR}
         active={false}
+        outputMode="native"
+        channelCount={12}
         bypassed={false}
       />,
     );
@@ -38,6 +40,35 @@ describe("LoudnessReadout", () => {
     expect(screen.queryByText("A/B")).toBeNull();
   });
 
+  it("names the programme the numbers were measured on", () => {
+    const { rerender } = render(
+      <LoudnessReadout
+        loudness={LOUDNESS}
+        masterMeters={{ current: SILENT_MASTER_METERS }}
+        headphoneLevels={SILENT_PAIR}
+        active={false}
+        outputMode="native"
+        channelCount={12}
+        bypassed={false}
+      />,
+    );
+    expect(screen.getByText("5.1 re-render")).toBeTruthy();
+
+    rerender(
+      <LoudnessReadout
+        loudness={LOUDNESS}
+        masterMeters={{ current: SILENT_MASTER_METERS }}
+        headphoneLevels={SILENT_PAIR}
+        active={false}
+        outputMode="stereo"
+        channelCount={12}
+        bypassed={false}
+      />,
+    );
+    expect(screen.getByText("Stereo fold")).toBeTruthy();
+    expect(screen.queryByText("5.1 re-render")).toBeNull();
+  });
+
   it("names the monitor match only while the chain is bypassed", () => {
     render(
       <LoudnessReadout
@@ -45,6 +76,8 @@ describe("LoudnessReadout", () => {
         masterMeters={{ current: SILENT_MASTER_METERS }}
         headphoneLevels={SILENT_PAIR}
         active={false}
+        outputMode="native"
+        channelCount={12}
         bypassed
       />,
     );

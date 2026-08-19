@@ -1,7 +1,7 @@
 import * as React from "react";
 import { canvasTheme } from "@/lib/canvasTheme";
 import { cn } from "@/lib/utils";
-import type { LoudnessSummary, MasterMeters, MeterLevel } from "./useStemPreview";
+import type { LoudnessSummary, MasterMeters, MeterLevel, OutputMode } from "./useStemPreview";
 import type { EngineRef } from "./wasmEngine/engineTypes";
 
 // The mastering readouts: EBU Tech 3341 M/S/I loudness with the delivery
@@ -43,6 +43,19 @@ export function peakToLoudness(truePeakDbtp: number, integratedLkfs: number): nu
 export function peakToShortTerm(peakDb: number, shortTermLkfs: number): number {
   if (shortTermLkfs <= SILENT_LKFS) return NaN;
   return peakDb - shortTermLkfs;
+}
+
+/** Which programme the readout is measuring.
+ *
+ * The measurement pass follows whatever collapse the transport is auditioning,
+ * and a native bed wider than 5.1 is measured on its 5.1 re-render
+ * (docs/standards/loudness_dsp_bs1770.md §"Measurement programme"). Without
+ * this label a stereo-fold reading is indistinguishable from the bed's. */
+export function collapseModeLabel(mode: OutputMode, channelCount: number): string {
+  if (mode === "stereo") return "Stereo fold";
+  if (mode === "binaural") return "Binaural";
+  if (mode === "transaural") return "Transaural";
+  return channelCount > 6 ? "5.1 re-render" : "Native bed";
 }
 
 export type MasterReadout = MasterMeters & {
@@ -153,6 +166,8 @@ export function LoudnessReadout({
   headphoneLevels,
   active,
   bypassed,
+  outputMode,
+  channelCount,
   className,
 }: {
   loudness: LoudnessSummary;
@@ -160,6 +175,8 @@ export function LoudnessReadout({
   headphoneLevels: EngineRef<{ left: MeterLevel; right: MeterLevel }>;
   active: boolean;
   bypassed: boolean;
+  outputMode: OutputMode;
+  channelCount: number;
   className?: string;
 }) {
   const live = useMasterReadout(masterMeters, headphoneLevels, active);
@@ -175,6 +192,11 @@ export function LoudnessReadout({
       role="group"
       aria-label="Loudness"
     >
+      <Cell
+        label="Prog"
+        value={collapseModeLabel(outputMode, channelCount)}
+        title="Programme the loudness readout is measured on — it follows the active output mode, and a native bed wider than 5.1 is measured on its 5.1 re-render"
+      />
       <Cell label="M" value={formatLkfs(live.momentaryLkfs)} title="Momentary loudness, 400 ms (LKFS)" />
       <Cell label="S" value={formatLkfs(live.shortTermLkfs)} title="Short-term loudness, 3 s (LKFS)" />
       <Cell

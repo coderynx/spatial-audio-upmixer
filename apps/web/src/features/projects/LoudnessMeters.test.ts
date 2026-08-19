@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { formatLkfs, formatLu, peakToLoudness, peakToShortTerm } from "./LoudnessMeters";
+import {
+  collapseModeLabel,
+  formatLkfs,
+  formatLu,
+  peakToLoudness,
+  peakToShortTerm,
+} from "./LoudnessMeters";
 
 describe("loudness readout formatting", () => {
   it("floors silence at -∞ rather than printing the gate", () => {
@@ -16,6 +22,21 @@ describe("loudness readout formatting", () => {
   it("shows a dash where a crest metric has no loudness to divide by", () => {
     expect(formatLu(peakToLoudness(-1, -70))).toBe("—");
     expect(formatLu(peakToShortTerm(-3, -70))).toBe("—");
+  });
+});
+
+describe("collapse-mode label", () => {
+  it("names the collapse the transport is auditioning", () => {
+    expect(collapseModeLabel("stereo", 12)).toBe("Stereo fold");
+    expect(collapseModeLabel("binaural", 12)).toBe("Binaural");
+    expect(collapseModeLabel("transaural", 12)).toBe("Transaural");
+  });
+
+  it("distinguishes a native bed from the 5.1 re-render it is measured on", () => {
+    expect(collapseModeLabel("native", 12)).toBe("5.1 re-render");
+    expect(collapseModeLabel("native", 8)).toBe("5.1 re-render");
+    expect(collapseModeLabel("native", 6)).toBe("Native bed");
+    expect(collapseModeLabel("native", 2)).toBe("Native bed");
   });
 });
 

@@ -102,6 +102,10 @@ class UpmixConfig:
     loudness_max_tp: float | None = None
     loudness_max_gain_db: float = 30.0
 
+    # Unset renders the binaural QC programme only for height-bearing beds;
+    # see docs/standards/spatial_layouts_bs775_bs2051.md §"Fold QC thresholds".
+    qc_measure_binaural: bool | None = None
+
     limiter_lookahead_ms: float = 5.0
     limiter_release_ms: float = 50.0
 

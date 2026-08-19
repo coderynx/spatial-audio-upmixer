@@ -103,6 +103,7 @@ from upmixer.config import UpmixConfig
 from upmixer.formats import OutputFormat
 
 from .delivery import resolve_delivery_target
+from .foldqc import FoldQC, measure_folds
 from .limiter import LookAheadLimiter
 
 _log = logging.getLogger("upmixer")
@@ -114,6 +115,9 @@ _rbk("mastering", {
         "target_preset": ("config", "loudness_target_preset"),
         "target":        ("config", "loudness_target"),
         "max_tp":        ("config", "loudness_max_tp"),
+    },
+    "qc": {
+        "measure_binaural": ("config", "qc_measure_binaural"),
     },
 })
 del _rbk
@@ -204,6 +208,10 @@ class MasteringResult:
     """Integrated loudness of the delivered bed itself — the secondary
     diagnostic that sits next to a fold-referenced ``measured_lkfs``."""
 
+    folds: FoldQC | None = None
+    """Loudness/True-Peak QC of the master's folds (BS.775 stereo downmix, 5.1
+    re-render, binaural render), or *None* for a bed with no fold to measure."""
+
     def delivery_fields(self) -> dict:
         """The loudness and compliance block, keyed as
         :class:`~upmixer.result.UpmixResult` fields."""
@@ -219,6 +227,7 @@ class MasteringResult:
             "tp_compliant": self.tp_compliant,
             "fold_referenced": self.fold_referenced,
             "full_bed_lkfs": self.full_bed_lkfs,
+            "folds": self.folds,
         }
 
 
@@ -451,6 +460,11 @@ class MasteringChain:
             measured_tp = measure_true_peak(channels)
             short_term = stats["max_short_term_lkfs"]
             deviation = abs(stats["integrated_lkfs"] - delivery.target_lkfs)
+            native_lkfs = (
+                measure_integrated_loudness(channels, sample_rate, output_fmt)
+                if fold
+                else stats["integrated_lkfs"]
+            )
             result = MasteringResult(
                 measured_lkfs=stats["integrated_lkfs"],
                 measured_tp_dbtp=measured_tp,
@@ -482,10 +496,14 @@ class MasteringChain:
                 ),
                 tp_compliant=measured_tp <= delivery.max_tp_dbtp,
                 fold_referenced=fold,
-                full_bed_lkfs=(
-                    measure_integrated_loudness(channels, sample_rate, output_fmt)
-                    if fold
-                    else None
+                full_bed_lkfs=native_lkfs if fold else None,
+                folds=measure_folds(
+                    channels,
+                    sample_rate,
+                    output_fmt,
+                    cfg,
+                    native_lkfs,
+                    delivery.max_tp_dbtp,
                 ),
             )
         return channels, result

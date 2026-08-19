@@ -25,22 +25,64 @@ export function jobDetails(job: Job) {
   return { layout, mode, downloadable };
 }
 
+type FoldMeasurement = {
+  lkfs: number;
+  tp_dbtp: number;
+  plr_db: number;
+  lkfs_delta_lu: number;
+  tp_compliant: boolean;
+  loudness_divergent: boolean;
+};
+
+type DeliveryResult = {
+  measured_lkfs?: number | null;
+  measured_tp_dbtp?: number | null;
+  target_preset?: string | null;
+  loudness_compliant?: boolean | null;
+  tp_compliant?: boolean | null;
+  fold_referenced?: boolean;
+  folds?: {
+    native_lkfs: number;
+    stereo?: FoldMeasurement | null;
+    surround_51?: FoldMeasurement | null;
+    binaural?: FoldMeasurement | null;
+  } | null;
+};
+
+function deliveryResult(job: Job) {
+  return job.tracks.find((track) => track.result)?.result as DeliveryResult | undefined;
+}
+
+/** Labels for `MasteringResult.folds`, in the order the table shows them. */
+const FOLD_LABELS: [keyof NonNullable<DeliveryResult["folds"]>, string][] = [
+  ["stereo", "Stereo fold"],
+  ["surround_51", "5.1 re-render"],
+  ["binaural", "Binaural"],
+];
+
+/** Loudness and true peak of each fold of a finished master, against the
+ * delivered bed's own loudness. Warnings only — the fold is never corrected
+ * (docs/standards/spatial_layouts_bs775_bs2051.md §"Fold QC thresholds"). */
+export function jobFolds(job: Job) {
+  const folds = deliveryResult(job)?.folds;
+  if (!folds) return null;
+  const rows = FOLD_LABELS.flatMap(([key, label]) => {
+    const fold = folds[key];
+    return typeof fold === "object" && fold !== null
+      ? [{ key, label, ...fold, flagged: !fold.tp_compliant || fold.loudness_divergent }]
+      : [];
+  });
+  if (rows.length === 0) return null;
+  return { nativeLkfs: folds.native_lkfs, rows, flagged: rows.some((row) => row.flagged) };
+}
+
 /** The delivered loudness a finished track reported, with the target it was
  * held to. `compliant` is null where the target publishes no tolerance —
  * there is a number to show but no pass/fail to claim. `foldReferenced`
  * marks a loudness measured on the 5.1 re-render rather than the full bed
  * (docs/standards/loudness_dsp_bs1770.md). */
 export function jobDelivery(job: Job) {
-  const result = job.tracks.find((track) => track.result)?.result as
-    | {
-        measured_lkfs?: number | null;
-        measured_tp_dbtp?: number | null;
-        target_preset?: string | null;
-        loudness_compliant?: boolean | null;
-        tp_compliant?: boolean | null;
-        fold_referenced?: boolean;
-      }
-    | undefined;
+  const result = deliveryResult(job);
   if (!result || result.measured_lkfs == null) return null;
   const compliant =
     result.loudness_compliant == null && result.tp_compliant == null

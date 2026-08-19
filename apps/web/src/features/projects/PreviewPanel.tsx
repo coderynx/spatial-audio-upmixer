@@ -125,6 +125,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
           headphoneLevels={preview.headphoneLevels}
           active={preview.playing}
           bypassed={viewState.masteringBypassed || viewState.matchBypassed}
+          outputMode={outputMode}
+          channelCount={channels.length}
         />
       )}
       <div ref={rowRef} className={cn("flex min-h-0 gap-2", paneView ? "min-h-[180px] flex-1" : "flex-[3]")}>

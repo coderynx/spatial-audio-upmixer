@@ -350,6 +350,63 @@ re-render they build is a fixed programme a delivery specification names,
 not a monitoring choice. LFE has no fold contribution — BS.1770 weights it
 zero, so it never reaches the measurement either way.
 
+### Fold QC thresholds (project convention, measurement only)
+
+*(`packages/core/src/mastering/foldqc.py`, run by `MasteringChain` after the
+limiter. Reported as `MasteringResult.folds` / `UpmixResult.folds`.)*
+
+The limiter's true-peak guarantee is **per channel and does not survive a
+fold**: the downmixes above are linear mixes, so `Lo = FL + k_s·SL` on
+correlated in-phase content is `1.7071·FL`, 4.65 dB of headroom nothing in
+the chain budgeted for. Integrated loudness moves the other way — a fold
+collapses channels the BS.1770 weighted sum was counting separately, so it
+usually reads *quieter* than the bed.
+
+Three folds are measured against the delivered bed's own integrated loudness:
+
+| field | programme | measured when |
+|---|---|---|
+| `folds.stereo` | the 2/0 downmix above, at the configured `k_s`/`k_h` | bed wider than 2 channels |
+| `folds.surround_51` | the 5.1 re-render below | bed wider than 5.1 |
+| `folds.binaural` | the finished binaural render of this bed (`render_binaural_delivery`) | `config.qc_measure_binaural`, unset = the `BINAURAL_BED_FORMATS` beds |
+
+Two conditions warn. **Nothing is corrected** — the mitigation is the mix or
+the mastering settings, not a hidden second limiter, so a fold-referenced
+re-limit is deliberately out of scope.
+
+| condition | threshold |
+|---|---|
+| fold true peak over the delivery target's ceiling | the target's own `max_tp_dbtp` |
+| fold integrated loudness away from the bed's | `FOLD_DIVERGENCE_LU` = **±1.5 LU** |
+
+**Evidence for ±1.5 LU** (`docs/plans/mastering/phase0_report.md` audit 1,
+`phase1_report.md` §"What the fold changes", `phase8_report.md` fold tables —
+reproduce with `uv run pytest
+packages/core/tests/test_master_measurement.py -m perf -s`):
+
+- Realistic decorrelated programme material folds by at most **1.27 LU**
+  (7.1.4 → stereo; 5.1 → stereo is 0.63–0.67 LU, 7.1.4 → 5.1 is a systematic
+  0.32 LU). The threshold sits just above the worst realistic case, so normal
+  content never warns.
+- Material living entirely overhead folds by **2.35 LU** (5.1 re-render) to
+  **3.98 LU** (stereo) — the case a height-heavy mix really can fail, and the
+  reason the threshold has to be below 2 LU to catch it.
+- The loosest published delivery tolerance any target in
+  `mastering/delivery.py` carries is **±2 LU** (Netflix, ATSC A/85). Warning
+  at 1.5 LU fires before a fold could put the master outside the tolerance of
+  the spec it was mastered to; EBU R128's ±0.5 LU is tighter than the
+  systematic 5.1-fold bias itself, so it is not a usable bound here.
+
+The binaural row measures the **finished** render rather than the raw HOA
+collapse. `render_binaural` applies no level calibration for the number of
+speakers it collapses, so twelve decorrelated channels sum into two ears at
+roughly their energy sum: +10.2 to +10.3 LU and +3.1 to +4.7 dBTP on both
+phase 0 programmes. That number describes the renderer's constant, not the
+master, so it would fire on every export. `render_binaural_delivery`'s
+correction is capped at `BINAURAL_LOUDNESS_MAX_GAIN_DB` upward, which is what
+makes the delivered row informative: a bed whose collapse lands quiet cannot
+be brought back and warns (−6.55 LU on a correlated front-heavy fixture).
+
 ### Deriving a missing centre (project convention, inverse of the 2/0 matrix)
 
 *(`MultichannelUpmixer._extract_center`, for a source that has FL/FR but no C.
@@ -651,6 +708,8 @@ default preset realized on `7.1.4`, not a separate table.
 - [ ] Bass management: decorrelation stays at or above `unify_hz`, so the mono LF bus and its Sigma-a = 1 invariant are untouched
 - [ ] Bass management: the decorrelator's band split is zero-phase (a causal split combs ~3 dB at 200 Hz)
 - [ ] Bass management: allpass group delay is capped at 30 ms, past which the cascade reads as reverb rather than width
+- [ ] Fold QC warns, never corrects: no fold-referenced re-limiting
+- [ ] Fold QC divergence threshold = ±1.5 LU, below the loosest published delivery tolerance (±2 LU) and above the worst realistic fold (1.27 LU)
 - [ ] Downmix centre coefficient a₀ = 0.707 (−3.01 dB) default
 - [ ] Downmix surround coefficient b₀ = 0.707 (−3.01 dB) default; alternative 0.500
 - [ ] Sound system designator uses U+M+B format (e.g. 4+5+0 for System D)

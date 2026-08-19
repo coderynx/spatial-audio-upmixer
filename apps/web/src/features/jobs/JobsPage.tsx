@@ -15,7 +15,8 @@ import { jobArtifactSize } from "@/lib/projectStats";
 import { cn } from "@/lib/utils";
 import { JobActions } from "./JobActions";
 import { JobTable } from "./JobTable";
-import { jobDetails, statusLabel, statusVariant } from "./status";
+import { FoldTable } from "./FoldTable";
+import { jobDetails, jobFolds, statusLabel, statusVariant } from "./status";
 import type { JobAction } from "./useJobs";
 
 const ACTIVE_STATUSES = ["running", "queued", "pause_requested"];
@@ -86,6 +87,7 @@ export function JobsPage({
     </WorkspaceScroll>
   );
 
+  const folds = selected ? jobFolds(selected) : null;
   const inspector = selected ? (
     <>
       <WorkspaceScroll>
@@ -105,6 +107,11 @@ export function JobsPage({
             <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-[11px] leading-relaxed text-destructive">
               {selected.error}
             </p>
+          </InspectorGroup>
+        )}
+        {folds && (
+          <InspectorGroup title="Folds">
+            <FoldTable folds={folds} />
           </InspectorGroup>
         )}
         <InspectorGroup title={`Tracks · ${selected.tracks.length}`}>
