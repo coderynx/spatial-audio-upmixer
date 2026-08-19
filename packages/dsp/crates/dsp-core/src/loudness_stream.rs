@@ -11,8 +11,8 @@
 use crate::kernels::biquad::SosFilter;
 use crate::kernels::sum::pairwise_sum;
 use crate::loudness::{
-    k_weighting_sos, ABS_GATE, BLOCK_S, HOP_S, LKFS_OFFSET, REL_GATE_OFFSET, TRUE_PEAK_FIR_4X,
-    TRUE_PEAK_OVERSAMPLE,
+    k_weighting_sos, ABS_GATE, BLOCK_S, HOP_S, LKFS_OFFSET, REL_GATE_OFFSET, SHORT_TERM_S,
+    TRUE_PEAK_FIR_4X, TRUE_PEAK_OVERSAMPLE,
 };
 
 /// One channel's K-weighted gating blocks, produced as samples arrive.
@@ -145,6 +145,98 @@ impl IntegratedLoudnessMeter {
             .collect();
         let gated = if above_rel.is_empty() { &above_abs } else { &above_rel };
         LKFS_OFFSET + 10.0 * mean_of(gated).max(1e-30).log10()
+    }
+}
+
+/// Blocks of [`HOP_S`] the sliding windows are evaluated over: 400 ms of them
+/// for momentary, 3 s for short-term (EBU Tech 3341 §2.1-2.2).
+const MOMENTARY_BLOCKS: usize = (BLOCK_S / HOP_S) as usize;
+const SHORT_TERM_BLOCKS: usize = (SHORT_TERM_S / HOP_S) as usize;
+
+/// EBU Tech 3341 momentary (400 ms) and short-term (3 s) loudness of a signal
+/// delivered in slices.
+///
+/// Both windows are ungated and share one grid of non-overlapping [`HOP_S`]
+/// blocks — [`ChannelGate`] with its block equal to its hop — so a meter block
+/// is the same K-weighted, [`pairwise_sum`]-accumulated mean square the
+/// integrated meter's gating blocks are, and a window is the mean of the last
+/// few of them. Tech 3341 asks for at least 10 updates a second, which is
+/// exactly this grid.
+pub struct WindowLoudnessMeter {
+    channels: Vec<ChannelGate>,
+    scratch: Vec<f64>,
+    /// Summed weighted mean square per closed block, oldest first, capped at
+    /// [`SHORT_TERM_BLOCKS`].
+    recent: Vec<f64>,
+    enough_for_a_block: bool,
+}
+
+impl WindowLoudnessMeter {
+    /// `weights` are the BS.1770 channel weights, in channel order; a zero
+    /// weight drops the channel, as it does in [`IntegratedLoudnessMeter`].
+    pub fn new(weights: &[f64], sample_rate: u32) -> Self {
+        let hop_len = (HOP_S * sample_rate as f64) as usize;
+        let sos = k_weighting_sos(sample_rate);
+        Self {
+            channels: weights
+                .iter()
+                .map(|w| ChannelGate::new(*w, &sos, hop_len.max(1), hop_len.max(1)))
+                .collect(),
+            scratch: Vec::new(),
+            recent: Vec::new(),
+            enough_for_a_block: hop_len > 0,
+        }
+    }
+
+    /// Feed one slice per weight. Every slice must be the same length — the
+    /// channels close blocks in lockstep, which is what lets them be summed
+    /// by position rather than by a global block index.
+    pub fn push(&mut self, channel_slices: &[&[f64]]) {
+        if !self.enough_for_a_block {
+            return;
+        }
+        let Some(frames) = channel_slices.first().map(|s| s.len()) else { return };
+        if channel_slices.iter().any(|s| s.len() != frames) {
+            return;
+        }
+        let mut summed: Vec<f64> = Vec::new();
+        for (index, gate) in self.channels.iter_mut().enumerate() {
+            if gate.weight == 0.0 {
+                continue;
+            }
+            let Some(slice) = channel_slices.get(index) else { continue };
+            self.scratch.clear();
+            gate.push(slice, &mut self.scratch);
+            for (offset, value) in self.scratch.iter().enumerate() {
+                match summed.get_mut(offset) {
+                    Some(slot) => *slot += value,
+                    None => summed.push(*value),
+                }
+            }
+        }
+        self.recent.append(&mut summed);
+        let excess = self.recent.len().saturating_sub(SHORT_TERM_BLOCKS);
+        self.recent.drain(..excess);
+    }
+
+    /// Momentary loudness in LKFS, floored at the absolute gate.
+    pub fn momentary(&self) -> f64 {
+        self.window_lkfs(MOMENTARY_BLOCKS)
+    }
+
+    /// Short-term loudness in LKFS, floored at the absolute gate.
+    pub fn short_term(&self) -> f64 {
+        self.window_lkfs(SHORT_TERM_BLOCKS)
+    }
+
+    fn window_lkfs(&self, blocks: usize) -> f64 {
+        let take = blocks.min(self.recent.len());
+        if take == 0 {
+            return ABS_GATE;
+        }
+        let window = &self.recent[self.recent.len() - take..];
+        let mean = pairwise_sum(window) / take as f64;
+        (LKFS_OFFSET + 10.0 * mean.max(1e-30).log10()).max(ABS_GATE)
     }
 }
 

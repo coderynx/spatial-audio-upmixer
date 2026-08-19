@@ -45,15 +45,27 @@ mod meters {
     }
 
     #[test]
-    fn the_flat_block_is_stems_then_channels_then_output() {
+    fn the_flat_block_is_stems_then_channels_then_output_then_the_master() {
         let meters = Meters {
             stems: vec![[Level { rms: 0.1, peak: 0.2 }, Level { rms: 0.15, peak: 0.25 }]],
             channels: vec![Level { rms: 0.3, peak: 0.4 }],
             output: [Level { rms: 0.5, peak: 0.6 }, Level { rms: 0.7, peak: 0.8 }],
+            master: MasterMeters {
+                momentary_lkfs: -14.0,
+                short_term_lkfs: -16.0,
+                comp_gr_db: 2.0,
+                limiter_gr_db: 1.0,
+                limiter_lfe_gr_db: 3.0,
+            },
         };
         let mut out = vec![0.0_f32; meters.len()];
-        assert_eq!(meters.write(&mut out), 10);
-        assert_eq!(out, vec![0.1, 0.2, 0.15, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]);
+        assert_eq!(meters.write(&mut out), 15);
+        assert_eq!(
+            out,
+            vec![
+                0.1, 0.2, 0.15, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, -14.0, -16.0, 2.0, 1.0, 3.0
+            ]
+        );
     }
 }
 

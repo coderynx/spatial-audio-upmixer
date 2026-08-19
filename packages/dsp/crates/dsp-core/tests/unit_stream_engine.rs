@@ -125,6 +125,122 @@ mod engine {
     }
 }
 
+mod master_meters {
+    use std::sync::Arc;
+    use upmixer_dsp_core::loudness::measure_loudness_stats;
+    use upmixer_dsp_core::stream::engine::*;
+    use upmixer_dsp_core::stream::params::EngineParams;
+
+    /// A hot stereo programme through a compressor and a limiter, so both
+    /// gain-reduction taps have something to report.
+    fn engine(frames: usize, level: f64) -> PreviewEngine {
+        let params: EngineParams = serde_json::from_str(
+            r#"{
+                "speakers": [
+                    {"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [1.0, 0.0]},
+                    {"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [0.0, 1.0]},
+                    {"name": "LFE", "azimuth_rad": 0.0, "elevation_rad": 0.0, "group_gain": 1.0,
+                     "downmix": [0.0, 0.0]}
+                ],
+                "lfe_index": 2,
+                "shapes": ["left", "right", "mono"],
+                "sends": {"surround_bass_cutoff_hz": 250.0,
+                          "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
+                          "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
+                          "height_directional_band_hz": 8000.0,
+                          "height_directional_band_gain": 1.0,
+                          "lfe_cutoff_hz": 120.0, "lfe_filter_order": 4, "lfe_gain": 3.0},
+                "stems": [{"routing": [["FL", 1.0], ["FR", 1.0], ["LFE", 1.0]],
+                           "rebalance_db": 0.0, "enabled": true, "eq_fir": [], "route_scale": 1.0}],
+                "master": {"compressor": {"threshold_db": -30.0, "ratio": 4.0, "attack_ms": 5.0,
+                                          "release_ms": 80.0, "knee_db": 6.0, "makeup_db": 12.0,
+                                          "sidechain_hpf_hz": null},
+                           "limiter": {"ceiling_dbtp": -1.0, "lookahead_ms": 1.5,
+                                       "release_ms": 50.0, "safety_margin_db": 0.1}},
+                "output_mode": "native",
+                "meter_weights": [1.0, 1.0, 0.0],
+                "soft_limit_threshold": 0.0
+            }"#,
+        )
+        .expect("engine parameters");
+
+        // Two tones: the 220 Hz one drives the mains, the 60 Hz one survives
+        // the LFE bus's 120 Hz low-pass so the LFE curve has a peak of its own.
+        let tone: Vec<f32> = (0..frames)
+            .map(|i| {
+                let t = i as f64 / 48_000.0;
+                let half = level * 0.5;
+                (half * (2.0 * std::f64::consts::PI * 220.0 * t).sin()
+                    + half * (2.0 * std::f64::consts::PI * 60.0 * t).sin()) as f32
+            })
+            .collect();
+        PreviewEngine::new(
+            48_000,
+            params,
+            vec![Arc::new(StemSource { left: tone.clone(), right: tone })],
+        )
+    }
+
+    fn render(engine: &mut PreviewEngine, frames: usize) -> Vec<Vec<f64>> {
+        let block = 128;
+        let mut out = vec![0.0; 3 * block];
+        let mut collected = vec![Vec::new(); 3];
+        let mut done = 0;
+        while done < frames {
+            let written = engine.render(&mut out, block);
+            if written == 0 {
+                break;
+            }
+            for (channel, sink) in collected.iter_mut().enumerate() {
+                sink.extend_from_slice(&out[channel * block..channel * block + written]);
+            }
+            done += written;
+        }
+        collected
+    }
+
+    /// The live windows read the programme that was actually emitted: after a
+    /// whole render their short-term reading is the offline kit's last 3 s.
+    #[test]
+    fn the_loudness_windows_read_the_emitted_programme() {
+        let mut engine = engine(240_000, 0.2);
+        let out = render(&mut engine, 240_000);
+        let tail = out[0].len().saturating_sub(3 * 48_000);
+        let want = measure_loudness_stats(
+            &[(1.0, &out[0][tail..]), (1.0, &out[1][tail..])],
+            48_000,
+        );
+        let got = engine.meters().master.short_term_lkfs;
+        assert!(
+            (got - want.max_short_term_lkfs).abs() < 0.1,
+            "short-term {got} vs offline {}",
+            want.max_short_term_lkfs,
+        );
+    }
+
+    /// Both gain-reduction taps report on a programme hot enough to work
+    /// them, and a quiet one leaves every stage at rest.
+    #[test]
+    fn the_gain_reduction_taps_follow_the_stages() {
+        let mut hot = engine(96_000, 0.9);
+        render(&mut hot, 96_000);
+        let master = hot.meters().master;
+        assert!(master.comp_gr_db > 1.0, "compressor GR {}", master.comp_gr_db);
+        assert!(master.limiter_gr_db > 0.0, "limiter GR {}", master.limiter_gr_db);
+        assert!(master.limiter_lfe_gr_db > 0.0, "LFE GR {}", master.limiter_lfe_gr_db);
+
+        let mut quiet = engine(96_000, 0.002);
+        render(&mut quiet, 96_000);
+        let master = quiet.meters().master;
+        assert_eq!(master.comp_gr_db, 0.0);
+        assert_eq!(master.limiter_gr_db, 0.0);
+        assert_eq!(master.limiter_lfe_gr_db, 0.0);
+        assert!(master.momentary_lkfs < -40.0, "momentary {}", master.momentary_lkfs);
+    }
+}
+
 mod measure {
     use upmixer_dsp_core::stream::engine::PreviewEngine;
     use upmixer_dsp_core::stream::measure::*;

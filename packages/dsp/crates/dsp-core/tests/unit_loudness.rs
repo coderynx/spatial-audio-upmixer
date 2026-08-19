@@ -100,7 +100,7 @@ mod loudness {
 mod loudness_stream {
     use upmixer_dsp_core::loudness::ABS_GATE;
     use upmixer_dsp_core::loudness_stream::*;
-    use upmixer_dsp_core::loudness::{measure_integrated_loudness, measure_true_peak};
+    use upmixer_dsp_core::loudness::{measure_integrated_loudness, measure_loudness_stats, measure_true_peak};
 
     fn programme(n: usize, seed: f64) -> Vec<f64> {
         (0..n)
@@ -168,5 +168,55 @@ mod loudness_stream {
         let mut meter = IntegratedLoudnessMeter::new(&[1.0], 48_000);
         meter.push(&[&silence]);
         assert_eq!(meter.finish(), ABS_GATE);
+    }
+
+    /// The live meters and the offline kit read the same programme the same
+    /// way: the maxima of the sliding windows are the maxima
+    /// `measure_loudness_stats` reports, once each window is actually full.
+    #[test]
+    fn the_sliding_windows_match_the_offline_maxima() {
+        let sr = 48_000;
+        let left = programme(480_000, 0.0);
+        let right = programme(480_000, 1.7);
+        let want = measure_loudness_stats(&[(1.0, &left), (1.0, &right)], sr);
+
+        let hop = (0.1 * sr as f64) as usize;
+        for slice in [128usize, 4096] {
+            let mut meter = WindowLoudnessMeter::new(&[1.0, 1.0], sr);
+            let (mut max_momentary, mut max_short) = (ABS_GATE, ABS_GATE);
+            let mut at = 0;
+            while at < left.len() {
+                let stop = (at + slice).min(left.len());
+                meter.push(&[&left[at..stop], &right[at..stop]]);
+                at = stop;
+                if at >= 4 * hop {
+                    max_momentary = max_momentary.max(meter.momentary());
+                }
+                if at >= 30 * hop {
+                    max_short = max_short.max(meter.short_term());
+                }
+            }
+            let tol = 1e-9;
+            assert!(
+                (max_momentary - want.max_momentary_lkfs).abs() < tol,
+                "slice {slice}: momentary {max_momentary} vs {}",
+                want.max_momentary_lkfs,
+            );
+            assert!(
+                (max_short - want.max_short_term_lkfs).abs() < tol,
+                "slice {slice}: short-term {max_short} vs {}",
+                want.max_short_term_lkfs,
+            );
+        }
+    }
+
+    #[test]
+    fn the_sliding_windows_floor_at_the_absolute_gate() {
+        let silence = vec![0.0; 48_000];
+        let mut meter = WindowLoudnessMeter::new(&[1.0], 48_000);
+        assert_eq!(meter.momentary(), ABS_GATE);
+        meter.push(&[&silence]);
+        assert_eq!(meter.momentary(), ABS_GATE);
+        assert_eq!(meter.short_term(), ABS_GATE);
     }
 }

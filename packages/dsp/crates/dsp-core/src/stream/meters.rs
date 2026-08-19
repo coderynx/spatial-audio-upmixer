@@ -39,6 +39,26 @@ impl Level {
     }
 }
 
+/// The mastering readouts: loudness of the delivered programme and how hard
+/// each dynamics stage is working, both over the same trailing window the
+/// level meters use.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MasterMeters {
+    /// EBU Tech 3341 momentary (400 ms) loudness, LKFS.
+    pub momentary_lkfs: f64,
+    /// EBU Tech 3341 short-term (3 s) loudness, LKFS.
+    pub short_term_lkfs: f64,
+    /// Deepest bus-compressor gain reduction, dB, positive downward.
+    pub comp_gr_db: f64,
+    /// Deepest limiter gain reduction on the mains curve, dB.
+    pub limiter_gr_db: f64,
+    /// Deepest limiter gain reduction on the LFE's own curve, dB.
+    pub limiter_lfe_gr_db: f64,
+}
+
+/// Floats [`MasterMeters`] writes.
+const MASTER_METER_FLOATS: usize = 5;
+
 /// Everything the UI meters, in one block the host reads after each render.
 #[derive(Clone, Debug, Default)]
 pub struct Meters {
@@ -51,11 +71,13 @@ pub struct Meters {
     pub channels: Vec<Level>,
     /// The collapsed pair, or the first two bed channels for native output.
     pub output: [Level; 2],
+    /// Loudness and gain-reduction readouts for the master strip.
+    pub master: MasterMeters,
 }
 
 impl Meters {
     /// Flatten to `[rms, peak]` pairs: stems (left, right), then channels,
-    /// then output.
+    /// then output, then [`MasterMeters`]'s own flat floats.
     pub fn write(&self, out: &mut [f32]) -> usize {
         let mut i = 0;
         let push = |level: &Level, out: &mut [f32], i: &mut usize| {
@@ -75,12 +97,25 @@ impl Meters {
         for level in &self.output {
             push(level, out, &mut i);
         }
+        let m = &self.master;
+        for value in [
+            m.momentary_lkfs,
+            m.short_term_lkfs,
+            m.comp_gr_db,
+            m.limiter_gr_db,
+            m.limiter_lfe_gr_db,
+        ] {
+            if i < out.len() {
+                out[i] = value as f32;
+            }
+            i += 1;
+        }
         i
     }
 
     /// Number of floats [`write`] needs.
     pub fn len(&self) -> usize {
-        2 * (self.stems.len() * 2 + self.channels.len() + 2)
+        2 * (self.stems.len() * 2 + self.channels.len() + 2) + MASTER_METER_FLOATS
     }
 
     pub fn is_empty(&self) -> bool {

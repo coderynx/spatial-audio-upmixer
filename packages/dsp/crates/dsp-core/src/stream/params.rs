@@ -159,6 +159,13 @@ pub struct EngineParams {
     /// Engaged by the transport's A/B button: renders the unmastered bed.
     #[serde(default)]
     pub bypass_mastering: bool,
+    /// BS.1770 channel weights the live momentary/short-term meters read the
+    /// delivered channels with, in channel order — the same set a
+    /// `MeasurementPass` is given. Empty leaves them unity-weighted, which is
+    /// what a collapsed pair needs; a native bed wider than 5.1 is metered on
+    /// its 5.1 re-render, whose weights are fixed and ignore these.
+    #[serde(default)]
+    pub meter_weights: Vec<f64>,
 }
 
 impl EngineParams {

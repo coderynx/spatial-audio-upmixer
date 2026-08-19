@@ -101,6 +101,13 @@ impl PreviewEngine {
         {
             self.output.retune(self.sample_rate, &self.params);
         }
+
+        if old.speakers != self.params.speakers
+            || old.output_mode != self.params.output_mode
+            || old.meter_weights != self.params.meter_weights
+        {
+            self.rebuild_loudness_meter();
+        }
     }
 
     /// Full rebuild for a channel-count/LFE-position change — every stage

@@ -139,13 +139,15 @@ impl StreamingCompressor {
     }
 
     /// Gain to apply to every non-LFE channel for one sample, given the
-    /// linked RMS across them.
+    /// linked RMS across them, and the gain reduction that gain carries in dB
+    /// — positive downward, and excluding make-up, which is what a GR meter
+    /// shows.
     #[inline]
-    pub fn tick(&mut self, linked_rms: f64) -> f64 {
+    pub fn tick(&mut self, linked_rms: f64) -> (f64, f64) {
         let envelope = self.fast.tick(linked_rms).max(self.slow.tick(linked_rms));
         let env_db = 20.0 * envelope.max(1e-20).log10();
         let gr_db = crate::mastering::compressor::gain_reduction_db(env_db, &self.params);
-        10.0_f64.powf((gr_db + self.params.makeup_db) / 20.0)
+        (10.0_f64.powf((gr_db + self.params.makeup_db) / 20.0), -gr_db)
     }
 }
 
