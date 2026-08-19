@@ -1,6 +1,7 @@
 //! Live parameter edits and the rebuilds a topology change forces.
 
 use super::{build_decorrelator, build_unifier, PreviewEngine, Queue, GAIN_RAMP_MS};
+use crate::mastering::dyneq::DynamicEq;
 use crate::stream::master::StreamingLimiter;
 use crate::stream::params::EngineParams;
 use crate::stream::routing::StemRouteState;
@@ -53,6 +54,16 @@ impl PreviewEngine {
         }
 
         let n_channels = self.params.speakers.len();
+        // Rebuilt only when the band list actually moved: a rebuild restarts
+        // every detector envelope cold.
+        if !self.dyn_eq.as_ref().is_some_and(|s| s.matches(&self.params.master.dynamic_eq)) {
+            self.dyn_eq = DynamicEq::new(
+                self.sample_rate,
+                n_channels,
+                self.params.lfe_index,
+                &self.params.master.dynamic_eq,
+            );
+        }
         match self.params.master.compressor {
             None => self.compressor = None,
             Some(c) => match &mut self.compressor {
@@ -121,6 +132,12 @@ impl PreviewEngine {
         self.collapsed = vec![Vec::new(); n_channels.max(2)];
         self.rebuild_routes();
         self.lfe_bus.retune(self.sample_rate, &self.params.sends);
+        self.dyn_eq = DynamicEq::new(
+            self.sample_rate,
+            n_channels,
+            self.params.lfe_index,
+            &self.params.master.dynamic_eq,
+        );
         self.compressor = self
             .params
             .master

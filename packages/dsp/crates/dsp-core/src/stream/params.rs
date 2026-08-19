@@ -8,8 +8,8 @@
 use serde::Deserialize;
 
 use crate::mastering::{
-    bass::BassParams, clip::ClipParams, compressor::CompParams, head::HeadParams,
-    limiter::LimiterParams,
+    bass::BassParams, clip::ClipParams, compressor::CompParams, dyneq::BandParams,
+    head::HeadParams, limiter::LimiterParams,
 };
 use crate::spatial::voicing::VoicingParams;
 
@@ -121,6 +121,10 @@ pub struct MasterParams {
     pub eq_fir: Vec<f64>,
     #[serde(default = "unit_scale")]
     pub eq_strength: f64,
+    /// Dynamic-EQ bands, between the static EQ and the compressor. Empty —
+    /// the default — is the stage absent, not a stage doing nothing.
+    #[serde(default)]
+    pub dynamic_eq: Vec<BandParams>,
     #[serde(default)]
     pub compressor: Option<CompParams>,
     #[serde(default)]

@@ -10,6 +10,7 @@ use upmixer_dsp_core::mastering::{
     bass::{bass_control, BassParams},
     clip::{soft_clip, ClipParams},
     compressor::{bus_compress, CompParams},
+    dyneq::{dynamic_eq, BandParams},
     head::{chain_head, HeadParams},
     limiter::{lookahead_limit, LimiterParams},
 };
@@ -27,6 +28,10 @@ fn params_json(with_master: bool) -> String {
         "master": {
             "head": {"cutoff_hz": 22.0},
             "clip": {"ceiling_dbtp": -1.0, "clip_db": 1.0, "knee": 0.8},
+            "dynamic_eq": [{"freq_hz": 3800.0, "q": 2.0, "threshold_db": -34.0,
+                            "ratio": 4.0, "attack_ms": 10.0, "release_ms": 150.0},
+                           {"freq_hz": 220.0, "q": 1.4, "threshold_db": -38.0,
+                            "ratio": 2.5, "attack_ms": 30.0, "release_ms": 250.0}],
             "compressor": {"threshold_db": -18.0, "ratio": 2.0, "attack_ms": 20.0,
                            "release_ms": 200.0, "knee_db": 6.0, "makeup_db": 0.0,
                            "sidechain_hpf_hz": 100.0},
@@ -164,6 +169,30 @@ fn streaming_mastering_matches_the_offline_chain() {
     let lfe = Some(3usize);
 
     chain_head(&mut offline, lfe, SR, &HeadParams { cutoff_hz: 22.0 });
+    let cuts = dynamic_eq(
+        &mut offline,
+        lfe,
+        SR,
+        &[
+            BandParams {
+                freq_hz: 3800.0,
+                q: 2.0,
+                threshold_db: -34.0,
+                ratio: 4.0,
+                attack_ms: 10.0,
+                release_ms: 150.0,
+            },
+            BandParams {
+                freq_hz: 220.0,
+                q: 1.4,
+                threshold_db: -38.0,
+                ratio: 2.5,
+                attack_ms: 30.0,
+                release_ms: 250.0,
+            },
+        ],
+    );
+    assert!(cuts.iter().all(|c| *c > 0.5), "both bands should engage: {cuts:?}");
     bus_compress(
         &mut offline,
         lfe,

@@ -3,7 +3,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
-use upmixer_dsp_core::mastering::{bass, clip, compressor, eq, head, limiter};
+use upmixer_dsp_core::mastering::{bass, clip, compressor, dyneq, eq, head, limiter};
 
 use crate::{from_bed, to_bed};
 
@@ -147,6 +147,35 @@ fn chain_head<'py>(
     from_bed(py, bed)
 }
 
+/// `bands` is one `(freq_hz, q, threshold_db, ratio, attack_ms, release_ms)`
+/// tuple per band; returns the bed and each band's deepest cut in dB.
+#[pyfunction]
+#[pyo3(signature = (channels, lfe_index, sample_rate, bands))]
+fn dynamic_eq<'py>(
+    py: Python<'py>,
+    channels: Vec<PyReadonlyArray1<'py, f64>>,
+    lfe_index: Option<usize>,
+    sample_rate: u32,
+    bands: Vec<(f64, f64, f64, f64, f64, f64)>,
+) -> (Vec<Bound<'py, PyArray1<f64>>>, Vec<f64>) {
+    let bands: Vec<dyneq::BandParams> = bands
+        .into_iter()
+        .map(
+            |(freq_hz, q, threshold_db, ratio, attack_ms, release_ms)| dyneq::BandParams {
+                freq_hz,
+                q,
+                threshold_db,
+                ratio,
+                attack_ms,
+                release_ms,
+            },
+        )
+        .collect();
+    let mut bed = to_bed(channels);
+    let cuts = py.detach(|| dyneq::dynamic_eq(&mut bed, lfe_index, sample_rate, &bands));
+    (from_bed(py, bed), cuts)
+}
+
 #[pyfunction]
 #[pyo3(signature = (channels, lfe_index, ceiling_dbtp, clip_db, knee))]
 fn soft_clip<'py>(
@@ -209,6 +238,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(bus_compress, m)?)?;
     m.add_function(wrap_pyfunction!(bass_control, m)?)?;
     m.add_function(wrap_pyfunction!(chain_head, m)?)?;
+    m.add_function(wrap_pyfunction!(dynamic_eq, m)?)?;
     m.add_function(wrap_pyfunction!(soft_clip, m)?)?;
     m.add_function(wrap_pyfunction!(forward_window_min, m)?)?;
     m.add_function(wrap_pyfunction!(lookahead_limit, m)?)?;

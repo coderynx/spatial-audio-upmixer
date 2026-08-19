@@ -115,6 +115,11 @@ impl PreviewEngine {
             for (channel, block) in bed.iter_mut().enumerate() {
                 *block = self.causal[channel].pre_compressor(block);
             }
+            // Between the static EQ and the compressor: surgical correction
+            // before glue, and still a shared curve across the bed.
+            if let Some(dyn_eq) = &mut self.dyn_eq {
+                dyn_eq.process(&mut bed);
+            }
             let non_lfe = self.non_lfe();
             if let Some(comp) = &mut self.compressor {
                 if !non_lfe.is_empty() {

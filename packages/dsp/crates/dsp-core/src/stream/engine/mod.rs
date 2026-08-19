@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::kernels::fft::RealFft;
 use crate::kernels::stft::hann_periodic;
 use crate::loudness_stream::WindowLoudnessMeter;
+use crate::mastering::dyneq::DynamicEq;
 use crate::spatial::downmix::FoldTo51;
 
 use crate::stream::master::{
@@ -95,6 +96,7 @@ pub struct PreviewEngine {
     routes: Vec<StemRouteState>,
     lfe_bus: LfeBus,
     causal: Vec<CausalChain>,
+    dyn_eq: Option<DynamicEq>,
     compressor: Option<StreamingCompressor>,
     unifier: Option<LfUnifier>,
     decorrelator: Option<StreamingDecorrelator>,
@@ -210,6 +212,12 @@ impl PreviewEngine {
         let causal = (0..n_channels)
             .map(|i| CausalChain::new(sample_rate, &params.master, params.lfe_index == Some(i)))
             .collect();
+        let dyn_eq = DynamicEq::new(
+            sample_rate,
+            n_channels,
+            params.lfe_index,
+            &params.master.dynamic_eq,
+        );
         let compressor = params
             .master
             .compressor
@@ -252,6 +260,7 @@ impl PreviewEngine {
             stems,
             routes,
             causal,
+            dyn_eq,
             compressor,
             unifier,
             decorrelator,
@@ -343,6 +352,9 @@ impl PreviewEngine {
             route.reset();
         }
         self.lfe_bus.reset();
+        if let Some(dyn_eq) = &mut self.dyn_eq {
+            dyn_eq.reset();
+        }
         if let Some(comp) = &mut self.compressor {
             comp.reset();
         }
