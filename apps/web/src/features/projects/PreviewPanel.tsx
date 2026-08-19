@@ -11,6 +11,7 @@ import ChannelMeters from "./ChannelMeters";
 import { StripResizeHandle } from "./ChannelStrip";
 import ElevationView from "./ElevationView";
 import HazeView from "./HazeView";
+import { LoudnessReadout } from "./LoudnessMeters";
 import { MixerView } from "./MixerView";
 import StereoPanoramaView from "./StereoPanoramaView";
 import { TimelineView } from "./TimelineView";
@@ -117,6 +118,15 @@ export function PreviewPanel(props: PreviewPanelProps) {
   return <section ref={containerRef} className="flex min-h-0 flex-col">
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
       <PreviewStatus preview={preview} project={project} previewStemCount={previewStemCount} />
+      {preview.supported && previewStemCount > 0 && (
+        <LoudnessReadout
+          loudness={preview.loudness}
+          masterMeters={preview.masterMeters}
+          headphoneLevels={preview.headphoneLevels}
+          active={preview.playing}
+          bypassed={viewState.masteringBypassed}
+        />
+      )}
       <div ref={rowRef} className={cn("flex min-h-0 gap-2", paneView ? "min-h-[180px] flex-1" : "flex-[3]")}>
         {!stereoLayout && <div className="relative min-h-0 shrink-0" style={{ width: hazeWidth }}>
           <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={onSelectStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={onHazeIntensity} className="h-full w-full" />
@@ -238,6 +248,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
         anchorStrength={trackManifest.mixing.stem_source_anchor_strength}
         onAnchorStrength={onAnchorStrength}
         headphoneLevels={preview.headphoneLevels}
+        masterMeters={preview.masterMeters}
+        hasLfe={channels.includes("LFE")}
         volume={preview.volume}
         onVolume={preview.setVolume}
         muted={preview.muted}
