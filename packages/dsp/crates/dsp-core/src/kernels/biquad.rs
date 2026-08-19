@@ -26,6 +26,15 @@ impl Sos {
         self.z = [0.0, 0.0];
     }
 
+    /// Replace the coefficients in place, keeping the delay registers — the
+    /// single-section form of [`SosFilter::retune_flat`], for a section whose
+    /// design moves while it is running.
+    pub fn retune(&mut self, coeffs: [f64; 6]) {
+        let a0 = coeffs[3];
+        self.b = [coeffs[0] / a0, coeffs[1] / a0, coeffs[2] / a0];
+        self.a = [1.0, coeffs[4] / a0, coeffs[5] / a0];
+    }
+
     #[inline]
     pub fn tick(&mut self, x: f64) -> f64 {
         let y = self.b[0] * x + self.z[0];
@@ -133,6 +142,15 @@ pub fn peaking_sos(wn: f64, q: f64, gain: f64) -> [f64; 6] {
         -2.0 * cos_w0,
         1.0 - alpha / a,
     ]
+}
+
+/// RBJ Audio-EQ-Cookbook band-pass with constant 0 dB peak gain, one section.
+/// Shares `wn`/`q` with [`peaking_sos`], so a detector built from a bell's own
+/// design hears the band that bell acts on.
+pub fn bandpass_sos(wn: f64, q: f64) -> [f64; 6] {
+    let w0 = std::f64::consts::PI * wn;
+    let alpha = w0.sin() / (2.0 * q);
+    [alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * w0.cos(), 1.0 - alpha]
 }
 
 /// Complex response of one section at `wn` (normalized to Nyquist).

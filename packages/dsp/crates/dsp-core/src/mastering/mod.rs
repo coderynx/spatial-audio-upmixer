@@ -1,12 +1,13 @@
 //! Mastering-bus stages. Ordering is contracted — chain head, reference
-//! match, EQ, compression, bass control, BS.1770 loudness, soft clip, then
-//! the look-ahead limiter last — and lives with the caller in
+//! match, EQ, dynamic EQ, compression, bass control, BS.1770 loudness, soft
+//! clip, then the look-ahead limiter last — and lives with the caller in
 //! `mastering/chain.py`.
 
 pub mod bass;
 pub mod clip;
 pub mod compressor;
 pub mod decorrelate;
+pub mod dyneq;
 pub mod eq;
 pub mod head;
 pub mod limiter;

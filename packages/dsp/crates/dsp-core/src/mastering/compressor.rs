@@ -35,9 +35,10 @@ pub struct CompInfo {
 /// Soft-knee gain computer: returns gain reduction in dB (≤ 0 before makeup).
 ///
 /// Shared with the streaming compressor, which differs only in how it
-/// follows the envelope.
-pub fn gain_reduction_db(env_db: f64, p: &CompParams) -> f64 {
-    let (t, r, w) = (p.threshold_db, p.ratio, p.knee_db.max(0.0));
+/// follows the envelope, and with the dynamic EQ, whose bands are the same
+/// computer driven by a band-limited detector.
+pub fn knee_gain_db(env_db: f64, threshold_db: f64, ratio: f64, knee_db: f64) -> f64 {
+    let (t, r, w) = (threshold_db, ratio, knee_db.max(0.0));
     let output_db = if w > 0.0 {
         let knee_lo = t - w / 2.0;
         let knee_hi = t + w / 2.0;
@@ -54,6 +55,10 @@ pub fn gain_reduction_db(env_db: f64, p: &CompParams) -> f64 {
         t + (env_db - t) / r
     };
     output_db - env_db
+}
+
+pub fn gain_reduction_db(env_db: f64, p: &CompParams) -> f64 {
+    knee_gain_db(env_db, p.threshold_db, p.ratio, p.knee_db)
 }
 
 /// One-pole smoothing coefficient for a time constant in milliseconds.
