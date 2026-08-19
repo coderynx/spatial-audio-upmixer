@@ -84,7 +84,12 @@ impl PreviewEngine {
         match self.params.master.limiter {
             None => self.limiter = None,
             Some(l) if self.limiter.is_none() || old.master.limiter != Some(l) => {
-                self.limiter = Some(StreamingLimiter::new(l, self.sample_rate, self.params.speakers.len()));
+                self.limiter = Some(StreamingLimiter::new(
+                    l,
+                    self.sample_rate,
+                    self.params.speakers.len(),
+                    self.params.lfe_index,
+                ));
             }
             Some(_) => {}
         }

@@ -10,9 +10,12 @@ Algorithm
 ---------
 1.  **Detect**: every channel (including LFE — true-peak scanning covers all
     channels per BS.1770-5 Annex 2) is 4x oversampled with the standard FIR.
-    The envelopes are combined with a running element-wise maximum across
-    channels ("linked" detection), so the same gain curve is applied to
-    every channel and stereo/surround imaging is preserved.
+    The *mains'* envelopes are combined with a running element-wise maximum
+    across channels ("linked" detection), so one gain curve reaches every
+    non-LFE channel and stereo/surround imaging is preserved. LFE is detected
+    and capped on its own envelope, so a low-frequency event cannot duck the
+    bed with it (see ``docs/standards/loudness_dsp_bs1770.md`` § "LFE and
+    true-peak").
 2.  **Instantaneous gain**: ``min(1, ceiling / envelope)`` at every
     oversampled position.
 3.  **Look-ahead**: a forward-window minimum over the instantaneous gain
@@ -97,7 +100,8 @@ def _forward_window_min(values: np.ndarray, window: int) -> np.ndarray:
 
 
 class LookAheadLimiter:
-    """Linked, look-ahead true-peak limiter for a multichannel bed.
+    """Look-ahead true-peak limiter for a multichannel bed, linked across
+    the mains.
 
     Args:
         ceiling_dbtp:  True-peak ceiling in dBTP (typically
@@ -123,16 +127,24 @@ class LookAheadLimiter:
         self._sr = int(sample_rate)
         self.gr_peak_db: float = 0.0
         self.gr_duty: float = 0.0
+        self.gr_lfe_peak_db: float = 0.0
 
-    def process(self, channels: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-        """Apply the linked look-ahead limiter to every channel (incl. LFE).
+    def process(
+        self,
+        channels: dict[str, np.ndarray],
+        lfe_key: str = "LFE",
+    ) -> dict[str, np.ndarray]:
+        """Cap every channel at the ceiling, the mains on one shared curve.
 
         Sets :attr:`gr_peak_db` and :attr:`gr_duty` — the deepest gain
-        reduction applied and the fraction of samples held under reduction —
-        so a caller can report what the limiter actually did.
+        reduction applied to the mains and the fraction of samples held under
+        reduction — plus :attr:`gr_lfe_peak_db` for the LFE's own curve, so a
+        caller can report what the limiter actually did.
 
         Args:
             channels: Dict channel_name -> 1D array.
+            lfe_key:  Channel name detected and capped separately from the
+                      mains (default ``"LFE"``).
 
         Returns:
             New channel dict, same shapes/dtypes as input.
@@ -143,8 +155,9 @@ class LookAheadLimiter:
         if max(len(channels[name]) for name in names) == 0:
             return channels
 
-        limited, max_gr_db, duty = upmixer_dsp.lookahead_limit(
+        limited, max_gr_db, duty, lfe_gr_db = upmixer_dsp.lookahead_limit(
             [np.ascontiguousarray(channels[name], dtype=np.float64) for name in names],
+            names.index(lfe_key) if lfe_key in channels else None,
             self._sr,
             self._ceiling_dbtp,
             self._lookahead_ms,
@@ -153,13 +166,14 @@ class LookAheadLimiter:
         )
         self.gr_peak_db = max_gr_db
         self.gr_duty = duty
+        self.gr_lfe_peak_db = lfe_gr_db
 
-        if max_gr_db > 1e-6:
+        if max(max_gr_db, lfe_gr_db) > 1e-6:
             _log.info(
                 "  Look-ahead limiter: ceiling=%.1f dBTP  lookahead=%.1f ms  "
-                "release=%.0f ms  GR peak=%.1f dB  GR duty=%.1f%%",
+                "release=%.0f ms  GR peak=%.1f dB  GR duty=%.1f%%  LFE GR peak=%.1f dB",
                 self._ceiling_dbtp, self._lookahead_ms,
-                self._release_ms, max_gr_db, 100.0 * duty,
+                self._release_ms, max_gr_db, 100.0 * duty, lfe_gr_db,
             )
 
         return {

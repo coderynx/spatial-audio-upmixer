@@ -206,7 +206,7 @@ impl PreviewEngine {
         let limiter = params
             .master
             .limiter
-            .map(|l| StreamingLimiter::new(l, sample_rate, n_channels));
+            .map(|l| StreamingLimiter::new(l, sample_rate, n_channels, params.lfe_index));
         let total_frames = stems.iter().map(|s| s.len()).max().unwrap_or(0);
 
         let stem_gain = params
@@ -639,7 +639,11 @@ impl PreviewEngine {
                 CausalChain::new(self.sample_rate, &self.params.master, self.params.lfe_index == Some(i))
             })
             .collect();
-        self.limiter = self.params.master.limiter.map(|l| StreamingLimiter::new(l, self.sample_rate, n_channels));
+        self.limiter = self
+            .params
+            .master
+            .limiter
+            .map(|l| StreamingLimiter::new(l, self.sample_rate, n_channels, self.params.lfe_index));
         self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
         self.pre = Queue::new(n_channels);
         self.post = Queue::new(n_channels);

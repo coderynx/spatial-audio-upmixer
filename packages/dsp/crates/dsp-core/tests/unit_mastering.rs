@@ -165,7 +165,7 @@ mod limiter {
                 amp * (2.0 * std::f64::consts::PI * 997.0 * t).sin()
             })
             .collect::<Vec<f64>>()];
-        let info = lookahead_limit(&mut bed, sr as u32, &params());
+        let info = lookahead_limit(&mut bed, None, sr as u32, &params());
         assert!(info.max_gr_db > 0.0, "expected the limiter to engage");
         assert!(
             (0.3..0.7).contains(&info.duty),
@@ -178,7 +178,7 @@ mod limiter {
     fn quiet_material_passes_through_untouched() {
         let quiet: Vec<f64> = (0..9600).map(|i| 0.05 * (i as f64 * 0.1).sin()).collect();
         let mut bed = vec![quiet.clone()];
-        let info = lookahead_limit(&mut bed, 48_000, &params());
+        let info = lookahead_limit(&mut bed, None, 48_000, &params());
         assert_eq!(info.duty, 0.0);
         let gr = info.max_gr_db;
         assert!(gr < 1e-9, "unexpected gain reduction {gr} dB");
@@ -198,11 +198,53 @@ mod limiter {
             })
             .collect();
         let mut bed = vec![loud.clone(), loud.iter().map(|v| v * 0.8).collect()];
-        let gr = lookahead_limit(&mut bed, sr as u32, &params()).max_gr_db;
+        let gr = lookahead_limit(&mut bed, None, sr as u32, &params()).max_gr_db;
         assert!(gr > 0.0, "expected the limiter to engage");
         let refs: Vec<&[f64]> = bed.iter().map(|c| c.as_slice()).collect();
         let dbtp = measure_true_peak(&refs);
         assert!(dbtp <= -1.0 + 1e-6, "true peak {dbtp} dBTP exceeds the ceiling");
+    }
+
+    /// Mains that never limit on their own, and a `cinema`-shaped LFE swell
+    /// far over the ceiling.
+    fn lfe_heavy_bed(mains_peak: f64, lfe_peak: f64) -> Vec<Vec<f64>> {
+        let sr = 48_000;
+        let tone = |freq: f64, amp: f64| -> Vec<f64> {
+            (0..sr)
+                .map(|i| {
+                    let t = i as f64 / sr as f64;
+                    amp * (2.0 * std::f64::consts::PI * freq * t).sin()
+                })
+                .collect()
+        };
+        vec![tone(997.0, mains_peak), tone(1109.0, mains_peak), tone(40.0, lfe_peak)]
+    }
+
+    #[test]
+    fn an_lfe_only_peak_leaves_the_mains_alone() {
+        let source = lfe_heavy_bed(0.25, 2.0);
+        let mut bed = source.clone();
+        let info = lookahead_limit(&mut bed, Some(2), 48_000, &params());
+
+        assert_eq!(info.max_gr_db, 0.0, "the LFE ducked the mains");
+        assert!(info.lfe_max_gr_db > 6.0, "LFE GR {} dB", info.lfe_max_gr_db);
+        assert_eq!(bed[0], source[0]);
+        assert_eq!(bed[1], source[1]);
+        let dbtp = measure_true_peak(&[bed[2].as_slice()]);
+        assert!(dbtp <= -1.0 + 1e-6, "LFE true peak {dbtp} dBTP exceeds the ceiling");
+    }
+
+    #[test]
+    fn a_quiet_lfe_leaves_the_mains_curve_untouched() {
+        let source = lfe_heavy_bed(0.98, 0.05);
+        let mut split = source.clone();
+        let mut linked = source.clone();
+        let info = lookahead_limit(&mut split, Some(2), 48_000, &params());
+        lookahead_limit(&mut linked, None, 48_000, &params());
+
+        assert!(info.max_gr_db > 0.0, "expected the mains to limit");
+        assert_eq!(split[0], linked[0]);
+        assert_eq!(split[1], linked[1]);
     }
 
     #[test]
@@ -211,7 +253,7 @@ mod limiter {
         let loud: Vec<f64> = (0..sr).map(|i| 0.95 * (i as f64 * 0.05).sin()).collect();
         let quiet: Vec<f64> = loud.iter().map(|v| v * 0.25).collect();
         let mut bed = vec![loud.clone(), quiet.clone()];
-        lookahead_limit(&mut bed, sr as u32, &params());
+        lookahead_limit(&mut bed, None, sr as u32, &params());
         for i in 0..loud.len() {
             if loud[i].abs() > 1e-9 {
                 let ratio_a = bed[0][i] / loud[i];

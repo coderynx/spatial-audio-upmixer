@@ -154,3 +154,24 @@ def test_limiter_gain_is_linked_across_channels():
     np.testing.assert_allclose(
         gain_hot[near_peak][valid], gain_quiet[near_peak][valid], atol=1e-9
     )
+
+
+def test_limiter_does_not_duck_the_mains_with_the_lfe():
+    """An LFE-only peak is capped on the LFE's own curve, leaving the mains
+    bit-identical — the link the mains share stops at LFE."""
+    n = _SR
+    t = np.arange(n) / _SR
+    mains = 0.25 * np.sin(2.0 * np.pi * 997.0 * t)
+    lfe = 2.0 * np.sin(2.0 * np.pi * 40.0 * t)
+    channels = {"FL": mains.copy(), "FR": mains.copy(), "LFE": lfe.copy()}
+
+    limiter = LookAheadLimiter(
+        ceiling_dbtp=-1.0, lookahead_ms=5.0, release_ms=50.0, sample_rate=_SR
+    )
+    out = limiter.process(channels)
+
+    assert limiter.gr_peak_db == 0.0
+    assert limiter.gr_lfe_peak_db > 6.0
+    np.testing.assert_array_equal(out["FL"], mains)
+    np.testing.assert_array_equal(out["FR"], mains)
+    assert measure_true_peak({"LFE": out["LFE"]}) <= -1.0 + 1e-6

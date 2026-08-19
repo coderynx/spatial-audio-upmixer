@@ -144,20 +144,23 @@ fn forward_window_min<'py>(
 }
 
 #[pyfunction]
-#[pyo3(signature = (channels, sample_rate, ceiling_dbtp, lookahead_ms, release_ms,
+#[pyo3(signature = (channels, lfe_index, sample_rate, ceiling_dbtp, lookahead_ms, release_ms,
                     safety_margin_db))]
+#[allow(clippy::too_many_arguments)]
 fn lookahead_limit<'py>(
     py: Python<'py>,
     channels: Vec<PyReadonlyArray1<'py, f64>>,
+    lfe_index: Option<usize>,
     sample_rate: u32,
     ceiling_dbtp: f64,
     lookahead_ms: f64,
     release_ms: f64,
     safety_margin_db: f64,
-) -> (Vec<Bound<'py, PyArray1<f64>>>, f64, f64) {
+) -> (Vec<Bound<'py, PyArray1<f64>>>, f64, f64, f64) {
     let mut bed = to_bed(channels);
     let info = py.detach(|| limiter::lookahead_limit(
         &mut bed,
+        lfe_index,
         sample_rate,
         &limiter::LimiterParams {
             ceiling_dbtp,
@@ -166,7 +169,7 @@ fn lookahead_limit<'py>(
             safety_margin_db,
         },
     ));
-    (from_bed(py, bed), info.max_gr_db, info.duty)
+    (from_bed(py, bed), info.max_gr_db, info.duty, info.lfe_max_gr_db)
 }
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

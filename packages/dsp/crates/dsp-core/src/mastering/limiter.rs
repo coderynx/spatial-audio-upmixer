@@ -1,4 +1,4 @@
-//! Linked look-ahead true-peak limiter.
+//! Look-ahead true-peak limiter, linked across the mains.
 //!
 //! Detection reuses the BS.1770 4x interpolator, so the limiter reacts to
 //! genuine inter-sample peaks. Offline it introduces no output latency: the
@@ -46,23 +46,32 @@ pub struct LimiterInfo {
     pub max_gr_db: f64,
     /// Fraction of output samples receiving more than `GR_DUTY_FLOOR_DB`.
     pub duty: f64,
+    /// Deepest reduction on the LFE's own curve; 0 when the bed has no LFE.
+    pub lfe_max_gr_db: f64,
 }
 
 /// Gain reduction below this is inaudible bookkeeping, not limiting.
 pub const GR_DUTY_FLOOR_DB: f64 = 0.1;
 
-/// Apply the limiter to every channel, LFE included, and return its gain-
-/// reduction statistics.
-pub fn lookahead_limit(bed: &mut super::Bed, sample_rate: u32, p: &LimiterParams) -> LimiterInfo {
-    let n = bed.iter().map(|c| c.len()).max().unwrap_or(0);
-    if n == 0 {
-        return LimiterInfo::default();
+/// Dilated base-rate gain curve for one detection group, and the deepest
+/// reduction in it. Every channel in `channels` feeds the same envelope, so
+/// they come out sharing one curve.
+fn gain_curve(
+    bed: &super::Bed,
+    channels: &[usize],
+    n: usize,
+    sample_rate: u32,
+    p: &LimiterParams,
+) -> (Vec<f64>, f64) {
+    if channels.is_empty() {
+        return (vec![1.0; n], 0.0);
     }
     let over_sr = sample_rate as f64 * TRUE_PEAK_OVERSAMPLE as f64;
     let ceiling_linear = 10.0_f64.powf((p.ceiling_dbtp - p.safety_margin_db) / 20.0);
 
     let mut envelope: Vec<f64> = vec![0.0; n * TRUE_PEAK_OVERSAMPLE];
-    for channel in bed.iter() {
+    for &i in channels {
+        let channel = &bed[i];
         let length = channel.len().min(n);
         if length == 0 {
             continue;
@@ -100,18 +109,51 @@ pub fn lookahead_limit(bed: &mut super::Bed, sample_rate: u32, p: &LimiterParams
             10.0_f64.powf(-worst / 20.0)
         })
         .collect();
-    let dilated = minimum_filter1d(&gain_base, 2 * FIR_MARGIN_SAMPLES + 1, BorderMode::Nearest);
 
-    for channel in bed.iter_mut() {
-        for (v, g) in channel.iter_mut().zip(dilated.iter()) {
+    (
+        minimum_filter1d(&gain_base, 2 * FIR_MARGIN_SAMPLES + 1, BorderMode::Nearest),
+        need_smoothed.iter().fold(0.0_f64, |m, v| m.max(*v)),
+    )
+}
+
+/// Cap every channel at the ceiling and return the gain-reduction statistics.
+///
+/// The mains share one curve — that is what preserves imaging — while LFE,
+/// when the bed has one, is capped by a curve derived from its own envelope,
+/// so a low-frequency event no longer ducks the bed with it. True-peak
+/// scanning still covers every channel (BS.1770-5 Annex 2); only the coupling
+/// between them goes. See `docs/standards/loudness_dsp_bs1770.md`
+/// § "LFE and true-peak".
+pub fn lookahead_limit(
+    bed: &mut super::Bed,
+    lfe: Option<usize>,
+    sample_rate: u32,
+    p: &LimiterParams,
+) -> LimiterInfo {
+    let n = bed.iter().map(|c| c.len()).max().unwrap_or(0);
+    if n == 0 {
+        return LimiterInfo::default();
+    }
+    let mains = super::non_lfe(bed.len(), lfe);
+    let (curve, max_gr_db) = gain_curve(bed, &mains, n, sample_rate, p);
+    let lfe_curve = lfe.map(|i| gain_curve(bed, &[i], n, sample_rate, p));
+
+    for &i in &mains {
+        for (v, g) in bed[i].iter_mut().zip(curve.iter()) {
+            *v *= g;
+        }
+    }
+    if let (Some(i), Some((lfe_curve, _))) = (lfe, lfe_curve.as_ref()) {
+        for (v, g) in bed[i].iter_mut().zip(lfe_curve.iter()) {
             *v *= g;
         }
     }
 
     let floor_gain = 10.0_f64.powf(-GR_DUTY_FLOOR_DB / 20.0);
-    let engaged = dilated.iter().filter(|g| **g < floor_gain).count();
+    let engaged = curve.iter().filter(|g| **g < floor_gain).count();
     LimiterInfo {
-        max_gr_db: need_smoothed.iter().fold(0.0_f64, |m, v| m.max(*v)),
-        duty: engaged as f64 / dilated.len() as f64,
+        max_gr_db,
+        duty: engaged as f64 / curve.len() as f64,
+        lfe_max_gr_db: lfe_curve.map_or(0.0, |(_, gr)| gr),
     }
 }

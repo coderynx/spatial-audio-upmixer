@@ -203,6 +203,7 @@ fn streaming_mastering_matches_the_offline_chain() {
     );
     lookahead_limit(
         &mut offline,
+        lfe,
         SR,
         &LimiterParams {
             ceiling_dbtp: -1.0,

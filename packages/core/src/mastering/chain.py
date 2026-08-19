@@ -48,10 +48,11 @@ Processing order
    wider than 5.1 both the normalization and the reported number are measured
    on the 5.1 re-render the delivery specs read
    (``docs/standards/loudness_dsp_bs1770.md`` §"Measurement programme").
-4. **Look-ahead true-peak limiter** — a linked, look-ahead brickwall
-   limiter (:class:`~upmixer.mastering.limiter.LookAheadLimiter`) reduces
-   gain ahead of any inter-sample peak so the delivered signal never
-   exceeds ``config.loudness_max_tp`` dBTP.  Runs *last*, after loudness
+4. **Look-ahead true-peak limiter** — a look-ahead brickwall limiter
+   (:class:`~upmixer.mastering.limiter.LookAheadLimiter`), linked across the
+   mains and capping LFE on its own curve, reduces gain ahead of any
+   inter-sample peak so the delivered signal never exceeds
+   ``config.loudness_max_tp`` dBTP.  Runs *last*, after loudness
    normalization, so it only ever engages as a true-peak safety net on the
    already loudness-corrected signal — running it earlier would bake its
    gain reduction in ahead of whatever peaks the pre-gain bed happens to
@@ -136,10 +137,13 @@ class MasteringResult:
     PSR under ~8 dB in the loudest sections as crushed."""
 
     limiter_gr_peak_db: float | None = None
-    """Deepest gain reduction the true-peak limiter applied, in dB."""
+    """Deepest gain reduction the true-peak limiter applied to the mains, in dB."""
 
     limiter_gr_duty: float | None = None
-    """Fraction of samples the limiter held under reduction."""
+    """Fraction of samples the limiter held the mains under reduction."""
+
+    limiter_gr_lfe_peak_db: float | None = None
+    """Deepest gain reduction on the LFE's own curve, in dB."""
 
     comp_gr_peak_db: float | None = None
     """Deepest gain reduction the bus compressor applied, in dB."""
@@ -414,6 +418,7 @@ class MasteringChain:
                 ),
                 limiter_gr_peak_db=limiter.gr_peak_db,
                 limiter_gr_duty=limiter.gr_duty,
+                limiter_gr_lfe_peak_db=limiter.gr_lfe_peak_db,
                 comp_gr_peak_db=comp_gr[0] if comp_gr else None,
                 comp_gr_avg_db=comp_gr[1] if comp_gr else None,
                 per_channel_tp_dbtp=measure_true_peak_per_channel(channels),

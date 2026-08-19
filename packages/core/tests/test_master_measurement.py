@@ -277,8 +277,9 @@ def test_audit_five_one_fold_loudness_delta() -> None:
 def test_audit_lfe_link_duck_depth() -> None:
     """Audit 2 — how much gain reduction the mains take from an LFE-only peak.
 
-    ``lookahead_limit`` maxes its envelope across every channel, LFE included,
-    so an LFE that alone approaches the ceiling ducks the whole bed.
+    The phase 2 yardstick: the mains' gain curve no longer sees the LFE, so
+    every row here should read zero duck however hot the LFE gets, while the
+    LFE itself still lands under the ceiling on its own curve.
     """
     rng = np.random.default_rng(_SEED)
     n = 10 * _SR
@@ -306,6 +307,8 @@ def test_audit_lfe_link_duck_depth() -> None:
             f"{100.0 * limiter.gr_duty:.1f}%",
             f"{20.0 * math.log10(float(np.min(gain))):+.2f}",
             f"{20.0 * math.log10(float(np.sqrt(np.mean(out['FL'] ** 2)) / np.sqrt(np.mean(mains ** 2)))):+.2f}",
+            f"{limiter.gr_lfe_peak_db:.2f}",
+            "—" if "LFE" not in out else f"{measure_true_peak({'LFE': out['LFE']}):.2f}",
         ))
 
     _print_table(
@@ -313,6 +316,7 @@ def test_audit_lfe_link_duck_depth() -> None:
         (
             "LFE peak", "GR peak dB", "GR duty",
             "worst mains gain dB", "mains RMS change dB",
+            "LFE GR peak dB", "LFE dBTP",
         ),
         rows,
     )
