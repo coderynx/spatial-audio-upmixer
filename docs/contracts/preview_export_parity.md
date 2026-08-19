@@ -53,6 +53,7 @@ Every stage below is one function, called from both sides:
 | Bus compression | `mastering::compressor` | `mastering/compressor.py` | `stream::master` |
 | Bass management | `mastering::bass` | `mastering/bass.py` | `stream::master` |
 | BS.1770 loudness / true peak | `loudness` | `loudness.py` | `stream::engine::measure` |
+| Momentary / short-term loudness | `loudness_stream::WindowLoudnessMeter` | `loudness::measure_loudness_stats` (kit) | `stream::engine::master_meters` |
 | 5.1 re-render (measurement programme) | `spatial::downmix::FoldTo51` | `loudness.py::measurement_programme` | `stream::measure` |
 | Look-ahead limiter | `mastering::limiter` | `mastering/limiter.py` | `stream::master` |
 | Ambisonic encode / HOA decode | `spatial::ambisonics` | `binaural/renderer.py` | `stream::output` |
@@ -76,6 +77,15 @@ while `lfe_filter_order` is hardcoded to `4` on both sides
 (`config.py`, `engineParams.ts`). Nothing user-facing writes it — no CLI flag, no
 manifest key — so the pair cannot drift in the field, but change one and change
 the other.
+
+The momentary/short-term row is the one whose two halves are the same
+arithmetic rather than the same call: the offline kit takes its maxima over
+the whole programme in one pass, the preview slides the same windows over what
+it has just emitted. Both build their windows from `ChannelGate`'s K-weighted,
+`pairwise_sum`-accumulated blocks on the same 100 ms grid, and
+`the_sliding_windows_match_the_offline_maxima` pins the two against each other.
+Only the preview draws them; the export reports its maxima through the
+measurement kit instead.
 
 The downmix row is the one entry whose *matrix* is not shared code: the export
 calls the kernel with the whole bed, while the preview mixes per speaker from a
@@ -219,6 +229,14 @@ which the loudness pots display before the configuration request lands — the
 same role the bass pots' literal defaults play, and it reaches neither the
 preview nor the export.
 
+The BS.1770 channel weights stay with the caller on both sides. The preview
+now sends them twice for the same reason it sent them once: `measure_weights`
+rides the `measure` message for the measurement pass, and the identical set
+rides the parameter block as `meter_weights` for the live momentary/short-term
+meters. Both come from `audioEngine.ts::measureWeights`, and both are
+overridden inside the core on a native bed wider than 5.1, where the 5.1
+re-render fixes its own weights.
+
 Constants that live in Rust are the ones that were already duplicated and are
 structural rather than tunable: the BS.1770 true-peak FIR, the ACN/N3D
 normalization, the filter-design internals, and the surround/height
@@ -238,7 +256,7 @@ ceremony beyond staying shaped like that response.
 
 ## 3. What can still differ
 
-Three behaviours are genuinely different by nature, not by drift. Nothing else
+Four behaviours are genuinely different by nature, not by drift. Nothing else
 should be.
 
 | # | Difference | Bound |
@@ -246,8 +264,9 @@ should be.
 | P1 | **Live-parameter latency.** The worklet renders ahead of the playhead, so a control change lands after the render horizon rather than instantly. The horizon is whichever zero-phase stage is active and reaches furthest: the LF unifier's 100 ms, or mid-bass decorrelation's 300 ms (its 4th-order 100-300 Hz band-pass needs the longer context — see `spatial_layouts_bs775_bs2051.md`). | ~100 ms; ~300 ms with `mastering_bass_decorrelate` above 0 |
 | P2 | **Seek warm-up.** A seek renders a discarded run-up so the filter states settle; without it the Haas-delayed sends would drop out and the compressor would re-attack. Inside the run-up the states are still converging. | 500 ms run-up; lands within 1e-6 of a straight play-through |
 | P3 | **Correction latency, in two stages.** The loudness/true-peak correction is a real BS.1770 measurement. A fast pass over a handful of excerpts lands first and is what the "calibrating loudness" UI waits for; an exact pass over the whole programme then keeps running in the background and refines the gain once it lands. Both are advanced in slices from the render callback (`stream::measure`), and the transport stays gated until the fast pass lands, so the preview never plays uncorrected; between the two, it plays on the fast pass's gain. Whatever the pass is meant to measure — parameter block and filter set both — has to reach the worklet before the `measure` message does, since the pass forks the engine as it stands (D29). | Fast pass: a few seconds, advances while paused or playing. Exact pass: ~2-3 min for an eight-minute track, only advances while paused (§4) |
+| P4 | **Monitor-only A/B compensation.** Bypassing the master chain measures the unmastered programme on its own key and applies a compensating scalar so both sides monitor at the same delivered loudness. It lives in the preview's `master.output_gain` ramp (`audioEngine.ts`), never in a manifest or an export, and is zero whenever the chain is not bypassed. The bypassed side is gated by the same calibration rule as a mode switch, so it never plays unmatched. | 0 dB unbypassed; the two sides' delivered-loudness difference otherwise, itself capped by the true-peak ceiling |
 
-Switching speaker layout is deliberately **not** a fourth entry. Selecting a
+Switching speaker layout is deliberately **not** a fifth entry. Selecting a
 different layout in the tracks panel rebuilds the preview from scratch — new
 `AudioContext`, new worklet node, stems re-decoded, loudness re-measured —
 rather than reaching the engine as a parameter change. An `AudioWorkletNode`'s
@@ -405,3 +424,4 @@ numbers.
 | D39 | The duck's detector window sat inside ordinary crest variation, so sustained material ducked as hard as the onsets the stage exists to separate. | Fixed — threshold 2.5, span to 4.0 |
 | D40 | Every duck fixture was too weak to reach the detector, so D39 was invisible to 188 passing tests. | Fixed — `hit_train_over_bed` and siblings rebuilt |
 | D41 | The look-ahead limiter linked LFE into the mains' gain curve, so an LFE-only peak ducked the whole bed one-for-one. | Fixed — separate LFE curve, offline and streaming (mastering phase 2) |
+| D42 | The master bypass compared a normalized mastered bed against a raw one, so the A/B was decided by level; the preview also metered RMS/peak only while the core already measured loudness and gain reduction. | Fixed — per-chain measurement plus a monitor match (P4), and `MasterMeters` (mastering phase 3) |

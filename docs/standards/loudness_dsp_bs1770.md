@@ -170,10 +170,38 @@ L_KG = −0.691 + 10·log10( Σᵢ Gᵢ · (1/|J_g|) · Σ_{J_g} z_{ij} )   [LKF
 
 *(BS.1770-5 Annex 1, equations 2–7)*
 
-### Momentary and short-term loudness (informative)
+### Momentary and short-term loudness
 
 - **Momentary:** 400 ms sliding window, no gating, updated continuously
 - **Short-term:** 3 s sliding window, no gating, updated continuously
+
+EBU Tech 3341 asks a meter for at least ten updates per second, so both
+windows are evaluated on the standard's own 100 ms grid: the mean of the last
+4 non-overlapping 100 ms blocks is the momentary window, the last 30 the
+short-term one. Same K-weighting, same per-block mean square, same channel
+weights as the integrated meter — only the gating is absent, which is what the
+two windows are.
+
+Two places measure them. Offline, `measure_loudness_stats` reports the maxima
+over a finished render, which is what the compliance kit and the delivery
+report read. Live, `WindowLoudnessMeter` slides the same windows over what the
+preview has just emitted, at the emit position, and reads the *measurement
+programme* — the 5.1 re-render for a native bed wider than 5.1, the delivered
+pair otherwise — so the meter and the compliance number describe the same
+signal.
+
+### Crest metrics (PLR / PSR)
+
+Neither is in BS.1770; both are ordinary mastering practice, reported by the
+preview from numbers the standard does define.
+
+- **PLR** (peak-to-loudness ratio): max true peak − integrated loudness, over
+  the whole programme. Both terms come from the measurement pass.
+- **PSR** (peak-to-short-term ratio): the highest peak in the current
+  short-term window − short-term loudness. The live meters carry **sample**
+  peak, not true peak, so the preview's PSR is a sample-peak crest and reads
+  slightly low against a true-peak meter; PLR, which comes off the
+  measurement pass, is true-peak throughout.
 
 ---
 

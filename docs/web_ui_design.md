@@ -556,6 +556,16 @@ give one idea two homes with no viewport justification.
   render — so it is labelled "Monitor" and shares one value with the Transport
   volume control. A strip whose fader *did* affect the render would be a DSP
   change bound by `docs/contracts/preview_export_parity.md`, not a UI one.
+- **Gain reduction meters sit beside the master strip's level meter**, not
+  in place of it: level and reduction are different questions, and a chain
+  working hard on a quiet passage is exactly the case a shared bar would
+  hide. One thin bar per stage (bus compressor, limiter mains, limiter LFE
+  where the layout has one), filling **downward** from the top the way
+  reduction moves, over the same `stripWell` slot the level meter uses, with
+  the deepest of the three printed above them. The LFE bar is separate
+  because its limiter curve is (`docs/standards/loudness_dsp_bs1770.md`
+  § "LFE and true-peak") — folding it into the mains' bar would show a
+  reduction the mains never took.
 - The rack scrolls horizontally when strips overflow; strips never shrink.
 
 ### 6.5 Horizontal fader
@@ -735,6 +745,26 @@ layout happens in the Prepare tab, on the track's own row
 active chips tinted `primary`. The last remaining chip is disabled with a
 title explaining why — removing a layout discards that layout's mix, so the
 rule is stated on the control rather than enforced by a silent no-op.
+
+### 6.8 Loudness readout
+
+The preview panel carries one line of numbers above the displays: momentary
+and short-term loudness from the live meters, integrated loudness and true
+peak from the measurement pass, the resolved delivery target, and the PLR/PSR
+crest metrics derived from those. Rules:
+
+- **Text, not a meter.** Loudness moves slowly and is read as a number; the
+  bars are for level. It updates at ~10 Hz — fast enough to track a mix,
+  slow enough to read — from the same meter refs the canvases use, so the
+  page does not re-render at frame rate (§7.1's reasoning, applied to text).
+- **Every cell carries its own tooltip and unit**, because "M", "S", "I" and
+  "TP" are only legible to someone who already knows the standard; §8 forbids
+  leaving that to colour or position.
+- **Out-of-spec reads `warning`, not `destructive`** — over target or over
+  ceiling is a mix decision to revisit, not an error state.
+- **The A/B match gain appears only while the master chain is bypassed**, and
+  is labelled as monitoring. A monitor-only offset the listener cannot see is
+  the thing a loudness-matched A/B is supposed to remove, not add.
 
 ### Semantic colour mapping
 
