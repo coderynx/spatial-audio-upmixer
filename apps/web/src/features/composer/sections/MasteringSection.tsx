@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { formatBytes } from "@/lib/format";
+import { resolveDeliveryTarget } from "@/features/projects/masteringProfiles";
 import type { MasteringReference } from "@/api";
 import type { ManifestSectionProps } from "./types";
 
@@ -135,16 +136,6 @@ function titleCase(value: string) {
     .join(" ");
 }
 
-/** The loudness and ceiling a delivery target carries, as manifest fields.
- * Empty for "Custom", which leaves whatever the two controls already show. */
-function deliveryTargetValues(
-  preset: string,
-  targets: Record<string, { target_lkfs: number; max_tp_dbtp: number }> | undefined,
-) {
-  const target = preset ? targets?.[preset] : undefined;
-  return target ? { target: target.target_lkfs, max_tp: target.max_tp_dbtp } : {};
-}
-
 export function MasteringSection({
   manifest,
   setManifest,
@@ -161,6 +152,9 @@ export function MasteringSection({
   const match = manifest.mastering.match_reference;
   const hasReference = masteringReference !== null;
   const { eq, compressor, bass, loudness } = manifest.mastering;
+  // What the two loudness controls show while unset — the named target's own
+  // numbers, resolved the same way the export resolves them.
+  const delivery = resolveDeliveryTarget(loudness, configuration?.constants?.delivery_targets);
   // Every bass override is nullable, so an unset control has to show what the
   // profile does. A native <select> given a value no option carries displays
   // its first option instead, which silently claimed "front"/"off" while the
@@ -325,9 +319,10 @@ export function MasteringSection({
         }
       >
         <div className={FIELD_GRID}>
-          {/* Picking a target writes its numbers into the two controls below,
-              which stay live as overrides — the backend resolves the same way
-              round (preset first, explicit field wins). */}
+          {/* Picking a target clears both overrides, so the controls below show
+              what the specification asks for until one is deliberately moved.
+              That is the precedence the backend resolves by, rather than the
+              web pre-filling numbers that would then read as overrides. */}
           <SelectField
             label="Delivery target"
             value={loudness.target_preset ?? ""}
@@ -336,7 +331,8 @@ export function MasteringSection({
                 loudness: {
                   ...loudness,
                   target_preset: preset || null,
-                  ...deliveryTargetValues(preset, configuration?.constants?.delivery_targets),
+                  target: null,
+                  max_tp: null,
                 },
               })
             }
@@ -348,9 +344,10 @@ export function MasteringSection({
               })),
             ]}
           />
-          <SliderField
+          <NullablePotField
             label="Target"
             value={loudness.target}
+            defaultValue={delivery.target_lkfs}
             min={-30}
             max={-10}
             step={0.5}
@@ -360,9 +357,10 @@ export function MasteringSection({
           />
           {/* True-peak limiting runs whether or not loudness is normalized, so
               this one stays live when the switch is off. */}
-          <SliderField
+          <NullablePotField
             label="True-peak ceiling"
             value={loudness.max_tp}
+            defaultValue={delivery.max_tp_dbtp}
             min={-6}
             max={0}
             step={0.1}

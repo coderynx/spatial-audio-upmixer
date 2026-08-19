@@ -190,11 +190,17 @@ pins it against the offline order, blocked ragged.
 The delivery-target table (`upmixer.mastering.delivery`'s
 `DELIVERY_TARGETS`) is served the same way, as `constants.delivery_targets`
 plus a `choices.delivery_targets` name list. The web never re-types a
-specification's numbers: picking a target copies the served loudness and
-ceiling into the manifest's existing `loudness.target` / `loudness.max_tp`,
-which the backend then resolves as the overrides they are. That keeps the
-preview's correction gain reading the same resolved target the export
-normalizes to, through the field it already read.
+specification's numbers, and — this is the part that is easy to get wrong —
+it never *pre-fills* them either. `mastering.loudness.target` and
+`.max_tp` are nullable on both sides, null meaning "defer to the named
+target"; `masteringProfiles.ts::resolveDeliveryTarget` and
+`mastering/delivery.py::resolve_delivery_target` apply the same
+preset-then-override precedence, the first for the panel's displayed values
+and the preview's correction gain, the second for the bounce. Writing the
+preset's numbers into the manifest instead would make them explicit
+overrides, which is how a preset gets silently defeated the next time the
+manifest is normalized and saved. **Change one resolver and change the
+other.**
 
 Constants that live in Rust are the ones that were already duplicated and are
 structural rather than tunable: the BS.1770 true-peak FIR, the ACN/N3D

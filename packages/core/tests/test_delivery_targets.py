@@ -7,6 +7,7 @@ import pytest
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
 from upmixer.loudness import measure_integrated_loudness, measurement_programme
+from upmixer.manifest import apply_asset_job, parse_manifest
 from upmixer.mastering import MasteringChain
 from upmixer.mastering.delivery import (
     DELIVERY_TARGETS,
@@ -58,6 +59,33 @@ class TestTargetResolution:
         target = resolve_delivery_target(UpmixConfig(loudness_target_preset="atmos"))
         assert target.preset is None
         assert target.target_lkfs == DEFAULT_TARGET_LKFS
+
+    def test_a_manifest_naming_only_a_preset_resolves_to_its_numbers(self):
+        """Null overrides must stay unset rather than landing as the defaults —
+        the web writes them that way for any target it has not overridden."""
+        manifest = {
+            "version": "1.0.0",
+            "mastering": {
+                "loudness": {
+                    "normalize": True,
+                    "target_preset": "ebu-r128",
+                    "target": None,
+                    "max_tp": None,
+                }
+            },
+            "assets": [{"input": "a.wav", "output": "b.wav"}],
+        }
+        _, jobs = parse_manifest(manifest)
+        cfg = UpmixConfig()
+        apply_asset_job(cfg, jobs[0])
+
+        assert cfg.loudness_target_lkfs is None
+        target = resolve_delivery_target(cfg)
+        assert (target.preset, target.target_lkfs, target.max_tp_dbtp) == (
+            "ebu-r128",
+            -23.0,
+            -1.0,
+        )
 
 
 class TestMeasurementProgramme:

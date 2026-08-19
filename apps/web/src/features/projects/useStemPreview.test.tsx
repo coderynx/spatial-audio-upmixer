@@ -318,6 +318,26 @@ describe("useStemPreview loudness calibration", () => {
     expect(measureWeights.at(-1)).toEqual([1, 1]);
   });
 
+  it("calibrates to a named delivery target the manifest never spells out", async () => {
+    // The manifest carries only the preset name — the numbers live in the
+    // served table. Measured -18 LKFS against ebu-r128's -23 is -5 dB of
+    // correction; falling back to the -18 default would leave this at unity
+    // and the preview would play 5 dB louder than the bounce.
+    await renderPreview({
+      mastering: { loudness: { normalize: true, target_preset: "ebu-r128" } },
+    });
+    const params = sentParams.at(-1) as { master: { output_gain: number } };
+    expect(params.master.output_gain).toBeCloseTo(10 ** (-5 / 20), 6);
+  });
+
+  it("lets an explicit target override the delivery target it sits under", async () => {
+    await renderPreview({
+      mastering: { loudness: { normalize: true, target_preset: "ebu-r128", target: -18 } },
+    });
+    const params = sentParams.at(-1) as { master: { output_gain: number } };
+    expect(params.master.output_gain).toBeCloseTo(1, 6);
+  });
+
   it("re-measures when the spatial profile changes, not just the output mode", async () => {
     const result = await renderPreview({ spatialProfile: "studio" });
     expect(measureCalls).toHaveLength(1);

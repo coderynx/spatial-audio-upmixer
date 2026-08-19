@@ -64,6 +64,33 @@ export type DeliveryTarget = {
   tolerance_lu: number | null;
 };
 
+/** With no preset named and no override set, the Dolby Atmos Music pair the
+ * chain has always defaulted to (`mastering/delivery.py`'s DEFAULT_*). */
+export const DEFAULT_DELIVERY_TARGET: DeliveryTarget = {
+  target_lkfs: -18,
+  max_tp_dbtp: -1,
+  tolerance_lu: null,
+};
+
+/** Resolve a manifest loudness block against the served target table, exactly
+ * as `mastering/delivery.py::resolve_delivery_target` does on the export side:
+ * the preset supplies both numbers, an explicit field overrides it, and an
+ * unknown preset name falls back to the defaults rather than to someone
+ * else's specification. Keep the two in step — the preview normalizes to what
+ * this returns and the export normalizes to what that returns. */
+export function resolveDeliveryTarget(
+  loudness: { target_preset?: string | null; target?: number | null; max_tp?: number | null } | undefined,
+  targets: Record<string, DeliveryTarget> | undefined,
+): DeliveryTarget {
+  const preset = loudness?.target_preset ? targets?.[loudness.target_preset] : undefined;
+  const base = preset ?? DEFAULT_DELIVERY_TARGET;
+  return {
+    target_lkfs: loudness?.target ?? base.target_lkfs,
+    max_tp_dbtp: loudness?.max_tp ?? base.max_tp_dbtp,
+    tolerance_lu: base.tolerance_lu,
+  };
+}
+
 /** A mastering block as the project stores it: a profile name plus per-field
  * overrides, any of which may be null meaning "use the profile's value".
  *
@@ -316,6 +343,7 @@ export type EngineConstants = {
   speakerDirections: Record<string, { azimuth_rad: number; elevation_rad: number }>;
   compProfiles: Record<CompProfileName, CompProfile>;
   bassProfiles: Record<BassProfileName, BassProfile>;
+  deliveryTargets: Record<string, DeliveryTarget>;
   subCutoffHz: number;
   midCutoffHz: number;
   exciteBlend: number;
@@ -389,6 +417,7 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     speakerDirections: s.speaker_directions,
     compProfiles: s.comp_profiles as Record<CompProfileName, CompProfile>,
     bassProfiles: s.bass_profiles as Record<BassProfileName, BassProfile>,
+    deliveryTargets: s.delivery_targets,
     subCutoffHz: s.bass_sub_cutoff_hz,
     midCutoffHz: s.bass_mid_cutoff_hz,
     exciteBlend: s.bass_excite_blend,

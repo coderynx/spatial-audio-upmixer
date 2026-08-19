@@ -5,7 +5,12 @@
 // live in the shared Rust core (packages/dsp).
 
 export type MasterPreview = {
-  loudness?: { normalize?: boolean; target?: number; max_tp?: number };
+  loudness?: {
+    normalize?: boolean;
+    target_preset?: string | null;
+    target?: number | null;
+    max_tp?: number | null;
+  };
   eq?: { profile?: string | null; strength?: number };
   // Server-precomputed correction curve, realized into a FIR on demand at
   // this config's strength/max_db — see docs/contracts/preview_export_parity.md

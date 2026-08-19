@@ -124,7 +124,7 @@ post-codec clipping in the wild.
   boundaries (web/CLI consume only core's public API; no DSP in the web
   layer) all apply.
 - `uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q`
-  must pass before and after every phase (baseline: 1174 passed /
+  must pass before and after every phase (baseline: 1175 passed /
   43 deselected after phase 1). Phases touching `apps/web` also run
   `npm test` and `npm run build` there.
 - **Preview/export parity is a hard constraint.** Any new mastering DSP

@@ -18,7 +18,12 @@ import type {
   SpatialProfile,
   TransauralProfile,
 } from "./masteringProfiles";
-import { loudnessWeight, resolveBassParams, resolveCompParams } from "./masteringProfiles";
+import {
+  loudnessWeight,
+  resolveBassParams,
+  resolveCompParams,
+  resolveDeliveryTarget,
+} from "./masteringProfiles";
 import type { MasterPreview } from "./masterPreview";
 import { DspEngineClient } from "./wasmEngine/engineClient";
 import { buildEngineParams } from "./wasmEngine/engineParams";
@@ -319,7 +324,14 @@ export class PreviewAudioEngine {
     // preset on the way (ledger D30).
     const bass = resolveBassParams(this.mastering?.bass, this.constants.bassProfiles);
     const comp = resolveCompParams(this.mastering?.compressor, this.constants.compProfiles);
-    const target = this.mastering?.loudness?.target ?? -18;
+    // Resolve the delivery target the way the export does, so a manifest that
+    // names a preset without spelling out its numbers calibrates the preview
+    // to the same loudness the bounce lands on.
+    const delivery = resolveDeliveryTarget(
+      this.mastering?.loudness,
+      this.constants.deliveryTargets,
+    );
+    const target = delivery.target_lkfs;
     const normalize = this.mastering?.loudness?.normalize ?? true;
     // One gain stage covers the whole job here, unlike the export chain's two,
     // so every mode gets the full budget — see
@@ -333,7 +345,7 @@ export class PreviewAudioEngine {
         : applyTruePeakCeiling(
             this.measuredTpDbtp,
             loudnessGain,
-            this.mastering?.loudness?.max_tp ?? -1,
+            delivery.max_tp_dbtp,
           );
 
     const previewable = this.previewableStems();
@@ -364,7 +376,7 @@ export class PreviewAudioEngine {
           ? 10 ** ((this.mastering.match_reference.rms_gain_db ?? 0) / 20)
           : 1,
         outputGain,
-        limiterCeilingDbtp: this.mastering?.loudness?.max_tp ?? -1,
+        limiterCeilingDbtp: delivery.max_tp_dbtp,
       },
       outputMode: this.outputMode,
       spatialProfile: this.spatialProfile,

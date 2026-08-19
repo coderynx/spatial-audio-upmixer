@@ -1,9 +1,9 @@
 # Phase 1 report — Delivery targets and spec-correct immersive measurement
 
 Plan: `docs/plans/mastering/phase1_delivery_targets.md`.
-Date: 2026-08-18. Suite: **1174 passed / 44 deselected** — 1157/43 before,
-plus this phase's 17 tests and one more perf-marked report generator.
-Rust: 198 passed. Web: 255 passed, `npm run build` clean.
+Date: 2026-08-18. Suite: **1175 passed / 44 deselected** — 1157/43 before,
+plus this phase's 18 tests and one more perf-marked report generator.
+Rust: 198 passed. Web: 262 passed, `npm run build` clean.
 
 ## What shipped
 
@@ -29,10 +29,13 @@ Rust: 198 passed. Web: 255 passed, `npm run build` clean.
   existing per-track result dict.
 - API serves `constants.delivery_targets` (the table, with tolerances) and
   `choices.delivery_targets` (the name list).
-- Web: a target picker in the Loudness panel, writing the served numbers into
-  the existing target/ceiling controls; a "Delivered" column on the jobs table
-  showing LKFS, dBTP, the target, whether the number is fold-referenced, and
-  pass/fail.
+- Web: a target picker in the Loudness panel; the target and ceiling controls
+  became nullable overrides (`NullablePotField`, the same control the bass
+  panel's overrides use), showing the named target's numbers until one is
+  deliberately moved. `masteringProfiles.ts::resolveDeliveryTarget` mirrors the
+  backend resolver and feeds both the panel and the preview's correction gain.
+  A "Delivered" column on the jobs table shows LKFS, dBTP, the target, whether
+  the number is fold-referenced, and pass/fail.
 
 ## Delivery targets
 
@@ -153,6 +156,35 @@ and under-weighting the side surrounds by 1.5 dB. A 5.1 preview therefore
 calibrated to a different number than the export delivered.
 `audioEngine.ts::measureWeights` now sends the layout's real weights.
 Recorded in `docs/contracts/preview_export_parity.md` §3.
+
+### The preset had to reach the preview, not just the manifest
+
+The first cut of the web integration had the picker write the preset's
+numbers straight into the target and ceiling controls, so the preview kept
+reading `loudness.target` as before. That is wrong in two ways, and both bite
+any manifest the web did not author — a CLI-written manifest, an API client,
+an imported job:
+
+- `normalizeManifest` spreads the web's own defaults under every manifest it
+  loads, so a manifest carrying only `target_preset: ebu-r128` gained
+  `target: -18`. On the next save that lands as an *explicit override* and
+  silently defeats the preset — the same failure the bass panel already
+  carries a comment about.
+- The preview would calibrate to −18 while the export delivered −23: 5 dB of
+  divergence between what the user hears and what ships.
+
+Fixed by mirroring the backend instead of pre-filling: `loudness.target` and
+`loudness.max_tp` are `number | null` in the web manifest too, null meaning
+"defer", and `resolveDeliveryTarget` resolves preset-then-override for both
+the panel's displayed values and the preview's correction gain.
+`apply_asset_job` already skips `None`, so the nulls the web now writes reach
+`resolve_delivery_target` as genuinely unset — pinned end to end by
+`test_a_manifest_naming_only_a_preset_resolves_to_its_numbers`.
+
+`useStemPreview.test.tsx`'s
+`calibrates to a named delivery target the manifest never spells out` pins the
+preview half, and was checked against the pre-fix code: it fails there with
+`expected 1 to be close to 0.5623`, exactly the 5 dB above.
 
 ### Realtime budget
 
