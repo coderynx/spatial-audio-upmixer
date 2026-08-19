@@ -99,7 +99,7 @@ validation; a phase must be green before the next starts.
 | 1 | `phase1_delivery_targets.md` → `phase1_report.md` | **Done.** Named delivery targets (atmos-music, ebu-r128, atsc-a85, netflix-atmos, streaming-stereo, apple-music, custom); immersive compliance measured on the 5.1 re-render; results surfaced through jobs API and web UI. |
 | 2 | `phase2_limiter_linking.md` → `phase2_report.md` | **Done.** LFE out of the limiter's shared gain engine (independent TP cap), per-curve GR telemetry, offline + streaming. Partial link not shipped — LFE unlinking closed the whole measured duck. |
 | 3 | `phase3_preview_metering_ab.md` → `phase3_report.md` | **Done.** Momentary/short-term loudness + TP + GR meters in the preview, PLR/PSR readout, and a loudness-matched master bypass (measured per chain state, monitor-only). |
-| 4 | `phase4_chain_head_tail.md` | Chain head (subsonic HPF + DC block) and pre-limiter soft clip, both linked/shared so the commutation invariant holds; default off. |
+| 4 | `phase4_chain_head_tail.md` → `phase4_report.md` | **Done.** Chain head (subsonic HPF + DC block) and pre-limiter soft clip, offline + streaming, default off. The clipper deliberately breaks the commutation invariant and sits after bass management for it; its aliasing is measured and an oversampled variant is scoped as a follow-up. |
 | 5 | `phase5_dynamic_eq.md` | Linked-detection dynamic EQ stage (threshold-triggered bands), default off — the surgical tool the static profile EQ can't be. |
 | 6 | `phase6_dither_export.md` | TPDF dither (+ optional noise shaping) at bit-depth reduction, dither-last ordering guarantee, SRC quality audit. |
 | 7 | `phase7_reference_match_usability.md` | Match smoothing control, frequency-range masks, loudness-matched audition. |
@@ -124,8 +124,8 @@ post-codec clipping in the wild.
   boundaries (web/CLI consume only core's public API; no DSP in the web
   layer) all apply.
 - `uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q`
-  must pass before and after every phase (baseline: 1176 passed /
-  44 deselected, unchanged through phase 3). Phases touching `apps/web` also run
+  must pass before and after every phase (baseline: 1182 passed /
+  44 deselected as of phase 4). Phases touching `apps/web` also run
   `npm test` and `npm run build` there.
 - **Preview/export parity is a hard constraint.** Any new mastering DSP
   lands once in `dsp-core` with both an offline entry and a streaming

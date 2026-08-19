@@ -299,6 +299,31 @@ Implementation: `packages/dsp/crates/dsp-core/src/mastering/limiter.rs`
 the deepest reduction on each curve is reported separately as
 `MasteringResult.limiter_gr_peak_db` and `limiter_gr_lfe_peak_db`.
 
+### Subsonic content and the measurement
+
+The RLB stage is a ~38 Hz high-pass, so sub-20 Hz rumble and DC reach the
+gating blocks attenuated but not removed, and they cost true-peak headroom at
+full weight. The chain's optional head stage removes both before anything else
+runs (`mastering/head.py`, `mastering::head`): a 12 dB/oct Butterworth
+high-pass at a 10–30 Hz corner on every non-LFE channel, and a first-order
+pole-zero DC blocker at 5 Hz on LFE, which is band-limited upstream and whose
+sub content is the delivery. On a 440 Hz tone carrying a 15 Hz component at
+−6 dB the head stage takes 3.0 dB off the limiter's peak gain reduction and
+drops its duty to zero, with the audible band unchanged
+(`unit_mastering_head_clip.rs`).
+
+### Clipping ahead of the limiter
+
+A memoryless clipper generates harmonics but no peak above its own ceiling, so
+it cannot break the dBTP guarantee the limiter downstream makes: the limiter
+still runs last, on the 4x-oversampled envelope of whatever the clipper
+produced. What the clipper changes is how much work is left — it takes the
+transients that would otherwise be met with deep, short gain reduction, so the
+limiter's duty falls and less of the programme body is given away to reach the
+same ceiling. The stage is off by default and its numbers are in
+`docs/plans/mastering/phase4_report.md`, including the aliasing it costs: it
+does not oversample in v1, so its odd harmonics past Nyquist fold back.
+
 ---
 
 ## Validation Checklist

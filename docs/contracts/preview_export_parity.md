@@ -48,6 +48,7 @@ Every stage below is one function, called from both sides:
 | Per-stem EQ | `spatial`/`kernels::fir_design` | `separation/stem_eq.py` | `stream::routing` |
 | Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate,transient}` | `separation/stem_router.py` | `stream::routing` |
 | Scene position → routing | `separation/stem_panner.py` | `apps/api/.../routing.py` | served with the project |
+| Chain head (subsonic / DC) | `mastering::head` | `mastering/head.py` | `stream::master` |
 | Reference match | `match_reference::{spectrum,curve}` | `mastering/match_reference/` | `stream::master` |
 | Spectral EQ | `mastering::eq` | `mastering/eq.py` | `stream::master` |
 | Bus compression | `mastering::compressor` | `mastering/compressor.py` | `stream::master` |
@@ -55,6 +56,7 @@ Every stage below is one function, called from both sides:
 | BS.1770 loudness / true peak | `loudness` | `loudness.py` | `stream::engine::measure` |
 | Momentary / short-term loudness | `loudness_stream::WindowLoudnessMeter` | `loudness::measure_loudness_stats` (kit) | `stream::engine::master_meters` |
 | 5.1 re-render (measurement programme) | `spatial::downmix::FoldTo51` | `loudness.py::measurement_programme` | `stream::measure` |
+| Soft clip | `mastering::clip` | `mastering/clip.py` | `stream::engine::render` |
 | Look-ahead limiter | `mastering::limiter` | `mastering/limiter.py` | `stream::master` |
 | Ambisonic encode / HOA decode | `spatial::ambisonics` | `binaural/renderer.py` | `stream::output` |
 | Voicing chain | `spatial::voicing` | `binaural/voicing.py` | `stream::output` |
@@ -114,13 +116,22 @@ why the API stores a stereo project's `mixing.stem_routing` already folded to
 FL/FR (see `docs/project_manifest_parity.md`): both sides then normalize over
 the same channel set.
 
-**Processing order is contracted** and lives in one place — reference match →
-EQ → compression → bass → BS.1770 loudness → limiter *last*. Soft limiting
-after loudness rather than before is deliberate; see
-`packages/core/src/mastering/chain.py`'s module docstring.
+**Processing order is contracted** and lives in one place — chain head →
+reference match → EQ → compression → bass → BS.1770 loudness → soft clip →
+limiter *last*. Soft limiting after loudness rather than before is deliberate;
+see `packages/core/src/mastering/chain.py`'s module docstring.
 
-Two things about that order are load-bearing rather than conventional, and
-neither is obvious from the code:
+The two ends added in mastering phase 4 are both optional and both off by
+default. The head runs *before* reference matching so the matcher never
+matches DC or rumble; the clipper runs *after* loudness normalization, since
+normalizing an already-clipped signal would make the clip depth depend on the
+loudness target. In the preview the clipper lands as samples enter the
+limiter's look-ahead queue rather than at the emit point, so the limiter's
+detection reads the same already-shaved signal it does offline
+(`stream::engine::render::fill_post`).
+
+Three things about that order are load-bearing rather than conventional, and
+none is obvious from the code:
 
 - **Bass must stay after reference matching.**
   `mastering/match_reference/spectrum.py` compares a BS.1770-weighted *power*
@@ -137,7 +148,20 @@ neither is obvious from the code:
   own docstring gives the reason the curve is shared: per-channel curves would
   desynchronize the inter-channel phase that BS.775 fold-down and transaural
   crosstalk cancellation depend on. `mastering::bass`'s
-  `unification_commutes_with_a_shared_upstream_gain` pins this.
+  `unification_commutes_with_a_shared_upstream_gain` pins this. The chain head
+  is in the same family and holds by the same argument: one shared
+  Butterworth design, applied identically to every non-LFE channel, is LTI
+  filtering that commutes with the LF sum. LFE's DC blocker is a different
+  filter, which is allowed for the same reason the limiter's separate LFE
+  curve is — LFE is not part of the mains' shared low bus.
+- **The soft clipper is the one pre-limiter stage that breaks commutation.**
+  It is linked in the only sense a memoryless nonlinearity can be — one curve,
+  one set of parameters, every non-LFE channel, sample by sample — but
+  `f(Σ lowᵢ) ≠ Σ f(lowᵢ)`, so it cannot sit ahead of bass management. It
+  doesn't: it runs after the LF sum has already been distributed and directly
+  before the limiter, which is the same position that costs the limiter's own
+  per-curve split nothing. Nothing downstream of either depends on the bed
+  still summing the way bass management left it.
 
 The limiter is the one mastering stage that does *not* apply a single curve to
 the whole bed: the mains share one, LFE is capped on its own
@@ -221,6 +245,16 @@ preset's numbers into the manifest instead would make them explicit
 overrides, which is how a preset gets silently defeated the next time the
 manifest is normalized and saved. **Change one resolver and change the
 other.**
+
+Mastering phase 4's two stages add nothing to that block, deliberately. Both
+carry only user values from the manifest (`mastering.highpass.cutoff_hz`,
+`mastering.clip.clip_db` / `.knee`) plus one number that is already served:
+the clipper's asymptote is the delivery target's ceiling, which both sides
+read through their own `resolve_delivery_target`. The LFE DC blocker's 5 Hz
+corner is structural and stays in `mastering::head`'s `DC_BLOCK_HZ`, like the
+duck's time constants. The one thing to keep in step is that the clipper runs
+on the bed in *every* output mode — `MasteringChain` masters the bed before
+any collapse — while the limiter is native-only.
 
 What an unset target and ceiling fall back to with no preset named is served
 too, as `constants.delivery_default`, so neither number is authored in the
