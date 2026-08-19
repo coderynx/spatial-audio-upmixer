@@ -1,3 +1,4 @@
+import io
 import json
 import multiprocessing
 import threading
@@ -275,3 +276,46 @@ def test_write_preview_on_background_thread_does_not_crash_for_long_tracks(tmp_p
 
     assert process.exitcode == 0
     assert destination.is_file()
+
+
+def _persisted_curve(storage: ProjectStemStorage, project_id: str) -> list[tuple[float, float]]:
+    from upmixer.mastering.match_reference.curve import _log_grid
+
+    grid = _log_grid(20000.0)
+    curve = [(float(f), float(4.0 * np.sin(i / 7.0))) for i, f in enumerate(grid)]
+    storage.write_reference_match(
+        project_id, "5.1", curve, ["FL", "FR", "C", "SL", "SR"], 1.5, 48_000, 1023, "sig",
+    )
+    return curve
+
+
+@pytest.mark.parametrize("knobs", [
+    {},
+    {"smooth_octaves": 1.0},
+    {"smooth_octaves": 1.0 / 12.0, "low_hz": 300.0},
+    {"low_hz": 300.0, "high_hz": 9000.0},
+])
+def test_the_served_fir_is_the_export_path_fir_for_the_same_curve_and_knobs(tmp_path, knobs):
+    """Preview/export parity for the reference-match FIR: the browser plays
+    what `reference_match_fir_wav_bytes` serves, the bounce runs
+    `build_curve_fir` — one function, so the two must be bit-identical at
+    float32 for the same stored curve and the same controls.
+    """
+    from upmixer.mastering.match_reference import build_curve_fir
+
+    storage = ProjectStemStorage(tmp_path / "project-stems")
+    curve = _persisted_curve(storage, "p1")
+
+    served = storage.reference_match_fir_wav_bytes(
+        "p1", "5.1", 0.6, 6.0,
+        knobs.get("smooth_octaves"), knobs.get("low_hz"), knobs.get("high_hz"),
+    )
+    assert served is not None
+    preview_taps, sample_rate = sf.read(io.BytesIO(served), dtype="float32", always_2d=False)
+    export_taps = build_curve_fir(
+        curve, 48_000, 1023, 0.6, 6.0,
+        knobs.get("smooth_octaves"), knobs.get("low_hz"), knobs.get("high_hz"),
+    )
+
+    assert sample_rate == 48_000
+    assert preview_taps.tobytes() == export_taps.astype(np.float32).tobytes()

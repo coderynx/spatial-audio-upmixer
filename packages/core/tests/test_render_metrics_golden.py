@@ -54,21 +54,21 @@ _GOLDEN_CHANNEL_RMS_HEX = {
 
 # Regenerate via `REGENERATE_GOLDEN=1 python3 -m pytest
 # tests/test_render_metrics_golden.py::test_python_reference_match_metrics_golden -s`.
-_GOLDEN_REFMATCH_LKFS_HEX = "c026067f8c654a2f"
-_GOLDEN_REFMATCH_TP_HEX = "c0284be7d95899f7"
+_GOLDEN_REFMATCH_LKFS_HEX = "c0241d621ab17eef"
+_GOLDEN_REFMATCH_TP_HEX = "c027461ccb62722d"
 _GOLDEN_REFMATCH_CHANNEL_RMS_HEX = {
-    "BL": "3fb2f4ae0cd8c892",
-    "BR": "3fb2ffebea60d98a",
-    "C": "3fb560fc39cd57c3",
-    "FL": "3fb176faef547bdf",
-    "FR": "3fc1638c34240f52",
-    "LFE": "3fb55c407f3421f4",
-    "SL": "3fb30e15486fbc88",
-    "SR": "3fb39044fbc8cd23",
-    "TBL": "3fb33ac0d4d56de6",
-    "TBR": "3fb338b810847156",
-    "TFL": "3fb3d79b8f57e4a3",
-    "TFR": "3fb324c2a9749708",
+    "BL": "3fb38d1255e1ebb5",
+    "BR": "3fb3905eb537adcd",
+    "C": "3fbe732d9310bc82",
+    "FL": "3fb490945110f21f",
+    "FR": "3fc1eefa85353d50",
+    "LFE": "3fb55d027fe04467",
+    "SL": "3fb44b853ab2ed6e",
+    "SR": "3fb4ad64aeb36c1c",
+    "TBL": "3fb4bf3d9ee6c662",
+    "TBR": "3fb51b5db1090ae0",
+    "TFL": "3fb4b8a53ca1bd3c",
+    "TFR": "3fb4d041730196e7",
 }
 
 # Regenerate via `REGENERATE_GOLDEN=1 python3 -m pytest

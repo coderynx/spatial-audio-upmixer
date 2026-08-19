@@ -58,7 +58,7 @@ def test_configuration_serves_engine_constants(web_client):
         "limiter_release_ms", "safety_margin_db", "loudness_max_gain_db", "surround_downmix_coeff",
         "height_downmix_coeff",
         "itu_center_coeff", "speaker_directions",
-        "dyneq_profiles",
+        "dyneq_profiles", "reference_match_smooth",
         "comp_profiles", "bass_profiles", "delivery_targets", "delivery_default",
         "bass_sub_cutoff_hz", "bass_mid_cutoff_hz",
         "bass_excite_blend", "bass_excite_drive", "bass_lf_spreads",

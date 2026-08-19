@@ -8,11 +8,24 @@ import type {
 import type { MasterPreview } from "../masterPreview";
 import { loadDecodeTaps, loadFirTaps, loadXtcTaps } from "./filterAssets";
 
-/** Appends the live `strength`/`max_db` knobs to a reference-match `fir_url`
- * base, so the FIR endpoint designs the filter for exactly this config. */
-export function withReferenceMatchParams(firUrl: string, strength: number, maxDb: number): string {
+/** Appends the live realization knobs to a reference-match `fir_url` base, so
+ * the FIR endpoint designs the filter for exactly this config. Unset controls
+ * are left off the URL rather than sent as a number, so the server's own
+ * defaults stay the single source (the delivery-target precedence rule). */
+export function withReferenceMatchParams(
+  firUrl: string,
+  strength: number,
+  maxDb: number,
+  smoothOct?: number | null,
+  lowHz?: number | null,
+  highHz?: number | null,
+): string {
   const separator = firUrl.includes("?") ? "&" : "?";
-  return `${firUrl}${separator}strength=${strength}&max_db=${maxDb}`;
+  const extra = ([["smooth_oct", smoothOct], ["low_hz", lowHz], ["high_hz", highHz]] as const)
+    .filter(([, value]) => value != null)
+    .map(([name, value]) => `&${name}=${value}`)
+    .join("");
+  return `${firUrl}${separator}strength=${strength}&max_db=${maxDb}${extra}`;
 }
 
 /**
@@ -100,7 +113,12 @@ export class FilterTapCache {
     const strength = refCfg?.strength ?? 1;
     const maxDb = refCfg?.max_db ?? 6;
     const active = Boolean(refCfg?.spectrum && refCfg.fir_url && strength > 0);
-    const url = active ? withReferenceMatchParams(refCfg!.fir_url as string, strength, maxDb) : null;
+    const url = active
+      ? withReferenceMatchParams(
+          refCfg!.fir_url as string, strength, maxDb,
+          refCfg!.smooth_octaves, refCfg!.low_hz, refCfg!.high_hz,
+        )
+      : null;
     if (url === this.referenceFirUrl && (url === null || this.referenceTaps)) return;
     this.referenceFirUrl = url;
     this.referenceTaps = url ? await loadFirTaps(url, context).catch(() => null) : null;

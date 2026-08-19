@@ -341,10 +341,12 @@ class TestReferenceChannelCanonicalization:
 
 
 class TestComputeReferenceCurve:
-    def test_breakpoints_count(self):
+    def test_breakpoints_are_the_log_grid(self):
         target = {"FL": _sine(440.0), "FR": _sine(550.0)}
         curve = compute_reference_curve(target, _stereo_ref(), SR, 8192)
-        assert len(curve) == 64
+        grid = _log_grid(20000.0)
+        assert len(curve) == len(grid)
+        assert np.allclose([f for f, _ in curve], grid)
 
     def test_breakpoints_ascending_freq(self):
         target = {"FL": _sine(440.0), "FR": _sine(550.0)}

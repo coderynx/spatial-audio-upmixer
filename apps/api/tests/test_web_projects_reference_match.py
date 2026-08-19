@@ -112,6 +112,13 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
         assert fir_response.status_code == 200
         assert fir_response.headers["content-type"].startswith("audio/")
 
+        # Phase 7's realization controls are query params on the same URL, so
+        # they cost a redesign and never a re-analysis.
+        base = view["reference_match"]["5.1"]["fir_url"]
+        masked = client.get(f"{base}&strength=1&max_db=6&low_hz=300&smooth_oct=1.0")
+        assert masked.status_code == 200
+        assert masked.content != client.get(f"{base}&strength=1&max_db=6").content
+
         call_count = {"n": 0}
         original_compute_curve = ReferenceMatchProcessor.compute_curve
 

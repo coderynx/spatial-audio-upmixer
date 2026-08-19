@@ -16,19 +16,16 @@ fn params(
     min_freq_hz: f64,
     max_freq_hz: f64,
     grid_step_oct: f64,
-    smooth_sigma_oct: f64,
     norm_low_hz: f64,
     norm_high_hz: f64,
     confidence_floor_db: f64,
     taper_low: (f64, f64),
     taper_high: (f64, f64),
-    n_breakpoints: usize,
 ) -> curve::CurveParams {
     curve::CurveParams {
         min_freq_hz,
         max_freq_hz,
         grid_step_oct,
-        smooth_sigma_oct,
         norm_low_hz,
         norm_high_hz,
         confidence_floor_db,
@@ -38,7 +35,6 @@ fn params(
             high_start: taper_high.0,
             high_end: taper_high.1,
         },
-        n_breakpoints,
     }
 }
 
@@ -139,8 +135,8 @@ fn soft_clamp<'py>(
 
 #[pyfunction]
 #[pyo3(signature = (freqs_t, power_t, freqs_r, power_r, sample_rate, min_freq_hz, max_freq_hz,
-                    grid_step_oct, smooth_sigma_oct, norm_low_hz, norm_high_hz,
-                    confidence_floor_db, taper_low, taper_high, n_breakpoints))]
+                    grid_step_oct, norm_low_hz, norm_high_hz,
+                    confidence_floor_db, taper_low, taper_high))]
 #[allow(clippy::too_many_arguments)]
 fn correction_curve<'py>(
     freqs_t: PyReadonlyArray1<'py, f64>,
@@ -151,13 +147,11 @@ fn correction_curve<'py>(
     min_freq_hz: f64,
     max_freq_hz: f64,
     grid_step_oct: f64,
-    smooth_sigma_oct: f64,
     norm_low_hz: f64,
     norm_high_hz: f64,
     confidence_floor_db: f64,
     taper_low: (f64, f64),
     taper_high: (f64, f64),
-    n_breakpoints: usize,
 ) -> Vec<(f64, f64)> {
     curve::correction_curve(
         freqs_t.as_array().to_vec().as_slice(),
@@ -169,15 +163,52 @@ fn correction_curve<'py>(
             min_freq_hz,
             max_freq_hz,
             grid_step_oct,
-            smooth_sigma_oct,
             norm_low_hz,
             norm_high_hz,
             confidence_floor_db,
             taper_low,
             taper_high,
-            n_breakpoints,
         ),
     )
+}
+
+#[pyfunction]
+#[pyo3(signature = (freqs, correction_db, strength, max_correction_db, clamp_knee_db,
+                    smooth_oct, grid_step_oct, low_hz, high_hz, mask_ease_oct,
+                    bass_clamp_hz, bass_clamp_db))]
+#[allow(clippy::too_many_arguments)]
+fn realize_curve<'py>(
+    py: Python<'py>,
+    freqs: PyReadonlyArray1<'py, f64>,
+    correction_db: PyReadonlyArray1<'py, f64>,
+    strength: f64,
+    max_correction_db: f64,
+    clamp_knee_db: f64,
+    smooth_oct: f64,
+    grid_step_oct: f64,
+    low_hz: f64,
+    high_hz: f64,
+    mask_ease_oct: f64,
+    bass_clamp_hz: f64,
+    bass_clamp_db: f64,
+) -> Bound<'py, PyArray1<f64>> {
+    let out = curve::realize_curve(
+        freqs.as_array().to_vec().as_slice(),
+        correction_db.as_array().to_vec().as_slice(),
+        &curve::RealizeParams {
+            strength,
+            max_correction_db,
+            clamp_knee_db,
+            smooth_oct,
+            grid_step_oct,
+            low_hz,
+            high_hz,
+            mask_ease_oct,
+            bass_clamp_hz,
+            bass_clamp_db,
+        },
+    );
+    PyArray1::from_vec(py, out)
 }
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -188,5 +219,6 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(band_edge_taper, m)?)?;
     m.add_function(wrap_pyfunction!(soft_clamp, m)?)?;
     m.add_function(wrap_pyfunction!(correction_curve, m)?)?;
+    m.add_function(wrap_pyfunction!(realize_curve, m)?)?;
     Ok(())
 }

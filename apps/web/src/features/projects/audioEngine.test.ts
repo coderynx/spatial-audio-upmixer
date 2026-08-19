@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { withReferenceMatchParams } from "./audioEngine";
+import { monitorMastering } from "./masterPreview";
 import { bypassMatchDb, correctionGain } from "./audioAnalysis";
 import { resolveDeliveryTarget } from "./masteringProfiles";
 import { TEST_ENGINE_CONSTANTS } from "./engineConstants.fixture";
@@ -82,5 +83,48 @@ describe("withReferenceMatchParams", () => {
 
   it("appends with & when the base url already carries a query param", () => {
     expect(withReferenceMatchParams("/fir?v=2", 1, 6)).toBe("/fir?v=2&strength=1&max_db=6");
+  });
+
+  it("leaves unset realization controls off the url", () => {
+    expect(withReferenceMatchParams("/fir", 1, 6, null, null, null)).toBe(
+      "/fir?strength=1&max_db=6",
+    );
+  });
+
+  it("appends only the realization controls that are set", () => {
+    expect(withReferenceMatchParams("/fir", 1, 6, null, 300, null)).toBe(
+      "/fir?strength=1&max_db=6&low_hz=300",
+    );
+    expect(withReferenceMatchParams("/fir", 1, 6, 0.5, 300, 9000)).toBe(
+      "/fir?strength=1&max_db=6&smooth_oct=0.5&low_hz=300&high_hz=9000",
+    );
+  });
+});
+
+describe("monitorMastering", () => {
+  const mastering = {
+    loudness: { normalize: true },
+    eq: { profile: "spatial-air" },
+    match_reference: { fir_url: "/fir", spectrum: true, rms: true, rms_gain_db: 2 },
+  };
+
+  it("passes the block through when nothing is bypassed", () => {
+    expect(monitorMastering(mastering, false)).toBe(mastering);
+  });
+
+  it("strips everything but loudness for the whole-chain bypass", () => {
+    expect(monitorMastering(mastering, true)).toEqual({ loudness: mastering.loudness });
+  });
+
+  it("strips both reference-match stages for the stage-scoped bypass", () => {
+    const out = monitorMastering(mastering, false, true);
+    expect(out?.eq).toEqual(mastering.eq);
+    expect(out?.match_reference).toEqual({
+      fir_url: "/fir", spectrum: false, rms: false, rms_gain_db: 2,
+    });
+  });
+
+  it("lets the whole-chain bypass win over the stage-scoped one", () => {
+    expect(monitorMastering(mastering, true, true)).toEqual({ loudness: mastering.loudness });
   });
 });

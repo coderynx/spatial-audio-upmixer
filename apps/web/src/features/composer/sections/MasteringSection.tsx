@@ -1,8 +1,6 @@
 import * as React from "react";
 import type { LucideIcon } from "lucide-react";
-import {
-  FileAudio, Loader2, Minimize2, Sparkles, Speaker, TrendingDown, TrendingUp, Upload, Waves, X,
-} from "lucide-react";
+import { Minimize2, Sparkles, Speaker, TrendingDown, TrendingUp, Waves } from "lucide-react";
 import {
   FIELD_GRID,
   NullablePotField,
@@ -10,14 +8,13 @@ import {
   SliderField,
   SwitchRow,
 } from "@/components/forms/fields";
-import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
-import { formatBytes } from "@/lib/format";
 import { resolveDeliveryTarget } from "@/features/projects/masteringProfiles";
 import type { MasteringReference } from "@/api";
 import type { ManifestSectionProps } from "./types";
 import { DynamicEqPanel } from "./DynamicEqPanel";
+import { ReferenceMatchPanel } from "./ReferenceMatchPanel";
 import { EffectPanel, FieldGroup, POT_GRID, titleCase } from "./EffectPanel";
 
 type MasteringSectionProps = ManifestSectionProps & {
@@ -78,6 +75,10 @@ function BassOption({ value }: { value: string }) {
  * (`delivery_default`); this never reaches the preview or the export. */
 const PRE_BOOTSTRAP_DELIVERY = { target_lkfs: -18, max_tp_dbtp: -1, tolerance_lu: null };
 
+/** Same role as `PRE_BOOTSTRAP_DELIVERY` for the match-smoothing pot: what it
+ * displays before the configuration request lands. Never realized against. */
+const PRE_BOOTSTRAP_SMOOTH = { defaultOct: 1 / 3, minOct: 1 / 12, maxOct: 1 };
+
 export function MasteringSection({
   manifest,
   setManifest,
@@ -90,9 +91,7 @@ export function MasteringSection({
   referencePending = false,
 }: MasteringSectionProps) {
   const choices = configuration?.choices;
-  const referenceInput = React.useRef<HTMLInputElement>(null);
   const match = manifest.mastering.match_reference;
-  const hasReference = masteringReference !== null;
   const { eq, compressor, bass, loudness, highpass, clip, dynamic_eq } = manifest.mastering;
   // What the two loudness controls show while unset — the named target's own
   // numbers, resolved the same way the export resolves them. The placeholder
@@ -107,6 +106,10 @@ export function MasteringSection({
   // profile does. A native <select> given a value no option carries displays
   // its first option instead, which silently claimed "front"/"off" while the
   // profile was running "bed"/"add".
+  const served = configuration?.constants?.reference_match_smooth;
+  const smoothing = served
+    ? { defaultOct: served.default_oct, minOct: served.min_oct, maxOct: served.max_oct }
+    : PRE_BOOTSTRAP_SMOOTH;
   const bassProfile = bass.profile
     ? configuration?.constants?.bass_profiles?.[bass.profile]
     : undefined;
@@ -174,112 +177,17 @@ export function MasteringSection({
           />
         </div>
       </EffectPanel>
-
-      <EffectPanel
-        title="Reference EQ match"
-        enabled={match.spectrum}
-        toggleDisabled={!hasReference}
-        onEnabledChange={(spectrum) =>
-          setMastering({ match_reference: { ...match, spectrum } })
-        }
-        status={
-          hasReference && referencePending ? (
-            <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Preparing
-            </span>
-          ) : null
-        }
-      >
-        {masteringReference ? (
-          <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 p-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <FileAudio className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0">
-                <p className="truncate text-[13px] font-medium">{masteringReference.filename}</p>
-                <p className="text-[11px] text-muted-foreground">
-                  {formatBytes(masteringReference.size_bytes)}
-                </p>
-              </div>
-            </div>
-            <div className="flex shrink-0 gap-1">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={referenceUploading}
-                onClick={() => referenceInput.current?.click()}
-              >
-                <Upload /> Replace
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={referenceUploading}
-                onClick={onReferenceClear}
-              >
-                <X /> Remove
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-1.5">
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={referenceUploading}
-              onClick={() => referenceInput.current?.click()}
-            >
-              <Upload />
-              {referenceUploading ? "Uploading" : "Choose reference track"}
-            </Button>
-            <p className="text-[11px] text-muted-foreground">
-              One WAV or FLAC, matched across every track.
-            </p>
-          </div>
-        )}
-        <input
-          ref={referenceInput}
-          className="hidden"
-          type="file"
-          aria-label="Reference audio track"
-          accept="audio/wav,audio/flac,.wav,.flac"
-          onChange={(event) => {
-            const [file] = Array.from(event.target.files || []);
-            if (file) onReferenceUpload(file);
-            event.currentTarget.value = "";
-          }}
-        />
-        {referenceError && <p className="text-[11px] text-destructive">{referenceError}</p>}
-        <div className={FIELD_GRID}>
-          <SliderField
-            label="Strength"
-            value={match.strength}
-            min={0}
-            max={1}
-            step={0.01}
-            disabled={!hasReference || !match.spectrum}
-            onChange={(strength) => setMastering({ match_reference: { ...match, strength } })}
-          />
-          <SliderField
-            label="Max correction"
-            value={match.max_db}
-            min={0}
-            max={12}
-            step={0.5}
-            suffix=" dB"
-            disabled={!hasReference || !match.spectrum}
-            onChange={(max_db) => setMastering({ match_reference: { ...match, max_db } })}
-          />
-        </div>
-        <SwitchRow
-          label="Match RMS level"
-          checked={match.rms}
-          disabled={!hasReference}
-          onChange={(rms) => setMastering({ match_reference: { ...match, rms } })}
-        />
-      </EffectPanel>
+      <ReferenceMatchPanel
+        match={match}
+        setMastering={setMastering}
+        smoothing={smoothing}
+        masteringReference={masteringReference}
+        referenceUploading={referenceUploading}
+        referenceError={referenceError}
+        referencePending={referencePending}
+        onReferenceUpload={onReferenceUpload}
+        onReferenceClear={onReferenceClear}
+      />
 
       <EffectPanel
         title="Loudness"

@@ -52,6 +52,8 @@ mastering:
   # match_reference:
   #   path: reference_atmos.wav
   #   strength: 0.5
+  #   smooth_octaves: 0.3333   # 1/12 chases resonances, 1 matches tonal balance
+  #   low_hz: 300.0            # keep this mix's own low end
   compressor:
     profile: glue
   loudness:

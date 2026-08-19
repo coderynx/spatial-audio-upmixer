@@ -30,6 +30,12 @@ def _dyneq_profile_choices() -> tuple[str, ...]:
     return DYNEQ_PROFILE_NAMES
 
 
+def _smooth_octave_bounds() -> tuple[float, float]:
+    # Deferred for the same reason as the profile-choice helpers around it.
+    from upmixer.mastering.match_reference.curve import SMOOTH_OCT_MAX, SMOOTH_OCT_MIN
+    return SMOOTH_OCT_MIN, SMOOTH_OCT_MAX
+
+
 def _transaural_profile_choices() -> tuple[str, ...]:
     # Deferred import: upmixer.crosstalk imports upmixer.binaural.renderer,
     # which imports upmixer.mastering.chain, which imports this module at
@@ -136,6 +142,9 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             "mastering.clip.knee": 0.0,
             "mastering.match_reference.strength": 0.0,
             "mastering.match_reference.max_db": 0.0,
+            "mastering.match_reference.smooth_octaves": _smooth_octave_bounds()[0],
+            "mastering.match_reference.low_hz": 20.0,
+            "mastering.match_reference.high_hz": 20.0,
             "mastering.compressor.ratio": 1.0,
             "mastering.compressor.attack_ms": 0.0,
             "mastering.compressor.release_ms": 0.0,
@@ -149,6 +158,9 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             "mastering.clip.clip_db": 6.0,
             "mastering.clip.knee": 1.0,
             "mastering.match_reference.strength": 1.0,
+            "mastering.match_reference.smooth_octaves": _smooth_octave_bounds()[1],
+            "mastering.match_reference.low_hz": 20000.0,
+            "mastering.match_reference.high_hz": 20000.0,
             "engine.stem_phase_fix_scale": 1.0,
             "format.downmix.height_coeff": 1.0,
             "routing.stem_transient_duck": 1.0,

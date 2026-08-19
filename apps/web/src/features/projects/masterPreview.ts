@@ -28,6 +28,9 @@ export type MasterPreview = {
     spectrum?: boolean;
     rms?: boolean;
     max_db?: number;
+    smooth_octaves?: number | null;
+    low_hz?: number | null;
+    high_hz?: number | null;
   };
   compressor?: {
     profile?: string | null;
@@ -55,14 +58,22 @@ export type MasterPreview = {
 };
 
 /**
- * The transport's bypass button: render the bed with every tone and dynamics
- * stage stripped, keeping only loudness. A session-only monitoring choice,
- * not a manifest field — so it has no counterpart in the export.
+ * The transport's bypass buttons. `bypassed` renders the bed with every tone
+ * and dynamics stage stripped, keeping only loudness; `matchBypassed` strips
+ * the reference matcher alone — both its spectral curve and its level gain,
+ * since the level gain is what made the old stage A/B loudness-biased.
+ * Session-only monitoring choices, not manifest fields, so neither has a
+ * counterpart in the export (parity contract §3, P4).
  */
 export function monitorMastering(
   mastering: MasterPreview | undefined,
   bypassed: boolean,
+  matchBypassed = false,
 ): MasterPreview | undefined {
-  if (!bypassed) return mastering;
-  return mastering?.loudness ? { loudness: mastering.loudness } : undefined;
+  if (bypassed) return mastering?.loudness ? { loudness: mastering.loudness } : undefined;
+  if (!matchBypassed || !mastering?.match_reference) return mastering;
+  return {
+    ...mastering,
+    match_reference: { ...mastering.match_reference, spectrum: false, rms: false },
+  };
 }

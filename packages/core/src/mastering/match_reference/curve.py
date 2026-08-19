@@ -9,10 +9,7 @@ contracted constants):
    (:mod:`.spectrum`).
 2. Both resampled onto a shared 1/24-octave log grid, 20 Hz-20 kHz, so the
    ratio compares like-for-like frequencies regardless of FFT bin spacing.
-3. ``correction_db = 10*log10(ref/target)``, smoothed 1/24-oct grid at a
-   real 1/3-octave Gaussian width (fixes a prior bug where the smoothing
-   kernel's width was measured from a linear FFT grid and collapsed to a
-   near-identity three-tap kernel).
+3. ``correction_db = 10*log10(ref/target)``.
 4. Mean-subtracted over 100 Hz-10 kHz *on the log grid*, so the offset is an
    equal-per-octave average rather than biased toward the top of the band by
    linear bin density.
@@ -20,10 +17,11 @@ contracted constants):
    peak (protects against extrapolating a curve from noise-floor content,
    e.g. a lossy-sourced reference's brickwall) and hard-tapered to 0 dB
    below 25 Hz / above 18 kHz.
-6. Decimated to log-spaced breakpoints for FIR design.
 
-Steps 1-6 don't depend on ``strength`` or ``max_correction_db`` — the result
-is what gets persisted. :func:`build_curve_fir` applies both per request.
+Steps 1-5 depend on no user control — the raw grid curve is what gets
+persisted. :func:`build_curve_fir` owns every control (strength, smoothing
+bandwidth, frequency-range masks, the two clamps), so moving one re-designs
+the FIR without re-running the analysis.
 """
 from __future__ import annotations
 
@@ -35,12 +33,19 @@ from .spectrum import weighted_power_spectrum, weighted_power_spectrum_reference
 
 _EPS: float = 1e-20
 
-_N_BREAKPOINTS: int = 64
 _MIN_FREQ_HZ: float = 20.0
 _MAX_FREQ_HZ: float = 20000.0
 
 _LOG_GRID_OCT_STEP: float = 1.0 / 24.0
-_SMOOTH_SIGMA_OCT: float = 1.0 / 3.0
+
+SMOOTH_OCT_DEFAULT: float = 1.0 / 3.0
+SMOOTH_OCT_MIN: float = 1.0 / 12.0
+SMOOTH_OCT_MAX: float = 1.0
+"""Realization-time smoothing bandwidth, in octaves. Coarse matches tonal
+balance, fine chases the reference's own resonances. Served to the web (see
+``docs/contracts/preview_export_parity.md`` §2)."""
+
+_MASK_EASE_OCT: float = 0.5
 
 _NORM_LOW_HZ: float = 100.0
 _NORM_HIGH_HZ: float = 10000.0
@@ -121,9 +126,31 @@ def compute_reference_curve(
     return upmixer_dsp.correction_curve(
         _as_f64(freqs_t), _as_f64(power_t), _as_f64(freqs_r), _as_f64(power_r),
         sample_rate,
-        _MIN_FREQ_HZ, _MAX_FREQ_HZ, _LOG_GRID_OCT_STEP, _SMOOTH_SIGMA_OCT,
+        _MIN_FREQ_HZ, _MAX_FREQ_HZ, _LOG_GRID_OCT_STEP,
         _NORM_LOW_HZ, _NORM_HIGH_HZ, _CONFIDENCE_FLOOR_DB,
-        _TAPER_LOW_HZ, _TAPER_HIGH_HZ, _N_BREAKPOINTS,
+        _TAPER_LOW_HZ, _TAPER_HIGH_HZ,
+    )
+
+
+def realize_curve(
+    curve: list[tuple[float, float]],
+    strength: float,
+    max_correction_db: float,
+    smooth_octaves: float | None = None,
+    low_hz: float | None = None,
+    high_hz: float | None = None,
+) -> np.ndarray:
+    """The persisted curve's gains at one set of user controls, in dB."""
+    freqs = np.array([f for f, _ in curve], dtype=np.float64)
+    gains_db = np.array([g for _, g in curve], dtype=np.float64)
+    smooth = SMOOTH_OCT_DEFAULT if smooth_octaves is None else float(smooth_octaves)
+    return upmixer_dsp.realize_curve(
+        freqs, gains_db,
+        float(strength), float(max_correction_db), _CLAMP_KNEE_DB,
+        float(np.clip(smooth, SMOOTH_OCT_MIN, SMOOTH_OCT_MAX)), _LOG_GRID_OCT_STEP,
+        0.0 if low_hz is None else float(low_hz),
+        0.0 if high_hz is None else float(high_hz),
+        _MASK_EASE_OCT, _BASS_CLAMP_HZ, _BASS_CLAMP_DB,
     )
 
 
@@ -133,24 +160,27 @@ def build_curve_fir(
     n_taps: int,
     strength: float,
     max_correction_db: float,
+    smooth_octaves: float | None = None,
+    low_hz: float | None = None,
+    high_hz: float | None = None,
 ) -> np.ndarray:
-    """Design the minimum-phase correction FIR for one ``(strength,
-    max_correction_db)`` pair from a persisted, strength-independent
-    ``curve`` (see :func:`compute_reference_curve`).
+    """Design the minimum-phase correction FIR for one set of user controls
+    from a persisted, control-independent ``curve`` (see
+    :func:`compute_reference_curve`).
 
-    Cheap: no spectral analysis, just dB scaling, clamping, and
-    ``firwin2``/``minimum_phase`` (memoized by
+    Cheap: no spectral analysis, just the dB-domain realization
+    (:func:`realize_curve`) and ``firwin2``/``minimum_phase`` (memoized by
     ``eq._build_fir_from_breakpoints``'s cache). ``strength`` scales the
     curve in the dB domain rather than crossfading an undelayed dry signal
     against a minimum-phase-delayed wet one — the latter combs at partial
     strength, since minimum-phase group delay is frequency-dependent.
+
+    ``smooth_octaves`` is the Gaussian smoothing bandwidth (``None`` = the
+    1/3-octave default); ``low_hz``/``high_hz`` restrict the range the curve
+    acts on, easing to unity outside it (``None`` = full range).
     """
     if not curve:
         raise ValueError("build_curve_fir: curve is empty")
-    freqs = np.array([f for f, _ in curve], dtype=np.float64)
-    gains_db = np.array([g for _, g in curve], dtype=np.float64) * float(strength)
-    gains_db = _soft_clamp(gains_db, float(max_correction_db))
-    bass = freqs < _BASS_CLAMP_HZ
-    gains_db[bass] = np.clip(gains_db[bass], -_BASS_CLAMP_DB, _BASS_CLAMP_DB)
-    breakpoints = [(float(f), float(g)) for f, g in zip(freqs, gains_db)]
+    gains_db = realize_curve(curve, strength, max_correction_db, smooth_octaves, low_hz, high_hz)
+    breakpoints = [(float(f), float(g)) for (f, _), g in zip(curve, gains_db)]
     return _build_fir_from_breakpoints(breakpoints, sample_rate, n_taps)

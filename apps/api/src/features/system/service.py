@@ -49,6 +49,11 @@ def engine_constants() -> dict[str, Any]:
         DELIVERY_TARGETS,
     )
     from upmixer.mastering.dyneq import DYNEQ_PROFILES
+    from upmixer.mastering.match_reference.curve import (
+        SMOOTH_OCT_DEFAULT,
+        SMOOTH_OCT_MAX,
+        SMOOTH_OCT_MIN,
+    )
     from upmixer.mastering.limiter import _SAFETY_MARGIN_DB
     from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
     from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
@@ -90,6 +95,14 @@ def engine_constants() -> dict[str, Any]:
             for label, position in SPEAKER_AZIMUTH_ELEVATION.items()
         },
         "dyneq_profiles": DYNEQ_PROFILES,
+        # Reference-match curve realization: what the smoothing pot defaults
+        # to and the range it moves over. The masks default to the full band,
+        # which the web spells as null rather than as a number.
+        "reference_match_smooth": {
+            "default_oct": SMOOTH_OCT_DEFAULT,
+            "min_oct": SMOOTH_OCT_MIN,
+            "max_oct": SMOOTH_OCT_MAX,
+        },
         "comp_profiles": COMP_PROFILES,
         "bass_profiles": BASS_PROFILES,
         "delivery_targets": DELIVERY_TARGETS,

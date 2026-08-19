@@ -279,6 +279,29 @@ Nothing else about the stage is served. Its soft knee stays structural in
 `mastering::dyneq`'s `KNEE_DB`, like the duck's time constants, and band
 bounds are enforced once in `manifest/validate.py`'s `_DYNEQ_BOUNDS`.
 
+Mastering phase 7's reference-match realization controls are the one block
+where the browser sends nothing to the core at all: it asks the server for a
+FIR. `GET .../reference-match/{layout}/fir` takes `strength`, `max_db` and now
+`smooth_oct` / `low_hz` / `high_hz`, and answers by calling the same
+`match_reference.build_curve_fir` the bounce calls, off the same persisted
+curve — so the two sides are one function rather than two resolvers, and there
+is nothing to keep in step. What *is* served, as `constants.reference_match_smooth`,
+is the smoothing pot's default and range (`curve.py`'s `SMOOTH_OCT_DEFAULT` /
+`_MIN` / `_MAX`), because the panel has to draw the control before anything is
+realized. Unset controls are left **off** the URL rather than sent as a
+number, the same rule the delivery target's nullable pots follow: a value on
+the wire is an override, and the server's default has to stay the single
+source. The mask's raised-cosine ease width is structural and stays in
+`curve.py`'s `_MASK_EASE_OCT`, like the duck's time constants.
+
+The stored curve is **raw** — unsmoothed, on the 1/24-octave log grid — so
+every control acts at realization and none of them can force a re-analysis
+(ledger D13's discipline, now covering all five). The two analysis tapers
+(confidence, band edge) still run in `correction_curve`, which means
+realization-time smoothing runs *after* them; with a broadband reference that
+is worth ≤ 0.1 dB, with a line-spectrum one it is not (mastering
+`phase7_report.md` §"What moved").
+
 The preset thresholds are the one place in this contract where a served value
 depends on *level* rather than being level-free: they are absolute dBFS on the
 pre-normalization bed, which is the same convention and the same chain
@@ -339,7 +362,7 @@ should be.
 | P1 | **Live-parameter latency.** The worklet renders ahead of the playhead, so a control change lands after the render horizon rather than instantly. The horizon is whichever zero-phase stage is active and reaches furthest: the LF unifier's 100 ms, or mid-bass decorrelation's 300 ms (its 4th-order 100-300 Hz band-pass needs the longer context — see `spatial_layouts_bs775_bs2051.md`). | ~100 ms; ~300 ms with `mastering_bass_decorrelate` above 0 |
 | P2 | **Seek warm-up.** A seek renders a discarded run-up so the filter states settle; without it the Haas-delayed sends would drop out and the compressor would re-attack. Inside the run-up the states are still converging. | 500 ms run-up; lands within 1e-6 of a straight play-through |
 | P3 | **Correction latency, in two stages.** The loudness/true-peak correction is a real BS.1770 measurement. A fast pass over a handful of excerpts lands first and is what the "calibrating loudness" UI waits for; an exact pass over the whole programme then keeps running in the background and refines the gain once it lands. Both are advanced in slices from the render callback (`stream::measure`), and the transport stays gated until the fast pass lands, so the preview never plays uncorrected; between the two, it plays on the fast pass's gain. Whatever the pass is meant to measure — parameter block and filter set both — has to reach the worklet before the `measure` message does, since the pass forks the engine as it stands (D29). | Fast pass: a few seconds, advances while paused or playing. Exact pass: ~2-3 min for an eight-minute track, only advances while paused (§4) |
-| P4 | **Monitor-only A/B compensation.** Bypassing the master chain measures the unmastered programme on its own key and applies a compensating scalar so both sides monitor at the same delivered loudness. It lives in the preview's `master.output_gain` ramp (`audioEngine.ts`), never in a manifest or an export, and is zero whenever the chain is not bypassed. The bypassed side is gated by the same calibration rule as a mode switch, so it never plays unmatched. | 0 dB unbypassed; the two sides' delivered-loudness difference otherwise, itself capped by the true-peak ceiling |
+| P4 | **Monitor-only A/B compensation.** Bypassing the master chain — or, since mastering phase 7, the reference matcher alone (`monitorMastering`'s `matchBypassed`, which strips both the spectral curve and the level gain) — measures that programme on its own key and applies a compensating scalar so both sides monitor at the same delivered loudness. It lives in the preview's `master.output_gain` ramp (`audioEngine.ts`), never in a manifest or an export, and is zero whenever nothing is bypassed. The bypassed side is gated by the same calibration rule as a mode switch, so it never plays unmatched. A whole-chain bypass already strips the matcher, so the stage flag does not enter the measurement key there. | 0 dB unbypassed; the two sides' delivered-loudness difference otherwise, itself capped by the true-peak ceiling |
 | P5 | **The export's dithered tail.** Bit-depth reduction (`io.writer.dither_channels`, `dsp-core/src/dither.rs`) runs only on the export, after every stage in §1, because only the writer knows the delivery subtype. The preview plays float32 and has no such stage. The divergence is inaudible by construction: ±1 LSB of TPDF at 24-bit is ≈ −138 dBFS, below the float32 mantissa's own quantization of the same programme, and it is the last operation in the export — nothing in §1 sees it. See `docs/standards/loudness_dsp_bs1770.md` §"Export tail". | ≤ 1.5 LSB of the delivery subtype; ≈ −138 dBFS at PCM_24, ≈ −90 dBFS at PCM_16 |
 
 Switching speaker layout is deliberately **not** a fifth entry. Selecting a

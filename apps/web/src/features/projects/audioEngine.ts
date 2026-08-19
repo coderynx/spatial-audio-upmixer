@@ -97,6 +97,10 @@ export class PreviewAudioEngine {
   /** Transport A/B. The bypassed programme is measured on its own and
    * monitored at the mastered side's loudness — see `matchDb`. */
   masteringBypassed = false;
+  /** Stage-scoped A/B for the reference matcher alone, on the same
+   * measure-then-match machinery. Ignored while the whole chain is bypassed,
+   * which already strips the matcher. */
+  matchBypassed = false;
 
   volume = 1;
   muted = false;
@@ -288,6 +292,13 @@ export class PreviewAudioEngine {
     void this.measureIfNeeded();
   }
 
+  /** A/B the reference matcher on its own, at matched loudness. */
+  applyMatchBypass(bypassed: boolean) {
+    this.matchBypassed = bypassed;
+    this.apply();
+    void this.measureIfNeeded();
+  }
+
   /**
    * The filter set has to reach the engine *before* the measurement starts:
    * a pass forks the engine as it is when the message lands, so measuring
@@ -451,9 +462,9 @@ export class PreviewAudioEngine {
 
   /** The A/B's compensating monitor gain, once both sides are measured. */
   private matchDb(delivery: DeliveryTarget, normalize: boolean): number {
-    if (!this.masteringBypassed) return 0;
+    if (!this.masteringBypassed && !this.matchBypassed) return 0;
     return bypassMatchDb(
-      this.calibration.get(this.measureKey(false)),
+      this.calibration.get(this.measureKey(false, false)),
       this.calibration.get(this.measureKey()),
       delivery,
       this.constants.loudnessMaxGainDb,
@@ -472,14 +483,19 @@ export class PreviewAudioEngine {
 
   /**
    * Measure the programme once per output mode/profile/bypass combination, so
-   * a mode switch — or the A/B toggle, whose two sides are different
+   * a mode switch — or either A/B toggle, whose sides are different
    * programmes — re-measures rather than reusing a stale correction. The pass
    * walks the whole programme, so it resolves minutes later on a long track
    * and pauses transport meanwhile (playback is mandatory-calibrated, see
    * `playFrom`).
    */
-  private measureKey(bypassed = this.masteringBypassed): string {
-    const chain = bypassed ? "bypassed" : "mastered";
+  private measureKey(
+    bypassed = this.masteringBypassed,
+    matchBypassed = this.matchBypassed,
+  ): string {
+    // A whole-chain bypass already strips the matcher, so the stage flag adds
+    // no programme of its own there — and must not cost a second pass.
+    const chain = bypassed ? "bypassed" : matchBypassed ? "match-bypassed" : "mastered";
     return `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}:${chain}`;
   }
 

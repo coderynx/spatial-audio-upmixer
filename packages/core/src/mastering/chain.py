@@ -279,6 +279,9 @@ class MasteringChain:
                 match_spectrum=cfg.mastering_match_ref_spectrum,
                 match_rms=cfg.mastering_match_ref_rms,
                 max_correction_db=cfg.mastering_match_ref_max_db,
+                smooth_octaves=cfg.mastering_match_ref_smooth_oct,
+                low_hz=cfg.mastering_match_ref_low_hz,
+                high_hz=cfg.mastering_match_ref_high_hz,
                 sample_rate=sample_rate,
             )
             channels = proc.process(channels)

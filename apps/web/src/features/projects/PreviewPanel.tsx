@@ -124,7 +124,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
           masterMeters={preview.masterMeters}
           headphoneLevels={preview.headphoneLevels}
           active={preview.playing}
-          bypassed={viewState.masteringBypassed}
+          bypassed={viewState.masteringBypassed || viewState.matchBypassed}
         />
       )}
       <div ref={rowRef} className={cn("flex min-h-0 gap-2", paneView ? "min-h-[180px] flex-1" : "flex-[3]")}>

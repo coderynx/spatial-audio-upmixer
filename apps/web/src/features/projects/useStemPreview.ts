@@ -57,6 +57,8 @@ export function useStemPreview(
   // engine which of the two programmes it is rendering so it can measure and
   // loudness-match them separately.
   masteringBypassed = false,
+  // The reference matcher's own A/B, on the same machinery.
+  matchBypassed = false,
 ) {
   const layoutChannelsKey = layoutChannels.join(",");
   // Stable-identity, layout-scoped speaker list: drives the ambisonic
@@ -146,6 +148,7 @@ export function useStemPreview(
   engine.positionalChannels = positionalChannels;
   engine.speakerEnabled = speakerEnabled;
   engine.masteringBypassed = masteringBypassed;
+  engine.matchBypassed = matchBypassed;
 
   // Layout changed (not just the initial mount): drop mute state for
   // speakers the new layout no longer has and default any newly-added ones
@@ -194,6 +197,12 @@ export function useStemPreview(
     engine.applyMasteringBypass(masteringBypassed);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
   }, [masteringBypassed, ready, constants]);
+
+  React.useEffect(() => {
+    if (!constants) return;
+    engine.applyMatchBypass(matchBypassed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
+  }, [matchBypassed, ready, constants]);
 
   React.useEffect(() => {
     if (!constants) return;

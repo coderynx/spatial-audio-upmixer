@@ -56,6 +56,11 @@ export type Manifest = {
       spectrum: boolean;
       rms: boolean;
       max_db: number;
+      // Curve-realization controls. Null means the served default (smoothing)
+      // or no bound at all (the two masks) — never a number the web authors.
+      smooth_octaves: number | null;
+      low_hz: number | null;
+      high_hz: number | null;
     };
     compressor: {
       profile: string | null;
@@ -176,7 +181,10 @@ export const defaultManifest: Manifest = {
     clip: { enabled: false, clip_db: 0.5, knee: 1 },
     eq: { profile: null, strength: 1 },
     dynamic_eq: { profile: null, bands: [] },
-    match_reference: { strength: 0.7, spectrum: true, rms: true, max_db: 6 },
+    match_reference: {
+      strength: 0.7, spectrum: true, rms: true, max_db: 6,
+      smooth_octaves: null, low_hz: null, high_hz: null,
+    },
     compressor: {
       profile: "transparent",
       threshold_db: null,

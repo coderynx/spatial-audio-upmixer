@@ -156,6 +156,9 @@ class UpmixConfig:
     mastering_match_ref_spectrum: bool = True
     mastering_match_ref_rms: bool = True
     mastering_match_ref_max_db: float = 6.0
+    mastering_match_ref_smooth_oct: float | None = None
+    mastering_match_ref_low_hz: float | None = None
+    mastering_match_ref_high_hz: float | None = None
 
     stem_rebalance: dict | None = None
 

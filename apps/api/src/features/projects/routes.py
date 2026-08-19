@@ -13,6 +13,8 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Upl
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
 
+from upmixer.mastering.match_reference.curve import SMOOTH_OCT_MAX, SMOOTH_OCT_MIN
+
 from upmixer_web.features.imports.service import resolve_project_mastering_reference
 from upmixer_web.features.jobs.schemas import JobView
 from upmixer_web.features.jobs.views import job_view
@@ -364,10 +366,13 @@ def register_project_routes(
         layout: str,
         strength: float = 1.0,
         max_db: float = 6.0,
+        smooth_oct: float | None = None,
+        low_hz: float | None = None,
+        high_hz: float | None = None,
         session: Session = Depends(database_session),
     ) -> Response:
-        """Design and serve one speaker layout's reference-match FIR for a
-        (strength, max_db) pair on demand from that layout's persisted
+        """Design and serve one speaker layout's reference-match FIR for one
+        set of user controls on demand from that layout's persisted
         correction curve — see
         `ProjectStemStorage.reference_match_fir_wav_bytes`. Cheap enough to
         call on every slider drag (see
@@ -380,7 +385,13 @@ def register_project_routes(
             raise HTTPException(status_code=404, detail="Project not found")
         strength = max(0.0, min(1.0, strength))
         max_db = max(0.0, min(24.0, max_db))
-        wav_bytes = app.state.project_stems.reference_match_fir_wav_bytes(project_id, layout, strength, max_db)
+        if smooth_oct is not None:
+            smooth_oct = max(SMOOTH_OCT_MIN, min(SMOOTH_OCT_MAX, smooth_oct))
+        low_hz = None if low_hz is None else max(20.0, min(20000.0, low_hz))
+        high_hz = None if high_hz is None else max(20.0, min(20000.0, high_hz))
+        wav_bytes = app.state.project_stems.reference_match_fir_wav_bytes(
+            project_id, layout, strength, max_db, smooth_oct, low_hz, high_hz,
+        )
         if wav_bytes is None:
             raise HTTPException(status_code=404, detail="Reference-match FIR is not available")
         return Response(content=wav_bytes, media_type="audio/wav")

@@ -58,6 +58,7 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
       { freq_hz: 3500, q: 1.8, threshold_db: -32, ratio: 3, attack_ms: 15, release_ms: 180 },
     ],
   },
+  reference_match_smooth: { default_oct: 1 / 3, min_oct: 1 / 12, max_oct: 1 },
   comp_profiles: {
     transparent: { threshold_db: -22.0, ratio: 1.5, attack_ms: 30.0, release_ms: 300.0, knee_db: 9.0, makeup_db: 0.0, sidechain_hpf_hz: null },
     glue: { threshold_db: -18.0, ratio: 2.0, attack_ms: 20.0, release_ms: 200.0, knee_db: 6.0, makeup_db: 0.0, sidechain_hpf_hz: null },

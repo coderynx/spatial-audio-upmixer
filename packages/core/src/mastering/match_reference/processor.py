@@ -53,6 +53,9 @@ _rbk("mastering", {
         "spectrum": ("config", "mastering_match_ref_spectrum"),
         "rms":      ("config", "mastering_match_ref_rms"),
         "max_db":   ("config", "mastering_match_ref_max_db"),
+        "smooth_octaves": ("config", "mastering_match_ref_smooth_oct"),
+        "low_hz":   ("config", "mastering_match_ref_low_hz"),
+        "high_hz":  ("config", "mastering_match_ref_high_hz"),
     },
 })
 del _rbk
@@ -118,6 +121,12 @@ class ReferenceMatchProcessor:
         max_correction_db:   Maximum spectral correction magnitude (dB), soft
                              knee. Sub-bass below 120 Hz is additionally
                              clamped to +/-2 dB.
+        smooth_octaves:      Smoothing bandwidth of the realized curve, in
+                             octaves (1/12-1, ``None`` = 1/3).
+        low_hz:              Match only above this frequency, easing to unity
+                             below it (``None`` = no bound).
+        high_hz:             Match only below this frequency (``None`` = no
+                             bound).
         sample_rate:         Audio sample rate in Hz.
         n_fft:               STFT frame length for spectral analysis.
         n_taps:              FIR tap count (default 1023).
@@ -131,6 +140,9 @@ class ReferenceMatchProcessor:
         match_spectrum: bool = True,
         match_rms: bool = True,
         max_correction_db: float = 6.0,
+        smooth_octaves: float | None = None,
+        low_hz: float | None = None,
+        high_hz: float | None = None,
         sample_rate: int = 48000,
         n_fft: int = _N_FFT_DEFAULT,
         n_taps: int = _N_TAPS_DEFAULT,
@@ -141,6 +153,9 @@ class ReferenceMatchProcessor:
         self._match_spectrum = match_spectrum
         self._match_rms = match_rms
         self._max_db = float(max_correction_db)
+        self._smooth_oct = smooth_octaves
+        self._low_hz = low_hz
+        self._high_hz = high_hz
         self._sr = sample_rate
         self._n_fft = n_fft
         self._n_taps = n_taps
@@ -231,7 +246,10 @@ class ReferenceMatchProcessor:
                 "  Match reference: spectral correction  strength=%.2f  max=%.1f dB",
                 self._strength, self._max_db,
             )
-            fir = build_curve_fir(curve, self._sr, self._n_taps, self._strength, self._max_db)
+            fir = build_curve_fir(
+                curve, self._sr, self._n_taps, self._strength, self._max_db,
+                self._smooth_oct, self._low_hz, self._high_hz,
+            )
             for name in list(out.keys()):
                 if name == lfe_key:
                     continue

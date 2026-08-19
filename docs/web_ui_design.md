@@ -696,6 +696,12 @@ are bounded state changes (one per tab click), not a new element per render.
   Refresh and the page's `onCreate` button only when their callbacks are
   supplied; `App.tsx` withholds both specifically on `/projects/:id`, since
   the stage tabs need the width. The projects *list* route keeps both.
+- **A stage-scoped A/B appears only when its stage exists.** The
+  reference-match bypass sits beside the whole-chain one, and renders only
+  once the project actually carries a reference-match asset for the selected
+  layout — and not at all while the whole chain is already bypassed, which
+  strips the matcher anyway. A toggle that would be a no-op is not shown
+  disabled; it is not shown.
 - **`Transport`'s `leading` slot carries only the `TrackRail` reveal
   toggle** (§4 — collapsing takes the rail out of the layout entirely, so
   its own header button can't be what brings it back; this is the one place
@@ -762,9 +768,11 @@ crest metrics derived from those. Rules:
   leaving that to colour or position.
 - **Out-of-spec reads `warning`, not `destructive`** — over target or over
   ceiling is a mix decision to revisit, not an error state.
-- **The A/B match gain appears only while the master chain is bypassed**, and
-  is labelled as monitoring. A monitor-only offset the listener cannot see is
-  the thing a loudness-matched A/B is supposed to remove, not add.
+- **The A/B match gain appears only while something is bypassed**, and is
+  labelled as monitoring. A monitor-only offset the listener cannot see is
+  the thing a loudness-matched A/B is supposed to remove, not add. Two
+  buttons feed it: the whole-chain bypass and the reference matcher's own,
+  which shares the machinery and the same matched-loudness rule.
 
 ### Semantic colour mapping
 

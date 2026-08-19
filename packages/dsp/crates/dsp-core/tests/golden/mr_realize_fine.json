@@ -1,6 +1,11 @@
 {
-  "name": "mr_band_edge_taper",
+  "name": "mr_realize_fine",
   "params": {
+    "strength": 1.0,
+    "max_db": 24.0,
+    "smooth_oct": 0.08333333333333333,
+    "low_hz": 0.0,
+    "high_hz": 0.0,
     "min_freq_hz": 20.0,
     "max_freq_hz": 20000.0,
     "grid_step_oct": 0.041666666666666664,
@@ -21,18 +26,18 @@
     "bass_clamp_hz": 120.0,
     "bass_clamp_db": 2.0
   },
-  "tolerance": 1e-12,
+  "tolerance": 1e-11,
   "arrays": {
-    "correction": {
-      "file": "mr_band_edge_taper.correction.f64",
+    "freqs": {
+      "file": "mr_realize_fine.freqs.f64",
       "len": 240
     },
-    "freqs": {
-      "file": "mr_band_edge_taper.freqs.f64",
+    "correction": {
+      "file": "mr_realize_fine.correction.f64",
       "len": 240
     },
     "output": {
-      "file": "mr_band_edge_taper.output.f64",
+      "file": "mr_realize_fine.output.f64",
       "len": 240
     }
   }

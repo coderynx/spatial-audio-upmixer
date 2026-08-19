@@ -323,20 +323,21 @@ def dump_mastering() -> None:
 def dump_match_reference() -> None:
     from upmixer.mastering.match_reference.curve import (
         _BASS_CLAMP_DB, _BASS_CLAMP_HZ, _CLAMP_KNEE_DB, _CONFIDENCE_FLOOR_DB,
-        _LOG_GRID_OCT_STEP, _MAX_FREQ_HZ, _MIN_FREQ_HZ, _NORM_HIGH_HZ, _NORM_LOW_HZ,
-        _N_BREAKPOINTS, _SMOOTH_SIGMA_OCT, _TAPER_HIGH_HZ, _TAPER_LOW_HZ,
+        _LOG_GRID_OCT_STEP, _MASK_EASE_OCT, _MAX_FREQ_HZ, _MIN_FREQ_HZ,
+        _NORM_HIGH_HZ, _NORM_LOW_HZ, _TAPER_HIGH_HZ, _TAPER_LOW_HZ,
+        SMOOTH_OCT_DEFAULT, SMOOTH_OCT_MAX, SMOOTH_OCT_MIN,
         _band_edge_taper, _confidence_taper, _log_grid, _smooth_log_grid, _soft_clamp,
-        compute_reference_curve,
+        compute_reference_curve, realize_curve,
     )
     from upmixer.mastering.match_reference.spectrum import weighted_power_spectrum_arrays
 
     curve_params = {
         "min_freq_hz": _MIN_FREQ_HZ, "max_freq_hz": _MAX_FREQ_HZ,
-        "grid_step_oct": _LOG_GRID_OCT_STEP, "smooth_sigma_oct": _SMOOTH_SIGMA_OCT,
+        "grid_step_oct": _LOG_GRID_OCT_STEP, "smooth_sigma_oct": SMOOTH_OCT_DEFAULT,
         "norm_low_hz": _NORM_LOW_HZ, "norm_high_hz": _NORM_HIGH_HZ,
         "confidence_floor_db": _CONFIDENCE_FLOOR_DB,
         "taper_low": list(_TAPER_LOW_HZ), "taper_high": list(_TAPER_HIGH_HZ),
-        "n_breakpoints": _N_BREAKPOINTS, "clamp_knee_db": _CLAMP_KNEE_DB,
+        "clamp_knee_db": _CLAMP_KNEE_DB, "mask_ease_oct": _MASK_EASE_OCT,
         "bass_clamp_hz": _BASS_CLAMP_HZ, "bass_clamp_db": _BASS_CLAMP_DB,
     }
 
@@ -346,7 +347,26 @@ def dump_match_reference() -> None:
     ramp = np.sin(np.linspace(0.0, 9.0, len(grid))) * 4.0
     write_case("mr_smooth", curve_params,
                {"input": ramp,
-                "output": _smooth_log_grid(ramp, _SMOOTH_SIGMA_OCT, _LOG_GRID_OCT_STEP)}, 1e-11)
+                "output": _smooth_log_grid(ramp, SMOOTH_OCT_DEFAULT, _LOG_GRID_OCT_STEP)}, 1e-11)
+
+    # A one-grid-point notch: it survives the finest smoothing and is gone at
+    # the coarsest, which is the whole point of the control.
+    notch = np.zeros(len(grid))
+    notch[len(grid) // 2] = -12.0
+    raw = [(float(f), float(g)) for f, g in zip(grid, notch)]
+    for name, smooth in (("fine", SMOOTH_OCT_MIN), ("coarse", SMOOTH_OCT_MAX)):
+        write_case(f"mr_realize_{name}",
+                   {"strength": 1.0, "max_db": 24.0, "smooth_oct": smooth,
+                    "low_hz": 0.0, "high_hz": 0.0, **curve_params},
+                   {"freqs": grid, "correction": notch,
+                    "output": realize_curve(raw, 1.0, 24.0, smooth)}, 1e-11)
+
+    flat = [(float(f), 6.0) for f in grid]
+    write_case("mr_realize_mask",
+               {"strength": 1.0, "max_db": 24.0, "smooth_oct": SMOOTH_OCT_DEFAULT,
+                "low_hz": 300.0, "high_hz": 8000.0, **curve_params},
+               {"freqs": grid, "correction": np.full(len(grid), 6.0),
+                "output": realize_curve(flat, 1.0, 24.0, None, 300.0, 8000.0)}, 1e-11)
 
     ref_db = np.linspace(0.0, -90.0, len(grid))
     write_case("mr_confidence_taper", curve_params,

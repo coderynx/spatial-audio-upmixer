@@ -89,4 +89,65 @@ mod curve {
         assert!((out[0] - 6.0).abs() < 1e-12);
         assert_eq!(out[1], 0.0);
     }
+
+    fn realize(smooth_oct: f64, low_hz: f64, high_hz: f64) -> RealizeParams {
+        RealizeParams {
+            strength: 1.0,
+            max_correction_db: 24.0,
+            clamp_knee_db: 2.0,
+            smooth_oct,
+            grid_step_oct: 1.0 / 24.0,
+            low_hz,
+            high_hz,
+            mask_ease_oct: 0.5,
+            bass_clamp_hz: 120.0,
+            bass_clamp_db: 2.0,
+        }
+    }
+
+    #[test]
+    fn range_mask_is_unity_inside_and_eases_to_zero_outside() {
+        let freqs = [75.0, 150.0, 212.13, 300.0, 3000.0, 8000.0, 11_313.7, 16_000.0];
+        let mask = range_mask(&freqs, 300.0, 8000.0, 0.5);
+        assert_eq!(mask[0], 0.0);
+        assert_eq!(mask[1], 0.0);
+        assert!((mask[2] - 0.0).abs() < 1e-9, "ease starts at unity gain 0");
+        assert!((mask[3] - 1.0).abs() < 1e-12);
+        assert!((mask[4] - 1.0).abs() < 1e-12);
+        assert!((mask[5] - 1.0).abs() < 1e-12);
+        assert!((mask[6] - 0.0).abs() < 1e-9, "ease ends at unity gain 0");
+        assert_eq!(mask[7], 0.0);
+        // Monotone through the ease, and smooth: a raised cosine is half-way
+        // at the mid-point of the ramp.
+        let quarter = range_mask(&[300.0 / 2f64.powf(0.25)], 300.0, 0.0, 0.5);
+        assert!((quarter[0] - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_masked_curve_is_flat_outside_the_range() {
+        let grid = log_grid(20_000.0, 20.0, 1.0 / 24.0);
+        let flat = vec![6.0; grid.len()];
+        let out = realize_curve(&grid, &flat, &realize(1.0 / 3.0, 300.0, 0.0));
+        for (f, g) in grid.iter().zip(out.iter()) {
+            if *f < 150.0 {
+                assert_eq!(*g, 0.0, "{f} Hz should be untouched");
+            }
+            if *f > 320.0 {
+                assert!((g - 6.0).abs() < 1e-9, "{f} Hz should carry the curve");
+            }
+        }
+    }
+
+    #[test]
+    fn smoothing_bandwidth_decides_whether_a_notch_survives() {
+        let grid = log_grid(20_000.0, 20.0, 1.0 / 24.0);
+        let mid = grid.len() / 2;
+        let mut notch = vec![0.0; grid.len()];
+        notch[mid] = -12.0;
+        let fine = realize_curve(&grid, &notch, &realize(1.0 / 12.0, 0.0, 0.0));
+        let coarse = realize_curve(&grid, &notch, &realize(1.0, 0.0, 0.0));
+        assert!(fine[mid] < -2.0, "1/12 oct erased the notch: {}", fine[mid]);
+        assert!(coarse[mid] > -0.3, "1 oct kept the notch: {}", coarse[mid]);
+        assert!(fine[mid] < coarse[mid] * 5.0);
+    }
 }

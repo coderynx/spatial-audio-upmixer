@@ -23,12 +23,25 @@ pub struct CurveParams {
     pub min_freq_hz: f64,
     pub max_freq_hz: f64,
     pub grid_step_oct: f64,
-    pub smooth_sigma_oct: f64,
     pub norm_low_hz: f64,
     pub norm_high_hz: f64,
     pub confidence_floor_db: f64,
     pub taper: TaperBand,
-    pub n_breakpoints: usize,
+}
+
+/// Everything turning a stored curve into FIR breakpoints needs.
+#[derive(Clone, Copy, Debug)]
+pub struct RealizeParams {
+    pub strength: f64,
+    pub max_correction_db: f64,
+    pub clamp_knee_db: f64,
+    pub smooth_oct: f64,
+    pub grid_step_oct: f64,
+    pub low_hz: f64,
+    pub high_hz: f64,
+    pub mask_ease_oct: f64,
+    pub bass_clamp_hz: f64,
+    pub bass_clamp_db: f64,
 }
 
 fn linspace(start: f64, stop: f64, n: usize) -> Vec<f64> {
@@ -141,8 +154,54 @@ pub fn soft_clamp(db: &[f64], limit_db: f64, knee_db: f64) -> Vec<f64> {
         .collect()
 }
 
-/// The strength- and clamp-independent correction curve, as
-/// `(frequency_hz, gain_db)` breakpoints.
+/// Raised-cosine easing to unity gain outside `[low_hz, high_hz]`, spanning
+/// `ease_oct` octaves either side. A bound at or below zero leaves that side
+/// unmasked.
+pub fn range_mask(freqs: &[f64], low_hz: f64, high_hz: f64, ease_oct: f64) -> Vec<f64> {
+    let ease = ease_oct.max(1e-9);
+    let ramp = |t: f64| 0.5 - 0.5 * (std::f64::consts::PI * t.clamp(0.0, 1.0)).cos();
+    freqs
+        .iter()
+        .map(|f| {
+            let oct = f.log2();
+            let mut gain = 1.0_f64;
+            if low_hz > 0.0 {
+                gain = gain.min(ramp((oct - (low_hz.log2() - ease)) / ease));
+            }
+            if high_hz > 0.0 {
+                gain = gain.min(ramp(((high_hz.log2() + ease) - oct) / ease));
+            }
+            gain
+        })
+        .collect()
+}
+
+/// Realize a stored correction curve at one set of user controls: strength
+/// scaling, smoothing, range masking, then the two clamps.
+///
+/// The stored curve is raw — smoothing happens here, so changing any control
+/// re-designs the FIR without re-running the spectral analysis.
+pub fn realize_curve(freqs: &[f64], correction_db: &[f64], p: &RealizeParams) -> Vec<f64> {
+    let scaled: Vec<f64> = correction_db.iter().map(|v| v * p.strength).collect();
+    let mut out = smooth_log_grid(&scaled, p.smooth_oct, p.grid_step_oct);
+    for (v, m) in out
+        .iter_mut()
+        .zip(range_mask(freqs, p.low_hz, p.high_hz, p.mask_ease_oct))
+    {
+        *v *= m;
+    }
+    out = soft_clamp(&out, p.max_correction_db, p.clamp_knee_db);
+    for (v, f) in out.iter_mut().zip(freqs.iter()) {
+        if *f < p.bass_clamp_hz {
+            *v = v.clamp(-p.bass_clamp_db, p.bass_clamp_db);
+        }
+    }
+    out
+}
+
+/// The control-independent correction curve, as `(frequency_hz, gain_db)`
+/// pairs on the log-frequency grid. Unsmoothed: [`realize_curve`] owns every
+/// user control, so none of them forces a re-analysis.
 ///
 /// `power_t` must already be level-matched to `power_r`; otherwise a residual
 /// broadband offset ends up baked into the per-band curve instead of staying
@@ -169,7 +228,6 @@ pub fn correction_curve(
         .zip(power_t_grid.iter())
         .map(|(r, t)| 10.0 * ((r + EPS) / (t + EPS)).log10())
         .collect();
-    correction_db = smooth_log_grid(&correction_db, p.smooth_sigma_oct, p.grid_step_oct);
 
     let norm: Vec<f64> = grid
         .iter()
@@ -188,13 +246,5 @@ pub fn correction_curve(
     correction_db = confidence_taper(&correction_db, &ref_power_db, p.confidence_floor_db);
     correction_db = band_edge_taper(&correction_db, &grid, &p.taper);
 
-    let bp_high = p.max_freq_hz.min(nyquist);
-    let bp_freqs: Vec<f64> = linspace(p.min_freq_hz.log10(), bp_high.log10(), p.n_breakpoints)
-        .iter()
-        .map(|v| 10.0_f64.powf(*v))
-        .collect();
-    bp_freqs
-        .iter()
-        .map(|f| (*f, interp(f.log2(), &log_grid_values, &correction_db)))
-        .collect()
+    grid.into_iter().zip(correction_db).collect()
 }

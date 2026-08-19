@@ -307,6 +307,7 @@ export type ServedEngineConstants = {
   itu_center_coeff: number;
   speaker_directions: Record<string, { azimuth_rad: number; elevation_rad: number }>;
   dyneq_profiles: Record<string, DynamicEqBand[]>;
+  reference_match_smooth: { default_oct: number; min_oct: number; max_oct: number };
   comp_profiles: Record<string, CompProfile>;
   bass_profiles: Record<string, BassProfile>;
   delivery_targets: Record<string, DeliveryTarget>;
@@ -356,6 +357,9 @@ export type EngineConstants = {
   /** Named dynamic-EQ band sets, resolved here so the preview runs the same
    * bands the export does — the pattern the compressor and bass presets use. */
   dyneqProfiles: Record<string, DynamicEqBand[]>;
+  /** Smoothing bandwidth the reference-match pot defaults to, and its range.
+   * Served so the panel never authors the numbers the realizer applies. */
+  referenceMatchSmooth: { defaultOct: number; minOct: number; maxOct: number };
   compProfiles: Record<CompProfileName, CompProfile>;
   bassProfiles: Record<BassProfileName, BassProfile>;
   deliveryTargets: Record<string, DeliveryTarget>;
@@ -432,6 +436,11 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     ituCenterCoeff: s.itu_center_coeff,
     speakerDirections: s.speaker_directions,
     dyneqProfiles: s.dyneq_profiles,
+    referenceMatchSmooth: {
+      defaultOct: s.reference_match_smooth.default_oct,
+      minOct: s.reference_match_smooth.min_oct,
+      maxOct: s.reference_match_smooth.max_oct,
+    },
     compProfiles: s.comp_profiles as Record<CompProfileName, CompProfile>,
     bassProfiles: s.bass_profiles as Record<BassProfileName, BassProfile>,
     deliveryTargets: s.delivery_targets,

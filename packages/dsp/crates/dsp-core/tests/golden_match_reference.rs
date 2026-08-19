@@ -16,7 +16,6 @@ fn curve_params(c: &Case) -> curve::CurveParams {
         min_freq_hz: c.param_f64("min_freq_hz"),
         max_freq_hz: c.param_f64("max_freq_hz"),
         grid_step_oct: c.param_f64("grid_step_oct"),
-        smooth_sigma_oct: c.param_f64("smooth_sigma_oct"),
         norm_low_hz: c.param_f64("norm_low_hz"),
         norm_high_hz: c.param_f64("norm_high_hz"),
         confidence_floor_db: c.param_f64("confidence_floor_db"),
@@ -26,7 +25,21 @@ fn curve_params(c: &Case) -> curve::CurveParams {
             high_start: high[0],
             high_end: high[1],
         },
-        n_breakpoints: c.param_usize("n_breakpoints"),
+    }
+}
+
+fn realize_params(c: &Case) -> curve::RealizeParams {
+    curve::RealizeParams {
+        strength: c.param_f64("strength"),
+        max_correction_db: c.param_f64("max_db"),
+        clamp_knee_db: c.param_f64("clamp_knee_db"),
+        smooth_oct: c.param_f64("smooth_oct"),
+        grid_step_oct: c.param_f64("grid_step_oct"),
+        low_hz: c.param_f64("low_hz"),
+        high_hz: c.param_f64("high_hz"),
+        mask_ease_oct: c.param_f64("mask_ease_oct"),
+        bass_clamp_hz: c.param_f64("bass_clamp_hz"),
+        bass_clamp_db: c.param_f64("bass_clamp_db"),
     }
 }
 
@@ -56,7 +69,8 @@ fn log_grid_matches_python() {
 fn smoothing_matches_python() {
     let c = Case::load("mr_smooth");
     let p = curve_params(&c);
-    let got = curve::smooth_log_grid(&c.array("input"), p.smooth_sigma_oct, p.grid_step_oct);
+    let got =
+        curve::smooth_log_grid(&c.array("input"), c.param_f64("smooth_sigma_oct"), p.grid_step_oct);
     c.assert_close(&got, &c.array("output"), "smoothed curve");
 }
 
@@ -88,6 +102,15 @@ fn soft_clamp_matches_python() {
         c.param_f64("clamp_knee_db"),
     );
     c.assert_close(&got, &c.array("output"), "clamped curve");
+}
+
+#[test]
+fn curve_realization_matches_python() {
+    for name in ["mr_realize_fine", "mr_realize_coarse", "mr_realize_mask"] {
+        let c = Case::load(name);
+        let got = curve::realize_curve(&c.array("freqs"), &c.array("correction"), &realize_params(&c));
+        c.assert_close(&got, &c.array("output"), name);
+    }
 }
 
 #[test]
@@ -131,7 +154,7 @@ fn correction_curve_matches_python() {
     let got = curve::correction_curve(&freqs_t, &power_t, &freqs_r, &power_r, sr, &curve_params(&c));
     let got_freqs: Vec<f64> = got.iter().map(|(f, _)| *f).collect();
     let got_gains: Vec<f64> = got.iter().map(|(_, g)| *g).collect();
-    c.assert_close(&got_freqs, &c.array("freqs"), "breakpoint frequencies");
-    c.assert_close(&got_gains, &c.array("gains_db"), "breakpoint gains");
+    c.assert_close(&got_freqs, &c.array("freqs"), "grid frequencies");
+    c.assert_close(&got_gains, &c.array("gains_db"), "grid gains");
 }
 

@@ -28,7 +28,7 @@ import { AssetsTab } from "./assets/AssetsTab";
 import { KeyCommandsDialog } from "./KeyCommandsDialog";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import { StemChannelStrip } from "./ChannelStrip";
-import { MasterBypassButton } from "./MasterBypassButton";
+import { MasterBypassButton, MatchBypassButton } from "./MasterBypassButton";
 import { OutputModeSelect } from "./OutputModeSelect";
 import { monitorMastering } from "./masterPreview";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
@@ -129,6 +129,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     if (stereoLayout && outputMode !== "native") setOutputMode("native");
   }, [stereoLayout, outputMode, setOutputMode]);
   const masteringBypassed = viewState.masteringBypassed;
+  const matchBypassed = viewState.matchBypassed;
   const pane = usePaneLayout(projectId);
   const { paneView, previewColumn, changePane } = pane;
   const columns = useColumnLayout(projectId);
@@ -157,6 +158,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         spectrum: liveMatch?.spectrum,
         rms: liveMatch?.rms,
         max_db: liveMatch?.max_db,
+        smooth_octaves: liveMatch?.smooth_octaves,
+        low_hz: liveMatch?.low_hz,
+        high_hz: liveMatch?.high_hz,
       },
     };
   }, [trackManifest?.mastering, project?.reference_match, selectedLayout]);
@@ -165,10 +169,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     [configuration],
   );
   const monitoredMastering = React.useMemo(
-    () => monitorMastering(previewMastering, masteringBypassed),
-    [previewMastering, masteringBypassed],
+    () => monitorMastering(previewMastering, masteringBypassed, matchBypassed),
+    [previewMastering, masteringBypassed, matchBypassed],
   );
-  const preview = useStemPreview(previewStems, {}, trackManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants, trackManifest?.routing, masteringBypassed);
+  const preview = useStemPreview(previewStems, {}, trackManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants, trackManifest?.routing, masteringBypassed, matchBypassed);
   const previousRoutingLayoutRef = React.useRef(routingLayout);
   React.useEffect(() => { previousRoutingLayoutRef.current = routingLayout; }, [projectId]);
   React.useEffect(() => {
@@ -356,6 +360,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         <MasterBypassButton
           bypassed={masteringBypassed}
           onToggle={() => patchViewState({ masteringBypassed: !masteringBypassed })}
+        />
+        <MatchBypassButton
+          bypassed={matchBypassed}
+          disabled={masteringBypassed || !project?.reference_match?.[selectedLayout]}
+          onToggle={() => patchViewState({ matchBypassed: !matchBypassed })}
         />
         <OutputModeSelect
           value={outputMode}

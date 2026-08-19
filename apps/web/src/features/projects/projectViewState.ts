@@ -10,6 +10,7 @@ export type ProjectViewState = {
   transauralProfile: TransauralProfile;
   masterVolume: number;
   masteringBypassed: boolean;
+  matchBypassed: boolean;
   hazeIntensity: number;
   elevationIntensity: number;
 };
@@ -21,6 +22,7 @@ const DEFAULT_VIEW_STATE: ProjectViewState = {
   transauralProfile: "stereo",
   masterVolume: 1,
   masteringBypassed: false,
+  matchBypassed: false,
   hazeIntensity: 0.5,
   elevationIntensity: 0.5,
 };
@@ -53,6 +55,7 @@ function normalizeViewState(raw: Record<string, unknown> | undefined): ProjectVi
     transauralProfile: pick(raw?.transaural_profile, TRANSAURAL_PROFILES, DEFAULT_VIEW_STATE.transauralProfile),
     masterVolume: clamp01(raw?.master_volume, DEFAULT_VIEW_STATE.masterVolume),
     masteringBypassed: raw?.mastering_bypassed === true,
+    matchBypassed: raw?.match_bypassed === true,
     hazeIntensity: clamp01(raw?.haze_intensity, DEFAULT_VIEW_STATE.hazeIntensity),
     elevationIntensity: clamp01(raw?.elevation_intensity, DEFAULT_VIEW_STATE.elevationIntensity),
   };
@@ -66,6 +69,7 @@ function toPayload(state: ProjectViewState): Record<string, unknown> {
     transaural_profile: state.transauralProfile,
     master_volume: state.masterVolume,
     mastering_bypassed: state.masteringBypassed,
+    match_bypassed: state.matchBypassed,
     haze_intensity: state.hazeIntensity,
     elevation_intensity: state.elevationIntensity,
   };

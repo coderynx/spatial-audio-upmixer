@@ -372,10 +372,12 @@ class ProjectStemStorage:
 
     def reference_match_fir_wav_bytes(
         self, project_id: str, layout: str, strength: float, max_correction_db: float,
+        smooth_octaves: float | None = None,
+        low_hz: float | None = None,
+        high_hz: float | None = None,
     ) -> bytes | None:
-        """Render one layout's reference-match FIR for a ``(strength,
-        max_correction_db)`` pair from the persisted curve, as WAV bytes
-        ready to serve.
+        """Render one layout's reference-match FIR for one set of user
+        controls from the persisted curve, as WAV bytes ready to serve.
 
         Cheap: ``build_curve_fir`` only scales/clamps the persisted curve and
         runs ``firwin2``/``minimum_phase`` (memoized) — no spectral analysis,
@@ -391,6 +393,7 @@ class ProjectStemStorage:
         curve = [(float(f), float(g)) for f, g in meta["curve"]]
         fir = build_curve_fir(
             curve, meta["sample_rate"], meta.get("n_taps", 1023), strength, max_correction_db,
+            smooth_octaves, low_hz, high_hz,
         )
         buffer = io.BytesIO()
         sf.write(buffer, fir.astype(np.float32), meta["sample_rate"], format="WAV", subtype="FLOAT")
