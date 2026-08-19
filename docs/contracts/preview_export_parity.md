@@ -129,6 +129,16 @@ neither is obvious from the code:
   crosstalk cancellation depend on. `mastering::bass`'s
   `unification_commutes_with_a_shared_upstream_gain` pins this.
 
+The limiter is the one mastering stage that does *not* apply a single curve to
+the whole bed: the mains share one, LFE is capped on its own
+(`docs/standards/loudness_dsp_bs1770.md` § "LFE and true-peak"). That costs
+the commutation argument nothing, because the limiter runs *last* — after the
+LF sum has already been distributed — so no stage downstream of it depends on
+the bed still summing the way bass management left it. A `split`-mode LFE now
+diverges from the mains' share of the LF bus inside gain-reduction windows,
+which is the intended behaviour: it is the coupling that was audible, not the
+divergence.
+
 The one thing that can break identity is **build provenance**: the browser
 loads a committed `apps/web/public/wasm/upmixer_dsp.wasm`, not a wasm built on
 install, so it can fall behind the installed `upmixer_dsp` wheel. Both bindings
@@ -394,3 +404,4 @@ numbers.
 | D38 | At depth exactly 1.0 a saturating onset landed on gain 0.0 — the band annihilated, not ducked. | Fixed — `DUCK_MIN_GAIN` floors at −20 dB |
 | D39 | The duck's detector window sat inside ordinary crest variation, so sustained material ducked as hard as the onsets the stage exists to separate. | Fixed — threshold 2.5, span to 4.0 |
 | D40 | Every duck fixture was too weak to reach the detector, so D39 was invisible to 188 passing tests. | Fixed — `hit_train_over_bed` and siblings rebuilt |
+| D41 | The look-ahead limiter linked LFE into the mains' gain curve, so an LFE-only peak ducked the whole bed one-for-one. | Fixed — separate LFE curve, offline and streaming (mastering phase 2) |

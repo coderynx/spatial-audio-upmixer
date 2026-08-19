@@ -247,6 +247,30 @@ through inter-channel masking, never directly — but it does move true peak. Th
 bus's filter and level calibration are specified in
 `docs/standards/spatial_layouts_bs775_bs2051.md` § "LFE lowpass".
 
+**Limiting LFE is not the same question as scanning it.** Scanning is
+per-channel by the standard; what a limiter *couples* is a delivery choice the
+standard does not make. This project derives one shared gain curve from the
+mains' envelopes — that is what preserves imaging, since an identical
+time-varying gain on every channel leaves inter-channel phase and level ratios
+alone — and gives LFE its own curve from its own envelope. Both are capped at
+the same ceiling, so every channel is still TP-compliant; only the coupling
+between them is gone.
+
+Coupling LFE into the shared curve makes an LFE-only peak duck the entire bed
+one-for-one: with a `cinema` bass send putting 50% of the low bus into LFE, a
++6 dBFS LFE swell took 7.1 dB off the mains for 21% of the programme
+(`docs/plans/mastering/phase0_report.md` § "Audit 2"). Concentrated in the
+loud fifth of the programme and synchronised to the bass, that is audible
+pumping while barely moving an RMS meter. Current immersive limiter practice
+agrees: FLUX Elixir exposes channel-link as a control, Pulsar P21 Atlas shares
+gain reduction across the bed with LFE excluded, and McDSP's surround limiters
+group channels rather than linking all of them.
+
+Implementation: `packages/dsp/crates/dsp-core/src/mastering/limiter.rs`
+(`lookahead_limit`, and `stream/master.rs::StreamingLimiter` for the preview);
+the deepest reduction on each curve is reported separately as
+`MasteringResult.limiter_gr_peak_db` and `limiter_gr_lfe_peak_db`.
+
 ---
 
 ## Validation Checklist
@@ -260,6 +284,7 @@ bus's filter and level calibration are specified in
 - [ ] Surround channel weight = 1.41 (not 1.0, not sqrt(2) rounded to 1.414 — use 1.41 per spec Table 3)
 - [ ] LFE weight = 0 in LUFS sum
 - [ ] LFE included in true-peak scan
+- [ ] LFE capped on its own limiter curve, outside the mains' shared gain link
 - [ ] True-peak: at least 4× oversampling at ≤48 kHz, at least 2× at 96 kHz
       (this project runs 4× at every rate — see "What this project runs")
 - [ ] True-peak result in dBTP (not dBFS)
