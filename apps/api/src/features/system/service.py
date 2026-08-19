@@ -43,7 +43,11 @@ def engine_constants() -> dict[str, Any]:
         SUB_CUTOFF_HZ,
     )
     from upmixer.mastering.compressor import COMP_PROFILES
-    from upmixer.mastering.delivery import DELIVERY_TARGETS
+    from upmixer.mastering.delivery import (
+        DEFAULT_MAX_TP_DBTP,
+        DEFAULT_TARGET_LKFS,
+        DELIVERY_TARGETS,
+    )
     from upmixer.mastering.limiter import _SAFETY_MARGIN_DB
     from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
     from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
@@ -87,6 +91,12 @@ def engine_constants() -> dict[str, Any]:
         "comp_profiles": COMP_PROFILES,
         "bass_profiles": BASS_PROFILES,
         "delivery_targets": DELIVERY_TARGETS,
+        # What an unset target/ceiling resolves to with no preset named.
+        "delivery_default": {
+            "target_lkfs": DEFAULT_TARGET_LKFS,
+            "max_tp_dbtp": DEFAULT_MAX_TP_DBTP,
+            "tolerance_lu": None,
+        },
         "bass_sub_cutoff_hz": SUB_CUTOFF_HZ,
         "bass_mid_cutoff_hz": MID_CUTOFF_HZ,
         "bass_excite_blend": EXCITE_BLEND,

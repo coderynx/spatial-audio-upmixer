@@ -229,6 +229,19 @@ preview measurement path.
   stereo downmix's. They build the programme a specification names rather
   than a monitoring choice, so both sides read `FoldTo51`'s own constants.
   Recorded in the parity contract §1.
+- **The streaming fold test landed in `unit_stream_engine.rs`, not
+  `stream_equivalence.rs`** as the plan named. That file is where the other
+  `MeasurementPass` tests live, and the two properties it asked for are both
+  covered: block-size independence by `unit_spatial.rs`'s
+  `folding_block_by_block_matches_folding_the_whole_programme`, and
+  sliced-vs-blocking agreement by the engine test above.
+- **One flaky failure seen once**, in
+  `test_web_imports.py::test_mastering_reference_upload_runs_and_rejects_client_path`
+  — a background-worker upload test, unrelated to anything this phase touches.
+  It passed alone, and the full suite has since run clean three times in a row
+  plus the API suite four times. Recorded rather than dismissed: if it recurs,
+  it is a pre-existing timing flake in that test, not a delivery-target
+  regression.
 - Knowledge base (`~/Projects/upmixer-knowledge/techniques/mastering_restoration.md`)
   was consulted. It carries no delivery-target or measurement-programme
   guidance and nothing in it conflicts with the above.

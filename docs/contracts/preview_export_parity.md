@@ -202,6 +202,13 @@ overrides, which is how a preset gets silently defeated the next time the
 manifest is normalized and saved. **Change one resolver and change the
 other.**
 
+What an unset target and ceiling fall back to with no preset named is served
+too, as `constants.delivery_default`, so neither number is authored in the
+web. The one literal left is `MasteringSection`'s `PRE_BOOTSTRAP_DELIVERY`,
+which the loudness pots display before the configuration request lands — the
+same role the bass pots' literal defaults play, and it reaches neither the
+preview nor the export.
+
 Constants that live in Rust are the ones that were already duplicated and are
 structural rather than tunable: the BS.1770 true-peak FIR, the ACN/N3D
 normalization, the filter-design internals, and the surround/height

@@ -330,6 +330,7 @@ export class PreviewAudioEngine {
     const delivery = resolveDeliveryTarget(
       this.mastering?.loudness,
       this.constants.deliveryTargets,
+      this.constants.deliveryDefault,
     );
     const target = delivery.target_lkfs;
     const normalize = this.mastering?.loudness?.normalize ?? true;

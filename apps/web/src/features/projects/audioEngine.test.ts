@@ -1,21 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import { withReferenceMatchParams } from "./audioEngine";
-import { DEFAULT_DELIVERY_TARGET, resolveDeliveryTarget } from "./masteringProfiles";
+import { resolveDeliveryTarget } from "./masteringProfiles";
 import { TEST_ENGINE_CONSTANTS } from "./engineConstants.fixture";
 
 const TARGETS = TEST_ENGINE_CONSTANTS.deliveryTargets;
+const FALLBACK = TEST_ENGINE_CONSTANTS.deliveryDefault;
 
 describe("resolveDeliveryTarget", () => {
-  it("falls back to the Atmos Music pair with no preset and no override", () => {
-    expect(resolveDeliveryTarget(undefined, TARGETS)).toEqual(DEFAULT_DELIVERY_TARGET);
-    expect(resolveDeliveryTarget({ target_preset: null }, TARGETS)).toEqual(
-      DEFAULT_DELIVERY_TARGET,
-    );
+  it("uses the served default with no preset named and no override set", () => {
+    expect(resolveDeliveryTarget(undefined, TARGETS, FALLBACK)).toEqual(FALLBACK);
+    expect(resolveDeliveryTarget({ target_preset: null }, TARGETS, FALLBACK)).toEqual(FALLBACK);
   });
 
   it("takes both numbers and the tolerance from a named target", () => {
-    expect(resolveDeliveryTarget({ target_preset: "ebu-r128" }, TARGETS)).toEqual({
+    expect(resolveDeliveryTarget({ target_preset: "ebu-r128" }, TARGETS, FALLBACK)).toEqual({
       target_lkfs: -23,
       max_tp_dbtp: -1,
       tolerance_lu: 0.5,
@@ -26,6 +25,7 @@ describe("resolveDeliveryTarget", () => {
     const resolved = resolveDeliveryTarget(
       { target_preset: "ebu-r128", target: -20 },
       TARGETS,
+      FALLBACK,
     );
     expect(resolved.target_lkfs).toBe(-20);
     expect(resolved.max_tp_dbtp).toBe(-1);
@@ -33,8 +33,8 @@ describe("resolveDeliveryTarget", () => {
   });
 
   it("falls back rather than guessing when the preset name is unknown", () => {
-    expect(resolveDeliveryTarget({ target_preset: "atmos" }, TARGETS)).toEqual(
-      DEFAULT_DELIVERY_TARGET,
+    expect(resolveDeliveryTarget({ target_preset: "atmos" }, TARGETS, FALLBACK)).toEqual(
+      FALLBACK,
     );
   });
 });

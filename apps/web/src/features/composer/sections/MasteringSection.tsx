@@ -129,6 +129,11 @@ function FieldGroup({ title, children }: { title: string; children: React.ReactN
   );
 }
 
+/** Shown by the loudness pots only until `GET /api/v1/configuration` lands,
+ * the way the bass pots' literal defaults do. The real numbers are served
+ * (`delivery_default`); this never reaches the preview or the export. */
+const PRE_BOOTSTRAP_DELIVERY = { target_lkfs: -18, max_tp_dbtp: -1, tolerance_lu: null };
+
 function titleCase(value: string) {
   return value
     .split("-")
@@ -153,8 +158,14 @@ export function MasteringSection({
   const hasReference = masteringReference !== null;
   const { eq, compressor, bass, loudness } = manifest.mastering;
   // What the two loudness controls show while unset — the named target's own
-  // numbers, resolved the same way the export resolves them.
-  const delivery = resolveDeliveryTarget(loudness, configuration?.constants?.delivery_targets);
+  // numbers, resolved the same way the export resolves them. The placeholder
+  // only stands in before the constants land, like the bass pots' defaults;
+  // nothing on the audio path reads it.
+  const delivery = resolveDeliveryTarget(
+    loudness,
+    configuration?.constants?.delivery_targets,
+    configuration?.constants?.delivery_default ?? PRE_BOOTSTRAP_DELIVERY,
+  );
   // Every bass override is nullable, so an unset control has to show what the
   // profile does. A native <select> given a value no option carries displays
   // its first option instead, which silently claimed "front"/"off" while the

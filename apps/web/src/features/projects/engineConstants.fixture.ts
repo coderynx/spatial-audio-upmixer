@@ -66,6 +66,7 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
     deep: { sub_gain_db: 1.0, mid_gain_db: 0.5, unify_hz: 90.0, spread: "bed", punch: 0.25, excite: true, lfe_mode: "add", lfe_send: 0.3, lfe_gain_db: 1.0, decorrelate: 0.0 },
     cinema: { sub_gain_db: 1.0, mid_gain_db: 0.0, unify_hz: 80.0, spread: "bed", punch: 0.0, excite: false, lfe_mode: "split", lfe_send: 0.5, lfe_gain_db: 0.0, decorrelate: 0.0 },
   },
+  delivery_default: { target_lkfs: -18.0, max_tp_dbtp: -1.0, tolerance_lu: null },
   delivery_targets: {
     "atmos-music": { target_lkfs: -18.0, max_tp_dbtp: -1.0, tolerance_lu: null },
     "netflix-atmos": { target_lkfs: -27.0, max_tp_dbtp: -2.0, tolerance_lu: 2.0 },
