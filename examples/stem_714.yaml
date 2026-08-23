@@ -20,9 +20,6 @@ engine:
 mixing:
   channel_layout: 7.1.4
   stem_source_anchor_strength: 0.75
-  spatial:
-    profile: detailed
-    intensity: 0.8
   # Stem rebalance: bring vocals forward, tighten bass
   # stem_rebalance:
   #   Vocals: +1.0

@@ -85,8 +85,7 @@ Open `http://localhost:5173`. API documentation is available at `http://localhos
 
 - Upmix mono, stereo, 5.0, 5.1, 7.1, 5.1.2, 5.1.4, and 7.1.2 sources.
 - Produce 5.1, 7.1, 5.1.2, 5.1.4, 7.1.2, or 7.1.4 channel beds.
-- Choose a fast coherence-based STFT pipeline or an instrument-aware stem pipeline.
-- Adapt width, ambience, transients, and height routing with automatic or explicit spatial profiles.
+- Place each separated stem in the bed with routing presets, explicit per-stem sends, and height voicing.
 - Preserve the intent of multichannel sources through zone-aware routing and optional source anchoring.
 - Apply reference matching, spectral EQ, bus compression, bass control, BS.1770 loudness normalization, and true-peak
   control through one mastering chain.
@@ -108,7 +107,7 @@ Install the CLI (pulls in the `upmixer` library automatically):
 python3 -m pip install upmixer-cli
 ```
 
-Or install just the library, for realtime processing without a CLI:
+Or install just the library, without a CLI:
 
 ```bash
 python3 -m pip install upmixer
@@ -164,15 +163,11 @@ upmixer --manifest examples/atmos_music.yaml
 Existing outputs are protected by default. Use `--overwrite` only when replacement is intentional, or `--resume` with
 saved run state to skip outputs whose input and settings still match.
 
-## Processing Modes
+## Processing Mode
 
 | Mode | Best for | How it works | Additional dependency |
 |---|---|---|---|
-| `realtime` | Fast previews, general files, and parallel batches | Coherence analysis separates correlated direct sound from diffuse ambience, then derives center, surround, back, height, and LFE content | None |
 | `stem` | Music, complex mixes, and deliberate instrument placement | Separates requested sources, analyzes each stem, routes it spatially, blends native source zones when requested, and masters the result | `separation-cpu`/`separation-gpu` extra |
-
-Realtime mode treats mono as a centered stereo pair. For multichannel input it preserves existing channels and derives
-only the channels needed by the target layout.
 
 Stem mode separates every available stereo zone—front, surround, back, and height—rather than collapsing a
 multichannel source to stereo. Center and LFE material are retained as passthrough channels where applicable.
@@ -395,7 +390,6 @@ CLI flags > per-asset manifest values > global manifest values > UpmixConfig def
 
 | Manifest | Demonstrates |
 |---|---|
-| [`stereo_to_51.yaml`](examples/stereo_to_51.yaml) | Fast stereo-to-5.1 realtime processing |
 | [`stem_714.yaml`](examples/stem_714.yaml) | Full 7.1.4 stem workflow, source anchoring, and optional stem shaping |
 | [`stem_hierarchical.yaml`](examples/stem_hierarchical.yaml) | Automatic crowd, primary, drum, and backing-vocal stages |
 | [`atmos_music.yaml`](examples/atmos_music.yaml) | YAML ADM-BWF music-authoring bed |
@@ -405,7 +399,6 @@ CLI flags > per-asset manifest values > global manifest values > UpmixConfig def
 | [`batch_album_stem.yaml`](examples/batch_album_stem.yaml) | Explicit album jobs with shared stem settings |
 | [`batch_dir_stem.yaml`](examples/batch_dir_stem.yaml) | Directory expansion and per-directory overrides |
 | [`batch_explicit_jobs.yaml`](examples/batch_explicit_jobs.yaml) | Per-track deep-merged overrides |
-| [`batch_files_realtime.yaml`](examples/batch_files_realtime.yaml) | Realtime batch from unrelated source paths |
 
 ## Batch Processing
 
@@ -463,20 +456,6 @@ platform and workflow; validate metadata, loudness, channel order, and downstrea
 
 ## Python API
 
-Realtime/file pipeline:
-
-```python
-from upmixer import UpmixConfig, UpmixPipeline
-
-config = UpmixConfig(
-    output_format="7.1.4",
-    spatial_profile="auto",
-    loudness_target_lkfs=-18.0,
-)
-result = UpmixPipeline(config).process_file("stereo.wav", "spatial.wav")
-print(result.to_json())
-```
-
 Stem pipeline with automatic model planning and deterministic cleanup:
 
 ```python
@@ -495,7 +474,7 @@ with StemUpmixPipeline(config) as pipeline:
 print(result.stems)
 ```
 
-Both `process_file` methods accept `input_format_override` and a `progress_callback(message, fraction)` callable.
+`process_file` accepts `input_format_override` and a `progress_callback(message, fraction)` callable.
 
 The primary public imports are:
 
@@ -503,9 +482,7 @@ The primary public imports are:
 from upmixer import (
     FORMAT_MAP,
     INPUT_FORMAT_MAP,
-    StreamingProcessor,
     UpmixConfig,
-    UpmixPipeline,
     UpmixResult,
 )
 ```

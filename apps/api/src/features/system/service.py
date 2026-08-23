@@ -172,8 +172,6 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
             ],
             "output_subtypes": list(WAV_SUBTYPES),
             "sample_rates": [44100, 48000, 88200, 96000, 192000],
-            "modes": ["realtime", "stem"],
-            "spatial_profiles": ["auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"],
             "binaural_profiles": ["studio", "listening", "flat"],
             "binaural_beds": list(BINAURAL_BED_FORMATS),
             "transaural_profiles": list(CROSSTALK_PROFILES),

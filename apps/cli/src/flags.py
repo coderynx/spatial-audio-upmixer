@@ -27,10 +27,6 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.height_gain = args.height_gain
     if args.lfe_gain is not None:
         config.lfe_gain = args.lfe_gain
-    if args.center_extraction_gain is not None:
-        config.center_extraction_gain = args.center_extraction_gain
-    if args.center_attenuation is not None:
-        config.center_attenuation = args.center_attenuation
     if args.lfe_cutoff is not None:
         config.lfe_cutoff_hz = args.lfe_cutoff
     if args.height_low_rolloff_gain is not None:
@@ -44,20 +40,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.hop_size = args.fft_size // 4
     if args.no_auto_fft:
         config.auto_fft_size = False
-    if args.block_size is not None:
-        config.block_size = args.block_size
     if args.no_normalize:
         config.normalize_output = False
-    if args.content_mix_strength is not None:
-        config.content_mix_strength = max(0.0, min(1.0, args.content_mix_strength))
-    if args.content_hf_analysis_hz is not None:
-        config.content_hf_analysis_hz = args.content_hf_analysis_hz
-    if args.spatial_profile is not None:
-        config.spatial_profile = args.spatial_profile
-    if args.spatial_intensity is not None:
-        config.spatial_intensity = max(0.0, min(1.0, args.spatial_intensity))
-    if args.no_spatial_preanalysis:
-        config.spatial_preanalysis = False
     if args.binaural_profile is not None:
         config.binaural_profile = args.binaural_profile
     if args.transaural_profile is not None:
@@ -251,12 +235,10 @@ def _parse_key_value_pairs(s: str, value_type: type) -> dict:
     return result
 
 
-def _apply_resource_limits(cpu_priority: str, mode: str) -> None:
-    """Apply mode-aware scheduling and numeric-library thread limits."""
+def _apply_resource_limits(cpu_priority: str) -> None:
+    """Apply scheduling and numeric-library thread limits."""
     import os
-    effective = "normal" if cpu_priority == "auto" and mode == "stem" else cpu_priority
-    if effective == "auto":
-        effective = "low"
+    effective = "normal" if cpu_priority == "auto" else cpu_priority
     if effective == "low":
         try:
             os.nice(10)

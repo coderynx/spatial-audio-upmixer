@@ -28,7 +28,7 @@ def ensure_stem_separation_available(
 ) -> None:
     """Reject runnable stem manifests when optional inference support is absent."""
     engine = manifest.get("engine", {})
-    if isinstance(engine, dict) and engine.get("mode", "realtime") == "stem":
+    if isinstance(engine, dict) and engine.get("mode", "stem") == "stem":
         if not capability["available"]:
             raise ValueError(str(capability["install_message"]))
 

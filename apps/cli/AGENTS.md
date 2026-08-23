@@ -16,7 +16,7 @@ Parameter precedence: CLI flags > manifest values > profile defaults >
 
 ## Usage examples
 
-- `uv run upmixer input.wav output.wav --format 7.1.4 --mode realtime`
+- `uv run upmixer input.wav output.wav --format 7.1.4`
   exercises the installed CLI locally.
 - `uv run upmixer --manifest examples/atmos_music.yaml`, `uv run upmixer
   --profile-info`, and `uv run upmixer --manifest-keys` inspect common CLI

@@ -1,7 +1,6 @@
 """Runs pipeline processing in an isolated child process.
 
-Stem separation (in-core PyTorch inference) and mastering both run
-inside :meth:`~upmixer.pipeline.UpmixPipeline.process_file` /
+Stem separation (in-core PyTorch inference) and mastering both run inside
 :meth:`~upmixer.separation.stem_pipeline.StemUpmixPipeline.process_file`.
 Native crashes (OS OOM-kill, CUDA/MPS driver crashes, segfaults) in that code
 are not catchable Python exceptions, so running it in-process would take
@@ -17,7 +16,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 from upmixer.config import UpmixConfig
-from upmixer.pipeline import UpmixPipeline
 from upmixer.separation.stem_pipeline import StemUpmixPipeline
 
 _CTX = multiprocessing.get_context("spawn")
@@ -28,7 +26,7 @@ class WorkItem:
     """One track's processing work, picklable across the process boundary."""
 
     track_id: str
-    mode: Literal["stem", "stem_prepare", "realtime"]
+    mode: Literal["stem", "stem_prepare"]
     input_path: str
     output_path: str
     config: UpmixConfig
@@ -60,25 +58,17 @@ def _run_work_items(items: list[WorkItem], progress_queue, cancel_event) -> None
                 progress_queue.put(("progress", tid, message, fraction))
 
             try:
-                if item.mode in ("stem", "stem_prepare"):
-                    if stem_pipeline is None:
-                        stem_pipeline = StemUpmixPipeline(config=item.config)
-                    stem_pipeline.config = item.config
-                    if item.mode == "stem_prepare":
-                        result = stem_pipeline.prepare_stems(
-                            item.input_path,
-                            input_format_override=item.input_format_override,
-                            progress_callback=_callback,
-                        )
-                    else:
-                        result = stem_pipeline.process_file(
-                            item.input_path,
-                            item.output_path,
-                            input_format_override=item.input_format_override,
-                            progress_callback=_callback,
-                        )
+                if stem_pipeline is None:
+                    stem_pipeline = StemUpmixPipeline(config=item.config)
+                stem_pipeline.config = item.config
+                if item.mode == "stem_prepare":
+                    result = stem_pipeline.prepare_stems(
+                        item.input_path,
+                        input_format_override=item.input_format_override,
+                        progress_callback=_callback,
+                    )
                 else:
-                    result = UpmixPipeline(item.config).process_file(
+                    result = stem_pipeline.process_file(
                         item.input_path,
                         item.output_path,
                         input_format_override=item.input_format_override,

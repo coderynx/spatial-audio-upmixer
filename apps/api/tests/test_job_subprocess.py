@@ -68,7 +68,6 @@ def _item(track_id: str, input_path: str, mode: str = "stem") -> WorkItem:
 
 def test_run_work_items_emits_progress_and_done(monkeypatch):
     monkeypatch.setattr(job_subprocess, "StemUpmixPipeline", _FakePipeline)
-    monkeypatch.setattr(job_subprocess, "UpmixPipeline", _FakePipeline)
     _FakePipeline.calls = []
 
     items = [_item("t1", "a.wav"), _item("t2", "b.wav")]
@@ -83,7 +82,6 @@ def test_run_work_items_emits_progress_and_done(monkeypatch):
 
 def test_run_work_items_reports_track_error(monkeypatch):
     monkeypatch.setattr(job_subprocess, "StemUpmixPipeline", _FakePipeline)
-    monkeypatch.setattr(job_subprocess, "UpmixPipeline", _FakePipeline)
 
     items = [_item("t1", "boom.wav")]
     q = _FakeQueue()

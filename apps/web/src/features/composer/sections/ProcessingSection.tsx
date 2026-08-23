@@ -75,23 +75,6 @@ export function ProcessingSection({
           label: String(value),
         }))}
       />
-      <SelectField
-        label="Block size"
-        value={String(manifest.processing.block_size)}
-        onChange={(block_size) =>
-          setManifest({
-            ...manifest,
-            processing: {
-              ...manifest.processing,
-              block_size: Number(block_size),
-            },
-          })
-        }
-        options={[1024, 2048, 4096, 8192, 16384].map((value) => ({
-          value: String(value),
-          label: String(value),
-        }))}
-      />
     </div>
   );
 }

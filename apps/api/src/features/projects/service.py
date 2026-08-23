@@ -191,7 +191,6 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
     mixing = normalized.setdefault("mixing", {})
     if isinstance(mixing.get("stem_solo"), str):
         mixing["stem_solo"] = [mixing["stem_solo"]]
-    mixing["spatial"] = {"profile": "balanced", "intensity": 0.0, "preanalyze": False}
     mixing["stem_source_anchor_strength"] = mixing.get("stem_source_anchor_strength", 0.0)
     format_block = normalized.setdefault("format", {})
     format_block.setdefault("type", "multichannel")
@@ -201,8 +200,7 @@ def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, An
     transaural = format_block.setdefault("transaural", {})
     transaural.setdefault("profile", "stereo")
     normalize_layout_mix(normalized, str(mixing.setdefault("channel_layout", "7.1.4")), stems)
-    routing = normalized.setdefault("routing", {})
-    routing["content_mix_strength"] = 0.0
+    normalized.setdefault("routing", {})
     normalized.setdefault("processing", {})["preview"] = False
     return normalized, stems
 

@@ -12,7 +12,7 @@ import upmixer.mastering.compressor  # noqa: F401
 # Import domain modules so their register_block_keys calls execute before tests.
 import upmixer.mastering.eq  # noqa: F401
 import upmixer.mastering.match_reference  # noqa: F401
-import upmixer.routing.channel_router  # noqa: F401
+import upmixer.separation.stem_router  # noqa: F401
 from upmixer.manifest import (
     ManifestError,
     load_manifest,
@@ -268,11 +268,11 @@ class TestDirAssetExpansion:
         (tmp_path / "song.flac").write_bytes(b"")
         data = {
             "version": "1.0",
-            "engine": {"mode": "realtime"},
+            "engine": {"mode": "stem"},
             "assets": [{"input_dir": str(tmp_path), "output_dir": "/out/"}],
         }
         _, jobs = parse_manifest(data)
-        assert jobs[0].engine["mode"] == "realtime"
+        assert jobs[0].engine["mode"] == "stem"
 
     def test_config_dicts_are_independent_per_file(self, tmp_path):
         (tmp_path / "a.flac").write_bytes(b"")

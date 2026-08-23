@@ -38,7 +38,7 @@ def test_album_import_preview_and_paused_job(web_client):
 
     manifest = {
         "version": "1.0.0",
-        "engine": {"mode": "realtime"},
+        "engine": {"mode": "stem"},
         "mixing": {"channel_layout": "5.1"},
         "format": {"type": "wav", "subtype": "PCM_24", "sample_rate": 48000},
     }
@@ -59,7 +59,7 @@ def test_album_import_preview_and_paused_job(web_client):
     assert all(track["asset"]["audio_url"] for track in job["tracks"])
 
 
-def test_mastering_reference_upload_runs_and_rejects_client_path(web_client):
+def test_mastering_reference_upload_runs_and_rejects_client_path(web_client, in_process_jobs):
     imported = web_client.post(
         "/api/v1/imports",
         files=[("files", ("tone.wav", _wav_bytes(), "audio/wav"))],
@@ -93,7 +93,7 @@ def test_mastering_reference_upload_runs_and_rejects_client_path(web_client):
 
     manifest = {
         "version": "1.0.0",
-        "engine": {"mode": "realtime"},
+        "engine": {"mode": "stem"},
         "mixing": {"channel_layout": "5.1"},
         "mastering": {
             "loudness": {"normalize": False},

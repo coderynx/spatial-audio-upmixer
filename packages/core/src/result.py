@@ -15,8 +15,7 @@ from upmixer.mastering.foldqc import FoldQC
 class UpmixResult:
     """Metadata produced by a completed upmix operation.
 
-    Returned by :meth:`UpmixPipeline.process_file` and
-    :meth:`StemUpmixPipeline.process_file`.  All fields are safe to
+    Returned by :meth:`StemUpmixPipeline.process_file`.  All fields are safe to
     serialise to JSON via :meth:`to_json`.
 
     Attributes:
@@ -29,7 +28,7 @@ class UpmixResult:
         duration_seconds: Duration of the audio in seconds.
         n_channels_in: Number of input channels.
         n_channels_out: Number of output channels written.
-        mode: Processing mode — ``"realtime"`` (STFT coherence) or ``"stem"``.
+        mode: Processing mode — always ``"stem"``.
         measured_lkfs: Delivered integrated loudness (BS.1770-5),
             or *None* if loudness normalization was disabled.  Measured on the
             5.1 re-render when ``fold_referenced`` is set.
@@ -51,8 +50,7 @@ class UpmixResult:
             5.1 re-render and binaural render
             (:class:`~upmixer.mastering.foldqc.FoldQC`), or *None* where the
             delivery has no fold to measure.
-        stems: Canonical stem names used during separation (stem mode only),
-            or *None* in realtime mode.
+        stems: Canonical stem names used during separation.
         processing_time_seconds: Wall-clock time for the full operation.
     """
 
@@ -79,8 +77,6 @@ class UpmixResult:
     full_bed_lkfs: float | None = None
     folds: FoldQC | None = None
     stems: list[str] | None = None
-    spatial_profile: str | None = None
-    spatial_profile_confidence: float | None = None
     processing_time_seconds: float = 0.0
 
     def to_dict(self) -> dict:

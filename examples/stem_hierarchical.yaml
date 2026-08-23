@@ -54,9 +54,6 @@ engine:
 mixing:
   channel_layout: 7.1.4
   stem_source_anchor_strength: 0.5
-  spatial:
-    profile: live
-    intensity: 0.9
 
   stem_rebalance:
     Vocals: +1.5    # vocals forward

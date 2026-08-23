@@ -30,7 +30,6 @@ export type Manifest = {
   };
   mixing: {
     channel_layout: string;
-    spatial: { profile: string; intensity: number; preanalyze: boolean };
     stem_rebalance: Record<string, number>;
     stem_eq: Record<string, string>;
     stem_routing: Record<string, Record<string, number>>;
@@ -94,19 +93,15 @@ export type Manifest = {
     height_gain: number;
     lfe_gain: number;
     lfe_cutoff: number;
-    center_extraction_gain: number;
-    center_attenuation: number;
     height_low_rolloff_gain: number;
     height_high_shelf_gain: number;
     height_directional_band_gain: number;
-    content_mix_strength: number;
   };
   processing: {
     preview: boolean;
     preview_duration: number;
     preview_start: number | null;
     fft_size: number;
-    block_size: number;
     normalize_output: boolean;
   };
   format: {
@@ -167,7 +162,6 @@ export const defaultManifest: Manifest = {
   },
   mixing: {
     channel_layout: "7.1.4",
-    spatial: { profile: "auto", intensity: 1, preanalyze: true },
     stem_rebalance: {},
     stem_eq: {},
     stem_placement: {},
@@ -217,19 +211,15 @@ export const defaultManifest: Manifest = {
     height_gain: 0.55,
     lfe_gain: 0.3162,
     lfe_cutoff: 120,
-    center_extraction_gain: 0.85,
-    center_attenuation: 0.5,
     height_low_rolloff_gain: 0.15,
     height_high_shelf_gain: 1.5,
     height_directional_band_gain: 1,
-    content_mix_strength: 1,
   },
   processing: {
     preview: false,
     preview_duration: 30,
     preview_start: null,
     fft_size: 4096,
-    block_size: 4096,
     normalize_output: true,
   },
   format: {
@@ -250,7 +240,6 @@ export function normalizeManifest(source: Record<string, unknown>): Manifest {
     mixing: {
       ...defaultManifest.mixing,
       ...value.mixing,
-      spatial: { ...defaultManifest.mixing.spatial, ...value.mixing?.spatial },
       stem_rebalance: {
         ...defaultManifest.mixing.stem_rebalance,
         ...value.mixing?.stem_rebalance,
@@ -310,8 +299,7 @@ export const defaultProjectManifest: Manifest = {
   ...defaultManifest,
   mixing: {
     ...defaultManifest.mixing,
-    spatial: { profile: "balanced", intensity: 0, preanalyze: false },
     stem_source_anchor_strength: 0,
   },
-  routing: { ...defaultManifest.routing, content_mix_strength: 0 },
+  routing: { ...defaultManifest.routing },
 };

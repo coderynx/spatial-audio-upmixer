@@ -15,7 +15,7 @@ def _result(input_path: str, output_path: str) -> UpmixResult:
     return UpmixResult(
         input_path=input_path, output_path=output_path, input_format="stereo",
         output_format="5.1", input_sample_rate=48_000, output_sample_rate=48_000,
-        duration_seconds=0.1, n_channels_in=2, n_channels_out=6, mode="realtime",
+        duration_seconds=0.1, n_channels_in=2, n_channels_out=6, mode="stem",
     )
 
 

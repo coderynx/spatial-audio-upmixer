@@ -9,25 +9,20 @@ core library. No CLI or web-specific code lives here; keep it that way.
 Source lives directly under `src/` (e.g. `src/config.py`, imported as
 `upmixer.config` via a `package-dir` remap — there is no `src/upmixer/`
 directory on disk). Key modules: `config.py` (`UpmixConfig`), `formats.py`
-(channel definitions), `manifest/` (YAML/JSON jobs), `analysis/`,
-`decomposition/`, `routing/`, `io/`, `mastering/`, `separation/` (incl. the
-in-core PyTorch inference engine under `separation/inference/`), `binaural/`
-(HOA binaural rendering), `crosstalk/` (transaural XTC rendering), `eval/`
-(objective separation evaluation harness — see `docs/evaluation_harness.md`),
-`upmix/`.
+(channel definitions), `manifest/` (YAML/JSON jobs), `analysis/`, `io/`,
+`mastering/`, `separation/` (incl. the in-core PyTorch inference engine under
+`separation/inference/`), `binaural/` (HOA binaural rendering), `crosstalk/`
+(transaural XTC rendering), and `eval/` (objective separation evaluation
+harness — see `docs/evaluation_harness.md`).
 
-Two pipelines share a mastering chain:
+One pipeline:
 
-- `UpmixPipeline` (`src/pipeline.py`) is the realtime/file pipeline. Stereo
-  or mono input is processed through coherence-based STFT analysis,
-  direct/ambient decomposition, routing, and mastering. Multichannel input
-  uses `MultichannelUpmixer` for pass-through and channel derivation.
 - `StemUpmixPipeline` (`src/separation/stem_pipeline.py`) separates zone
   audio into instrument stems via the in-core inference engine
   (`src/separation/inference/`), analyzes and routes each stem, mixes them,
   and then masters the result.
 
-Both finish with `MasteringChain` (`src/mastering/chain.py`): spectral EQ,
+It finishes with `MasteringChain` (`src/mastering/chain.py`): spectral EQ,
 bus compression, bass control, BS.1770 loudness normalization, true-peak
 limiting, and soft limiting.
 

@@ -86,7 +86,6 @@ class JobRunnerMixin:
                         reference_path,
                     )
                 _, asset_jobs = parse_manifest(manifest)
-                mode = asset_jobs[0].engine.get("mode", "realtime") if asset_jobs else "realtime"
 
                 work_items: list[WorkItem] = []
                 items_by_track: dict[str, WorkItem] = {}
@@ -112,7 +111,7 @@ class JobRunnerMixin:
 
                     item = WorkItem(
                         track_id=track_id,
-                        mode=mode,
+                        mode="stem",
                         input_path=asset_job.input,
                         output_path=asset_job.output,
                         config=config,

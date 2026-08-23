@@ -27,7 +27,6 @@ from upmixer_cli.flags import _apply_cli_flags, _apply_resource_limits, _parse_k
 from upmixer_cli.manifest_run import _run_manifest_assets
 from upmixer.codecs import codec_extension
 from upmixer.config import UpmixConfig
-from upmixer.pipeline import UpmixPipeline
 
 # Import-time side effect: registers manifest block keys. MasteringChain only
 # imports these lazily inside process(), so without this a fresh process
@@ -36,7 +35,7 @@ import upmixer.mastering.bass  # noqa: F401
 import upmixer.mastering.compressor  # noqa: F401
 import upmixer.mastering.eq  # noqa: F401
 import upmixer.mastering.match_reference  # noqa: F401
-import upmixer.routing.channel_router  # noqa: F401
+import upmixer.separation.stem_router  # noqa: F401
 
 
 def main() -> None:
@@ -81,8 +80,7 @@ def main() -> None:
 
     _apply_cli_flags(config, args, sample_rate_set)
 
-    mode = args.mode or "realtime"
-    _apply_resource_limits(args.cpu_priority, mode)
+    _apply_resource_limits(args.cpu_priority)
     stem_model_dir = args.stem_model_dir or None
     input_format   = args.input_format   or None
 
@@ -121,12 +119,9 @@ def main() -> None:
             else:
                 parser.error("No input files found for batch processing.")
 
-        workers = args.batch_workers or 1
         processor = BatchProcessor(
             config=config,
-            mode=mode,
             stem_model_dir=stem_model_dir,
-            workers=workers,
             progress_callback=lambda done, total, path: (
                 _log.info("[%d/%d] %s", done + 1, total, path) if path else None
             ),
@@ -212,22 +207,15 @@ def main() -> None:
                 print(f"READY: {input_path} -> {output_path}")
             return
 
-        if mode == "stem":
-            from upmixer.separation.stem_pipeline import StemUpmixPipeline
-            stem_pipeline = StemUpmixPipeline(
-                config=config,
-                model_dir=stem_model_dir,
-            )
-            result = stem_pipeline.process_file(
-                input_path, output_path,
-                input_format_override=input_format,
-            )
-        else:
-            pipeline = UpmixPipeline(config)
-            result = pipeline.process_file(
-                input_path, output_path,
-                input_format_override=input_format,
-            )
+        from upmixer.separation.stem_pipeline import StemUpmixPipeline
+        stem_pipeline = StemUpmixPipeline(
+            config=config,
+            model_dir=stem_model_dir,
+        )
+        result = stem_pipeline.process_file(
+            input_path, output_path,
+            input_format_override=input_format,
+        )
 
         if args.json:
             print(result.to_json())

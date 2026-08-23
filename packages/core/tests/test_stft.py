@@ -1,6 +1,6 @@
 import numpy as np
 
-from upmixer.analysis.stft import STFTAnalyzer, StreamingSTFT
+from upmixer.analysis.stft import STFTAnalyzer
 from upmixer.config import UpmixConfig
 
 
@@ -56,69 +56,6 @@ def test_freq_bins(sample_rate):
     assert len(freqs) == stft.n_freq_bins
     assert freqs[0] == 0.0
     assert freqs[-1] <= sample_rate / 2
-
-
-def test_streaming_round_trip(sample_rate):
-    """StreamingSTFT analyze -> synthesize should reconstruct signal."""
-    config = UpmixConfig(auto_fft_size=False)
-    stream = StreamingSTFT(config, sample_rate)
-    hop = stream.hop_size
-
-    rng = np.random.default_rng(42)
-    signal = rng.standard_normal(sample_rate)
-
-    output_chunks = []
-    for start in range(0, len(signal), hop):
-        end = start + hop
-        if end > len(signal):
-            chunk = np.pad(signal[start:], (0, end - len(signal)))
-        else:
-            chunk = signal[start:end]
-
-        frame = stream.analyze_frame(chunk)
-        if frame is not None:
-            out = stream.synthesize_frame(frame)
-            output_chunks.append(out)
-        else:
-            output_chunks.append(np.zeros(hop))
-
-    reconstructed = np.concatenate(output_chunks)
-
-    # The streaming STFT has a latency of fft-hop samples (the
-    # initial None frames that fill the analysis buffer).  In steady
-    # state reconstructed[n] == signal[n - latency].
-    fft = stream.fft_size
-    latency = fft - hop
-
-    # Skip 2*fft at each end to avoid transient and boundary effects
-    rec_start = 2 * fft
-    rec_end = len(signal) - fft
-    sig_start = rec_start - latency
-    sig_end = rec_end - latency
-
-    error = np.max(np.abs(reconstructed[rec_start:rec_end] - signal[sig_start:sig_end]))
-    assert error < 1e-6, f"Streaming reconstruction error: {error}"
-
-
-def test_streaming_startup_and_tail_are_lossless(sample_rate):
-    """Leading pad and drained tail preserve every source sample."""
-    config = UpmixConfig(auto_fft_size=False)
-    stream = StreamingSTFT(config, sample_rate)
-    hop = stream.hop_size
-    rng = np.random.default_rng(9)
-    signal = rng.standard_normal(hop * 5 + 137)
-    padded = np.pad(signal, (0, (-len(signal)) % hop))
-
-    chunks = []
-    for start in range(0, len(padded), hop):
-        chunks.append(stream.synthesize_frame(stream.analyze_frame(padded[start:start + hop])))
-    for _ in range(stream.latency_samples // hop):
-        chunks.append(stream.synthesize_frame(stream.analyze_frame(np.zeros(hop))))
-
-    output = np.concatenate(chunks)
-    recovered = output[stream.latency_samples:stream.latency_samples + len(signal)]
-    np.testing.assert_allclose(recovered, signal, atol=1e-6)
-    assert stream.latency_samples == stream.fft_size - stream.hop_size
 
 
 def test_auto_fft_size_192k():

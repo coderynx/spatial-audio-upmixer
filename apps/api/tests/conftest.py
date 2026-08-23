@@ -7,6 +7,8 @@ pytest.importorskip("sqlalchemy")
 
 from fastapi.testclient import TestClient
 
+from _helpers import InProcessJobRun
+
 from upmixer_web.api import create_app
 from upmixer_web.settings import Settings
 
@@ -34,3 +36,16 @@ def web_client(tmp_path):
     )
     with TestClient(create_app(settings)) as client:
         yield client
+
+
+@pytest.fixture
+def in_process_jobs(monkeypatch):
+    """Run job work items in-process with separation stubbed.
+
+    End-to-end job tests need the routing/mastering/delivery chain; the real
+    :class:`JobSubprocess` spawns a child no monkeypatch can reach, and
+    running the separation models in the suite is not an option.
+    """
+    monkeypatch.setattr(
+        "upmixer_web.features.jobs.worker.JobSubprocess", InProcessJobRun
+    )

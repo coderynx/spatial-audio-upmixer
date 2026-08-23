@@ -16,11 +16,7 @@
 
   "mixing": {
     "channel_layout": "7.1.4",
-    "stem_source_anchor_strength": 0.5,
-    "spatial": {
-      "profile": "spacious",
-      "intensity": 0.8
-    }
+    "stem_source_anchor_strength": 0.5
   },
 
   "format": {

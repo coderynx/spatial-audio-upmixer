@@ -240,7 +240,6 @@ export function SettingsPage({ configuration }: { configuration: Configuration |
           <ChoicePanel title="Mastering EQ profiles" values={choices?.eq_profiles} />
           <ChoicePanel title="Compressor profiles" values={choices?.compressor_profiles} />
           <ChoicePanel title="Bass profiles" values={choices?.bass_profiles} />
-          <ChoicePanel title="Spatial profiles" values={choices?.spatial_profiles} />
           <ChoicePanel title="Binaural profiles" values={choices?.binaural_profiles} />
           <Panel className="2xl:col-span-2">
             <PanelHeader title={`Manifest keys · ${Object.keys(configuration.manifest_keys).length}`} />

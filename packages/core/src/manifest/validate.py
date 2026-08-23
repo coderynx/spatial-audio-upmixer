@@ -118,7 +118,6 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
         if not math.isfinite(float(value)):
             raise ManifestError(f"{path} must be finite.")
         minimums = {
-            "mixing.spatial.intensity": 0.0,
             "mixing.stem_source_anchor_strength": 0.0,
             "engine.stem_batch_size": 1.0,
             "engine.stem_segment_size": 1.0,
@@ -134,7 +133,6 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             "processing.preview_start": 0.0,
             "format.downmix.height_coeff": 0.0,
             "routing.lfe_cutoff": 0.0,
-            "routing.content_hf_analysis_hz": 0.0,
             "mastering.eq.strength": 0.0,
             "mastering.highpass.cutoff_hz": 10.0,
             "mastering.clip.clip_db": 0.0,
@@ -150,7 +148,6 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             "mastering.compressor.knee_db": 0.0,
         }
         maximums = {
-            "mixing.spatial.intensity": 1.0,
             "mixing.stem_source_anchor_strength": 1.0,
             "mastering.eq.strength": 1.0,
             "mastering.highpass.cutoff_hz": 30.0,
@@ -168,14 +165,13 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
         if path in maximums and float(value) > maximums[path]:
             raise ManifestError(f"{path} must be at most {maximums[path]}.")
     choices = {
-        "engine.mode": {"realtime", "stem"},
+        "engine.mode": {"stem"},
         "mixing.channel_layout": set(FORMAT_MAP),
         "format.type": {"multichannel", "adm-bwf", "binaural", "transaural"},
         "format.codec": set(CODECS),
         "format.subtype": set(WAV_SUBTYPES),
         "format.dither": set(DITHER_MODES),
         "format.downmix.surround_coeff": {0.7071, 0.5, 0.0},
-        "mixing.spatial.profile": {"auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"},
         "mastering.dynamic_eq.profile": set(_dyneq_profile_choices()),
         "format.binaural.profile": set(_binaural_profile_choices()),
         "format.transaural.profile": set(_transaural_profile_choices()),

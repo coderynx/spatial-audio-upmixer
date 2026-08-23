@@ -10,7 +10,6 @@ export function OutputSection({
   configuration,
 }: ManifestSectionProps) {
   const choices = configuration?.choices;
-  const separation = configuration?.capabilities.stem_separation;
   const stereo = isStereoLayout(manifest.mixing.channel_layout);
   const codecs = choices?.output_codecs || OUTPUT_CODECS;
   const bitDepths = subtypesFor(codecs, manifest.format.codec);
@@ -29,24 +28,6 @@ export function OutputSection({
   };
   return (
     <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2">
-      <SelectField
-        label="Processing engine"
-        value={manifest.engine.mode}
-        onChange={(mode) =>
-          setManifest({ ...manifest, engine: { ...manifest.engine, mode } })
-        }
-        options={(choices?.modes || ["realtime", "stem"]).map((value) => ({
-          value,
-          label: value === "stem" ? "Stem separation" : "Realtime",
-          disabled: value === "stem" && separation?.available === false,
-        }))}
-        hint={
-          separation?.accelerator_issue ||
-          (separation?.available
-            ? `Stem backend: ${separation.backend || "CPU"}`
-            : separation?.install_message || undefined)
-        }
-      />
       {!stereo && <ToggleField
         label="Stereo downmix"
         description="Write an ITU-R BS.775-compatible stereo companion file."

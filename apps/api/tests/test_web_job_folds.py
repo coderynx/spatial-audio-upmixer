@@ -58,7 +58,7 @@ def _mastered_result() -> dict:
         duration_seconds=4.0,
         n_channels_in=2,
         n_channels_out=12,
-        mode="realtime",
+        mode="stem",
         **mastering.delivery_fields(),
     ).to_dict()
 

@@ -9,7 +9,7 @@ import upmixer.mastering.compressor  # noqa: F401
 # Import domain modules so their register_block_keys calls execute before tests.
 import upmixer.mastering.eq  # noqa: F401
 import upmixer.mastering.match_reference  # noqa: F401
-import upmixer.routing.channel_router  # noqa: F401
+import upmixer.separation.stem_router  # noqa: F401
 from upmixer.config import UpmixConfig
 from upmixer.manifest import (
     _BLOCK_REGISTRY,
@@ -105,13 +105,13 @@ class TestBatchAssetsWithOverrides:
                 {
                     "input": "b.flac",
                     "output": "b.wav",
-                    "engine": {"mode": "realtime"},
+                    "engine": {"mode": "stem"},
                 },
             ],
         }
         _, jobs = parse_manifest(data)
         assert jobs[0].engine.get("mode") == "stem"
-        assert jobs[1].engine.get("mode") == "realtime"
+        assert jobs[1].engine.get("mode") == "stem"
 
     def test_stem_cache_dir_shortcut_does_not_override_other_blocks(self):
         data = {
@@ -331,7 +331,7 @@ class TestBlockRegistry:
         for block in ("engine", "format", "mixing", "processing"):
             assert block in _BLOCK_REGISTRY
 
-    def test_routing_registered_by_channel_router(self):
+    def test_routing_registered_by_stem_router(self):
         assert "routing" in _BLOCK_REGISTRY
         assert "center_gain" in _BLOCK_REGISTRY["routing"]
 

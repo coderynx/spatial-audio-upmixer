@@ -25,9 +25,6 @@ engine:
 mixing:
   channel_layout: 7.1.4
   stem_source_anchor_strength: 0.5
-  spatial:
-    profile: auto
-    intensity: 1.0
 
 # ── Output format — ADM-BWF authoring beds ────────────────────────────────────
 format:

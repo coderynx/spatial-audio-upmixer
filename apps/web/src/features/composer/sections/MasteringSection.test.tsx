@@ -13,8 +13,6 @@ const configuration: Configuration = {
     output_types: [],
     output_subtypes: [],
     sample_rates: [],
-    modes: [],
-    spatial_profiles: [],
     eq_profiles: ["neutral"],
     compressor_profiles: ["transparent", "glue"],
     bass_profiles: ["tight"],

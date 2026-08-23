@@ -202,7 +202,7 @@ class TestBatchResult:
             duration_seconds=3.0,
             n_channels_in=2,
             n_channels_out=12,
-            mode="realtime",
+            mode="stem",
         )
 
     def test_to_dict_structure(self):

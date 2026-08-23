@@ -5,10 +5,10 @@ loaded models (e.g. the stem separation neural network) across all files.
 
 Usage — CLI:
     # Multiple files from any directories
-    upmixer track1.wav /other/dir/track2.flac --output-dir /out/ --mode stem
+    upmixer track1.wav /other/dir/track2.flac --output-dir /out/
 
     # Whole directory scan
-    upmixer --batch-dir /albums/ok-computer/ --output-dir /out/ --mode stem
+    upmixer --batch-dir /albums/ok-computer/ --output-dir /out/
 
     # Manifest with cross-directory file list
     upmixer --manifest batch.yaml
@@ -20,7 +20,7 @@ Usage — library:
         input_paths=["/dir1/a.wav", "/dir2/b.flac"],
         output_dir="/out/",
     )
-    result = BatchProcessor(config, mode="stem").process(jobs)
+    result = BatchProcessor(config).process(jobs)
     print(result.to_json())
 """
 from __future__ import annotations
@@ -31,7 +31,6 @@ import logging
 import os
 import time
 import traceback
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
@@ -163,20 +162,10 @@ def resolve_batch_jobs(
     return []
 
 
-def _realtime_worker(args: tuple) -> UpmixResult:
-    """Top-level function for ProcessPoolExecutor workers (must be picklable)."""
-    input_path, output_path, input_fmt, config_dict = args
-    from upmixer.config import UpmixConfig
-    from upmixer.pipeline import UpmixPipeline
-    cfg = UpmixConfig(**config_dict)
-    pipeline = UpmixPipeline(cfg)
-    return pipeline.process_file(input_path, output_path, input_format_override=input_fmt)
-
-
 class BatchProcessor:
     """Processes a list of BatchJobs through a single pipeline instance.
 
-    Stem mode: Sequential. The neural network model is loaded once on the first
+    Sequential. The neural network model is loaded once on the first
     file and reused for all subsequent files — the primary performance benefit
     for album-sized batches. Separated stems are cached to disk so that
     re-runs of the same batch (e.g. after adjusting loudness settings) skip
@@ -184,15 +173,9 @@ class BatchProcessor:
     ``~/.cache/upmixer-stems``; override via ``config.stem_cache_dir`` or
     ``--stem-cache-dir``. The separator is released when done.
 
-    Realtime mode: Sequential (workers=1) or parallel via ProcessPoolExecutor
-    (workers>1). Uses processes (not threads) to avoid GIL + numpy memory
-    contention.
-
     Args:
         config: Per-file processing configuration.
-        mode: "realtime" (STFT coherence) or "stem" (source separation).
         stem_model_dir: Override model cache directory.
-        workers: Parallel workers for realtime mode (ignored in stem mode).
         progress_callback: Called as (done, total, current_input_path) before
             each file starts.
     """
@@ -200,18 +183,14 @@ class BatchProcessor:
     def __init__(
         self,
         config: UpmixConfig,
-        mode: str = "realtime",
         stem_model_dir: str | None = None,
-        workers: int = 1,
         progress_callback: Callable[[int, int, str], None] | None = None,
         overwrite: bool = True,
         resume: bool = False,
         state_file: str | None = None,
     ) -> None:
         self._config = config
-        self._mode = mode
         self._stem_model_dir = stem_model_dir
-        self._workers = max(1, workers)
         self._progress = progress_callback
         self._overwrite = overwrite
         self._resume = resume
@@ -225,10 +204,7 @@ class BatchProcessor:
         result.skipped.extend(skipped)
         total = len(jobs)
 
-        if self._mode == "stem":
-            processed = self._process_stem(planned, total)
-        else:
-            processed = self._process_realtime(planned, total)
+        processed = self._process_stem(planned, total)
 
         result.jobs.extend(processed.jobs)
         result.failed.extend(processed.failed)
@@ -308,69 +284,4 @@ class BatchProcessor:
                     })
         if self._progress:
             self._progress(total, total, "")
-        return result
-
-    def _process_realtime(self, jobs: list[BatchJob], total: int) -> BatchResult:
-        from upmixer.pipeline import UpmixPipeline
-
-        result = BatchResult()
-
-        if self._workers == 1:
-            pipeline = UpmixPipeline(self._config)
-            for done, job in enumerate(jobs):
-                if self._progress:
-                    self._progress(done, total, job.input_path)
-                _log.info("[%d/%d] %s", done + 1, total, job.input_path)
-                try:
-                    r = pipeline.process_file(
-                        job.input_path,
-                        job.output_path,
-                        input_format_override=job.input_format_override,
-                    )
-                    result.jobs.append(r)
-                    self._record_state(job, r)
-                    result.total_audio_duration_s += r.duration_seconds
-                except Exception as exc:
-                    _log.error("FAILED: %s — %s", job.input_path, exc)
-                    result.failed.append({
-                        "input": job.input_path,
-                        "output": job.output_path,
-                        "error": str(exc),
-                        "traceback": traceback.format_exc(),
-                    })
-            if self._progress:
-                self._progress(total, total, "")
-        else:
-            # Parallel: each worker process constructs its own pipeline.
-            # Use config.__dict__ for pickling (UpmixConfig is a plain dataclass).
-            from dataclasses import asdict as _asdict
-            config_dict = _asdict(self._config)
-            work_items = [
-                (job.input_path, job.output_path, job.input_format_override, config_dict)
-                for job in jobs
-            ]
-            done_count = 0
-            job_map = {i: jobs[i] for i in range(len(jobs))}
-            with ProcessPoolExecutor(max_workers=self._workers) as ex:
-                futures = {ex.submit(_realtime_worker, item): i for i, item in enumerate(work_items)}
-                for fut in as_completed(futures):
-                    idx = futures[fut]
-                    job = job_map[idx]
-                    done_count += 1
-                    if self._progress:
-                        self._progress(done_count, total, job.input_path)
-                    try:
-                        r = fut.result()
-                        result.jobs.append(r)
-                        self._record_state(job, r)
-                        result.total_audio_duration_s += r.duration_seconds
-                    except Exception as exc:
-                        _log.error("FAILED: %s — %s", job.input_path, exc)
-                        result.failed.append({
-                            "input": job.input_path,
-                            "output": job.output_path,
-                            "error": str(exc),
-                            "traceback": traceback.format_exc(),
-                        })
-
         return result

@@ -22,9 +22,6 @@ engine:
 mixing:
   channel_layout: 7.1.4
   stem_source_anchor_strength: 0.5
-  spatial:
-    profile: balanced
-    intensity: 0.6
 
 # ── Output format — binaural delivery is always 2ch; not compatible with adm-bwf ──
 format:

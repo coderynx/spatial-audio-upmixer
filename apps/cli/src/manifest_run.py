@@ -6,7 +6,6 @@ from pathlib import Path
 
 from upmixer_cli.flags import _apply_cli_flags, _apply_resource_limits
 from upmixer.config import UpmixConfig
-from upmixer.pipeline import UpmixPipeline
 
 _log = logging.getLogger("upmixer")
 
@@ -14,8 +13,8 @@ _log = logging.getLogger("upmixer")
 def _run_manifest_assets(asset_jobs, meta, args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Process all assets resolved from a manifest file.
 
-    Applies per-asset config deep-merged with CLI flag overrides.  In stem
-    mode the separator model is loaded once and reused across all assets.
+    Applies per-asset config deep-merged with CLI flag overrides.  The
+    separator model is loaded once and reused across all assets.
     """
     from upmixer.manifest import apply_asset_job
 
@@ -30,8 +29,7 @@ def _run_manifest_assets(asset_jobs, meta, args: argparse.Namespace, parser: arg
             _log.info("  %s", meta.description)
 
     first_engine = asset_jobs[0].engine
-    mode = args.mode or first_engine.get("mode", "realtime")
-    _apply_resource_limits(args.cpu_priority, mode)
+    _apply_resource_limits(args.cpu_priority)
     stem_model_dir = args.stem_model_dir or first_engine.get("stem_model_dir", None)
     n = len(asset_jobs)
 
@@ -102,31 +100,17 @@ def _run_manifest_assets(asset_jobs, meta, args: argparse.Namespace, parser: arg
         return
 
     n = len(prepared)
-    if mode == "stem":
-        from upmixer.separation.stem_pipeline import StemUpmixPipeline
-        first_cfg = prepared[0][1]
-        with StemUpmixPipeline(
-            config=first_cfg,
-            model_dir=stem_model_dir,
-        ) as pipeline:
-            for i, (job, cfg, input_fmt, plan) in enumerate(prepared):
-                _log.info("[%d/%d] %s", i + 1, n, job.input)
-                pipeline.config = cfg
-                try:
-                    result = pipeline.process_file(job.input, job.output, input_format_override=input_fmt)
-                    state.record(plan, result)
-                    report["jobs"].append(result.to_dict())
-                    if args.json:
-                        print(result.to_json())
-                except Exception as exc:
-                    _log.error("FAILED: %s — %s", job.input, exc)
-                    report["failed"].append({"input": job.input, "output": job.output, "error": str(exc)})
-    else:
+    from upmixer.separation.stem_pipeline import StemUpmixPipeline
+    first_cfg = prepared[0][1]
+    with StemUpmixPipeline(
+        config=first_cfg,
+        model_dir=stem_model_dir,
+    ) as pipeline:
         for i, (job, cfg, input_fmt, plan) in enumerate(prepared):
             _log.info("[%d/%d] %s", i + 1, n, job.input)
-            pipeline_rt = UpmixPipeline(cfg)
+            pipeline.config = cfg
             try:
-                result = pipeline_rt.process_file(job.input, job.output, input_format_override=input_fmt)
+                result = pipeline.process_file(job.input, job.output, input_format_override=input_fmt)
                 state.record(plan, result)
                 report["jobs"].append(result.to_dict())
                 if args.json:

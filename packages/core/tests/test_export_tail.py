@@ -19,7 +19,6 @@ from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.writer import AudioWriter, dither_channels, write_audio
 from upmixer.manifest import ManifestError, parse_manifest, validate_manifest
 from upmixer.mastering import MasteringChain
-from upmixer.pipeline import UpmixPipeline
 from upmixer.resample import anti_imaging_fir, resample_channels
 from upmixer.separation.stem_pipeline import StemUpmixPipeline
 
@@ -52,33 +51,6 @@ def _round_trip(tmp_path, signal: np.ndarray, subtype: str, mode: str) -> np.nda
     write_audio(path, signal.reshape(-1, 1), _SR, "wav_pcm", subtype, mode, _SEED)
     delivered, _ = sf.read(str(path), dtype="float64", always_2d=True)
     return delivered[:, 0]
-
-
-def test_mastering_runs_after_the_resample_and_at_the_delivery_rate(tmp_path, monkeypatch):
-    events: list[tuple] = []
-    original_resample = resample_channels
-    original_process = MasteringChain.process
-
-    def spy_resample(channels, src_sr, dst_sr):
-        events.append(("resample", src_sr, dst_sr))
-        return original_resample(channels, src_sr, dst_sr)
-
-    def spy_process(self, channels, sample_rate, output_fmt):
-        events.append(("master", sample_rate))
-        return original_process(self, channels, sample_rate, output_fmt)
-
-    monkeypatch.setattr("upmixer.pipeline.resample_channels", spy_resample)
-    monkeypatch.setattr(MasteringChain, "process", spy_process)
-
-    source = 0.2 * np.sin(2 * np.pi * 440.0 * np.arange(44_100) / 44_100)
-    input_path = tmp_path / "in.wav"
-    sf.write(str(input_path), np.column_stack([source, source]), 44_100, subtype="PCM_24")
-    config = UpmixConfig(output_format="stereo", output_sample_rate=_SR)
-    UpmixPipeline(config).process_file(str(input_path), str(tmp_path / "out.wav"))
-
-    assert [event[0] for event in events] == ["resample", "master"]
-    assert events[0][2] == _SR
-    assert events[1][1] == _SR
 
 
 def test_the_stem_pipeline_masters_at_the_delivery_rate(tmp_path):
@@ -125,12 +97,20 @@ def test_two_renders_of_the_same_job_are_byte_identical(tmp_path):
     input_path = tmp_path / "in.wav"
     sf.write(str(input_path), np.column_stack([source, source * 0.7]), _SR, subtype="PCM_24")
 
-    config = UpmixConfig(output_format="5.1")
+    def fake_execute_plan(get_separator, plan, sep_path, sep_sr, stage_callback=None,
+                          cfg=None, resume_key=None):
+        audio, _ = sf.read(sep_path, dtype="float32", always_2d=True)
+        return {name: audio.copy() for name in plan.requested_stems}
+
+    config = UpmixConfig(stems=["Vocals"], output_format="5.1")
     rendered = []
-    for name in ("a.wav", "b.wav"):
-        output = tmp_path / name
-        UpmixPipeline(config).process_file(str(input_path), str(output))
-        rendered.append(output.read_bytes())
+    with patch("upmixer.separation.stem_pipeline_exec.execute_plan", side_effect=fake_execute_plan):
+        for name in ("a.wav", "b.wav"):
+            output = tmp_path / name
+            pipeline = StemUpmixPipeline(config)
+            pipeline.process_file(str(input_path), str(output))
+            pipeline.close()
+            rendered.append(output.read_bytes())
     assert rendered[0] == rendered[1]
 
 

@@ -355,12 +355,6 @@ class StemUpmixPipeline:
         source_zones = _resample_zones(sep.source_zones, sr, sep_sr)
         all_stems, n_samples = self._post_process_stems(sep, _progress)
 
-        if cfg.spatial_profile not in {"auto", "balanced"}:
-            _log.warning(
-                "Stem mode does not apply dynamic spatial profiles; ignoring '%s'. "
-                "Use mixing.stem_routing (or a routing preset) instead.",
-                cfg.spatial_profile,
-            )
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
 
         _progress("  Routing stems to channels...", 0.80)

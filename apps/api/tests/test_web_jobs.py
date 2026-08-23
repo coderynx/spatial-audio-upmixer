@@ -55,7 +55,7 @@ def test_stem_jobs_fail_before_queue_when_dependency_is_missing(
     assert resume.status_code == 422
 
 
-def test_realtime_job_completes_and_downloads(web_client):
+def test_a_job_completes_and_downloads(web_client, in_process_jobs):
     imported = web_client.post(
         "/api/v1/imports",
         files=[
@@ -68,10 +68,9 @@ def test_realtime_job_completes_and_downloads(web_client):
         "name": "Tone master",
         "manifest": {
             "version": "1.0.0",
-            "engine": {"mode": "realtime"},
+            "engine": {"mode": "stem"},
             "mixing": {
                 "channel_layout": "5.1",
-                "spatial": {"profile": "balanced", "intensity": 0.5, "preanalyze": False},
             },
             "mastering": {"loudness": {"normalize": False}},
             "format": {"type": "wav", "subtype": "PCM_24", "sample_rate": 48000},
@@ -108,7 +107,7 @@ def test_realtime_job_completes_and_downloads(web_client):
     ],
 )
 def test_a_job_delivers_its_codec_extension_and_content_type(
-    web_client, codec, extension, media_type
+    web_client, in_process_jobs, codec, extension, media_type
 ):
     imported = web_client.post(
         "/api/v1/imports",
@@ -122,10 +121,9 @@ def test_a_job_delivers_its_codec_extension_and_content_type(
         "name": f"Tone {codec}",
         "manifest": {
             "version": "1.0.0",
-            "engine": {"mode": "realtime"},
+            "engine": {"mode": "stem"},
             "mixing": {
                 "channel_layout": "5.1",
-                "spatial": {"profile": "balanced", "intensity": 0.5, "preanalyze": False},
             },
             "mastering": {"loudness": {"normalize": False}},
             "format": {
@@ -169,7 +167,7 @@ def test_a_job_rejects_a_codec_the_layout_cannot_carry(web_client):
         "name": "Too many channels for FLAC",
         "manifest": {
             "version": "1.0.0",
-            "engine": {"mode": "realtime"},
+            "engine": {"mode": "stem"},
             "mixing": {"channel_layout": "7.1.4"},
             "format": {"type": "multichannel", "codec": "flac", "subtype": "PCM_24"},
         },

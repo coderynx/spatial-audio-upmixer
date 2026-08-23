@@ -81,7 +81,7 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
             "name": "Editable master",
             "manifest": {
                 "version": "1.0.0",
-                "engine": {"mode": "realtime", "stems": ["Vocals", "Drums", "Kick"]},
+                "engine": {"mode": "stem", "stems": ["Vocals", "Drums", "Kick"]},
                 "mixing": {"channel_layout": "7.1.4"},
             },
             "scene": {"stems": {"Vocals": {"azimuth_deg": 0, "elevation_deg": 0}}},
@@ -198,7 +198,7 @@ def test_project_view_state_persists_independently_of_settings(tmp_path, monkeyp
     with TestClient(create_app(settings)) as client:
         created = client.post("/api/v1/projects", json={
             "name": "View state project",
-            "manifest": {"version": "1.0.0", "engine": {"mode": "realtime", "stems": []}},
+            "manifest": {"version": "1.0.0", "engine": {"mode": "stem", "stems": []}},
         })
         assert created.status_code == 201
         project = created.json()
@@ -241,7 +241,7 @@ def test_project_view_state_rejects_out_of_range_values(tmp_path, monkeypatch):
     with TestClient(create_app(settings)) as client:
         created = client.post("/api/v1/projects", json={
             "name": "Invalid view state project",
-            "manifest": {"version": "1.0.0", "engine": {"mode": "realtime", "stems": []}},
+            "manifest": {"version": "1.0.0", "engine": {"mode": "stem", "stems": []}},
         })
         project_id = created.json()["id"]
 

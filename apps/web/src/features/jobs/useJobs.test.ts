@@ -16,7 +16,7 @@ vi.mock("@/api", async (importOriginal) => {
         manifest_keys: {},
         choices: {
           channel_layouts: [], output_types: [], output_subtypes: [],
-          sample_rates: [], modes: [], spatial_profiles: [],
+          sample_rates: [],
           stem_eq_profiles: [], stems: [],
           eq_profiles: [], compressor_profiles: [], bass_profiles: [],
         },

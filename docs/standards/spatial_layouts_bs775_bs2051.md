@@ -47,15 +47,14 @@ Define normative loudspeaker positions (azimuth/elevation), channel labels, LFE 
 filter. Implemented once in
 `packages/dsp/crates/dsp-core/src/kernels/butter.rs::linkwitz_riley_lowpass_sos`
 and reached from every LFE producer: `upmixer_dsp.lfe_lowpass` for
-`StemRouter.route`, `MultichannelUpmixer`, the ADM writer, and the binaural /
-transaural LFE feed; `stream::routing::LfeBus` for the preview;
-`routing/lfe.py::LFEExtractor` for the frequency-domain path.)*
+`StemRouter.route`, the ADM writer, and the binaural / transaural LFE feed;
+`stream::routing::LfeBus` for the preview.)*
 
 The bus lowpass is a **Linkwitz-Riley** of `lfe_filter_order` (default 4,
 i.e. two cascaded 2nd-order Butterworths), so `|H|` is the Butterworth
 magnitude squared: **−6 dB at `lfe_cutoff_hz`**, same 24 dB/octave asymptote
-as the 4th-order Butterworth it replaced. **The order must be even and ≥ 2**;
-`LFEExtractor` raises and the Rust design asserts.
+as the 4th-order Butterworth it replaced. **The order must be even and ≥ 2**,
+which the Rust design asserts.
 
 Two things this does *not* do, both deliberate:
 
@@ -407,46 +406,6 @@ correction is capped at `BINAURAL_LOUDNESS_MAX_GAIN_DB` upward, which is what
 makes the delivered row informative: a bed whose collapse lands quiet cannot
 be brought back and warns (−6.55 LU on a correlated front-heavy fixture).
 
-### Deriving a missing centre (project convention, inverse of the 2/0 matrix)
-
-*(`MultichannelUpmixer._extract_center`, for a source that has FL/FR but no C.
-BS.775 defines the fold, not its inverse.)*
-
-The centre is extracted **subtractively**: a coherence- and pan-weighted
-fraction `w` of the mid signal `m = (FL + FR)/2` leaves the fronts and is
-carried by C, scaled by the reciprocal of the downmix centre coefficient:
-
-```
-C   = w·m / a₀          (a₀ = 0.707, so C = √2·w·m)
-FL' = FL − w·m
-FR' = FR − w·m
-```
-
-Two properties hold simultaneously, and only at this pairing:
-
-- **Fold-down identity.** `FL' + a₀·C = FL` exactly, so the 2/0 downmix of the
-  result is the input front pair — centred content is not counted twice.
-- **Energy identity.** For fully correlated fronts (`w = 1`), `|C|² =
-  |FL|² + |FR|²`: the front triple carries the input pair's energy.
-
-Requiring both fixes the extraction gain at 1.0 (full extraction). Any partial
-gain `g < 1` splits correlated content across three speakers and loses power —
-`g² + 2(1 − a₀g)² = 2` has `g = 1` as its only solution — which is why
-`center_extraction_gain` / `center_gain`, the stereo pipeline's partial-extraction
-knobs, do not apply on this path.
-
-The consequence to know: centred content now plays from one speaker at `√2·m`
-instead of two at `m` each, so its **coherent sum at the reference position is
-3 dB lower** than the passive-sum derivation gave. That is the
-power-preserving choice BS.775's `a₀ = 0.707` already encodes; the previous
-`C = a₀·m` *added* to unchanged fronts was a +2.6 dB build-up on centred
-content and a +3.4 dB over-weight in the downmix
-(`docs/plans/mixing/phase6_report.md` §2).
-
-A derived LFE takes the **original** `m`, not the extracted C: the residual
-fronts have their centred low end removed, and the LFE feed wants the full
-front content.
-
 ### 3/2 → 3/0 (5.1 to 3.0)
 
 ```
@@ -627,9 +586,8 @@ enforced by `formats.validate_delivery`:
 
 `can_upmix` accepts any input for a two-channel output. Mono duplicates to
 FL/FR, stereo passes through, and anything wider folds through
-`itu_downmix_stereo` (BS.775-4 Annex 4 Table 2, above) before processing —
-`pipeline._stereo_delivery_channels` for the realtime path, and at the front of
-`StemUpmixPipeline`'s separation for the stem path, so a folded run separates a
+`itu_downmix_stereo` (BS.775-4 Annex 4 Table 2, above) before processing, at
+the front of `StemUpmixPipeline`'s separation, so a folded run separates a
 single `front` zone. The fold marks the stem cache identity (`|stereo`), since
 the same file otherwise yields `@zone`-keyed stems.
 

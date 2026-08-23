@@ -42,6 +42,7 @@ import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
+from upmixer.manifest import register_block as _rb
 from upmixer.loudness import CHANNEL_WEIGHT, k_weighted_power
 from upmixer.separation.stem_placement import STEM_ROUTING_PRESET_NAMES, preset_routing
 from upmixer.utils import (
@@ -49,6 +50,19 @@ from upmixer.utils import (
     SURROUND_VELVET_SEED,
     velvet_send,
 )
+
+_rb("routing", {
+    "center_gain":            ("config", "center_gain"),
+    "surround_gain":          ("config", "surround_gain"),
+    "back_gain":              ("config", "back_gain"),
+    "height_gain":            ("config", "height_gain"),
+    "lfe_gain":               ("config", "lfe_gain"),
+    "lfe_cutoff":             ("config", "lfe_cutoff"),
+    "height_low_rolloff_gain":("config", "height_low_rolloff_gain"),
+    "height_high_shelf_gain": ("config", "height_high_shelf_gain"),
+    "height_directional_band_gain": ("config", "height_directional_band_gain"),
+})
+del _rb
 
 DEFAULT_ROUTING_PRESET = "balanced"
 DEFAULT_ROUTING_LAYOUT = "7.1.4"

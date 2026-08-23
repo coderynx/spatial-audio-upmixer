@@ -19,16 +19,6 @@ class UpmixConfig:
     window_type: str = "hann"
     auto_fft_size: bool = True
 
-    block_size: int = 4096
-
-    coherence_smoothing: float = 0.6
-    coherence_attack_alpha: float = 0.25
-    coherence_release_alpha: float = 0.75
-    epsilon: float = 1e-10
-
-    center_extraction_gain: float = 0.85
-    center_attenuation: float = 0.5
-
     center_gain: float = 0.85
     # BS.775-4 Annex 7: LFE programme level is 10 dB below full-range beds.
     lfe_gain: float = 0.31622776601683794
@@ -40,14 +30,6 @@ class UpmixConfig:
     lfe_filter_order: int = 4
 
     surround_bass_cutoff_hz: float = 250.0
-    transient_gate_min: float = 0.15
-
-    transient_n_bands: int = 10
-    transient_ema_alpha: float = 0.85
-    transient_sensitivity_k: float = 2.5
-
-    harmonic_median_half_width: int = 8
-    harmonic_smoothing_alpha: float = 0.7
 
     height_low_rolloff_hz: float = 150.0
     height_low_rolloff_gain: float = 0.15
@@ -70,15 +52,6 @@ class UpmixConfig:
 
     normalize_output: bool = True
     peak_limit_threshold: float = 0.95
-
-    content_mix_strength: float = 1.0
-    content_hf_analysis_hz: float = 4000.0
-
-    # ``auto`` selects a content-led profile per file; live StreamingProcessor
-    # callers without a pre-analysis plan stay deliberately conservative.
-    spatial_profile: str = "auto"
-    spatial_intensity: float = 1.0
-    spatial_preanalysis: bool = True
 
     # See docs/standards/spatial_audio_engine.md.
     binaural_profile: str = "studio"

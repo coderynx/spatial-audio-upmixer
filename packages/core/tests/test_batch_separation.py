@@ -215,7 +215,7 @@ class TestBatchStemCache:
         out_dir.mkdir()
         jobs = resolve_batch_jobs(input_paths=[a, b], output_dir=str(out_dir))
 
-        processor = BatchProcessor(config=UpmixConfig(), mode="stem")
+        processor = BatchProcessor(config=UpmixConfig())
         captured: dict = {}
 
         def fake_pipeline_cls(config, **kwargs):
@@ -241,7 +241,7 @@ class TestBatchStemCache:
         custom_dir = str(tmp_path / "my_stems")
         config = UpmixConfig()
         config.stem_cache_dir = custom_dir
-        processor = BatchProcessor(config=config, mode="stem")
+        processor = BatchProcessor(config=config)
         captured: dict = {}
 
         def fake_pipeline_cls(config, **kwargs):
@@ -266,7 +266,7 @@ class TestBatchStemCache:
         original_config = UpmixConfig()
         assert original_config.stem_cache_dir is None
 
-        processor = BatchProcessor(config=original_config, mode="stem")
+        processor = BatchProcessor(config=original_config)
 
         def fake_pipeline_cls(config, **kwargs):
             return self._make_mock_pipeline(self._fake_result)
@@ -281,7 +281,14 @@ class TestBatchStemCache:
         assert original_config.stem_cache_dir is None
 
 
-class TestBatchProcessorRealtime:
+class TestBatchProcessorSequencing:
+    def _make_mock_pipeline(self, process_file_side_effect):
+        mock = MagicMock()
+        mock.__enter__ = MagicMock(return_value=mock)
+        mock.__exit__ = MagicMock(return_value=False)
+        mock.process_file.side_effect = process_file_side_effect
+        return mock
+
     def _fake_result(self, input_path: str, output_path: str) -> UpmixResult:
         return UpmixResult(
             input_path=input_path,
@@ -293,8 +300,17 @@ class TestBatchProcessorRealtime:
             duration_seconds=1.0,
             n_channels_in=2,
             n_channels_out=6,
-            mode="realtime",
+            mode="stem",
         )
+
+    def _run(self, jobs, side_effect, **processor_kwargs):
+        processor = BatchProcessor(config=UpmixConfig(), **processor_kwargs)
+        pipeline = self._make_mock_pipeline(side_effect)
+        with patch(
+            "upmixer.separation.stem_pipeline.StemUpmixPipeline",
+            return_value=pipeline,
+        ):
+            return processor.process(jobs)
 
     def test_sequential_two_files(self, two_wavs, tmp_path):
         a, b = two_wavs
@@ -302,11 +318,7 @@ class TestBatchProcessorRealtime:
         out_dir.mkdir()
         jobs = resolve_batch_jobs(input_paths=[a, b], output_dir=str(out_dir))
 
-        processor = BatchProcessor(config=UpmixConfig(), mode="realtime", workers=1)
-
-        with patch("upmixer.pipeline.UpmixPipeline.process_file") as mock_pf:
-            mock_pf.side_effect = lambda inp, out, **_: self._fake_result(inp, out)
-            result = processor.process(jobs)
+        result = self._run(jobs, lambda inp, out, **_: self._fake_result(inp, out))
 
         assert len(result.jobs) == 2
         assert len(result.failed) == 0
@@ -318,8 +330,6 @@ class TestBatchProcessorRealtime:
         out_dir.mkdir()
         jobs = resolve_batch_jobs(input_paths=[a, b], output_dir=str(out_dir))
 
-        processor = BatchProcessor(config=UpmixConfig(), mode="realtime", workers=1)
-
         call_count = 0
 
         def side_effect(inp, out, **_):
@@ -329,8 +339,7 @@ class TestBatchProcessorRealtime:
                 raise RuntimeError("simulated failure")
             return self._fake_result(inp, out)
 
-        with patch("upmixer.pipeline.UpmixPipeline.process_file", side_effect=side_effect):
-            result = processor.process(jobs)
+        result = self._run(jobs, side_effect)
 
         assert len(result.failed) == 1
         assert len(result.jobs) == 1
@@ -343,16 +352,11 @@ class TestBatchProcessorRealtime:
         jobs = resolve_batch_jobs(input_paths=[a, b], output_dir=str(out_dir))
 
         calls = []
-        processor = BatchProcessor(
-            config=UpmixConfig(),
-            mode="realtime",
-            workers=1,
+        self._run(
+            jobs,
+            lambda inp, out, **_: self._fake_result(inp, out),
             progress_callback=lambda done, total, path: calls.append((done, total)),
         )
-
-        with patch("upmixer.pipeline.UpmixPipeline.process_file") as mock_pf:
-            mock_pf.side_effect = lambda inp, out, **_: self._fake_result(inp, out)
-            processor.process(jobs)
 
         assert len(calls) >= 2
 
@@ -382,14 +386,14 @@ class TestManifestBatch:
 
         data = {
             "version": "1.0",
-            "engine": {"mode": "realtime"},
+            "engine": {"mode": "stem"},
             "assets": [
                 {"input": "a.wav", "output": "a_out.wav"},
                 {"input": "b.wav", "output": "b_out.wav"},
             ],
         }
         _, jobs = parse_manifest(data)
-        assert all(j.engine.get("mode") == "realtime" for j in jobs)
+        assert all(j.engine.get("mode") == "stem" for j in jobs)
 
     def test_global_config_inherited_by_all_assets(self):
         from upmixer.manifest import parse_manifest

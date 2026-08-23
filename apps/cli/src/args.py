@@ -91,16 +91,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
-        "--batch-workers",
-        type=int,
-        default=None,
-        metavar="N",
-        help=(
-            "Parallel workers for realtime batch mode (default: 1). "
-            "Stem mode is always sequential (model reuse requires single process)."
-        ),
-    )
-    parser.add_argument(
         "--recursive", action="store_true",
         help="Recursively scan --batch-dir instead of its top level only.",
     )
@@ -137,18 +127,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
-        "--mode",
-        choices=["realtime", "stem"],
-        default=None,
-        help=(
-            "Processing mode (default: realtime). "
-            "'realtime': coherence-based STFT pipeline, works on any input. "
-            "'stem': source-separation pipeline — separates instruments then "
-            "places each in 3D space. "
-            "Requires: pip install 'upmixer[separation-cpu]'."
-        ),
-    )
-    parser.add_argument(
         "--stems",
         default=None,
         metavar="STEM[,STEM...]",
@@ -176,9 +154,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--height-gain",           type=float, default=None, help="Height channel gain for Atmos formats (default: 0.55)")
     parser.add_argument("--lfe-gain",              type=float, default=None, help="LFE channel gain (default: 0.3162)")
 
-    parser.add_argument("--center-extraction-gain",type=float, default=None, help="Mid signal → center channel (default: 0.85)")
-    parser.add_argument("--center-attenuation",    type=float, default=None, help="Center attenuation in FL/FR (default: 0.5)")
-
     parser.add_argument("--lfe-cutoff",            type=float, default=None, metavar="HZ", help="LFE low-pass cutoff in Hz (default: 120)")
 
     parser.add_argument("--height-low-rolloff-gain",type=float, default=None, help="Sub-bass gain for height channels (default: 0.15)")
@@ -187,18 +162,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--fft-size",   type=int,  default=None, help="STFT window size")
     parser.add_argument("--no-auto-fft",action="store_true",     help="Disable automatic FFT size scaling for high sample rates")
-    parser.add_argument("--block-size", type=int,  default=None, help="Streaming block size in samples (default: 4096)")
 
     parser.add_argument("--no-normalize", action="store_true", help="Disable output energy normalization (mixing phase)")
-    parser.add_argument("--content-mix-strength", type=float, default=None, metavar="S", help="Content-aware mixing strength 0.0–1.0 (default: 1.0)")
-    parser.add_argument(
-        "--spatial-profile",
-        choices=["auto", "balanced", "intimate", "rhythmic", "spacious", "live", "detailed"],
-        default=None,
-        help="Creative spatial profile (default: auto).",
-    )
-    parser.add_argument("--spatial-intensity", type=float, default=None, metavar="S", help="Spatial adaptation strength 0.0–1.0 (default: 1.0)")
-    parser.add_argument("--no-spatial-preanalysis", action="store_true", help="Disable offline spatial analysis.")
     parser.add_argument(
         "--binaural-profile",
         choices=["studio", "listening", "flat"],
@@ -210,13 +175,6 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["stereo", "smart_speaker", "car", "laptop", "phone"],
         default=None,
         help="Spatial Audio Engine profile for --output-type transaural (default: stereo).",
-    )
-    parser.add_argument(
-        "--content-hf-analysis-hz",
-        type=lambda value: positive_float(value, "--content-hf-analysis-hz"),
-        default=None,
-        metavar="HZ",
-        help="High-frequency threshold for stem content analysis (default: 4000)",
     )
     parser.add_argument(
         "--no-loudness-normalize",
@@ -320,8 +278,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         help=(
             "Process scheduling priority and numeric-library thread use. "
-            "'auto' uses full resources for stem mode and reduced resources "
-            "for realtime mode. Default: auto."
+            "'auto' uses full resources. Default: auto."
         ),
     )
 
