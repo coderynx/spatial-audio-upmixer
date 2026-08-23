@@ -9,6 +9,7 @@ mod engine;
 mod measure;
 mod scale;
 mod offline;
+mod panner;
 mod params;
 
 use std::alloc::{alloc, dealloc, Layout};

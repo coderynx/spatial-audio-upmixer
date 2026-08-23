@@ -237,8 +237,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getConfiguration: () => request<Configuration>("/api/v1/configuration"),
-  resolveStemRouting: (payload: { stems: string[]; channel_layout: string; preset: string }) =>
-    request<StemRouting>("/api/v1/stem-routing/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   getImport: (id: string) => request<ImportPreview>(`/api/v1/imports/${id}`),
   listJobs: () => request<Job[]>("/api/v1/jobs"),
   listProjects: () => request<Project[]>("/api/v1/projects"),

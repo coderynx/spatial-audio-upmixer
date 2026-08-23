@@ -47,7 +47,7 @@ Every stage below is one function, called from both sides:
 |---|---|---|---|
 | Per-stem EQ | `spatial`/`kernels::fir_design` | `separation/stem_eq.py` | `stream::routing` |
 | Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate,transient}` | `separation/stem_router.py` | `stream::routing` |
-| Scene position → routing | `separation/stem_panner.py` | `apps/api/.../routing.py` | served with the project |
+| Placement → speaker gains | `spatial::{panner,presets}` | `separation/stem_placement.py` | `wasmEngine/panner.ts` |
 | Chain head (subsonic / DC) | `mastering::head` | `mastering/head.py` | `stream::master` |
 | Reference match | `match_reference::{spectrum,curve}` | `mastering/match_reference/` | `stream::master` |
 | Spectral EQ | `mastering::eq` | `mastering/eq.py` | `stream::master` |
@@ -64,12 +64,20 @@ Every stage below is one function, called from both sides:
 | Crosstalk (transaural) | `spatial::xtc` | `crosstalk/renderer.py` | `stream::output` |
 | BS.775 stereo downmix | `spatial::downmix` | `utils.py` | `stream::output` |
 
-Placement panning is the one stage with no Rust half, and needs none: it turns
-a placement into a gain map once, per stem, before any audio is touched. Both
-sides consume the same map — the export from `preset_routing`, the preview from
-the project payload — so the panner is shared by *being* the only one, not by
-being ported. Nothing in `packages/dsp` or the worklet knows what a placement
-is (ledger D34).
+Placement panning was previously the one stage with no Rust half, on the
+grounds that it runs once per stem before any audio is touched and both sides
+could consume the same served gain map (ledger D34). The mix editor's
+left/right control retired that: rotating a stem's azimuth means re-panning
+interactively, and a served map cannot be rotated — only the placement behind
+it can. The panner and the preset placement tables are therefore in
+`spatial::{panner,presets}`, reached by PyO3 for the export and by a
+main-thread wasm instance for the preview (`wasmEngine/panner.ts`).
+
+The worklet still knows nothing about placements: panning is control-rate, runs
+off the audio thread, and reaches the engine only as the gain table it always
+did. `mixing.stem_placement` carries the editable placement, `mixing.stem_routing`
+the gains derived from it; the router reads the gains, so the two are redundant
+by design and the placement is what the UI edits.
 
 The stem → bed row's LFE bus is one lowpass design in
 `kernels::butter::linkwitz_riley_lowpass_sos`, reached as `upmixer_dsp.lfe_lowpass`

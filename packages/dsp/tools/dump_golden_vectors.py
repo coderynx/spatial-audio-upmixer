@@ -492,6 +492,94 @@ def dump_spatial() -> None:
     )
 
 
+def dump_panner() -> None:
+    """MDAP stem panning: preset routing, the height flatten, and hull edges.
+
+    Dumped before the NumPy panner is swapped for the Rust one, so these are
+    the reference; afterwards they pin the port.
+    """
+    from upmixer.formats import FORMAT_MAP
+    from upmixer.separation.stem_placement import (
+        STEM_ROUTING_PRESET_NAMES,
+        StemPlacement,
+        placement_route,
+        resolve_placements,
+    )
+    from upmixer.separation.stem_router import build_stem_routing
+
+    layouts = list(FORMAT_MAP)
+    channels = {name: [c.value for c in FORMAT_MAP[name].channels] for name in layouts}
+    stems = sorted(resolve_placements("balanced", "7.1.4"))
+
+    cases: list[list[str]] = []
+    gains: list[float] = []
+    for preset in STEM_ROUTING_PRESET_NAMES:
+        for layout in layouts:
+            routing = build_stem_routing(stems, FORMAT_MAP[layout], preset)
+            for stem in stems:
+                route = routing.get(stem, {})
+                cases.append([preset, layout, stem])
+                gains.extend(route.get(channel, 0.0) for channel in channels[layout])
+    write_case(
+        "panner_routing",
+        {"cases": cases, "channels": channels, "stems": stems},
+        {"gains": np.array(gains, dtype=np.float64)},
+        1e-12,
+    )
+
+    projected: list[float] = []
+    for preset in STEM_ROUTING_PRESET_NAMES:
+        for layout in layouts:
+            placements = resolve_placements(preset, layout)
+            for stem in stems:
+                p = placements[stem]
+                projected.extend(
+                    (p.azimuth_deg, p.elevation_deg, p.width_deg, p.spread_deg, p.lfe)
+                )
+    write_case(
+        "panner_projection",
+        {"cases": cases, "stems": stems,
+         "fields": ["azimuth_deg", "elevation_deg", "width_deg", "spread_deg", "lfe"]},
+        {"placements": np.array(projected, dtype=np.float64)},
+        1e-12,
+    )
+
+    # Hull edges and clamps: the rear of a 5.1 bed (no rear pair, projects onto
+    # the side pair), elevation above the height layer and below the floor,
+    # azimuth stated past +/-180, a width beyond a full ring, and a zero-width
+    # point with no spread.
+    edges = [
+        (0.0, 0.0, 0.0, 0.0, 0.0),
+        (0.0, 0.0, 0.0, 60.0, 0.0),
+        (180.0, 0.0, 0.0, 60.0, 0.0),
+        (135.0, 0.0, 40.0, 50.0, 0.0),
+        (90.0, 0.0, 0.0, 0.0, 0.0),
+        (-90.0, 0.0, 0.0, 0.0, 0.0),
+        (0.0, 90.0, 0.0, 30.0, 0.0),
+        (0.0, -30.0, 0.0, 30.0, 0.0),
+        (225.0, 10.0, 0.0, 40.0, 0.0),
+        (-135.0, 10.0, 0.0, 40.0, 0.0),
+        (0.0, 20.0, 360.0, 40.0, 0.0),
+        (0.0, 35.0, 0.0, 0.0, 0.5),
+        (45.0, 15.0, 90.0, 70.0, 0.25),
+        (110.0, 30.0, 20.0, 0.0, 0.0),
+    ]
+    edge_cases: list[list[float | str]] = []
+    edge_gains: list[float] = []
+    for layout in layouts:
+        for edge in edges:
+            route = placement_route(StemPlacement(*edge), FORMAT_MAP[layout])
+            edge_cases.append([layout, *edge])
+            edge_gains.extend(route.get(channel, 0.0) for channel in channels[layout])
+    write_case(
+        "panner_edges",
+        {"cases": edge_cases, "channels": channels,
+         "fields": ["azimuth_deg", "elevation_deg", "width_deg", "spread_deg", "lfe"]},
+        {"gains": np.array(edge_gains, dtype=np.float64)},
+        1e-12,
+    )
+
+
 def main() -> int:
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
     for stale in GOLDEN_DIR.glob("*"):
@@ -512,6 +600,7 @@ def main() -> int:
     dump_mastering()
     dump_match_reference()
     dump_spatial()
+    dump_panner()
     print(f"wrote fixtures to {GOLDEN_DIR}")
     return 0
 

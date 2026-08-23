@@ -1,0 +1,118 @@
+//! MDAP stem-placement panning exports.
+//!
+//! Speaker maps cross the boundary as ordered gain lists aligned with the
+//! channel names the caller passed in; `packages/core` turns them back into
+//! the sparse channel dictionaries its manifests use.
+
+use pyo3::prelude::*;
+
+use upmixer_dsp_core::spatial::panner::{self, StemPlacement};
+use upmixer_dsp_core::spatial::presets;
+
+type PlacementTuple = (f64, f64, f64, f64, f64);
+
+fn placement(values: PlacementTuple) -> StemPlacement {
+    StemPlacement::new(values.0, values.1, values.2, values.3, values.4)
+}
+
+fn unpack(value: &StemPlacement) -> PlacementTuple {
+    (
+        value.azimuth_deg,
+        value.elevation_deg,
+        value.width_deg,
+        value.spread_deg,
+        value.lfe,
+    )
+}
+
+fn as_refs(names: &[String]) -> Vec<&str> {
+    names.iter().map(String::as_str).collect()
+}
+
+#[pyfunction]
+fn direction(azimuth_deg: f64, elevation_deg: f64) -> (f64, f64, f64) {
+    let vector = panner::direction(azimuth_deg, elevation_deg);
+    (vector[0], vector[1], vector[2])
+}
+
+#[pyfunction]
+fn panning_gains(
+    azimuth_deg: f64,
+    elevation_deg: f64,
+    width_deg: f64,
+    spread_deg: f64,
+    speakers: Vec<String>,
+) -> Vec<f64> {
+    let value = placement((azimuth_deg, elevation_deg, width_deg, spread_deg, 0.0));
+    panner::panning_gains(&value, &as_refs(&speakers))
+}
+
+#[pyfunction]
+fn placement_route(
+    azimuth_deg: f64,
+    elevation_deg: f64,
+    width_deg: f64,
+    spread_deg: f64,
+    lfe: f64,
+    channels: Vec<String>,
+) -> Vec<f64> {
+    let value = placement((azimuth_deg, elevation_deg, width_deg, spread_deg, lfe));
+    panner::placement_route(&value, &as_refs(&channels))
+}
+
+#[pyfunction]
+fn project_placement(
+    azimuth_deg: f64,
+    elevation_deg: f64,
+    width_deg: f64,
+    spread_deg: f64,
+    lfe: f64,
+    channels: Vec<String>,
+) -> PlacementTuple {
+    let value = placement((azimuth_deg, elevation_deg, width_deg, spread_deg, lfe));
+    unpack(&panner::project(&value, &as_refs(&channels)))
+}
+
+#[pyfunction]
+fn build_stem_routing(
+    stems: Vec<String>,
+    channels: Vec<String>,
+    preset: &str,
+) -> Vec<(String, Vec<f64>)> {
+    panner::build_stem_routing(&as_refs(&stems), &as_refs(&channels), preset)
+}
+
+#[pyfunction]
+fn fold_route_to_stereo(route: Vec<f64>, channels: Vec<String>) -> (f64, f64) {
+    panner::fold_route_to_stereo(&route, &as_refs(&channels))
+}
+
+#[pyfunction]
+fn preset_names() -> Vec<&'static str> {
+    presets::PRESET_NAMES.to_vec()
+}
+
+#[pyfunction]
+fn preset_placements(preset: &str) -> Vec<(String, PlacementTuple)> {
+    presets::preset_stems(preset)
+        .iter()
+        .map(|(stem, value)| (stem.to_string(), unpack(value)))
+        .collect()
+}
+
+pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(direction, m)?)?;
+    m.add_function(wrap_pyfunction!(panning_gains, m)?)?;
+    m.add_function(wrap_pyfunction!(placement_route, m)?)?;
+    m.add_function(wrap_pyfunction!(project_placement, m)?)?;
+    m.add_function(wrap_pyfunction!(build_stem_routing, m)?)?;
+    m.add_function(wrap_pyfunction!(fold_route_to_stereo, m)?)?;
+    m.add_function(wrap_pyfunction!(preset_names, m)?)?;
+    m.add_function(wrap_pyfunction!(preset_placements, m)?)?;
+    m.add("VIRTUAL_SOURCE_STEP_DEG", panner::VIRTUAL_SOURCE_STEP_DEG)?;
+    m.add("SPREAD_RING_FACTOR", panner::SPREAD_RING_FACTOR)?;
+    m.add("MINIMUM_SEND", panner::MINIMUM_SEND)?;
+    m.add("HEIGHT_FLATTEN_WIDTH_FACTOR", panner::HEIGHT_FLATTEN_WIDTH_FACTOR)?;
+    m.add("STEREO_PLACEMENT_CHANNELS", panner::STEREO_PLACEMENT_CHANNELS)?;
+    Ok(())
+}

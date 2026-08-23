@@ -27,6 +27,12 @@ them as parameters. Only structural math constants that would otherwise be
 duplicated (the BS.1770 true-peak FIR, ambisonic normalization, filter-design
 internals) live in Rust.
 
+The stem-routing preset tables (`spatial::presets`) are the deliberate
+exception: they are voicing data, not structural math, but the preview resolves
+presets locally so both sides must read one table. Retuning a preset means a
+`cargo` rebuild plus `uv sync --reinstall-package upmixer-dsp` and
+`npm run build:wasm`.
+
 ## Numerics
 
 Everything is `f64` internally, matching NumPy. `rustfft`/`realfft` do not

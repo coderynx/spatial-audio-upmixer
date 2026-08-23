@@ -34,6 +34,7 @@ export type Manifest = {
     stem_rebalance: Record<string, number>;
     stem_eq: Record<string, string>;
     stem_routing: Record<string, Record<string, number>>;
+    stem_placement: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; spread_deg: number }>;
     stem_enabled: Record<string, boolean>;
     stem_solo: string[];
     stem_source_anchor_strength: number;
@@ -169,6 +170,7 @@ export const defaultManifest: Manifest = {
     spatial: { profile: "auto", intensity: 1, preanalyze: true },
     stem_rebalance: {},
     stem_eq: {},
+    stem_placement: {},
     stem_routing: {},
     stem_enabled: {},
     stem_solo: [],

@@ -43,10 +43,9 @@ import upmixer_dsp
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
 from upmixer.loudness import CHANNEL_WEIGHT, k_weighted_power
-from upmixer.separation.stem_placement import STEREO_PLACEMENT_LAYOUT, preset_routing
+from upmixer.separation.stem_placement import STEM_ROUTING_PRESET_NAMES, preset_routing
 from upmixer.utils import (
     HEIGHT_VELVET_SEED,
-    ITU_CENTER_COEFF,
     SURROUND_VELVET_SEED,
     velvet_send,
 )
@@ -56,9 +55,6 @@ DEFAULT_ROUTING_LAYOUT = "7.1.4"
 
 _LEFT_CHANNELS  = {ChannelLabel.FL, ChannelLabel.SL, ChannelLabel.BL, ChannelLabel.TFL, ChannelLabel.TBL}
 _RIGHT_CHANNELS = {ChannelLabel.FR, ChannelLabel.SR, ChannelLabel.BR, ChannelLabel.TFR, ChannelLabel.TBR}
-
-_LEFT_NAMES  = {label.value for label in _LEFT_CHANNELS}
-_RIGHT_NAMES = {label.value for label in _RIGHT_CHANNELS}
 
 _SURROUND_CHANNELS = {ChannelLabel.SL, ChannelLabel.SR, ChannelLabel.BL, ChannelLabel.BR}
 _HEIGHT_CHANNELS   = {ChannelLabel.TFL, ChannelLabel.TFR, ChannelLabel.TBL, ChannelLabel.TBR}
@@ -203,14 +199,15 @@ def build_stem_routing(
     panned into its speakers; two-channel output is folded here, having been
     panned across the full layout first (see ``stem_placement``).
     """
-    to_stereo = output_format.n_channels == 2
-    routing = preset_routing(
-        preset, FORMAT_MAP[STEREO_PLACEMENT_LAYOUT] if to_stereo else output_format
-    )
+    if preset not in STEM_ROUTING_PRESET_NAMES:
+        raise ValueError(
+            f"Unknown stem routing preset '{preset}'. Valid: {STEM_ROUTING_PRESET_NAMES}"
+        )
+    channels = [label.value for label in output_format.channels]
+    routing = upmixer_dsp.build_stem_routing(stems, channels, preset)
     return {
-        stem: fold_route_to_stereo(routing[stem]) if to_stereo else routing[stem]
-        for stem in stems
-        if stem in routing
+        stem: {channel: gain for channel, gain in zip(channels, gains) if gain > 0.0}
+        for stem, gains in routing
     }
 
 
@@ -221,17 +218,10 @@ def fold_route_to_stereo(route: dict[str, float]) -> dict[str, float]:
     renormalizes each stem to its own loudness afterwards, so the side weights
     are a pan law, not the BS.775-4 level law. Idempotent.
     """
-    left = right = 0.0
-    for channel, gain in route.items():
-        if gain <= 0.0 or channel == "LFE":
-            continue
-        if channel == ChannelLabel.C.value:
-            left += gain * ITU_CENTER_COEFF
-            right += gain * ITU_CENTER_COEFF
-        elif channel in _LEFT_NAMES:
-            left += gain
-        elif channel in _RIGHT_NAMES:
-            right += gain
+    channels = list(route)
+    left, right = upmixer_dsp.fold_route_to_stereo(
+        [route[channel] for channel in channels], channels
+    )
     return {ChannelLabel.FL.value: left, ChannelLabel.FR.value: right}
 
 
@@ -241,6 +231,9 @@ def apply_stem_pan(route: dict[str, float], pan: float) -> dict[str, float]:
     ``pan`` is 0.0 (hard left) to 1.0 (hard right), 0.5 centred. The pair's
     combined magnitude is preserved so the stem's balance against any other
     channels in the route is unchanged.
+
+    A gain-table edit, not a placement move: this is the CLI's ``--stem-pan``
+    flag, which has no placement to rotate.
     """
     angle = min(1.0, max(0.0, pan)) * (math.pi / 2.0)
     magnitude = math.hypot(

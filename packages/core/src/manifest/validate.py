@@ -208,6 +208,10 @@ _ASSET_NON_BLOCK_KEYS: frozenset[str] = frozenset({
 })
 
 
+_PLACEMENT_FIELDS = frozenset({"azimuth_deg", "elevation_deg", "width_deg", "spread_deg"})
+_PLACEMENT_NON_NEGATIVE = frozenset({"width_deg", "spread_deg"})
+
+
 def validate_manifest(data: dict) -> None:
     """Validate the top-level manifest structure.
 
@@ -351,6 +355,34 @@ def validate_manifest(data: dict) -> None:
             for stem_key in solo:
                 if not _valid_route_stem(stem_key):
                     raise ManifestError(f"Unknown solo stem '{stem_key}'.")
+        placement = mixing.get("stem_placement")
+        if placement is not None:
+            if not isinstance(placement, dict):
+                raise ManifestError(f"{location}.mixing.stem_placement must be a mapping.")
+            for stem_key, fields in placement.items():
+                if not _valid_route_stem(stem_key):
+                    raise ManifestError(f"Unknown stem routing key '{stem_key}'.")
+                if not isinstance(fields, dict):
+                    raise ManifestError(
+                        f"{location}.mixing.stem_placement.{stem_key} must be a mapping."
+                    )
+                for field, value in fields.items():
+                    if field not in _PLACEMENT_FIELDS:
+                        raise ManifestError(
+                            f"Unknown placement field '{field}' for stem '{stem_key}'."
+                        )
+                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                        raise ManifestError(
+                            f"Placement '{stem_key}.{field}' must be a number."
+                        )
+                    if not math.isfinite(float(value)):
+                        raise ManifestError(
+                            f"Placement '{stem_key}.{field}' must be finite."
+                        )
+                    if field in _PLACEMENT_NON_NEGATIVE and float(value) < 0.0:
+                        raise ManifestError(
+                            f"Placement '{stem_key}.{field}' must be non-negative."
+                        )
         routing = mixing.get("stem_routing")
         if routing is None:
             return

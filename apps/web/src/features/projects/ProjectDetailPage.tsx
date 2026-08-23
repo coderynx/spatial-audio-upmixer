@@ -50,6 +50,7 @@ import { useStemPreview, type OutputMode } from "./useStemPreview";
 import { resolveEngineConstants } from "./masteringProfiles";
 import { useProjectState } from "./useProjectState";
 import { StemControls } from "./StemControls";
+import { loadPanner, NEUTRAL_PLACEMENT, type Panner, type StemPlacement } from "./wasmEngine/panner";
 import { useTrackPeaks } from "./useTrackPeaks";
 
 type Stage = "assets" | "mixing" | "mastering" | "delivery";
@@ -223,16 +224,59 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const setHazeIntensity = React.useCallback((next: number) => patchViewState({ hazeIntensity: next }), [patchViewState]);
   const setElevationIntensity = React.useCallback((next: number) => patchViewState({ elevationIntensity: next }), [patchViewState]);
   const routing: StemRouting = React.useMemo(() => trackManifest?.mixing.stem_routing || {}, [trackManifest]);
+  const placements = React.useMemo(
+    () => (trackManifest?.mixing.stem_placement || {}) as Record<string, StemPlacement>,
+    [trackManifest],
+  );
+  const [panner, setPanner] = React.useState<Panner | null>(null);
+  React.useEffect(() => {
+    let live = true;
+    loadPanner().then((loaded) => { if (live) setPanner(loaded); }).catch((reason) => setError((reason as Error).message));
+    return () => { live = false; };
+  }, [setError]);
+  const maxElevationDeg = React.useMemo(
+    () => (panner && channels.length ? panner.maxElevationDeg(channels) : 0),
+    [panner, channels],
+  );
+  /** A stem with no stored placement falls back to the preset's, so the first
+   * edit rotates the image it already had instead of a point at the front. */
+  const placementFor = React.useCallback(
+    (stem: string): StemPlacement =>
+      placements[stem]
+      ?? panner?.presetPlacements(preset)[stem.split("@", 1)[0]]
+      ?? NEUTRAL_PLACEMENT,
+    [placements, panner, preset],
+  );
   const updateRoute = (stem: string, patch: Record<string, number>) => {
     if (!trackManifest) return;
     updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_routing: { ...routing, [stem]: { ...routing[stem], ...patch } } } }, true);
   };
-  const applyPreset = async () => {
-    if (!trackManifest || !stemNames.length) return;
-    try {
-      const next = await api.resolveStemRouting({ stems: stemNames, channel_layout: trackManifest.mixing.channel_layout, preset });
-      updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_routing: next } });
-    } catch (reason) { setError((reason as Error).message); }
+  /** The placement is what the user edits; the gain table is derived from it
+   * here so the manifest the export reads never lags behind the UI. */
+  const updatePlacement = (stem: string, placement: StemPlacement) => {
+    if (!trackManifest || !panner) return;
+    const route = panner.placementRoute(placement, channels, routing[stem]?.LFE ?? 0);
+    updateTrackManifest({
+      ...trackManifest,
+      mixing: {
+        ...trackManifest.mixing,
+        stem_placement: { ...placements, [stem]: placement },
+        stem_routing: { ...routing, [stem]: route },
+      },
+    }, true);
+  };
+  const applyPreset = () => {
+    if (!trackManifest || !stemNames.length || !panner) return;
+    const table = panner.presetPlacements(preset);
+    const nextPlacements: Record<string, StemPlacement> = {};
+    const nextRouting: StemRouting = {};
+    for (const stem of stemNames) {
+      const placement = table[stem.split("@", 1)[0]];
+      if (!placement) continue;
+      nextPlacements[stem] = placement;
+      nextRouting[stem] = panner.placementRoute(placement, channels, routing[stem]?.LFE ?? 0);
+    }
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_placement: nextPlacements, stem_routing: nextRouting } });
   };
   const toggleEnabled = React.useCallback((stem: string) => {
     if (!trackManifest) return;
@@ -475,7 +519,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                   <span className="min-w-0 flex-1 truncate">{selectedStem}</span>
                   <span className="text-[11px] font-normal text-muted-foreground">{stemMuted ? "muted" : "enabled"}</span>
                 </p>
-                <StemControls route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
+                <StemControls key={selectedStem} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
                   stemEqProfiles={configuration?.choices.stem_eq_profiles}
                 />
                 <div className="mt-3 flex justify-center border-t pt-3">

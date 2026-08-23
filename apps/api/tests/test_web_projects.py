@@ -113,6 +113,76 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
         assert expanded.json()["requested_stems"] == ["Vocals", "Kick", "Bass"]
 
 
+def test_stem_placement_survives_the_settings_round_trip(tmp_path, monkeypatch):
+    """The mix editor edits placements and derives the gain table from them, so
+    a placement that does not come back out of `/settings` silently costs the
+    stem its position on the next load."""
+    settings = Settings(
+        data_dir=tmp_path,
+        database_url=f"sqlite:///{tmp_path / 'projects.db'}",
+        worker_count=1,
+    )
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    placement = {
+        "azimuth_deg": -42.5,
+        "elevation_deg": 12.0,
+        "width_deg": 128.0,
+        "spread_deg": 70.0,
+    }
+    with TestClient(create_app(settings)) as client:
+        created = client.post("/api/v1/projects", json={
+            "name": "Placed",
+            "manifest": {
+                "version": "1.0.0",
+                "engine": {"mode": "stem", "stems": ["Vocals", "Guitar"]},
+                "mixing": {
+                    "channel_layout": "7.1.4",
+                    "stem_placement": {"Guitar": placement},
+                },
+            },
+        })
+        assert created.status_code == 201, created.text
+        project = created.json()
+        assert project["manifest"]["mixing"]["stem_placement"]["Guitar"] == placement
+
+        moved = {**placement, "azimuth_deg": 90.0}
+        manifest = project["manifest"]
+        manifest["mixing"]["stem_placement"] = {"Guitar": moved}
+        saved = client.put(f"/api/v1/projects/{project['id']}/settings", json={
+            "name": project["name"],
+            "manifest": manifest,
+            "scene": project["scene"],
+        })
+        assert saved.status_code == 200, saved.text
+
+        reloaded = client.get(f"/api/v1/projects/{project['id']}").json()
+        assert reloaded["manifest"]["mixing"]["stem_placement"] == {"Guitar": moved}
+
+
+def test_a_malformed_stem_placement_is_rejected(tmp_path, monkeypatch):
+    settings = Settings(
+        data_dir=tmp_path,
+        database_url=f"sqlite:///{tmp_path / 'projects.db'}",
+        worker_count=1,
+    )
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
+    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    with TestClient(create_app(settings)) as client:
+        rejected = client.post("/api/v1/projects", json={
+            "name": "Bad placement",
+            "manifest": {
+                "version": "1.0.0",
+                "engine": {"mode": "stem", "stems": ["Vocals"]},
+                "mixing": {
+                    "channel_layout": "7.1.4",
+                    "stem_placement": {"Vocals": {"width_deg": -1.0}},
+                },
+            },
+        })
+        assert rejected.status_code == 422
+
+
 def test_project_view_state_persists_independently_of_settings(tmp_path, monkeypatch):
     """Timeline/monitoring preferences (stem order, listening profile, master
     volume, A/B bypass, haze/elevation intensity) round-trip through their own

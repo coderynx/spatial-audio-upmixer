@@ -37,7 +37,6 @@ vi.mock("@/api", async (importOriginal) => {
       saveProject: vi.fn(async () => project),
       saveProjectTrackLayout: vi.fn(async () => project),
       retryProject: vi.fn(async () => project),
-      resolveStemRouting: vi.fn(async () => ({})),
       saveProjectViewState: vi.fn(async () => undefined),
     },
   };
