@@ -78,7 +78,8 @@ fn params_json(with_master: bool) -> String {
             {{"routing": [["FL", 0.9], ["FR", 0.9], ["SL", 0.4], ["LFE", 0.3]],
               "rebalance_db": 0.0, "enabled": true}},
             {{"routing": [["FL", 0.5], ["FR", 0.5], ["SL", 0.7], ["LFE", 0.1]],
-              "rebalance_db": -2.0, "enabled": true}}
+              "rebalance_db": -2.0, "enabled": true,
+              "ambient_rear": 0.6, "ambient_height": 0.4}}
         ],
         {master}
         "output_mode": "native"

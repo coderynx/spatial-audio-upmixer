@@ -18,16 +18,17 @@
 use crate::loudness::{gated_power, loudness_channel_weight};
 use crate::loudness_stream::IntegratedLoudnessMeter;
 use crate::stream::params::StemParams;
-use crate::stream::routing::shape_index;
+use crate::stream::params::SendShape;
+use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND};
 
 use super::engine::PreviewEngine;
 
 /// Signals one stem's routing can draw on, in [`shape_index`]'s own order —
-/// the dry pair, their mono sum, then the four shaped sends — so a speaker's
-/// signal is its shape. The dry pair doubles as the stem's own input, which is
-/// what the routed sum is matched to.
+/// the dry pair, their mono sum, the four shaped sends, then the four ambient
+/// sends — so a speaker's signal is its shape. The dry pair doubles as the
+/// stem's own input, which is what the routed sum is matched to.
 const INPUT: usize = 0;
-const SIGNALS: usize = 7;
+use crate::stream::routing::SIGNALS;
 
 /// The part of a block that is metered: the preroll in front of an excerpt is
 /// rendered to warm the send filters, then dropped.
@@ -238,6 +239,25 @@ fn scale_from(
         let gain = weight * speaker.group_gain;
         let signal = shape_index(params.shapes[channel]);
         routed_power += loudness_channel_weight(name) * gain * gain * powers[signal];
+        routed_energy += gain * gain * energies[signal];
+    }
+
+    // The ambient sends reach their whole speaker class rather than the
+    // stem's placement, so they are summed off the shapes, not the routing.
+    for (channel, shape) in params.shapes.iter().enumerate() {
+        let (amount, signal) = match shape {
+            SendShape::SurroundLeft => (sp.ambient_rear, AMBIENT_SURROUND),
+            SendShape::SurroundRight => (sp.ambient_rear, AMBIENT_SURROUND + 1),
+            SendShape::HeightLeft => (sp.ambient_height, AMBIENT_HEIGHT),
+            SendShape::HeightRight => (sp.ambient_height, AMBIENT_HEIGHT + 1),
+            _ => continue,
+        };
+        if amount <= 0.0 {
+            continue;
+        }
+        let speaker = &params.speakers[channel];
+        let gain = amount * params.ambient_share(*shape) * speaker.group_gain;
+        routed_power += loudness_channel_weight(&speaker.name) * gain * gain * powers[signal];
         routed_energy += gain * gain * energies[signal];
     }
 

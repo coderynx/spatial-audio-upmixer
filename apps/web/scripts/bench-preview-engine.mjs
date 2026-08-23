@@ -119,6 +119,15 @@ const CASES = {
   // the very next quantum just as surely as a slow render can. Uses the
   // heaviest configuration (full mastering chain + limiter) so a retune
   // that isn't as narrow as it should be shows up here first.
+  // Every stem splitting its ambient half out and feeding it to both the
+  // surrounds and the heights: the heaviest per-stem work the engine has,
+  // an STFT pair per stem per hop on top of the normal routing.
+  ambientNative: {
+    mode: "native",
+    decode: false,
+    ambient: true,
+    label: "native 7.1.4 + ambient sends on every stem",
+  },
   mixEditPlaying: {
     mode: "native",
     decode: false,
@@ -132,7 +141,7 @@ function instantiate() {
   return new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
 }
 
-function params(mode, decodeTaps) {
+function params(mode, decodeTaps, ambient = false) {
   return {
     speakers: CHANNELS.map((name, i) => ({
       name,
@@ -154,6 +163,7 @@ function params(mode, decodeTaps) {
     stems: Array.from({ length: STEMS }, () => ({
       routing: CHANNELS.map((name) => [name, 0.3]),
       rebalance_db: 0, enabled: true, eq_fir: [], route_scale: 1,
+      ambient_rear: ambient ? 0.8 : 0, ambient_height: ambient ? 0.8 : 0,
     })),
     master: {
       // Both default-off stages benched on, per parity contract §4.
@@ -214,9 +224,9 @@ function decodeBank() {
   return bank;
 }
 
-function run(label, mode, decodeTaps, kind) {
+function run(label, mode, decodeTaps, kind, ambient = false) {
   const wasm = instantiate();
-  const encoded = new TextEncoder().encode(JSON.stringify(params(mode, decodeTaps)));
+  const encoded = new TextEncoder().encode(JSON.stringify(params(mode, decodeTaps, ambient)));
   const ptr = wasm.dsp_alloc(encoded.length);
   new Uint8Array(wasm.memory.buffer, ptr, encoded.length).set(encoded);
   const engine = wasm.dsp_engine_new(SR, ptr, encoded.length);
@@ -357,8 +367,10 @@ function run(label, mode, decodeTaps, kind) {
 // garbage collection, not the DSP.
 const requested = process.argv[2];
 if (requested) {
-  const { mode, decode, label, kind } = CASES[requested];
-  process.stdout.write(JSON.stringify(run(label, mode, decode ? decodeBank() : [], kind)));
+  const { mode, decode, label, kind, ambient } = CASES[requested];
+  process.stdout.write(
+    JSON.stringify(run(label, mode, decode ? decodeBank() : [], kind, ambient)),
+  );
 } else {
   const self = fileURLToPath(import.meta.url);
   console.log(`deadline ${DEADLINE_MS.toFixed(2)} ms per ${QUANTUM}-frame quantum at ${SR} Hz\n`);

@@ -3,9 +3,17 @@
 use super::{build_decorrelator, build_unifier, PreviewEngine, GAIN_RAMP_MS};
 use crate::mastering::dyneq::DynamicEq;
 use crate::stream::master::StreamingLimiter;
-use crate::stream::params::EngineParams;
+use crate::stream::params::{EngineParams, SendParams, StemParams};
 use crate::stream::routing::StemRouteState;
 use crate::stream::state::{OnePole, StreamingCompressor};
+
+/// One stem's routing state, including the ambient half when the stem asks
+/// for one. Both the initial build and a stem-count change come through here.
+pub(crate) fn build_route(sample_rate: u32, sends: &SendParams, stem: &StemParams) -> StemRouteState {
+    let mut route = StemRouteState::new(sample_rate, sends, &stem.eq_fir);
+    route.set_ambient(sample_rate, sends, &stem.eq_fir, stem.wants_ambient());
+    route
+}
 
 /// Whether anything the per-stem routing reads has moved: the signals it
 /// builds, the speakers it sends them to, or the gains on the way.
@@ -17,10 +25,12 @@ fn routing_changed(old: &EngineParams, new: &EngineParams) -> bool {
     if gains != new.speakers.iter().map(|s| s.group_gain).collect::<Vec<f64>>() {
         return true;
     }
-    old.stems
-        .iter()
-        .zip(&new.stems)
-        .any(|(a, b)| a.routing != b.routing || a.eq_fir != b.eq_fir)
+    old.stems.iter().zip(&new.stems).any(|(a, b)| {
+        a.routing != b.routing
+            || a.eq_fir != b.eq_fir
+            || a.ambient_rear != b.ambient_rear
+            || a.ambient_height != b.ambient_height
+    })
 }
 
 impl PreviewEngine {
@@ -73,6 +83,10 @@ impl PreviewEngine {
             let eq_changed = new_eq != old_eq;
             if sends_changed || eq_changed {
                 route.retune(self.sample_rate, &self.params.sends, new_eq, sends_changed, eq_changed);
+            }
+            let wants_ambient = self.params.stems.get(i).is_some_and(|s| s.wants_ambient());
+            if wants_ambient != route.has_ambient() || sends_changed || eq_changed {
+                route.set_ambient(self.sample_rate, &self.params.sends, new_eq, wants_ambient);
             }
         }
 
@@ -180,7 +194,7 @@ impl PreviewEngine {
             .params
             .stems
             .iter()
-            .map(|s| StemRouteState::new(self.sample_rate, &self.params.sends, &s.eq_fir))
+            .map(|s| build_route(self.sample_rate, &self.params.sends, s))
             .collect();
         self.stem_gain = self
             .params

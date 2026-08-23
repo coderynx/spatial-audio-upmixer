@@ -11,7 +11,7 @@ use super::{PreviewEngine, METER_WINDOW_FRAMES, UNIFY_STRIDE};
 use crate::mastering::clip::ClipCurve;
 use crate::stream::meters::Level;
 use crate::stream::params::SendShape;
-use crate::stream::routing::shape_index;
+use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND, SIGNALS};
 
 impl PreviewEngine {
     /// Run one stem's routing chain over `count` frames from `start`, leaving
@@ -46,10 +46,21 @@ impl PreviewEngine {
             left.push(*stem.left.get(frame).unwrap_or(&0.0) as f64);
             right.push(*stem.right.get(frame).unwrap_or(&0.0) as f64);
         }
+        // A send the layout has no speaker for gets no ambient: the amount
+        // is taken out of the dry pair, so sending it nowhere would be a hole
+        // rather than a move.
+        let rear = sp.ambient_rear * f64::from(self.params.ambient_share(SendShape::SurroundLeft) > 0.0);
+        let height = sp.ambient_height * f64::from(self.params.ambient_share(SendShape::HeightLeft) > 0.0);
+
         let route = &mut self.routes[stem_index];
         if let Some((eq_l, eq_r)) = &mut route.eq {
             left = eq_l.process(&left);
             right = eq_r.process(&right);
+        }
+        if route.has_ambient() && (rear > 0.0 || height > 0.0) {
+            route.split_ambient(
+                &stem.left, &stem.right, start, count, rear, height, &mut left, &mut right,
+            );
         }
         route.process(&left, &right, needs_surround, needs_height);
     }
@@ -84,7 +95,8 @@ impl PreviewEngine {
             let sp = &self.params.stems[stem_index];
             let smoother = &mut self.stem_gain[stem_index];
             let route = &self.routes[stem_index];
-            let shaped: [&[f64]; 7] = std::array::from_fn(|i| route.signal(i));
+            let shaped: [&[f64]; SIGNALS] = std::array::from_fn(|i| route.signal(i));
+            let ambient = route.has_ambient().then(|| ambient_feeds(&self.params, sp));
 
             for i in 0..count {
                 let gain = smoother.tick(target_gain);
@@ -100,6 +112,13 @@ impl PreviewEngine {
                     let speaker = &self.params.speakers[channel];
                     let signal = shaped[shape_index(self.params.shapes[channel])][i];
                     bed[channel][i] += signal * weight * speaker.group_gain * gain;
+                }
+                // The ambient half reaches its whole speaker class, whatever
+                // the stem's placement sends there.
+                if let Some(feeds) = &ambient {
+                    for (channel, slot, weight) in feeds {
+                        bed[*channel][i] += shaped[*slot][i] * weight * gain;
+                    }
                 }
             }
         }
@@ -340,4 +359,26 @@ impl PreviewEngine {
         self.pre.drain_to(self.emitted.saturating_sub(self.look_ahead()));
         emit
     }
+}
+
+/// Which speakers one stem's ambient sends reach, and at what weight:
+/// `(speaker, signal slot, weight)`, the weight already carrying the class
+/// share and the speaker's group gain.
+fn ambient_feeds(params: &crate::stream::params::EngineParams, sp: &crate::stream::params::StemParams) -> Vec<(usize, usize, f64)> {
+    let mut feeds = Vec::new();
+    for (channel, shape) in params.shapes.iter().enumerate() {
+        let (amount, slot) = match shape {
+            SendShape::SurroundLeft => (sp.ambient_rear, AMBIENT_SURROUND),
+            SendShape::SurroundRight => (sp.ambient_rear, AMBIENT_SURROUND + 1),
+            SendShape::HeightLeft => (sp.ambient_height, AMBIENT_HEIGHT),
+            SendShape::HeightRight => (sp.ambient_height, AMBIENT_HEIGHT + 1),
+            _ => continue,
+        };
+        if amount <= 0.0 {
+            continue;
+        }
+        let weight = amount * params.ambient_share(*shape) * params.speakers[channel].group_gain;
+        feeds.push((channel, slot, weight));
+    }
+    feeds
 }

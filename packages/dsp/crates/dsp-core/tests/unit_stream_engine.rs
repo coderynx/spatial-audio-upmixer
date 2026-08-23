@@ -583,3 +583,128 @@ mod routing {
         }
     }
 }
+
+mod ambient_sends {
+    use std::sync::Arc;
+    use upmixer_dsp_core::kernels::rng::next_unit;
+    use upmixer_dsp_core::stream::engine::{PreviewEngine, StemSource};
+    use upmixer_dsp_core::stream::params::EngineParams;
+
+    const SR: u32 = 48_000;
+    const N: usize = 24_000;
+    const CHANNELS: usize = 6;
+
+    /// A stem shaped like a separated one: a centred note with a decorrelated
+    /// tail behind it.
+    fn stem() -> Arc<StemSource> {
+        let mut left = vec![0.0f32; N];
+        let mut right = vec![0.0f32; N];
+        let (mut seed_l, mut seed_r) = (11u64, 12u64);
+        for i in 0..N {
+            let t = i as f64 / SR as f64;
+            let note = 0.3 * (2.0 * std::f64::consts::PI * 440.0 * t).sin();
+            let tail = 0.15 * (-1.5 * t).exp();
+            left[i] = (note + tail * (next_unit(&mut seed_l) * 2.0 - 1.0)) as f32;
+            right[i] = (note + tail * (next_unit(&mut seed_r) * 2.0 - 1.0)) as f32;
+        }
+        Arc::new(StemSource { left, right })
+    }
+
+    /// A 5.1.2 bed whose stem is routed to the fronts only, so anything that
+    /// reaches SL/SR or the heights got there through an ambient send.
+    fn engine(rear: f64, height: f64) -> PreviewEngine {
+        let params: EngineParams = serde_json::from_str(&format!(
+            r#"{{
+                "speakers": [
+                    {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
+                    {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
+                    {{"name": "SL", "azimuth_rad": 1.9199, "elevation_rad": 0.0, "group_gain": 1.0}},
+                    {{"name": "SR", "azimuth_rad": -1.9199, "elevation_rad": 0.0, "group_gain": 1.0}},
+                    {{"name": "TFL", "azimuth_rad": 0.7854, "elevation_rad": 0.7854, "group_gain": 1.0}},
+                    {{"name": "TFR", "azimuth_rad": -0.7854, "elevation_rad": 0.7854, "group_gain": 1.0}}
+                ],
+                "shapes": ["left", "right", "surround_left", "surround_right",
+                           "height_left", "height_right"],
+                "surround_downmix_coeff": 0.7071067811865476,
+                "height_downmix_coeff": 0.7071067811865476,
+                "sends": {{"surround_bass_cutoff_hz": 250.0,
+                          "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
+                          "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
+                          "height_directional_band_hz": 8000.0,
+                          "height_directional_band_gain": 1.0,
+                          "lfe_cutoff_hz": 120.0, "lfe_filter_order": 4, "lfe_gain": 1.0}},
+                "stems": [{{"routing": [["FL", 1.0], ["FR", 1.0]], "enabled": true,
+                           "ambient_rear": {rear}, "ambient_height": {height}}}],
+                "master": {{}},
+                "output_mode": "native",
+                "bypass_mastering": true,
+                "soft_limit_threshold": 0.0
+            }}"#
+        ))
+        .expect("engine parameters");
+        PreviewEngine::new(SR, params, vec![stem()])
+    }
+
+    fn render(rear: f64, height: f64) -> Vec<Vec<f64>> {
+        let mut engine = engine(rear, height);
+        let mut out = vec![0.0; CHANNELS * N];
+        let emitted = engine.render(&mut out, N);
+        (0..CHANNELS)
+            .map(|ch| out[ch * N..ch * N + emitted].to_vec())
+            .collect()
+    }
+
+    fn energy(signal: &[f64]) -> f64 {
+        signal.iter().map(|v| v * v).sum()
+    }
+
+    #[test]
+    fn a_zero_slider_leaves_the_surrounds_and_heights_silent() {
+        let bed = render(0.0, 0.0);
+        for channel in 2..CHANNELS {
+            assert_eq!(energy(&bed[channel]), 0.0, "channel {channel} is not silent");
+        }
+    }
+
+    #[test]
+    fn an_ambient_send_reaches_speakers_the_stem_is_not_routed_to() {
+        let bed = render(0.8, 0.8);
+        for channel in 2..CHANNELS {
+            assert!(energy(&bed[channel]) > 0.0, "channel {channel} got no ambient");
+        }
+    }
+
+    #[test]
+    fn what_the_sends_take_comes_out_of_the_front() {
+        let dry = render(0.0, 0.0);
+        let sent = render(0.9, 0.9);
+        let front_dry = energy(&dry[0]) + energy(&dry[1]);
+        let front_sent = energy(&sent[0]) + energy(&sent[1]);
+        assert!(
+            front_sent < front_dry,
+            "front kept {front_sent:.4} of {front_dry:.4} — the sends are a copy, not a move"
+        );
+    }
+
+    #[test]
+    fn the_heights_get_the_brighter_half_of_the_ambient() {
+        let bed = render(0.8, 0.8);
+        // Zero crossings stand in for a centroid: the height feed carries the
+        // top of the tilt plus its own elevation shelf.
+        let crossings = |signal: &[f64]| {
+            signal.windows(2).filter(|w| w[0].signum() != w[1].signum()).count()
+        };
+        assert!(
+            crossings(&bed[4]) > crossings(&bed[2]),
+            "height send is not brighter than the rear send"
+        );
+    }
+
+    #[test]
+    fn the_send_scales_with_its_slider() {
+        let half = render(0.4, 0.0);
+        let full = render(0.8, 0.0);
+        let ratio = energy(&full[2]) / energy(&half[2]);
+        assert!((ratio - 4.0).abs() < 0.2, "doubling the slider scaled power by {ratio:.3}");
+    }
+}

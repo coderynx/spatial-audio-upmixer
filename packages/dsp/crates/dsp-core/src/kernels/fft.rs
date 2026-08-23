@@ -69,6 +69,32 @@ impl RealFft {
     }
 }
 
+/// Allocation-free `rfft`/`irfft` for a caller that runs them per block on
+/// the audio thread. `signal` and `spectrum` are scratch the caller owns and
+/// keeps; both are overwritten.
+impl RealFft {
+    pub fn rfft_into(&self, signal: &mut [f64], spectrum: &mut [Complex64]) {
+        self.forward
+            .process(signal, spectrum)
+            .expect("rfft length mismatch");
+    }
+
+    pub fn irfft_into(&self, spectrum: &mut [Complex64], signal: &mut [f64]) {
+        spectrum[0].im = 0.0;
+        if self.len % 2 == 0 {
+            let last = spectrum.len() - 1;
+            spectrum[last].im = 0.0;
+        }
+        self.inverse
+            .process(spectrum, signal)
+            .expect("irfft length mismatch");
+        let scale = 1.0 / self.len as f64;
+        for v in signal.iter_mut() {
+            *v *= scale;
+        }
+    }
+}
+
 /// Next length ≥ `n` that factors into 2, 3, and 5 — the sizes `rustfft`
 /// plans without falling back to Bluestein.
 pub fn next_fast_len(n: usize) -> usize {

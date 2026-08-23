@@ -207,7 +207,7 @@ impl PreviewEngine {
         let routes = params
             .stems
             .iter()
-            .map(|s| StemRouteState::new(sample_rate, &params.sends, &s.eq_fir))
+            .map(|s| params_update::build_route(sample_rate, &params.sends, s))
             .collect();
         let causal = (0..n_channels)
             .map(|i| CausalChain::new(sample_rate, &params.master, params.lfe_index == Some(i)))

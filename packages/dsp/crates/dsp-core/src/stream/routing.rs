@@ -5,6 +5,7 @@
 //! counterpart would have accumulated, so the two agree sample for sample.
 
 use crate::kernels::biquad::SosFilter;
+use crate::routing::ambient::AmbientSplit;
 use crate::kernels::butter::{butter_sos, linkwitz_riley_lowpass_sos, BandType};
 use crate::routing::decorrelate::{
     velvet_pair_seeded, VelvetFir, VelvetLine, VELVET_SEED, VELVET_SEED_HEIGHT,
@@ -14,10 +15,13 @@ use crate::routing::sends::directional_band_sos;
 use super::conv::StreamingConvolver;
 use super::params::{SendParams, SendShape};
 
-/// One shaped send: a filter chain and one side of a decorrelator pair.
+/// One shaped send: a filter chain and, for a send fed from the dry stem,
+/// one side of a decorrelator pair. The ambient sends carry no decorrelator:
+/// their two sides are already independent signals — that is what the split
+/// selected them for — so a velvet pair would only smear them.
 struct Send {
     filters: Vec<SosFilter>,
-    velvet: VelvetLine,
+    velvet: Option<VelvetLine>,
     /// Elevation-EQ gains, when this send is a height send: low rolloff,
     /// high shelf, directional band.
     elevation: Option<(f64, f64, f64)>,
@@ -28,7 +32,9 @@ impl Send {
         for f in &mut self.filters {
             f.reset();
         }
-        self.velvet.reset();
+        if let Some(velvet) = &mut self.velvet {
+            velvet.reset();
+        }
     }
 
     /// Re-derive a surround send's highpass in place.
@@ -78,23 +84,47 @@ impl Send {
 
     fn process(&mut self, input: &[f64], out: &mut Vec<f64>) {
         out.clear();
-        out.reserve(input.len());
-        for x in input {
-            let shaped = self.shape(*x);
-            out.push(shaped);
+        out.extend_from_slice(input);
+        self.process_in_place(out);
+    }
+
+    fn process_in_place(&mut self, buffer: &mut Vec<f64>) {
+        for x in buffer.iter_mut() {
+            *x = self.shape(*x);
         }
-        self.velvet.process(out);
+        if let Some(velvet) = &mut self.velvet {
+            velvet.process(buffer);
+        }
     }
 }
 
-/// Per-stem shaping state: the four sends plus the optional stem EQ.
+/// First of the two ambient-surround signals; the right side follows it.
+pub const AMBIENT_SURROUND: usize = 7;
+/// First of the two ambient-height signals; the right side follows it.
+pub const AMBIENT_HEIGHT: usize = 9;
+/// Signals a speaker can draw on, in [`shape_index`] order followed by the
+/// four ambient sends.
+pub const SIGNALS: usize = 11;
+
+/// Per-stem shaping state: the four sends plus the optional stem EQ, and —
+/// when the stem asks for it — the primary/ambient split and the four extra
+/// sends its ambient half plays through.
 pub struct StemRouteState {
     pub eq: Option<(StreamingConvolver, StreamingConvolver)>,
     surround: [Send; 2],
     height: [Send; 2],
+    split: Option<AmbientSplit>,
+    /// The stem EQ again, for the ambient half — one convolver per ambient
+    /// signal, since each carries its own stream. The split reads raw stem
+    /// PCM so it can look ahead of the block; its output is EQ'd afterwards
+    /// through the same kernel, which keeps it aligned with the dry path
+    /// rather than a filter length in front of it.
+    ambient_eq: Option<[StreamingConvolver; 4]>,
+    ambient_surround: [Send; 2],
+    ambient_height: [Send; 2],
     /// Last block's signals, indexed by [`shape_index`]: the dry pair, their
-    /// mono sum, then the four shaped sends.
-    shaped: [Vec<f64>; 7],
+    /// mono sum, the four shaped sends, then the four ambient sends.
+    shaped: [Vec<f64>; SIGNALS],
 }
 
 impl StemRouteState {
@@ -112,18 +142,18 @@ impl StemRouteState {
         let (surround_l, surround_r) = velvet_pair_seeded(sample_rate, VELVET_SEED);
         let (height_l, height_r) = velvet_pair_seeded(sample_rate, VELVET_SEED_HEIGHT);
 
-        let surround_send = |fir: &VelvetFir| Send {
+        let surround_send = |fir: Option<&VelvetFir>| Send {
             filters: vec![SosFilter::from_flat(&surround_hp)],
-            velvet: VelvetLine::new(fir),
+            velvet: fir.map(VelvetLine::new),
             elevation: None,
         };
-        let height_send = |fir: &VelvetFir| Send {
+        let height_send = |fir: Option<&VelvetFir>| Send {
             filters: vec![
                 SosFilter::from_flat(&height_lp),
                 SosFilter::from_flat(&height_hp),
                 SosFilter::from_flat(&[height_band]),
             ],
-            velvet: VelvetLine::new(fir),
+            velvet: fir.map(VelvetLine::new),
             elevation: Some((
                 p.height_low_rolloff_gain,
                 p.height_high_shelf_gain,
@@ -138,9 +168,81 @@ impl StemRouteState {
                     StreamingConvolver::new(eq_fir.to_vec()),
                 )
             }),
-            surround: [surround_send(&surround_l), surround_send(&surround_r)],
-            height: [height_send(&height_l), height_send(&height_r)],
+            surround: [surround_send(Some(&surround_l)), surround_send(Some(&surround_r))],
+            height: [height_send(Some(&height_l)), height_send(Some(&height_r))],
+            split: None,
+            ambient_eq: None,
+            ambient_surround: [surround_send(None), surround_send(None)],
+            ambient_height: [height_send(None), height_send(None)],
             shaped: Default::default(),
+        }
+    }
+
+    /// Build or drop the ambient half.
+    pub fn set_ambient(&mut self, sample_rate: u32, p: &SendParams, eq_fir: &[f64], wanted: bool) {
+        if !wanted {
+            self.split = None;
+            self.ambient_eq = None;
+            return;
+        }
+        if self.split.is_none() {
+            self.split = Some(AmbientSplit::new(sample_rate));
+        }
+        for s in self.ambient_surround.iter_mut() {
+            s.retune_surround(sample_rate, p);
+        }
+        for s in self.ambient_height.iter_mut() {
+            s.retune_height(sample_rate, p);
+        }
+        self.ambient_eq = (!eq_fir.is_empty())
+            .then(|| std::array::from_fn(|_| StreamingConvolver::new(eq_fir.to_vec())));
+    }
+
+    pub fn has_ambient(&self) -> bool {
+        self.split.is_some()
+    }
+
+    /// Split one block's ambient half out of the stem, leave it in the four
+    /// ambient signals, and take it out of the dry pair the sends are about
+    /// to shape — the amount moved to the surrounds and heights is the amount
+    /// the front no longer carries.
+    #[allow(clippy::too_many_arguments)]
+    pub fn split_ambient(
+        &mut self,
+        stem_left: &[f32],
+        stem_right: &[f32],
+        start: usize,
+        count: usize,
+        rear: f64,
+        height: f64,
+        left: &mut [f64],
+        right: &mut [f64],
+    ) {
+        let Some(split) = &mut self.split else { return };
+        let block = split.advance(stem_left, stem_right, start, count);
+        let sources = [
+            (AMBIENT_SURROUND, block.rear[0]),
+            (AMBIENT_SURROUND + 1, block.rear[1]),
+            (AMBIENT_HEIGHT, block.height[0]),
+            (AMBIENT_HEIGHT + 1, block.height[1]),
+        ];
+        for (slot, source) in sources {
+            self.shaped[slot].clear();
+            self.shaped[slot].extend_from_slice(source);
+        }
+        if let Some(eq) = &mut self.ambient_eq {
+            for (convolver, slot) in eq.iter_mut().zip(sources.map(|(slot, _)| slot)) {
+                self.shaped[slot] = convolver.process(&self.shaped[slot]);
+            }
+        }
+        for i in 0..count {
+            left[i] -= rear * self.shaped[AMBIENT_SURROUND][i] + height * self.shaped[AMBIENT_HEIGHT][i];
+            right[i] -=
+                rear * self.shaped[AMBIENT_SURROUND + 1][i] + height * self.shaped[AMBIENT_HEIGHT + 1][i];
+        }
+        for i in 0..2 {
+            self.ambient_surround[i].process_in_place(&mut self.shaped[AMBIENT_SURROUND + i]);
+            self.ambient_height[i].process_in_place(&mut self.shaped[AMBIENT_HEIGHT + i]);
         }
     }
 
@@ -149,8 +251,22 @@ impl StemRouteState {
             l.reset();
             r.reset();
         }
-        for s in self.surround.iter_mut().chain(self.height.iter_mut()) {
+        for s in self
+            .surround
+            .iter_mut()
+            .chain(self.height.iter_mut())
+            .chain(self.ambient_surround.iter_mut())
+            .chain(self.ambient_height.iter_mut())
+        {
             s.reset();
+        }
+        if let Some(split) = &mut self.split {
+            split.reset();
+        }
+        if let Some(eq) = &mut self.ambient_eq {
+            for convolver in eq.iter_mut() {
+                convolver.reset();
+            }
         }
     }
 
@@ -229,8 +345,10 @@ impl StemRouteState {
     }
 }
 
-/// Index into the seven signals a speaker can draw on: the three dry shapes,
-/// then the four shaped sends.
+/// Index into the dry signals a speaker can draw on: the three dry shapes,
+/// then the four shaped sends. The ambient sends are addressed by
+/// [`AMBIENT_SURROUND`]/[`AMBIENT_HEIGHT`] instead — a speaker's shape says
+/// which class it belongs to, not which of the two feeds it draws.
 pub fn shape_index(shape: SendShape) -> usize {
     match shape {
         SendShape::Left => 0,

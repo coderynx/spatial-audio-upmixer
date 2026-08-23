@@ -86,6 +86,19 @@ pub struct StemParams {
     /// the whole stem exactly as `StemRouter.route` does.
     #[serde(default = "unit_scale")]
     pub route_scale: f64,
+    /// How much of the stem's ambient half is sent to the surround speakers,
+    /// and to the height speakers. Zero — the default — leaves the stem
+    /// routed exactly as it was before the split existed.
+    #[serde(default)]
+    pub ambient_rear: f64,
+    #[serde(default)]
+    pub ambient_height: f64,
+}
+
+impl StemParams {
+    pub fn wants_ambient(&self) -> bool {
+        self.ambient_rear > 0.0 || self.ambient_height > 0.0
+    }
 }
 
 fn enabled_by_default() -> bool {
@@ -180,5 +193,24 @@ pub struct EngineParams {
 impl EngineParams {
     pub fn speaker_index(&self, name: &str) -> Option<usize> {
         self.speakers.iter().position(|s| s.name == name)
+    }
+
+    /// Per-speaker share of an ambient send, by shape class: the amount is
+    /// spread over the class's speakers as `1/sqrt(n)`, so a 7.1.4's four
+    /// surrounds carry the same total as a 5.1's two.
+    pub fn ambient_share(&self, shape: SendShape) -> f64 {
+        let class = |s: SendShape| {
+            matches!(
+                (shape, s),
+                (SendShape::SurroundLeft | SendShape::SurroundRight, SendShape::SurroundLeft | SendShape::SurroundRight)
+                    | (SendShape::HeightLeft | SendShape::HeightRight, SendShape::HeightLeft | SendShape::HeightRight)
+            )
+        };
+        let count = self.shapes.iter().filter(|s| class(**s)).count();
+        if count == 0 {
+            0.0
+        } else {
+            1.0 / (count as f64).sqrt()
+        }
     }
 }

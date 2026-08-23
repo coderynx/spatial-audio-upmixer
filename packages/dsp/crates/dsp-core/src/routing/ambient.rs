@@ -63,6 +63,12 @@ pub const AMBIENT_TILT_HZ: f64 = 2000.0;
 
 const EPS: f64 = 1e-20;
 
+/// Resolution of the tabulated mask. The curve is a fixed function of the
+/// ambience index and is evaluated once per bin per frame, where a `tanh`
+/// call each time is the single most expensive thing the stage does; at this
+/// many points, linear interpolation is within 1e-6 of the closed form.
+const MASK_TABLE_LEN: usize = 1024;
+
 /// One block of ambient signal, already split into its two destinations.
 pub struct AmbientBlock<'a> {
     pub rear: [&'a [f64]; 2],
@@ -89,7 +95,10 @@ pub struct AmbientSplit {
     rear: [Vec<f64>; 2],
     height: [Vec<f64>; 2],
     cursor: Option<usize>,
+    mask_table: Vec<f64>,
     frame: Vec<f64>,
+    scratch: Vec<f64>,
+    spectrum: [Vec<Complex64>; 2],
 }
 
 impl AmbientSplit {
@@ -101,7 +110,9 @@ impl AmbientSplit {
         for (i, w) in window.iter().enumerate() {
             cola[i % hop] += w * w;
         }
-        let ring = n + 4 * hop;
+        // Both are powers of two, so the drain loop indexes with a mask
+        // rather than the modulo it would otherwise run four times a sample.
+        let ring = (n + 4 * hop).next_power_of_two();
         let bins = n / 2 + 1;
         let nyq = sample_rate as f64 / 2.0;
         let wn = (AMBIENT_TILT_HZ / nyq).clamp(1e-6, 0.999_999);
@@ -129,7 +140,15 @@ impl AmbientSplit {
             rear: [Vec::new(), Vec::new()],
             height: [Vec::new(), Vec::new()],
             cursor: None,
+            mask_table: (0..=MASK_TABLE_LEN)
+                .map(|i| mask(i as f64 / MASK_TABLE_LEN as f64))
+                .collect(),
             frame: vec![0.0; n],
+            scratch: vec![0.0; n],
+            spectrum: [
+                vec![Complex64::new(0.0, 0.0); bins],
+                vec![Complex64::new(0.0, 0.0); bins],
+            ],
         }
     }
 
@@ -188,14 +207,15 @@ impl AmbientSplit {
             }
             let until = ((frame + 1) * self.hop).min(start + len);
             for offset in position..until {
-                let slot = offset % self.ring;
-                let value = self.ola[0][slot] / self.cola[offset % self.hop];
+                let slot = offset & (self.ring - 1);
+                let cola = self.cola[offset & (self.hop - 1)];
+                let value = self.ola[0][slot] / cola;
                 self.ola[0][slot] = 0.0;
                 let index = offset - start;
                 self.rear[0][index] = self.lp[0].tick(value);
                 self.height[0][index] = self.hp[0].tick(value);
 
-                let value = self.ola[1][slot] / self.cola[offset % self.hop];
+                let value = self.ola[1][slot] / cola;
                 self.ola[1][slot] = 0.0;
                 self.rear[1][index] = self.lp[1].tick(value);
                 self.height[1][index] = self.hp[1].tick(value);
@@ -212,15 +232,15 @@ impl AmbientSplit {
 
     fn process_frame(&mut self, left: &[f32], right: &[f32], index: usize) {
         let base = index * self.hop;
-        let spectrum_l = self.windowed(left, base);
-        let spectrum_r = self.windowed(right, base);
+        self.windowed(left, base, 0);
+        self.windowed(right, base, 1);
 
         let alpha = if self.primed { COHERENCE_SMOOTHING } else { 1.0 };
         self.primed = true;
 
-        for bin in 0..spectrum_l.len() {
-            let l = spectrum_l[bin];
-            let r = spectrum_r[bin];
+        for bin in 0..self.phi_lr.len() {
+            let l = self.spectrum[0][bin];
+            let r = self.spectrum[1][bin];
             self.phi_lr[bin] = self.phi_lr[bin] * (1.0 - alpha) + l * r.conj() * alpha;
             self.phi_ll[bin] = self.phi_ll[bin] * (1.0 - alpha) + l.norm_sqr() * alpha;
             self.phi_rr[bin] = self.phi_rr[bin] * (1.0 - alpha) + r.norm_sqr() * alpha;
@@ -228,7 +248,7 @@ impl AmbientSplit {
             let auto = self.phi_ll[bin] * self.phi_rr[bin];
             let coherence = (self.phi_lr[bin].norm() / (auto.sqrt() + EPS)).min(1.0);
             let balance = 2.0 * auto.sqrt() / (self.phi_ll[bin] + self.phi_rr[bin] + EPS);
-            let gain = balance * mask(1.0 - coherence);
+            let gain = balance * self.tabulated_mask(1.0 - coherence);
 
             self.masked[0][bin] = l * gain;
             self.masked[1][bin] = r * gain;
@@ -236,21 +256,34 @@ impl AmbientSplit {
         self.overlap_add(base);
     }
 
-    /// Windowed transform of one channel at `base`, zero-padded past the end.
-    fn windowed(&mut self, signal: &[f32], base: usize) -> Vec<Complex64> {
+    /// [`mask`] read off the table, linearly interpolated.
+    #[inline]
+    fn tabulated_mask(&self, ambience_index: f64) -> f64 {
+        let position = ambience_index.clamp(0.0, 1.0) * MASK_TABLE_LEN as f64;
+        let index = position as usize;
+        let fraction = position - index as f64;
+        let low = self.mask_table[index];
+        let high = self.mask_table[(index + 1).min(MASK_TABLE_LEN)];
+        low + (high - low) * fraction
+    }
+
+    /// Windowed transform of one channel at `base`, zero-padded past the end,
+    /// left in `spectrum[side]`.
+    fn windowed(&mut self, signal: &[f32], base: usize, side: usize) {
         for i in 0..self.n {
             let sample = signal.get(base + i).copied().unwrap_or(0.0) as f64;
             self.frame[i] = sample * self.window[i];
         }
-        self.fft.rfft(&self.frame)
+        self.fft.rfft_into(&mut self.frame, &mut self.spectrum[side]);
     }
 
     fn overlap_add(&mut self, base: usize) {
         for channel in 0..2 {
-            let signal = self.fft.irfft(&self.masked[channel]);
+            self.fft
+                .irfft_into(&mut self.masked[channel], &mut self.scratch);
             for i in 0..self.n {
-                let slot = (base + i) % self.ring;
-                self.ola[channel][slot] += signal[i] * self.window[i];
+                let slot = (base + i) & (self.ring - 1);
+                self.ola[channel][slot] += self.scratch[i] * self.window[i];
             }
         }
     }
