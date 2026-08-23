@@ -74,12 +74,11 @@ is (ledger D34).
 The stem → bed row's LFE bus is one lowpass design in
 `kernels::butter::linkwitz_riley_lowpass_sos`, reached as `upmixer_dsp.lfe_lowpass`
 on the export side and as `stream::routing::LfeBus` in the preview (see
-`docs/standards/spatial_layouts_bs775_bs2051.md` § "LFE lowpass"). Its order is
-the one LFE parameter the browser does *not* receive: `lfe_cutoff_hz` is served,
-while `lfe_filter_order` is hardcoded to `4` on both sides
-(`config.py`, `engineParams.ts`). Nothing user-facing writes it — no CLI flag, no
-manifest key — so the pair cannot drift in the field, but change one and change
-the other.
+`docs/standards/spatial_layouts_bs775_bs2051.md` § "LFE lowpass"). Both of its
+parameters are served: `lfe_cutoff_hz` and, since the browser used to hardcode
+it to `4`, `lfe_filter_order`. Nothing user-facing writes the order — no CLI
+flag, no manifest key — but it is a `UpmixConfig` field, so a default changed
+there used to reach the export and not the preview.
 
 The momentary/short-term row is the one whose two halves are the same
 arithmetic rather than the same call: the offline kit takes its maxima over
@@ -90,17 +89,18 @@ it has just emitted. Both build their windows from `ChannelGate`'s K-weighted,
 Only the preview draws them; the export reports its maxima through the
 measurement kit instead.
 
-The downmix row is the one entry whose *matrix* is not shared code: the export
-calls the kernel with the whole bed, while the preview mixes per speaker from a
-per-channel gain pair built in `engineParams.ts::downmixGains` out of the
-served `surround_downmix_coeff` / `height_downmix_coeff` / `itu_center_coeff`.
-The coefficients are shared, the two-line matrix is not — change one and change
-the other in the same commit (the height fold, phase 4, did).
+The downmix row's matrix is shared code too: `spatial::downmix::stereo_pair`
+gives the `(left, right)` gain pair for a role, and both `itu_downmix_stereo`
+(the export's whole-bed call) and `stream::output`'s per-speaker collapse are
+driven by it. Only the two configurable coefficients reach `EngineParams`, as
+`surround_downmix_coeff` / `height_downmix_coeff`. `itu_center_coeff` stays
+the crate's own constant (ledger D6) and is no longer served at all: the web
+read it only to build the matrix it no longer builds.
 
-The 5.1 re-render row is unlike the stereo-downmix row above it: its matrix
-*is* shared code, and its two coefficients are deliberately not served. The
-fold builds the programme a delivery specification names, not a monitoring
-choice, so both sides read `FoldTo51`'s own constants
+The 5.1 re-render row's matrix is shared code too, but unlike the
+stereo-downmix row above it, its two coefficients are deliberately not
+served. The fold builds the programme a delivery specification names, not a
+monitoring choice, so both sides read `FoldTo51`'s own constants
 (`docs/standards/spatial_layouts_bs775_bs2051.md` §"5.1 re-render fold").
 Both sides also decide to fold the same way — by layout arity, on a native
 bed wider than 5.1 — and both leave true peak on the delivered channels.
@@ -488,7 +488,7 @@ with the entry that proved it:
 | **Parameters** | Both sides run the same function on different inputs. The preview reads the project through `masteringProfiles.ts`/`engineParams.ts`, the export through `UpmixConfig`; a field one resolves and the other forwards by name is a real divergence with identical DSP. | D30 |
 | **Build provenance** | `apps/web/public/wasm/upmixer_dsp.wasm` is a committed binary. Shared source does not mean shared build — the preview runs whatever was last compiled. | D33 |
 | **Re-implementation drift** | DSP creeping back into TypeScript because a value is wanted before the engine can give it. | D34, D3 |
-| **Unshared wrapper stages** | Anything one side wraps around the core call — the export's chain assembly, the preview's downmix matrix and collapse-mode switching. | D32 |
+| **Unshared wrapper stages** | Anything one side wraps around the core call — the export's chain assembly, the preview's collapse-mode switching. The stereo-downmix matrix used to be one such wrapper (the preview built its own gain pair from served coefficients); it is now driven by `spatial::downmix::stereo_pair`, shared with the export's call. | D32 |
 
 **Admission rule.** A row belongs here only if the preview's output can differ
 from the export's. A bug inside the shared core hits both sides equally and is

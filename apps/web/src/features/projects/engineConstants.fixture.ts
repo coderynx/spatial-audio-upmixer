@@ -24,6 +24,7 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
   channel_group_gains: { center: 0.85, surround: 0.6, back: 0.55, height: 0.55 },
   lfe_gain: 0.31622776601683794,
   lfe_lowpass_hz: 120,
+  lfe_filter_order: 4,
   surround_bass_cutoff_hz: 250,
   height_low_rolloff_hz: 150,
   height_low_rolloff_gain: 0.15,
@@ -38,7 +39,6 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
   loudness_max_gain_db: 30.0,
   surround_downmix_coeff: 0.7071,
   height_downmix_coeff: 0.7071,
-  itu_center_coeff: 1 / Math.sqrt(2),
   speaker_directions: {
     FL: { azimuth_rad: 0.5216182970963865, elevation_rad: 0.0 },
     FR: { azimuth_rad: -0.5216182970963865, elevation_rad: 0.0 },

@@ -69,6 +69,8 @@ const PARAMS = {
   ],
   lfe_index: 2,
   shapes: ["left", "right", "mono"],
+  surround_downmix_coeff: 0.7071067811865476,
+  height_downmix_coeff: 0.7071067811865476,
   sends: {
     surround_bass_cutoff_hz: 250,
     height_low_rolloff_hz: 150,

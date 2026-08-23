@@ -8,11 +8,11 @@
 use crate::kernels::biquad::SosFilter;
 use crate::kernels::butter::{butter_bandpass_sos, butter_sos, BandType};
 use crate::spatial::ambisonics::{encode_gains, N_ACN_CHANNELS};
-use crate::spatial::downmix::soft_limit;
+use crate::spatial::downmix::{soft_limit, stereo_pair, DownmixRole};
 use crate::spatial::voicing::VoicingParams;
 
 use super::conv::StreamingConvolver;
-use super::params::{EngineParams, OutputMode};
+use super::params::{EngineParams, OutputMode, SpeakerParams};
 
 /// The voicing chain with carried filter state.
 pub struct StreamingVoicing {
@@ -99,6 +99,13 @@ pub struct OutputStage {
     soft_limit_threshold: f64,
 }
 
+fn build_downmix(speakers: &[SpeakerParams], surround_coeff: f64, height_coeff: f64) -> Vec<Option<(f64, f64)>> {
+    speakers
+        .iter()
+        .map(|s| DownmixRole::from_name(&s.name).map(|role| stereo_pair(role, surround_coeff, height_coeff)))
+        .collect()
+}
+
 fn split_taps(flat: &[f64], groups: usize) -> Vec<[Vec<f64>; 2]> {
     if flat.is_empty() || groups == 0 {
         return Vec::new();
@@ -159,7 +166,7 @@ impl OutputStage {
             decode,
             xtc,
             voicing: params.voicing.map(|v| StreamingVoicing::new(sample_rate, v)),
-            downmix: params.speakers.iter().map(|s| s.downmix).collect(),
+            downmix: build_downmix(&params.speakers, params.surround_downmix_coeff, params.height_downmix_coeff),
             soft_limit_threshold: params.soft_limit_threshold,
         }
     }
@@ -183,7 +190,7 @@ impl OutputStage {
                     .then(|| encode_gains(s.azimuth_rad, s.elevation_rad))
             })
             .collect();
-        self.downmix = params.speakers.iter().map(|s| s.downmix).collect();
+        self.downmix = build_downmix(&params.speakers, params.surround_downmix_coeff, params.height_downmix_coeff);
         self.soft_limit_threshold = params.soft_limit_threshold;
         self.voicing = params.voicing.map(|v| StreamingVoicing::new(sample_rate, v));
     }

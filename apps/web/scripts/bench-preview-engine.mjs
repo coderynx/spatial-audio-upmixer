@@ -139,10 +139,11 @@ function params(mode, decodeTaps) {
       azimuth_rad: i * 0.5 - 1,
       elevation_rad: i > 7 ? 0.5 : 0,
       group_gain: 0.7,
-      downmix: i < 2 ? [1 - i, i] : null,
     })),
     lfe_index: CHANNELS.indexOf("LFE"),
     shapes: SHAPES,
+    surround_downmix_coeff: 0.7071067811865476,
+    height_downmix_coeff: 0.7071067811865476,
     sends: {
       surround_bass_cutoff_hz: 250,
       height_low_rolloff_hz: 150, height_low_rolloff_gain: 0.15,

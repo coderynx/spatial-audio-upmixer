@@ -7,15 +7,15 @@ mod engine {
         let params: EngineParams = serde_json::from_str(&format!(
             r#"{{
                 "speakers": [
-                    {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [1.0, 0.0]}},
-                    {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [0.0, 1.0]}},
+                    {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
+                    {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
                     {{"name": "LFE", "azimuth_rad": 0.0, "elevation_rad": 0.0,
-                     "group_gain": 1.0, "muted": {mute_lfe}, "downmix": [0.0, 0.0]}}
+                     "group_gain": 1.0, "muted": {mute_lfe}}}
                 ],
                 "lfe_index": 2,
                 "shapes": ["left", "right", "mono"],
+                "surround_downmix_coeff": 0.7071067811865476,
+                "height_downmix_coeff": 0.7071067811865476,
                 "sends": {{"surround_bass_cutoff_hz": 250.0,
                           "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
                           "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
@@ -43,18 +43,16 @@ mod engine {
             r#"{{
                 "speakers": [
                     {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0,
-                     "group_gain": 1.0, "muted": {mute_fl}, "downmix": [1.0, 0.0]}},
-                    {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [0.0, 1.0]}},
-                    {{"name": "SL", "azimuth_rad": 1.9, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [0.3, 0.0]}},
-                    {{"name": "SR", "azimuth_rad": -1.9, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [0.0, 0.3]}},
-                    {{"name": "LFE", "azimuth_rad": 0.0, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [0.0, 0.0]}}
+                     "group_gain": 1.0, "muted": {mute_fl}}},
+                    {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
+                    {{"name": "SL", "azimuth_rad": 1.9, "elevation_rad": 0.0, "group_gain": 1.0}},
+                    {{"name": "SR", "azimuth_rad": -1.9, "elevation_rad": 0.0, "group_gain": 1.0}},
+                    {{"name": "LFE", "azimuth_rad": 0.0, "elevation_rad": 0.0, "group_gain": 1.0}}
                 ],
                 "lfe_index": 4,
                 "shapes": ["left", "right", "left", "right", "mono"],
+                "surround_downmix_coeff": 0.7071067811865476,
+                "height_downmix_coeff": 0.7071067811865476,
                 "sends": {{"surround_bass_cutoff_hz": 250.0,
                           "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
                           "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
@@ -137,15 +135,14 @@ mod master_meters {
         let params: EngineParams = serde_json::from_str(
             r#"{
                 "speakers": [
-                    {"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [1.0, 0.0]},
-                    {"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [0.0, 1.0]},
-                    {"name": "LFE", "azimuth_rad": 0.0, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [0.0, 0.0]}
+                    {"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0},
+                    {"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0},
+                    {"name": "LFE", "azimuth_rad": 0.0, "elevation_rad": 0.0, "group_gain": 1.0}
                 ],
                 "lfe_index": 2,
                 "shapes": ["left", "right", "mono"],
+                "surround_downmix_coeff": 0.7071067811865476,
+                "height_downmix_coeff": 0.7071067811865476,
                 "sends": {"surround_bass_cutoff_hz": 250.0,
                           "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
                           "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
@@ -252,13 +249,13 @@ mod measure {
         let params: EngineParams = serde_json::from_str(
             r#"{
                 "speakers": [
-                    {"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [1.0, 0.0]},
-                    {"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [0.0, 1.0]}
+                    {"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0},
+                    {"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0}
                 ],
                 "lfe_index": null,
                 "shapes": ["left", "right"],
+                "surround_downmix_coeff": 0.7071067811865476,
+                "height_downmix_coeff": 0.7071067811865476,
                 "sends": {"surround_bass_cutoff_hz": 250.0,
                           "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
                           "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
@@ -389,17 +386,17 @@ mod measure {
         let params: EngineParams = serde_json::from_str(
             r#"{
                 "speakers": [
-                    {"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [1.0, 0.0]},
-                    {"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                     "downmix": [0.0, 1.0]},
+                    {"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0},
+                    {"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0},
                     {"name": "TFL", "azimuth_rad": 0.7854, "elevation_rad": 0.7854,
-                     "group_gain": 1.0, "downmix": [0.7071067811865476, 0.0]},
+                     "group_gain": 1.0},
                     {"name": "TFR", "azimuth_rad": -0.7854, "elevation_rad": 0.7854,
-                     "group_gain": 1.0, "downmix": [0.0, 0.7071067811865476]}
+                     "group_gain": 1.0}
                 ],
                 "lfe_index": null,
                 "shapes": ["left", "right", "height_left", "height_right"],
+                "surround_downmix_coeff": 0.7071067811865476,
+                "height_downmix_coeff": 0.7071067811865476,
                 "sends": {"surround_bass_cutoff_hz": 250.0,
                           "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
                           "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,

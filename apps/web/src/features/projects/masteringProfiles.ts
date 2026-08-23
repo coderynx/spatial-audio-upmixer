@@ -296,6 +296,7 @@ export type ServedEngineConstants = {
   channel_group_gains: ChannelGroupGains;
   lfe_gain: number;
   lfe_lowpass_hz: number;
+  lfe_filter_order: number;
   surround_bass_cutoff_hz: number;
   height_low_rolloff_hz: number;
   height_low_rolloff_gain: number;
@@ -310,7 +311,6 @@ export type ServedEngineConstants = {
   loudness_max_gain_db: number;
   surround_downmix_coeff: number;
   height_downmix_coeff: number;
-  itu_center_coeff: number;
   speaker_directions: Record<string, { azimuth_rad: number; elevation_rad: number }>;
   dyneq_profiles: Record<string, DynamicEqBand[]>;
   reference_match_smooth: { default_oct: number; min_oct: number; max_oct: number };
@@ -347,6 +347,7 @@ export type EngineConstants = {
   channelGains: ChannelGroupGains;
   lfeGain: number;
   lfeLowpassHz: number;
+  lfeFilterOrder: number;
   surroundBassCutoffHz: number;
   heightShaping: HeightShaping;
   softLimitThreshold: number;
@@ -356,7 +357,6 @@ export type EngineConstants = {
   loudnessMaxGainDb: number;
   surroundDownmixCoeff: number;
   heightDownmixCoeff: number;
-  ituCenterCoeff: number;
   /** Ambisonic encode angles, served so the browser never re-derives them. */
   speakerDirections: Record<string, { azimuth_rad: number; elevation_rad: number }>;
   /** Named dynamic-EQ band sets, resolved here so the preview runs the same
@@ -421,6 +421,7 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     channelGains: s.channel_group_gains,
     lfeGain: s.lfe_gain,
     lfeLowpassHz: s.lfe_lowpass_hz,
+    lfeFilterOrder: s.lfe_filter_order,
     surroundBassCutoffHz: s.surround_bass_cutoff_hz,
     heightShaping: {
       lowRolloffHz: s.height_low_rolloff_hz,
@@ -437,7 +438,6 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     loudnessMaxGainDb: s.loudness_max_gain_db,
     surroundDownmixCoeff: s.surround_downmix_coeff,
     heightDownmixCoeff: s.height_downmix_coeff,
-    ituCenterCoeff: s.itu_center_coeff,
     speakerDirections: s.speaker_directions,
     dyneqProfiles: s.dyneq_profiles,
     referenceMatchSmooth: {

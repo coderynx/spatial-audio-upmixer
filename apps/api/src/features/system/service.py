@@ -57,8 +57,6 @@ def engine_constants() -> dict[str, Any]:
     from upmixer.mastering.limiter import _SAFETY_MARGIN_DB
     from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
     from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
-    from upmixer.utils import ITU_CENTER_COEFF
-
     cfg = UpmixConfig()
     return {
         "channel_group_gains": {
@@ -69,6 +67,7 @@ def engine_constants() -> dict[str, Any]:
         },
         "lfe_gain": cfg.lfe_gain,
         "lfe_lowpass_hz": cfg.lfe_cutoff_hz,
+        "lfe_filter_order": cfg.lfe_filter_order,
         "surround_bass_cutoff_hz": cfg.surround_bass_cutoff_hz,
         "height_low_rolloff_hz": cfg.height_low_rolloff_hz,
         "height_low_rolloff_gain": cfg.height_low_rolloff_gain,
@@ -83,7 +82,6 @@ def engine_constants() -> dict[str, Any]:
         "loudness_max_gain_db": cfg.loudness_max_gain_db,
         "surround_downmix_coeff": cfg.surround_downmix_coeff,
         "height_downmix_coeff": cfg.height_downmix_coeff,
-        "itu_center_coeff": ITU_CENTER_COEFF,
         # The shared DSP core encodes the ambisonic bus, so the browser must
         # not re-derive these angles from its own coordinate table.
         "speaker_directions": {

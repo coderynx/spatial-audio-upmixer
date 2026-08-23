@@ -129,6 +129,40 @@ impl FoldTo51 {
     }
 }
 
+/// The `(left, right)` stereo-downmix gain BS.775-4 Annex 4 Table 2 assigns a
+/// role, plus the project's height fold. The sole source of the coefficient
+/// table: `itu_downmix_stereo` and `stream::output`'s streaming collapse both
+/// read it instead of each carrying their own copy.
+pub fn stereo_pair(role: DownmixRole, surround_coeff: f64, height_coeff: f64) -> (f64, f64) {
+    match role {
+        DownmixRole::Fl => (1.0, 0.0),
+        DownmixRole::Fr => (0.0, 1.0),
+        DownmixRole::C => (ITU_CENTER_COEFF, ITU_CENTER_COEFF),
+        DownmixRole::Sl => (surround_coeff, 0.0),
+        DownmixRole::Sr => (0.0, surround_coeff),
+        DownmixRole::Bl => (surround_coeff * ITU_CENTER_COEFF, 0.0),
+        DownmixRole::Br => (0.0, surround_coeff * ITU_CENTER_COEFF),
+        DownmixRole::Tfl => (height_coeff, 0.0),
+        DownmixRole::Tfr => (0.0, height_coeff),
+        DownmixRole::Tbl => (height_coeff * surround_coeff, 0.0),
+        DownmixRole::Tbr => (0.0, height_coeff * surround_coeff),
+    }
+}
+
+const ALL_ROLES: [DownmixRole; 11] = [
+    DownmixRole::Fl,
+    DownmixRole::Fr,
+    DownmixRole::C,
+    DownmixRole::Sl,
+    DownmixRole::Sr,
+    DownmixRole::Bl,
+    DownmixRole::Br,
+    DownmixRole::Tfl,
+    DownmixRole::Tfr,
+    DownmixRole::Tbl,
+    DownmixRole::Tbr,
+];
+
 fn pick<'a>(channels: &[(DownmixRole, &'a [f64])], role: DownmixRole) -> Option<&'a [f64]> {
     channels.iter().find(|(r, _)| *r == role).map(|(_, s)| *s)
 }
@@ -161,18 +195,12 @@ pub fn itu_downmix_stereo(
         return (left, right);
     }
 
-    add_scaled(&mut left, pick(channels, DownmixRole::Fl), 1.0);
-    add_scaled(&mut right, pick(channels, DownmixRole::Fr), 1.0);
-    add_scaled(&mut left, pick(channels, DownmixRole::C), ITU_CENTER_COEFF);
-    add_scaled(&mut right, pick(channels, DownmixRole::C), ITU_CENTER_COEFF);
-    add_scaled(&mut left, pick(channels, DownmixRole::Sl), surround_coeff);
-    add_scaled(&mut right, pick(channels, DownmixRole::Sr), surround_coeff);
-    add_scaled(&mut left, pick(channels, DownmixRole::Bl), surround_coeff * ITU_CENTER_COEFF);
-    add_scaled(&mut right, pick(channels, DownmixRole::Br), surround_coeff * ITU_CENTER_COEFF);
-    add_scaled(&mut left, pick(channels, DownmixRole::Tfl), height_coeff);
-    add_scaled(&mut right, pick(channels, DownmixRole::Tfr), height_coeff);
-    add_scaled(&mut left, pick(channels, DownmixRole::Tbl), height_coeff * surround_coeff);
-    add_scaled(&mut right, pick(channels, DownmixRole::Tbr), height_coeff * surround_coeff);
+    for role in ALL_ROLES {
+        let (gl, gr) = stereo_pair(role, surround_coeff, height_coeff);
+        let signal = pick(channels, role);
+        add_scaled(&mut left, signal, gl);
+        add_scaled(&mut right, signal, gr);
+    }
     (left, right)
 }
 

@@ -31,9 +31,6 @@ pub struct SpeakerParams {
     pub elevation_rad: f64,
     /// Gain for the channel's group (centre, surround, back, height).
     pub group_gain: f64,
-    /// Stereo-downmix contribution; absent for LFE.
-    #[serde(default)]
-    pub downmix: Option<(f64, f64)>,
     /// Monitor-only speaker mute. Applied to the finished bed in
     /// `PreviewEngine::render`, never to the routing gain: folding it in
     /// earlier would take the channel out of the shared bass bus and the
@@ -149,6 +146,10 @@ pub struct EngineParams {
     pub lfe_index: Option<usize>,
     pub shapes: Vec<SendShape>,
     pub sends: SendParams,
+    /// Stereo-downmix coefficients BS.775-4 Annex 4 leaves configurable; the
+    /// centre/back-fold coefficient is not among them (ledger D6).
+    pub surround_downmix_coeff: f64,
+    pub height_downmix_coeff: f64,
     #[serde(default)]
     pub stems: Vec<StemParams>,
     #[serde(default)]

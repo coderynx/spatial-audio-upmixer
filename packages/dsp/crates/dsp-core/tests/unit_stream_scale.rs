@@ -30,16 +30,14 @@ fn engine(routing: &str) -> PreviewEngine {
     let params: EngineParams = serde_json::from_str(&format!(
         r#"{{
             "speakers": [
-                {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                 "downmix": [1.0, 0.0]}},
-                {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-                 "downmix": [0.0, 1.0]}},
-                {{"name": "SL", "azimuth_rad": 1.92, "elevation_rad": 0.0, "group_gain": 1.0,
-                 "downmix": [0.7071, 0.0]}},
-                {{"name": "SR", "azimuth_rad": -1.92, "elevation_rad": 0.0, "group_gain": 1.0,
-                 "downmix": [0.0, 0.7071]}}
+                {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
+                {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
+                {{"name": "SL", "azimuth_rad": 1.92, "elevation_rad": 0.0, "group_gain": 1.0}},
+                {{"name": "SR", "azimuth_rad": -1.92, "elevation_rad": 0.0, "group_gain": 1.0}}
             ],
             "shapes": ["left", "right", "surround_left", "surround_right"],
+            "surround_downmix_coeff": 0.7071067811865476,
+            "height_downmix_coeff": 0.7071067811865476,
             "sends": {{"surround_bass_cutoff_hz": 250.0,
                       "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
                       "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,

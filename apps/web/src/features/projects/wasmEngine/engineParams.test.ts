@@ -67,23 +67,24 @@ describe("buildEngineParams", () => {
     expect(by("SL").muted).toBe(false);
   });
 
-  it("applies channel group gains, folds heights into the downmix, excludes LFE", () => {
+  it("applies channel group gains", () => {
     const params = buildEngineParams(input());
-    const speakers = params.speakers as { name: string; group_gain: number; downmix: unknown }[];
+    const speakers = params.speakers as { name: string; group_gain: number }[];
     const by = (name: string) => speakers.find((s) => s.name === name)!;
 
     expect(by("FL").group_gain).toBe(1);
     expect(by("C").group_gain).toBe(constants.channelGains.center);
     expect(by("SL").group_gain).toBe(constants.channelGains.surround);
     expect(by("TFL").group_gain).toBe(constants.channelGains.height);
+  });
 
-    expect(by("C").downmix).toEqual([constants.ituCenterCoeff, constants.ituCenterCoeff]);
-    expect(by("TFL").downmix).toEqual([constants.heightDownmixCoeff, 0]);
-    expect(by("TBR").downmix).toEqual([
-      0,
-      constants.heightDownmixCoeff * constants.surroundDownmixCoeff,
-    ]);
-    expect(by("LFE").downmix).toBeNull();
+  it("forwards the served stereo-downmix coefficients, not a computed matrix", () => {
+    const params = buildEngineParams(input()) as {
+      surround_downmix_coeff: number;
+      height_downmix_coeff: number;
+    };
+    expect(params.surround_downmix_coeff).toBe(constants.surroundDownmixCoeff);
+    expect(params.height_downmix_coeff).toBe(constants.heightDownmixCoeff);
   });
 
   it("keeps LFE routing weights even though LFE has no shaped send", () => {

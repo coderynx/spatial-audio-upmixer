@@ -33,43 +33,6 @@ const CHANNEL_SHAPE: Record<string, string> = {
   TBR: "height_right",
 };
 
-/** BS.775-4 Annex 4 Table 2 contributions, plus the project's height fold
- * (docs/standards/spatial_layouts_bs775_bs2051.md); LFE excluded. */
-function downmixGains(
-  channel: string,
-  c: EngineConstants,
-): [number, number] | undefined {
-  const itu = c.ituCenterCoeff;
-  const surround = c.surroundDownmixCoeff;
-  const height = c.heightDownmixCoeff;
-  switch (channel) {
-    case "FL":
-      return [1, 0];
-    case "FR":
-      return [0, 1];
-    case "C":
-      return [itu, itu];
-    case "SL":
-      return [surround, 0];
-    case "SR":
-      return [0, surround];
-    case "BL":
-      return [surround * itu, 0];
-    case "BR":
-      return [0, surround * itu];
-    case "TFL":
-      return [height, 0];
-    case "TFR":
-      return [0, height];
-    case "TBL":
-      return [height * surround, 0];
-    case "TBR":
-      return [0, height * surround];
-    default:
-      return undefined;
-  }
-}
-
 function groupGain(channel: string, c: EngineConstants): number {
   const g = c.channelGains;
   if (channel === "C") return g.center;
@@ -180,7 +143,6 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
         azimuth_rad: direction.azimuth_rad,
         elevation_rad: direction.elevation_rad,
         group_gain: groupGain(name, c),
-        downmix: downmixGains(name, c) ?? null,
         // Monitor-only: the core applies it to the finished bed, so it never
         // reaches the shared bass bus or the linked compressor's detector.
         muted: input.speakerEnabled?.[name] === false,
@@ -190,6 +152,8 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
     // LFE has no shaped send of its own; it is summed from each stem's mono
     // signal and filtered once on the bus.
     shapes: speakers.map((name) => CHANNEL_SHAPE[name] ?? "mono"),
+    surround_downmix_coeff: c.surroundDownmixCoeff,
+    height_downmix_coeff: c.heightDownmixCoeff,
     sends: {
       surround_bass_cutoff_hz: c.surroundBassCutoffHz,
       height_low_rolloff_hz: c.heightShaping.lowRolloffHz,
@@ -200,7 +164,7 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
       height_directional_band_gain:
         input.sendOverrides?.heightDirectionalBandGain ?? c.heightShaping.directionalBandGain,
       lfe_cutoff_hz: c.lfeLowpassHz,
-      lfe_filter_order: 4,
+      lfe_filter_order: c.lfeFilterOrder,
       lfe_gain: c.lfeGain,
     },
     stems: input.stems.map((stem) => ({

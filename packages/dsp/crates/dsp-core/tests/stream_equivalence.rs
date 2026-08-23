@@ -53,16 +53,15 @@ fn params_json(with_master: bool) -> String {
     format!(
         r#"{{
         "speakers": [
-            {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-              "downmix": [1.0, 0.0]}},
-            {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0,
-              "downmix": [0.0, 1.0]}},
-            {{"name": "SL", "azimuth_rad": 1.9199, "elevation_rad": 0.0, "group_gain": 0.6,
-              "downmix": [0.7071067811865476, 0.0]}},
+            {{"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
+            {{"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0}},
+            {{"name": "SL", "azimuth_rad": 1.9199, "elevation_rad": 0.0, "group_gain": 0.6}},
             {{"name": "LFE", "azimuth_rad": 0.0, "elevation_rad": 0.0, "group_gain": 1.0}}
         ],
         "lfe_index": 3,
         "shapes": ["left", "right", "surround_left", "mono"],
+        "surround_downmix_coeff": 0.7071067811865476,
+        "height_downmix_coeff": 0.7071067811865476,
         "sends": {{
             "surround_bass_cutoff_hz": 250.0,
             "height_low_rolloff_hz": 150.0,
