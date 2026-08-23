@@ -117,6 +117,8 @@ scaling) respects the explicit-control contract.
   separation stage by design, so the harness report is mandatory there
   and the knowledge-base consultation rules in `packages/core/AGENTS.md`
   apply.
+- Phase 15 (per-stem primary/ambient split) is independent of 12–14 and
+  shipped on its own; see `phase15_ambient_split.md`.
 - No new Python or JS dependencies. New DSP is hand-rolled in `dsp-core`
   with golden tests, matching existing kernel style.
 - Standards-governed changes (downmix coefficients, LFE behavior) must

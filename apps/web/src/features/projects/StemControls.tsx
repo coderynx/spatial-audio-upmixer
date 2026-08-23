@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowLeftRight, ArrowUpDown, AudioWaveform, MoveVertical, Waves } from "lucide-react";
+import { ArrowLeftRight, ArrowUpDown, AudioWaveform, CloudFog, MoveVertical, Waves } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import type { StemPlacement } from "./wasmEngine/panner";
 
@@ -27,16 +27,21 @@ export function positionFromAzimuth(azimuthDeg: number): Position {
 }
 
 export const StemControls = React.memo(function StemControls({
-  placement, route, channels, eq, maxElevationDeg, onPlacement, onRoute, onEq, stemEqProfiles,
+  placement, route, channels, eq, maxElevationDeg, ambientRear, ambientHeight,
+  onPlacement, onRoute, onEq, onAmbient, stemEqProfiles,
 }: {
   placement: StemPlacement;
   route: Record<string, number>;
   channels: string[];
   eq: string;
   maxElevationDeg: number;
+  /** Fraction of the stem's ambient half sent to the surrounds / heights. */
+  ambientRear: number;
+  ambientHeight: number;
   onPlacement: (next: StemPlacement) => void;
   onRoute: (patch: Record<string, number>) => void;
   onEq: (eq: string) => void;
+  onAmbient: (patch: { rear?: number; height?: number }) => void;
   stemEqProfiles?: string[];
 }) {
   // The sliders are the Cartesian face of a direction, so a round trip through
@@ -61,6 +66,8 @@ export const StemControls = React.memo(function StemControls({
   const hasHeight = channels.includes("TFL") || channels.includes("TFR")
     || channels.includes("TBL") || channels.includes("TBR");
   const hasLfe = channels.includes("LFE");
+  const hasSurround = channels.includes("SL") || channels.includes("SR")
+    || channels.includes("BL") || channels.includes("BR");
   const height = maxElevationDeg > 0
     ? Math.min(1, Math.max(0, placement.elevation_deg / maxElevationDeg))
     : 0;
@@ -99,6 +106,20 @@ export const StemControls = React.memo(function StemControls({
           <Slider aria-label="Floor to height" className="mt-1.5" min={0} max={1} step={0.01}
             value={[height]}
             onValueChange={([value]) => onPlacement({ ...placement, elevation_deg: value * maxElevationDeg })} />
+        </label>
+      )}
+      {hasSurround && (
+        <label className="block text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1"><CloudFog className="h-3 w-3" />Ambience to rear</span>
+          <Slider aria-label="Ambience to rear" className="mt-1.5" min={0} max={1} step={0.01}
+            value={[ambientRear]} onValueChange={([rear]) => onAmbient({ rear })} />
+        </label>
+      )}
+      {hasHeight && (
+        <label className="block text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1"><CloudFog className="h-3 w-3" />Ambience to height</span>
+          <Slider aria-label="Ambience to height" className="mt-1.5" min={0} max={1} step={0.01}
+            value={[ambientHeight]} onValueChange={([height]) => onAmbient({ height })} />
         </label>
       )}
       {hasLfe && (

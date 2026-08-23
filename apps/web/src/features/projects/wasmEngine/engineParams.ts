@@ -69,6 +69,10 @@ export type StemMix = {
   eqFir?: Float64Array | number[];
   /** Whole-stem route-energy normalization, as `StemRouter.route` computes. */
   routeScale?: number;
+  /** How much of the stem's ambient half reaches the surrounds, and the
+   * heights. Both 0..1; zero is a stem routed the way it always was. */
+  ambientRear?: number;
+  ambientHeight?: number;
 };
 
 export type MasterMix = {
@@ -173,6 +177,8 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
       enabled: stem.enabled ?? true,
       eq_fir: stem.eqFir ? Array.from(stem.eqFir) : [],
       route_scale: stem.routeScale ?? 1,
+      ambient_rear: stem.ambientRear ?? 0,
+      ambient_height: stem.ambientHeight ?? 0,
     })),
     master: {
       head: master.highpassHz != null ? { cutoff_hz: master.highpassHz } : null,

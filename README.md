@@ -362,8 +362,19 @@ assets:
 ```
 
 Global `engine`, `mixing`, `routing`, `format`, `mastering`, and `processing` blocks apply to every asset. Per-asset
-configuration blocks are deep-merged, so an override changes only the specified keys. Keep `engine.mode` consistent
-across a manifest batch because one pipeline type is reused for the complete run.
+configuration blocks are deep-merged, so an override changes only the specified keys.
+
+Separated stems carry the room they were mixed with, so `mixing` also takes two per-stem ambient sends. Each is a
+fraction of that stem's ambient half, extracted by an inter-channel coherence mask and taken out of the front as it is
+sent — heights receive the brighter part of it, surrounds the rest:
+
+```yaml
+mixing:
+  stem_ambient_rear:
+    Vocals: 0.4
+  stem_ambient_height:
+    Vocals: 0.6
+```
 
 Optional stereo companion output uses the ITU-R BS.775 matrix. Omit `output` to
 derive a sibling filename from each multichannel asset output:

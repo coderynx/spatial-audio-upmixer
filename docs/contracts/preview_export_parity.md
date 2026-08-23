@@ -46,7 +46,8 @@ Every stage below is one function, called from both sides:
 | Stage | Core module | Export entry | Preview entry |
 |---|---|---|---|
 | Per-stem EQ | `spatial`/`kernels::fir_design` | `separation/stem_eq.py` | `stream::routing` |
-| Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate,transient}` | `separation/stem_router.py` | `stream::routing` |
+| Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate}` | `separation/stem_router.py` | `stream::routing` |
+| Primary/ambient split | `routing::ambient` | `separation/stem_router.py` (`upmixer_dsp.ambient_split`) | `stream::routing` |
 | Placement → speaker gains | `spatial::{panner,presets}` | `separation/stem_placement.py` | `wasmEngine/panner.ts` |
 | Chain head (subsonic / DC) | `mastering::head` | `mastering/head.py` | `stream::master` |
 | Reference match | `match_reference::{spectrum,curve}` | `mastering/match_reference/` | `stream::master` |
@@ -548,3 +549,6 @@ numbers.
 | D35–D40 | Findings from the transient/sustain duck (phases 11 and 13). Removed along with the whole feature — see git history. | Removed |
 | D41 | The look-ahead limiter linked LFE into the mains' gain curve, so an LFE-only peak ducked the whole bed one-for-one. | Fixed — separate LFE curve, offline and streaming (mastering phase 2) |
 | D42 | The master bypass compared a normalized mastered bed against a raw one, so the A/B was decided by level; the preview also metered RMS/peak only while the core already measured loudness and gain reduction. | Fixed — per-chain measurement plus a monitor match (P4), and `MasterMeters` (mastering phase 3) |
+| D43 | The realtime (STFT coherence) pipeline was a second, Python-only routing path with no preview half at all — everything it did diverged from the preview by construction. | Removed — stem mode is the only mode |
+| D44 | The ambient split needs the EQ'd stem the export routes, but a streaming convolver cannot be read ahead of the block it fills, so the preview would have had to split a different signal. | Fixed — the stem EQ runs ahead of the render position into a carried buffer both paths read (mixing phase 15) |
+| D45 | The route normalization measured the dry pair *after* the ambient sends took their share, so a stem got quieter as its sliders came up. | Fixed — the pre-split pair is its own signal (`STEM_INPUT`) on both sides |

@@ -217,6 +217,22 @@ describe("buildEngineParams", () => {
     }
   });
 
+  it("forwards the per-stem ambient sends", () => {
+    const params = buildEngineParams(
+      input({ stems: [{ id: "V", routing: { FL: 1 }, ambientRear: 0.4, ambientHeight: 0.9 }] }),
+    );
+    const stems = params.stems as { ambient_rear: number; ambient_height: number }[];
+    expect(stems[0].ambient_rear).toBe(0.4);
+    expect(stems[0].ambient_height).toBe(0.9);
+  });
+
+  it("defaults the ambient sends to zero, which is the pre-split routing", () => {
+    const params = buildEngineParams(input());
+    const stems = params.stems as { ambient_rear: number; ambient_height: number }[];
+    expect(stems[0].ambient_rear).toBe(0);
+    expect(stems[0].ambient_height).toBe(0);
+  });
+
   it("produces a block the core accepts", () => {
     const wasmPath = resolve(process.cwd(), "public/wasm/upmixer_dsp.wasm");
     const wasm = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmPath)))

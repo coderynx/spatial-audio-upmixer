@@ -12,6 +12,7 @@ const WIDE: StemPlacement = {
 
 function renderControls(props: Partial<React.ComponentProps<typeof StemControls>> = {}) {
   const onPlacement = vi.fn();
+  const onAmbient = vi.fn();
   render(
     <StemControls
       placement={WIDE}
@@ -19,13 +20,16 @@ function renderControls(props: Partial<React.ComponentProps<typeof StemControls>
       channels={FULL}
       eq=""
       maxElevationDeg={35}
+      ambientRear={0}
+      ambientHeight={0}
       onPlacement={onPlacement}
       onRoute={vi.fn()}
       onEq={vi.fn()}
+      onAmbient={onAmbient}
       {...props}
     />,
   );
-  return { onPlacement };
+  return { onPlacement, onAmbient };
 }
 
 /** Radix sliders respond to keyboard stepping in jsdom, where pointer drags
@@ -129,5 +133,25 @@ describe("StemControls", () => {
 
     expect(onRoute).toHaveBeenCalledWith({ LFE: expect.any(Number) });
     expect(onPlacement).not.toHaveBeenCalled();
+  });
+});
+
+describe("ambience sends", () => {
+  it("reports the rear send as a fraction, from the value it was given", () => {
+    const { onAmbient } = renderControls({ ambientRear: 0.5 });
+    step("Ambience to rear", 1);
+    expect(onAmbient).toHaveBeenLastCalledWith({ rear: 0.51 });
+  });
+
+  it("offers no height send on a layout without height speakers", () => {
+    renderControls({ channels: ["FL", "FR", "C", "LFE", "SL", "SR"] });
+    expect(screen.getByLabelText("Ambience to rear")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Ambience to height")).toBeNull();
+  });
+
+  it("offers neither send on a stereo layout", () => {
+    renderControls({ channels: ["FL", "FR"] });
+    expect(screen.queryByLabelText("Ambience to rear")).toBeNull();
+    expect(screen.queryByLabelText("Ambience to height")).toBeNull();
   });
 });

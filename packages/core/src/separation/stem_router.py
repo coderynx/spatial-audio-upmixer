@@ -471,6 +471,10 @@ class StemRouter:
                 rear_amount = 0.0
             if not height_share:
                 height_amount = 0.0
+            # The stem's own level, before the sends take their share: the
+            # route normalization matches the routed sum to this, or a stem
+            # would get quieter as its sends come up.
+            input_L, input_R = stem_L, stem_R
             ambient: dict[ChannelLabel, np.ndarray] = {}
             if rear_amount > 0.0 or height_amount > 0.0:
                 # A send the layout has no speaker for gets no ambient: the
@@ -562,7 +566,7 @@ class StemRouter:
                     continue
                 route_items.append((label, gain, signal))
 
-            route_scale = self._route_scale(route_items, stem_L, stem_R)
+            route_scale = self._route_scale(route_items, input_L, input_R)
             for label, gain, signal in route_items:
                 channels[label.value][:n] += route_scale * gain * signal
 

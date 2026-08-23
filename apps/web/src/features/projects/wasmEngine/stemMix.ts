@@ -9,6 +9,8 @@ export type MixPreviewShape = {
   stem_enabled?: Record<string, boolean>;
   stem_solo?: string[];
   stem_eq?: Record<string, string>;
+  stem_ambient_rear?: Record<string, number>;
+  stem_ambient_height?: Record<string, number>;
   stem_source_anchor_strength?: number;
 };
 
@@ -46,6 +48,11 @@ export function resolveStemMixes(options: {
       : true;
     const enabled = soloed && mix?.stem_enabled?.[base] !== false && scene.enabled !== false;
 
+    const send = (table: Record<string, number> | undefined) => {
+      const value = table?.[stem.stem_key] ?? table?.[base] ?? 0;
+      return Math.min(1, Math.max(0, value));
+    };
+
     const anchorDb = 20 * Math.log10(Math.max(1 - anchor * frontFraction, 1e-6));
     return {
       id: stem.id,
@@ -54,6 +61,8 @@ export function resolveStemMixes(options: {
       enabled,
       eqFir: stemEqTaps.get(stem.stem_key),
       routeScale: estimateRouteScale(routing, constants.channelGains),
+      ambientRear: send(mix?.stem_ambient_rear),
+      ambientHeight: send(mix?.stem_ambient_height),
     };
   });
 }

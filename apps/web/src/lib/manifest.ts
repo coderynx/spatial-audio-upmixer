@@ -32,6 +32,8 @@ export type Manifest = {
     channel_layout: string;
     stem_rebalance: Record<string, number>;
     stem_eq: Record<string, string>;
+    stem_ambient_rear: Record<string, number>;
+    stem_ambient_height: Record<string, number>;
     stem_routing: Record<string, Record<string, number>>;
     stem_placement: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; spread_deg: number }>;
     stem_enabled: Record<string, boolean>;
@@ -164,6 +166,8 @@ export const defaultManifest: Manifest = {
     channel_layout: "7.1.4",
     stem_rebalance: {},
     stem_eq: {},
+    stem_ambient_rear: {},
+    stem_ambient_height: {},
     stem_placement: {},
     stem_routing: {},
     stem_enabled: {},
@@ -245,6 +249,14 @@ export function normalizeManifest(source: Record<string, unknown>): Manifest {
         ...value.mixing?.stem_rebalance,
       },
       stem_eq: { ...defaultManifest.mixing.stem_eq, ...value.mixing?.stem_eq },
+      stem_ambient_rear: {
+        ...defaultManifest.mixing.stem_ambient_rear,
+        ...value.mixing?.stem_ambient_rear,
+      },
+      stem_ambient_height: {
+        ...defaultManifest.mixing.stem_ambient_height,
+        ...value.mixing?.stem_ambient_height,
+      },
       stem_routing: { ...defaultManifest.mixing.stem_routing, ...value.mixing?.stem_routing },
       stem_enabled: { ...defaultManifest.mixing.stem_enabled, ...value.mixing?.stem_enabled },
       stem_solo: Array.isArray(value.mixing?.stem_solo) ? value.mixing.stem_solo : [],

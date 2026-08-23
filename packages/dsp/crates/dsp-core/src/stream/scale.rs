@@ -19,15 +19,12 @@ use crate::loudness::{gated_power, loudness_channel_weight};
 use crate::loudness_stream::IntegratedLoudnessMeter;
 use crate::stream::params::StemParams;
 use crate::stream::params::SendShape;
-use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND};
+use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND, STEM_INPUT};
 
 use super::engine::PreviewEngine;
 
-/// Signals one stem's routing can draw on, in [`shape_index`]'s own order —
-/// the dry pair, their mono sum, the four shaped sends, then the four ambient
-/// sends — so a speaker's signal is its shape. The dry pair doubles as the
-/// stem's own input, which is what the routed sum is matched to.
-const INPUT: usize = 0;
+/// The stem's own level, which the routed sum is matched to.
+const INPUT: usize = STEM_INPUT;
 use crate::stream::routing::SIGNALS;
 
 /// The part of a block that is metered: the preroll in front of an excerpt is

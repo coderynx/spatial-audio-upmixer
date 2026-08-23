@@ -293,6 +293,30 @@ describe("ProjectDetailPage tabs", () => {
     expect(saved.mixing.stem_routing.Vocals.LFE).toBeCloseTo(0.01);
   });
 
+  it("writes an ambience send to the mixing block the export reads", async () => {
+    const config = {
+      choices: {
+        layout_channels: {
+          "7.1.4": ["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR"],
+        },
+      },
+    } as unknown as Configuration;
+    const user = userEvent.setup();
+    renderPage(config);
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Mixer" }));
+    await user.click(screen.getByRole("button", { name: "Vocals" }));
+    fireEvent.keyDown(screen.getByRole("slider", { name: "Ambience to height" }), { key: "ArrowUp" });
+
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());
+    const [, , , payload] = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)!;
+    const saved = payload.manifest_overrides as unknown as {
+      mixing: { stem_ambient_height: Record<string, number> };
+    };
+    expect(saved.mixing.stem_ambient_height.Vocals).toBeCloseTo(0.01);
+  });
+
   it("hides the LFE send slider for a layout without an LFE channel", async () => {
     const config = {
       choices: { layout_channels: { "7.1.4": ["FL", "FR"] } },

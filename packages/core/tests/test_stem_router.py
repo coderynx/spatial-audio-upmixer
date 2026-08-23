@@ -339,11 +339,13 @@ def test_front_only_stereo_route_still_matches_raw_energy():
 
 
 def _reverberant(n: int = 48000, seed: int = 7) -> np.ndarray:
-    """A centred note with a decorrelated tail — the shape a separated stem has."""
+    """A centred note with a decorrelated tail — the shape a separated stem
+    has. Repeats every second, so a longer fixture is more of the same
+    material rather than one event and a fade."""
     rng = np.random.default_rng(seed)
     t = np.arange(n) / 48000
-    note = 0.3 * np.sin(2.0 * np.pi * 440.0 * t) * (t < 0.5)
-    tail = 0.15 * np.exp(-1.5 * t)
+    note = 0.3 * np.sin(2.0 * np.pi * 440.0 * t) * ((t % 1.0) < 0.5)
+    tail = 0.15 * np.exp(-1.5 * (t % 1.0))
     return np.column_stack([
         note + tail * rng.standard_normal(n),
         note + tail * rng.standard_normal(n),
@@ -426,3 +428,23 @@ def test_a_mono_stem_has_almost_no_ambient_half_to_send():
     tail = slice(2048, n)
     ambient = np.mean(rear_l[tail] ** 2) + np.mean(height_l[tail] ** 2)
     assert ambient / np.mean(tone[tail] ** 2) < 0.05
+
+
+def test_an_ambient_send_keeps_the_stem_at_its_own_loudness():
+    """The sends move energy, they do not add it: the route normalization has
+    to match the routed sum to the *unsplit* stem, or a stem gets quieter as
+    its sends come up."""
+    # Three seconds: one is short enough that BS.1770's gate, not the
+    # routing, decides the difference between the two measurements.
+    stems = {"Other": _reverberant(n=144_000)}
+    fmt = FORMAT_MAP["7.1.4"]
+    dry = _router().route(stems, len(stems["Other"]))
+    sent = _router(
+        stem_ambient_rear={"Other": 0.8}, stem_ambient_height={"Other": 0.8}
+    ).route(stems, len(stems["Other"]))
+
+    quiet = measure_integrated_loudness(dry, 48000, fmt)
+    loud = measure_integrated_loudness(sent, 48000, fmt)
+    # Not exact: the normalization matches K-weighted power per routed
+    # signal, where this measures the gated loudness of the assembled bed.
+    assert abs(loud - quiet) < 0.5, (quiet, loud)

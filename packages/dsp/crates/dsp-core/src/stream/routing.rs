@@ -82,12 +82,6 @@ impl Send {
         }
     }
 
-    fn process(&mut self, input: &[f64], out: &mut Vec<f64>) {
-        out.clear();
-        out.extend_from_slice(input);
-        self.process_in_place(out);
-    }
-
     fn process_in_place(&mut self, buffer: &mut Vec<f64>) {
         for x in buffer.iter_mut() {
             *x = self.shape(*x);
@@ -159,9 +153,14 @@ impl Ahead {
 pub const AMBIENT_SURROUND: usize = 7;
 /// First of the two ambient-height signals; the right side follows it.
 pub const AMBIENT_HEIGHT: usize = 9;
-/// Signals a speaker can draw on, in [`shape_index`] order followed by the
-/// four ambient sends.
-pub const SIGNALS: usize = 11;
+/// The dry pair as it stood before the ambient half was taken out of it —
+/// the stem's own level, which is what the route normalization matches the
+/// routed sum to. Reading the post-split pair instead would make a stem get
+/// quieter as its sends come up, since the sends are inside the routed sum.
+pub const STEM_INPUT: usize = 11;
+/// Signals a stem's routing can draw on: [`shape_index`]'s seven, the four
+/// ambient sends, then the input pair.
+pub const SIGNALS: usize = 13;
 
 /// Per-stem shaping state: the four sends plus the optional stem EQ, and —
 /// when the stem asks for it — the primary/ambient split and the four extra
@@ -299,6 +298,10 @@ impl StemRouteState {
         self.scratch[1].clear();
         self.scratch[1].extend_from_slice(&self.ahead.right[offset..offset + count]);
 
+        for i in 0..2 {
+            self.shaped[STEM_INPUT + i].clear();
+            self.shaped[STEM_INPUT + i].extend_from_slice(&self.scratch[i]);
+        }
         if self.split.is_some() && (rear > 0.0 || height > 0.0) {
             self.split_ambient(start, count, rear, height);
         }
