@@ -39,13 +39,6 @@ impl PreviewEngine {
                 _ => {}
             }
         }
-        let mut left = Vec::with_capacity(count);
-        let mut right = Vec::with_capacity(count);
-        for i in 0..count {
-            let frame = start + i;
-            left.push(*stem.left.get(frame).unwrap_or(&0.0) as f64);
-            right.push(*stem.right.get(frame).unwrap_or(&0.0) as f64);
-        }
         // A send the layout has no speaker for gets no ambient: the amount
         // is taken out of the dry pair, so sending it nowhere would be a hole
         // rather than a move.
@@ -53,16 +46,16 @@ impl PreviewEngine {
         let height = sp.ambient_height * f64::from(self.params.ambient_share(SendShape::HeightLeft) > 0.0);
 
         let route = &mut self.routes[stem_index];
-        if let Some((eq_l, eq_r)) = &mut route.eq {
-            left = eq_l.process(&left);
-            right = eq_r.process(&right);
-        }
-        if route.has_ambient() && (rear > 0.0 || height > 0.0) {
-            route.split_ambient(
-                &stem.left, &stem.right, start, count, rear, height, &mut left, &mut right,
-            );
-        }
-        route.process(&left, &right, needs_surround, needs_height);
+        route.process_block(
+            &stem.left,
+            &stem.right,
+            start,
+            count,
+            rear,
+            height,
+            needs_surround,
+            needs_height,
+        );
     }
 
     /// Route and run the causal chain until `pre` reaches `target` frames.

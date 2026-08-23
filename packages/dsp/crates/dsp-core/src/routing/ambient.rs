@@ -174,12 +174,14 @@ impl AmbientSplit {
 
     /// Ambient rear and height pairs for `[start, start + len)` of a stem.
     ///
-    /// `left`/`right` are the whole resident stem, not the block: the mask for
-    /// a block is computed from frames that reach past its end.
+    /// `left`/`right` cover `[base, base + left.len())` of the stem and must
+    /// reach [`Self::look_ahead`] past the block: the mask for a block is
+    /// computed from frames that end after it does.
     pub fn advance(
         &mut self,
-        left: &[f32],
-        right: &[f32],
+        base: usize,
+        left: &[f64],
+        right: &[f64],
         start: usize,
         len: usize,
     ) -> AmbientBlock<'_> {
@@ -202,7 +204,7 @@ impl AmbientSplit {
             let position = start + done;
             let frame = position / self.hop;
             while self.next_frame <= frame {
-                self.process_frame(left, right, self.next_frame);
+                self.process_frame(base, left, right, self.next_frame);
                 self.next_frame += 1;
             }
             let until = ((frame + 1) * self.hop).min(start + len);
@@ -230,10 +232,10 @@ impl AmbientSplit {
         }
     }
 
-    fn process_frame(&mut self, left: &[f32], right: &[f32], index: usize) {
-        let base = index * self.hop;
-        self.windowed(left, base, 0);
-        self.windowed(right, base, 1);
+    fn process_frame(&mut self, base: usize, left: &[f64], right: &[f64], index: usize) {
+        let frame_start = index * self.hop;
+        self.windowed(left, base, frame_start, 0);
+        self.windowed(right, base, frame_start, 1);
 
         let alpha = if self.primed { COHERENCE_SMOOTHING } else { 1.0 };
         self.primed = true;
@@ -253,7 +255,7 @@ impl AmbientSplit {
             self.masked[0][bin] = l * gain;
             self.masked[1][bin] = r * gain;
         }
-        self.overlap_add(base);
+        self.overlap_add(frame_start);
     }
 
     /// [`mask`] read off the table, linearly interpolated.
@@ -269,9 +271,13 @@ impl AmbientSplit {
 
     /// Windowed transform of one channel at `base`, zero-padded past the end,
     /// left in `spectrum[side]`.
-    fn windowed(&mut self, signal: &[f32], base: usize, side: usize) {
+    fn windowed(&mut self, signal: &[f64], base: usize, frame_start: usize, side: usize) {
         for i in 0..self.n {
-            let sample = signal.get(base + i).copied().unwrap_or(0.0) as f64;
+            let sample = (frame_start + i)
+                .checked_sub(base)
+                .and_then(|index| signal.get(index))
+                .copied()
+                .unwrap_or(0.0);
             self.frame[i] = sample * self.window[i];
         }
         self.fft.rfft_into(&mut self.frame, &mut self.spectrum[side]);

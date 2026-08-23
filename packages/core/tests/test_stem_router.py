@@ -336,3 +336,93 @@ def test_front_only_stereo_route_still_matches_raw_energy():
     routed = sum(float(np.dot(ch, ch)) for ch in channels.values())
     source = float(np.dot(audio[:, 0], audio[:, 0]) + np.dot(audio[:, 1], audio[:, 1]))
     assert routed == pytest.approx(source, rel=1e-6)
+
+
+def _reverberant(n: int = 48000, seed: int = 7) -> np.ndarray:
+    """A centred note with a decorrelated tail — the shape a separated stem has."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(n) / 48000
+    note = 0.3 * np.sin(2.0 * np.pi * 440.0 * t) * (t < 0.5)
+    tail = 0.15 * np.exp(-1.5 * t)
+    return np.column_stack([
+        note + tail * rng.standard_normal(n),
+        note + tail * rng.standard_normal(n),
+    ])
+
+
+def test_a_zero_ambient_send_leaves_the_route_untouched():
+    stems = {"Other": _reverberant()}
+    plain = _router().route(stems, len(stems["Other"]))
+    zeroed = _router(
+        stem_ambient_rear={"Other": 0.0}, stem_ambient_height={"Other": 0.0}
+    ).route(stems, len(stems["Other"]))
+
+    for channel, samples in plain.items():
+        assert np.array_equal(samples, zeroed[channel]), channel
+
+
+def test_an_ambient_send_reaches_surrounds_a_front_routed_stem_never_touches():
+    stems = {"Other": _reverberant()}
+    front_only = {"Other": {ch: 0.0 for ch in ("SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR")}}
+    front_only["Other"].update({"FL": 1.0, "FR": 1.0})
+    dry = _router(stem_routing=front_only).route(stems, len(stems["Other"]))
+    sent = _router(stem_routing=front_only, stem_ambient_rear={"Other": 0.8}).route(
+        stems, len(stems["Other"])
+    )
+
+    assert np.max(np.abs(dry["SL"])) == 0.0
+    assert np.max(np.abs(sent["SL"])) > 0.0
+    # Only the rear slider moved, so the heights stay where the routing left them.
+    assert np.max(np.abs(sent["TFL"])) == 0.0
+
+
+def test_the_ambient_send_takes_its_level_out_of_the_front():
+    stems = {"Other": _reverberant()}
+    routing = {"Other": {ch: 0.0 for ch in ("SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR")}}
+    routing["Other"].update({"FL": 1.0, "FR": 1.0})
+    dry = _router(stem_routing=routing).route(stems, len(stems["Other"]))
+    sent = _router(stem_routing=routing, stem_ambient_rear={"Other": 0.9}).route(
+        stems, len(stems["Other"])
+    )
+
+    # Both are route-scale normalized, so compare the front's share of the bed.
+    front = lambda bed: np.sum(bed["FL"] ** 2) + np.sum(bed["FR"] ** 2)
+    total = lambda bed: sum(np.sum(samples ** 2) for samples in bed.values())
+    assert front(sent) / total(sent) < front(dry) / total(dry)
+
+
+def test_an_ambient_send_is_ignored_by_a_layout_without_that_class():
+    stems = {"Other": _reverberant()}
+    config = UpmixConfig(output_format="stereo", stem_ambient_rear={"Other": 0.9})
+    router = StemRouter(config, FORMAT_MAP["stereo"], 48000)
+    sent = router.route(stems, len(stems["Other"]))
+
+    plain = StemRouter(
+        UpmixConfig(output_format="stereo"), FORMAT_MAP["stereo"], 48000
+    ).route(stems, len(stems["Other"]))
+    for channel, samples in plain.items():
+        assert np.array_equal(samples, sent[channel]), channel
+
+
+def test_the_zone_key_beats_the_stem_name_for_an_ambient_send():
+    stems = {"Other@surround": _reverberant()}
+    router = _router(
+        stem_ambient_rear={"Other": 0.0, "Other@surround": 0.8},
+    )
+    assert router._ambient_for("Other@surround") == (0.8, 0.0)
+
+
+def test_a_mono_stem_has_almost_no_ambient_half_to_send():
+    """Coherence cannot tell a mono stem apart from its own dry signal, so the
+    send carries only the mask floor. Stated here because it is a real limit of
+    the stage, not a bug to chase later."""
+    n = 48000
+    t = np.arange(n) / 48000
+    tone = 0.3 * np.sin(2.0 * np.pi * 440.0 * t)
+    mono = np.column_stack([tone, tone])
+    rear_l, _, height_l, _ = upmixer_dsp.ambient_split(
+        np.ascontiguousarray(mono[:, 0]), np.ascontiguousarray(mono[:, 1]), 48000
+    )
+    tail = slice(2048, n)
+    ambient = np.mean(rear_l[tail] ** 2) + np.mean(height_l[tail] ** 2)
+    assert ambient / np.mean(tone[tail] ** 2) < 0.05

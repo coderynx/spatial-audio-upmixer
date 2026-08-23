@@ -298,6 +298,8 @@ class StemRouter:
         self._manifest_routing = config.stem_routing or {}
         self._custom_routing = routing or {}
         self._stem_enabled = config.stem_enabled or {}
+        self._ambient_rear = config.stem_ambient_rear or {}
+        self._ambient_height = config.stem_ambient_height or {}
         self._stem_solo = set(config.stem_solo or [])
         self._sr = sample_rate
         self._lfe_gain = config.lfe_gain
@@ -332,6 +334,23 @@ class StemRouter:
                 result.update(custom)
                 found_override = True
         return result if found_override else None
+
+    def _ambient_for(self, stem_key: str) -> tuple[float, float]:
+        """Ambient send amounts for a stem, zone key first."""
+        stem_name = stem_key.rsplit("@", 1)[0]
+
+        def amount(table: dict) -> float:
+            value = table[stem_key] if stem_key in table else table.get(stem_name, 0.0)
+            return max(0.0, min(1.0, float(value)))
+
+        return amount(self._ambient_rear), amount(self._ambient_height)
+
+    def _class_share(self, labels: set[ChannelLabel]) -> float:
+        """Per-speaker share of an ambient send: the amount is spread over the
+        class as 1/sqrt(n), so a 7.1.4's four surrounds carry the same total as
+        a 5.1's two.  Mirrors ``EngineParams::ambient_share``."""
+        count = sum(1 for label in self._fmt.channels if label in labels)
+        return 1.0 / math.sqrt(count) if count else 0.0
 
     def _is_enabled(self, stem_key: str) -> bool:
         stem_name = stem_key.rsplit("@", 1)[0]
@@ -445,6 +464,32 @@ class StemRouter:
             n = min(len(audio), n_samples)
             stem_L = audio[:n, 0].astype(np.float64, copy=False)
             stem_R = audio[:n, 1].astype(np.float64, copy=False) if audio.shape[1] > 1 else stem_L
+            rear_amount, height_amount = self._ambient_for(stem_key)
+            rear_share = self._class_share(_SURROUND_CHANNELS)
+            height_share = self._class_share(_HEIGHT_CHANNELS)
+            if not rear_share:
+                rear_amount = 0.0
+            if not height_share:
+                height_amount = 0.0
+            ambient: dict[ChannelLabel, np.ndarray] = {}
+            if rear_amount > 0.0 or height_amount > 0.0:
+                # A send the layout has no speaker for gets no ambient: the
+                # amount is taken out of the dry pair, so sending it nowhere
+                # would be a hole rather than a move.
+                rear_L, rear_R, height_L_amb, height_R_amb = upmixer_dsp.ambient_split(
+                    np.ascontiguousarray(stem_L, dtype=np.float64),
+                    np.ascontiguousarray(stem_R, dtype=np.float64),
+                    self._sr,
+                )
+                stem_L = stem_L - rear_amount * rear_L - height_amount * height_L_amb
+                stem_R = stem_R - rear_amount * rear_R - height_amount * height_R_amb
+                ambient = {
+                    ChannelLabel.SL: self._surround_send(rear_L),
+                    ChannelLabel.SR: self._surround_send(rear_R),
+                    ChannelLabel.TFL: self._height_send(height_L_amb),
+                    ChannelLabel.TFR: self._height_send(height_R_amb),
+                }
+
             stem_mono = (stem_L + stem_R) * 0.5
             needs_surround = any(
                 label in _SURROUND_CHANNELS and label.value in stem_routing
@@ -499,6 +544,23 @@ class StemRouter:
                     route_items.append((label, gain, signal))
                 elif label == ChannelLabel.C:
                     route_items.append((label, gain, stem_mono))
+
+            for label in self._fmt.channels:
+                if label.value in skip:
+                    continue
+                if label in _SURROUND_CHANNELS and rear_amount > 0.0:
+                    signal = ambient[
+                        ChannelLabel.SL if label in _LEFT_CHANNELS else ChannelLabel.SR
+                    ]
+                    gain = rear_amount * rear_share * self._channel_gain(label)
+                elif label in _HEIGHT_CHANNELS and height_amount > 0.0:
+                    signal = ambient[
+                        ChannelLabel.TFL if label in _LEFT_CHANNELS else ChannelLabel.TFR
+                    ]
+                    gain = height_amount * height_share * self._channel_gain(label)
+                else:
+                    continue
+                route_items.append((label, gain, signal))
 
             route_scale = self._route_scale(route_items, stem_L, stem_R)
             for label, gain, signal in route_items:

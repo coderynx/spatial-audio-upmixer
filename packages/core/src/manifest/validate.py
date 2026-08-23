@@ -379,6 +379,23 @@ def validate_manifest(data: dict) -> None:
                         raise ManifestError(
                             f"Placement '{stem_key}.{field}' must be non-negative."
                         )
+        for field in ("stem_ambient_rear", "stem_ambient_height"):
+            sends = mixing.get(field)
+            if sends is None:
+                continue
+            if not isinstance(sends, dict):
+                raise ManifestError(f"{location}.mixing.{field} must be a mapping.")
+            for stem_key, value in sends.items():
+                if not _valid_route_stem(stem_key):
+                    raise ManifestError(f"Unknown stem routing key '{stem_key}'.")
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ManifestError(
+                        f"{location}.mixing.{field}.{stem_key} must be a number in 0..1."
+                    )
+                if not math.isfinite(float(value)) or not 0.0 <= float(value) <= 1.0:
+                    raise ManifestError(
+                        f"{location}.mixing.{field}.{stem_key} must be in 0..1."
+                    )
         routing = mixing.get("stem_routing")
         if routing is None:
             return

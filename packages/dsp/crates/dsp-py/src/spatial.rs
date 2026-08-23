@@ -3,6 +3,7 @@
 use numpy::{PyArray1, PyReadonlyArray1};
 use pyo3::prelude::*;
 
+use upmixer_dsp_core::routing::ambient;
 use upmixer_dsp_core::routing::decorrelate;
 use upmixer_dsp_core::routing::sends;
 use upmixer_dsp_core::spatial::downmix::{self, DownmixRole, FoldTo51};
@@ -162,6 +163,38 @@ fn elevation_response<'py>(
     PyArray1::from_vec(py, out)
 }
 
+/// A stem's ambient half, split into the pair the surround sends carry and
+/// the pair the height sends carry.
+///
+/// Takes the stem as the router sees it — past the stem EQ — which is the
+/// same signal the preview's split reads: the engine runs that EQ ahead of
+/// the block for exactly this reason.
+#[pyfunction]
+#[pyo3(signature = (left, right, sample_rate))]
+fn ambient_split<'py>(
+    py: Python<'py>,
+    left: PyReadonlyArray1<'py, f64>,
+    right: PyReadonlyArray1<'py, f64>,
+    sample_rate: u32,
+) -> (
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+    Bound<'py, PyArray1<f64>>,
+) {
+    let left = left.as_array().to_vec();
+    let right = right.as_array().to_vec();
+    let n = left.len().min(right.len());
+    let mut split = ambient::AmbientSplit::new(sample_rate);
+    let block = split.advance(0, &left, &right, 0, n);
+    (
+        PyArray1::from_slice(py, block.rear[0]),
+        PyArray1::from_slice(py, block.rear[1]),
+        PyArray1::from_slice(py, block.height[0]),
+        PyArray1::from_slice(py, block.height[1]),
+    )
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(itu_downmix_stereo, m)?)?;
     m.add_function(wrap_pyfunction!(itu_downmix_mono, m)?)?;
@@ -176,5 +209,8 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("VELVET_SEED", decorrelate::VELVET_SEED)?;
     m.add("VELVET_SEED_HEIGHT", decorrelate::VELVET_SEED_HEIGHT)?;
     m.add("VELVET_WET", decorrelate::VELVET_WET)?;
+    m.add_function(wrap_pyfunction!(ambient_split, m)?)?;
+    m.add("AMBIENT_FFT_SIZE", ambient::AMBIENT_FFT_SIZE)?;
+    m.add("AMBIENT_TILT_HZ", ambient::AMBIENT_TILT_HZ)?;
     Ok(())
 }

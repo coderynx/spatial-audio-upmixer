@@ -11,7 +11,7 @@ use crate::stream::state::{OnePole, StreamingCompressor};
 /// for one. Both the initial build and a stem-count change come through here.
 pub(crate) fn build_route(sample_rate: u32, sends: &SendParams, stem: &StemParams) -> StemRouteState {
     let mut route = StemRouteState::new(sample_rate, sends, &stem.eq_fir);
-    route.set_ambient(sample_rate, sends, &stem.eq_fir, stem.wants_ambient());
+    route.set_ambient(sample_rate, sends, stem.wants_ambient());
     route
 }
 
@@ -85,8 +85,8 @@ impl PreviewEngine {
                 route.retune(self.sample_rate, &self.params.sends, new_eq, sends_changed, eq_changed);
             }
             let wants_ambient = self.params.stems.get(i).is_some_and(|s| s.wants_ambient());
-            if wants_ambient != route.has_ambient() || sends_changed || eq_changed {
-                route.set_ambient(self.sample_rate, &self.params.sends, new_eq, wants_ambient);
+            if wants_ambient != route.has_ambient() || sends_changed {
+                route.set_ambient(self.sample_rate, &self.params.sends, wants_ambient);
             }
         }
 

@@ -98,6 +98,63 @@ impl Send {
     }
 }
 
+/// EQ'd stem samples covering `[base, base + left.len())`, grown forward as
+/// blocks are asked for and trimmed from behind once they are consumed.
+#[derive(Default)]
+struct Ahead {
+    left: Vec<f64>,
+    right: Vec<f64>,
+    base: usize,
+}
+
+impl Ahead {
+    fn clear(&mut self, at: usize) {
+        self.left.clear();
+        self.right.clear();
+        self.base = at;
+    }
+
+    fn end(&self) -> usize {
+        self.base + self.left.len()
+    }
+
+    /// Fill forward to `target`, taking raw stem PCM through the stem EQ.
+    fn fill(
+        &mut self,
+        stem_left: &[f32],
+        stem_right: &[f32],
+        eq: &mut Option<(StreamingConvolver, StreamingConvolver)>,
+        target: usize,
+    ) {
+        if target <= self.end() {
+            return;
+        }
+        let (from, count) = (self.end(), target - self.end());
+        let take = |source: &[f32]| -> Vec<f64> {
+            (from..from + count)
+                .map(|i| *source.get(i).unwrap_or(&0.0) as f64)
+                .collect()
+        };
+        let (left, right) = match eq {
+            Some((eq_l, eq_r)) => (eq_l.process(&take(stem_left)), eq_r.process(&take(stem_right))),
+            None => (take(stem_left), take(stem_right)),
+        };
+        self.left.extend_from_slice(&left);
+        self.right.extend_from_slice(&right);
+    }
+
+    /// Drop samples before `keep_from`, in whole chunks so the copy is rare.
+    fn trim(&mut self, keep_from: usize) {
+        let drop = keep_from.saturating_sub(self.base);
+        if drop < self.left.len() / 2 {
+            return;
+        }
+        self.left.drain(..drop);
+        self.right.drain(..drop);
+        self.base += drop;
+    }
+}
+
 /// First of the two ambient-surround signals; the right side follows it.
 pub const AMBIENT_SURROUND: usize = 7;
 /// First of the two ambient-height signals; the right side follows it.
@@ -114,14 +171,16 @@ pub struct StemRouteState {
     surround: [Send; 2],
     height: [Send; 2],
     split: Option<AmbientSplit>,
-    /// The stem EQ again, for the ambient half — one convolver per ambient
-    /// signal, since each carries its own stream. The split reads raw stem
-    /// PCM so it can look ahead of the block; its output is EQ'd afterwards
-    /// through the same kernel, which keeps it aligned with the dry path
-    /// rather than a filter length in front of it.
-    ambient_eq: Option<[StreamingConvolver; 4]>,
+    /// Stem samples past the stem EQ, filled ahead of the block being
+    /// rendered. The split's mask needs a window that ends after the block
+    /// does, and it has to be the same signal the export splits — which is
+    /// the EQ'd stem, since the offline path EQs before it routes.
+    ahead: Ahead,
     ambient_surround: [Send; 2],
     ambient_height: [Send; 2],
+    /// The dry pair of the block being shaped, after the ambient half has
+    /// been taken out of it.
+    scratch: [Vec<f64>; 2],
     /// Last block's signals, indexed by [`shape_index`]: the dry pair, their
     /// mono sum, the four shaped sends, then the four ambient sends.
     shaped: [Vec<f64>; SIGNALS],
@@ -171,18 +230,18 @@ impl StemRouteState {
             surround: [surround_send(Some(&surround_l)), surround_send(Some(&surround_r))],
             height: [height_send(Some(&height_l)), height_send(Some(&height_r))],
             split: None,
-            ambient_eq: None,
+            ahead: Ahead::default(),
             ambient_surround: [surround_send(None), surround_send(None)],
             ambient_height: [height_send(None), height_send(None)],
+            scratch: Default::default(),
             shaped: Default::default(),
         }
     }
 
     /// Build or drop the ambient half.
-    pub fn set_ambient(&mut self, sample_rate: u32, p: &SendParams, eq_fir: &[f64], wanted: bool) {
+    pub fn set_ambient(&mut self, sample_rate: u32, p: &SendParams, wanted: bool) {
         if !wanted {
             self.split = None;
-            self.ambient_eq = None;
             return;
         }
         if self.split.is_none() {
@@ -194,20 +253,20 @@ impl StemRouteState {
         for s in self.ambient_height.iter_mut() {
             s.retune_height(sample_rate, p);
         }
-        self.ambient_eq = (!eq_fir.is_empty())
-            .then(|| std::array::from_fn(|_| StreamingConvolver::new(eq_fir.to_vec())));
     }
 
     pub fn has_ambient(&self) -> bool {
         self.split.is_some()
     }
 
-    /// Split one block's ambient half out of the stem, leave it in the four
-    /// ambient signals, and take it out of the dry pair the sends are about
-    /// to shape — the amount moved to the surrounds and heights is the amount
-    /// the front no longer carries.
+    /// Shape one block of a stem into every signal a speaker can draw on.
+    ///
+    /// The stem EQ runs ahead of the block rather than in step with it, so
+    /// the ambient split can read the window its mask needs without the
+    /// output being delayed by one. `rear`/`height` are the amounts moved out
+    /// of the dry pair and into the ambient sends.
     #[allow(clippy::too_many_arguments)]
-    pub fn split_ambient(
+    pub fn process_block(
         &mut self,
         stem_left: &[f32],
         stem_right: &[f32],
@@ -215,11 +274,49 @@ impl StemRouteState {
         count: usize,
         rear: f64,
         height: f64,
-        left: &mut [f64],
-        right: &mut [f64],
+        surround: bool,
+        height_send: bool,
     ) {
+        let look_ahead = self.split.as_ref().map_or(0, |s| s.look_ahead());
+        if start < self.ahead.base || start > self.ahead.end() {
+            // A seek, or the first block: the EQ's history and the split's
+            // frame grid both restart where the transport landed.
+            self.ahead.clear(start);
+            if let Some((eq_l, eq_r)) = &mut self.eq {
+                eq_l.reset();
+                eq_r.reset();
+            }
+            if let Some(split) = &mut self.split {
+                split.reset();
+            }
+        }
+        self.ahead
+            .fill(stem_left, stem_right, &mut self.eq, start + count + look_ahead);
+
+        let offset = start - self.ahead.base;
+        self.scratch[0].clear();
+        self.scratch[0].extend_from_slice(&self.ahead.left[offset..offset + count]);
+        self.scratch[1].clear();
+        self.scratch[1].extend_from_slice(&self.ahead.right[offset..offset + count]);
+
+        if self.split.is_some() && (rear > 0.0 || height > 0.0) {
+            self.split_ambient(start, count, rear, height);
+        }
+        self.shape_sends(count, surround, height_send);
+        self.ahead.trim(start + count);
+    }
+
+    /// Take the block's ambient half out of the scratch pair and leave it,
+    /// shaped, in the four ambient signals.
+    fn split_ambient(&mut self, start: usize, count: usize, rear: f64, height: f64) {
         let Some(split) = &mut self.split else { return };
-        let block = split.advance(stem_left, stem_right, start, count);
+        let block = split.advance(
+            self.ahead.base,
+            &self.ahead.left,
+            &self.ahead.right,
+            start,
+            count,
+        );
         let sources = [
             (AMBIENT_SURROUND, block.rear[0]),
             (AMBIENT_SURROUND + 1, block.rear[1]),
@@ -230,15 +327,11 @@ impl StemRouteState {
             self.shaped[slot].clear();
             self.shaped[slot].extend_from_slice(source);
         }
-        if let Some(eq) = &mut self.ambient_eq {
-            for (convolver, slot) in eq.iter_mut().zip(sources.map(|(slot, _)| slot)) {
-                self.shaped[slot] = convolver.process(&self.shaped[slot]);
-            }
-        }
         for i in 0..count {
-            left[i] -= rear * self.shaped[AMBIENT_SURROUND][i] + height * self.shaped[AMBIENT_HEIGHT][i];
-            right[i] -=
-                rear * self.shaped[AMBIENT_SURROUND + 1][i] + height * self.shaped[AMBIENT_HEIGHT + 1][i];
+            self.scratch[0][i] -=
+                rear * self.shaped[AMBIENT_SURROUND][i] + height * self.shaped[AMBIENT_HEIGHT][i];
+            self.scratch[1][i] -= rear * self.shaped[AMBIENT_SURROUND + 1][i]
+                + height * self.shaped[AMBIENT_HEIGHT + 1][i];
         }
         for i in 0..2 {
             self.ambient_surround[i].process_in_place(&mut self.shaped[AMBIENT_SURROUND + i]);
@@ -263,11 +356,7 @@ impl StemRouteState {
         if let Some(split) = &mut self.split {
             split.reset();
         }
-        if let Some(eq) = &mut self.ambient_eq {
-            for convolver in eq.iter_mut() {
-                convolver.reset();
-            }
-        }
+        self.ahead.clear(0);
     }
 
     /// Adopt new send shaping and/or a new stem EQ in place, keeping every
@@ -315,24 +404,44 @@ impl StemRouteState {
     /// a later mix edit routes the stem there — the same cold start the
     /// offline path takes on every render.
     pub fn process(&mut self, left: &[f64], right: &[f64], surround: bool, height: bool) {
-        let dry = |source: &[f64], out: &mut Vec<f64>| {
-            out.clear();
-            out.extend_from_slice(source);
-        };
-        dry(left, &mut self.shaped[0]);
-        dry(right, &mut self.shaped[1]);
+        self.scratch[0].clear();
+        self.scratch[0].extend_from_slice(left);
+        self.scratch[1].clear();
+        self.scratch[1].extend_from_slice(right);
+        self.shape_sends(left.len().min(right.len()), surround, height);
+    }
+
+    /// The dry pair in `scratch` into the seven dry signals.
+    fn shape_sends(&mut self, count: usize, surround: bool, height: bool) {
+        for i in 0..2 {
+            self.shaped[i].clear();
+            self.shaped[i].extend_from_slice(&self.scratch[i][..count]);
+        }
         self.shaped[2].clear();
-        self.shaped[2].extend(left.iter().zip(right).map(|(l, r)| (l + r) * 0.5));
-        for (i, source) in [left, right].into_iter().enumerate() {
+        self.shaped[2].extend(
+            self.scratch[0][..count]
+                .iter()
+                .zip(&self.scratch[1][..count])
+                .map(|(l, r)| (l + r) * 0.5),
+        );
+        for i in 0..2 {
             if surround {
-                self.surround[i].process(source, &mut self.shaped[3 + i]);
+                let (send, out) = (&mut self.surround[i], &mut self.shaped[3 + i]);
+                out.clear();
+                out.extend_from_slice(&self.scratch[i][..count]);
+                send.process_in_place(out);
             } else {
-                dry(source, &mut self.shaped[3 + i]);
+                self.shaped[3 + i].clear();
+                self.shaped[3 + i].extend_from_slice(&self.scratch[i][..count]);
             }
             if height {
-                self.height[i].process(source, &mut self.shaped[5 + i]);
+                let (send, out) = (&mut self.height[i], &mut self.shaped[5 + i]);
+                out.clear();
+                out.extend_from_slice(&self.scratch[i][..count]);
+                send.process_in_place(out);
             } else {
-                dry(source, &mut self.shaped[5 + i]);
+                self.shaped[5 + i].clear();
+                self.shaped[5 + i].extend_from_slice(&self.scratch[i][..count]);
             }
         }
     }

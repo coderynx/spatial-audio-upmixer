@@ -139,6 +139,11 @@ class UpmixConfig:
 
     stem_eq_profiles: dict | None = None
 
+    # Per-stem ambient sends: how much of the stem's ambient half reaches the
+    # surround speakers, and the height speakers.  Keyed like stem_rebalance.
+    stem_ambient_rear: dict | None = None
+    stem_ambient_height: dict | None = None
+
     # Explicit per-stem speaker-bed routing.  Each value maps a canonical stem
     # name (or ``Stem@zone`` key) to output channel weights.
     stem_routing: dict | None = None

@@ -1,32 +1,35 @@
+mod common;
+
 mod ambient {
+    use super::common;
     use upmixer_dsp_core::kernels::rng::next_unit;
     use upmixer_dsp_core::routing::ambient::*;
 
     const SR: u32 = 48_000;
     const N: usize = 48_000;
 
-    fn noise(seed: u64, n: usize) -> Vec<f32> {
+    fn noise(seed: u64, n: usize) -> Vec<f64> {
         let mut state = seed;
-        (0..n).map(|_| (next_unit(&mut state) * 2.0 - 1.0) as f32).collect()
+        (0..n).map(|_| next_unit(&mut state) * 2.0 - 1.0).collect()
     }
 
-    fn tone(freq: f64, n: usize) -> Vec<f32> {
+    fn tone(freq: f64, n: usize) -> Vec<f64> {
         (0..n)
             .map(|i| {
                 let t = i as f64 / SR as f64;
-                (0.5 * (2.0 * std::f64::consts::PI * freq * t).sin()) as f32
+                0.5 * (2.0 * std::f64::consts::PI * freq * t).sin()
             })
             .collect()
     }
 
     /// Ambient rear+height pairs over the whole signal, in `block` steps.
-    fn split_all(left: &[f32], right: &[f32], block: usize) -> [Vec<f64>; 4] {
+    fn split_all(left: &[f64], right: &[f64], block: usize) -> [Vec<f64>; 4] {
         let mut split = AmbientSplit::new(SR);
         let mut out: [Vec<f64>; 4] = Default::default();
         let mut start = 0;
         while start < left.len() {
             let len = block.min(left.len() - start);
-            let piece = split.advance(left, right, start, len);
+            let piece = split.advance(0, left, right, start, len);
             out[0].extend_from_slice(piece.rear[0]);
             out[1].extend_from_slice(piece.rear[1]);
             out[2].extend_from_slice(piece.height[0]);
@@ -48,7 +51,7 @@ mod ambient {
         let split = split_all(&mono, &mono, 512);
         let source: f64 = mono[AMBIENT_FFT_SIZE..]
             .iter()
-            .map(|v| (*v as f64) * (*v as f64))
+            .map(|v| v * v)
             .sum::<f64>()
             / (N - AMBIENT_FFT_SIZE) as f64;
         let ambient = power(&split[0]) + power(&split[2]);
@@ -67,7 +70,7 @@ mod ambient {
         let split = split_all(&left, &right, 512);
         let source: f64 = left[AMBIENT_FFT_SIZE..]
             .iter()
-            .map(|v| (*v as f64) * (*v as f64))
+            .map(|v| v * v)
             .sum::<f64>()
             / (N - AMBIENT_FFT_SIZE) as f64;
         let ambient = power(&split[0]) + power(&split[2]);
@@ -81,11 +84,11 @@ mod ambient {
     #[test]
     fn a_hard_panned_primary_is_not_mistaken_for_ambient() {
         let left = tone(440.0, N);
-        let right = vec![0.0f32; N];
+        let right = vec![0.0; N];
         let split = split_all(&left, &right, 512);
         let source: f64 = left[AMBIENT_FFT_SIZE..]
             .iter()
-            .map(|v| (*v as f64) * (*v as f64))
+            .map(|v| v * v)
             .sum::<f64>()
             / (N - AMBIENT_FFT_SIZE) as f64;
         // Coherence alone reads this as ambience; the equal-energy guard is
@@ -141,26 +144,22 @@ mod ambient {
         // behind it, the shape a separated stem actually has.
         let tail_l = noise(9, N);
         let tail_r = noise(10, N);
-        let mut left = vec![0.0f32; N];
-        let mut right = vec![0.0f32; N];
+        let mut left = vec![0.0; N];
+        let mut right = vec![0.0; N];
         let note = tone(660.0, N);
         for i in 0..N {
             let t = i as f64 / SR as f64;
             let note_gain = if t < 0.5 { 1.0 } else { 0.0 };
             let tail_gain = 0.2 * (-3.0 * t).exp();
-            left[i] = (note[i] as f64 * note_gain + tail_l[i] as f64 * tail_gain) as f32;
-            right[i] = (note[i] as f64 * note_gain + tail_r[i] as f64 * tail_gain) as f32;
+            left[i] = note[i] * note_gain + tail_l[i] * tail_gain;
+            right[i] = note[i] * note_gain + tail_r[i] * tail_gain;
         }
         let split = split_all(&left, &right, 512);
         let window = |signal: &[f64], from: usize, to: usize| {
             signal[from..to].iter().map(|v| v * v).sum::<f64>() / (to - from) as f64
         };
-        let source = |signal: &[f32], from: usize, to: usize| {
-            signal[from..to]
-                .iter()
-                .map(|v| (*v as f64) * (*v as f64))
-                .sum::<f64>()
-                / (to - from) as f64
+        let source = |signal: &[f64], from: usize, to: usize| {
+            signal[from..to].iter().map(|v| v * v).sum::<f64>() / (to - from) as f64
         };
         let (note_from, note_to) = (SR as usize / 4, SR as usize / 2);
         let (tail_from, tail_to) = (SR as usize * 3 / 4, N);
@@ -176,14 +175,37 @@ mod ambient {
         );
     }
 
+    /// The same pin `packages/core/tests/test_ambient_split.py` asserts
+    /// through the wheel: a wasm preview and a Python export built from
+    /// different splits fail here.
+    #[test]
+    fn the_split_matches_the_pinned_samples() {
+        const PROBES: [usize; 3] = [2048, 4096, 6144];
+        const PINNED: [[f64; 3]; 4] = [
+            [0.025500546122205835, -0.02468343658839656, 0.00848466442776755],
+            [-0.00030555565927435185, -0.020050936014130185, 0.01994336485504655],
+            [0.001318185343109183, -0.013159212431698798, 0.01275652064286037],
+            [-0.0028177731006771385, 0.01706274763965475, -0.015981200895673956],
+        ];
+        let left = common::deterministic_signal(9600, SR, 0.0);
+        let right = common::deterministic_signal(9600, SR, 1.0);
+        let got = split_all(&left, &right, 512);
+        // split_all's order is rear L/R then height L/R.
+        for (signal, want) in [&got[0], &got[1], &got[2], &got[3]].into_iter().zip(PINNED) {
+            for (probe, expected) in PROBES.into_iter().zip(want) {
+                assert_eq!(signal[probe], expected, "sample {probe}");
+            }
+        }
+    }
+
     #[test]
     fn a_reset_split_repeats_itself() {
         let left = noise(7, 8192);
         let right = noise(8, 8192);
         let mut split = AmbientSplit::new(SR);
-        let first: Vec<f64> = split.advance(&left, &right, 0, 4096).rear[0].to_vec();
+        let first: Vec<f64> = split.advance(0, &left, &right, 0, 4096).rear[0].to_vec();
         split.reset();
-        let second: Vec<f64> = split.advance(&left, &right, 0, 4096).rear[0].to_vec();
+        let second: Vec<f64> = split.advance(0, &left, &right, 0, 4096).rear[0].to_vec();
         assert_eq!(first, second);
     }
 }
