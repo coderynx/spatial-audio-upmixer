@@ -128,13 +128,3 @@ function weightFraction(route: Record<string, number>, of: Set<string>): number 
 export function heightFraction(route: Record<string, number>): number {
   return weightFraction(route, TOP_CHANNELS);
 }
-
-const DUCKED_CHANNELS = new Set(["SL", "SR", "BL", "BR", ...TOP_CHANNELS]);
-
-/** Fraction (0..1) of a stem's routed weight reaching the decorrelated
- * surround and height sends — the only paths the transient duck attenuates
- * (`routing/transient.rs`), FL/FR/C carrying the dry bed untouched. Scales a
- * stem's reported duck gain into how much of *that stem* actually moved. */
-export function duckedFraction(route: Record<string, number>): number {
-  return weightFraction(route, DUCKED_CHANNELS);
-}

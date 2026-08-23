@@ -142,9 +142,9 @@ export type BuildEngineParamsInput = {
   /**
    * Send values the project's manifest `routing` block sets per track. The
    * served constant is only the default: a track that carries its own value
-   * must preview with it, or the export ducks where the preview did not.
+   * must preview with it, or the export diverges from what the preview did.
    */
-  sendOverrides?: { stemTransientDuck?: number; heightDirectionalBandGain?: number };
+  sendOverrides?: { heightDirectionalBandGain?: number };
   /** Per-speaker mute; a muted speaker contributes nothing to any render. */
   speakerEnabled?: Record<string, boolean>;
   /** Transport A/B: render the bed without any mastering stage. */
@@ -199,7 +199,6 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
       height_directional_band_hz: c.heightShaping.directionalBandHz,
       height_directional_band_gain:
         input.sendOverrides?.heightDirectionalBandGain ?? c.heightShaping.directionalBandGain,
-      stem_transient_duck: input.sendOverrides?.stemTransientDuck ?? c.stemTransientDuck,
       lfe_cutoff_hz: c.lfeLowpassHz,
       lfe_filter_order: 4,
       lfe_gain: c.lfeGain,

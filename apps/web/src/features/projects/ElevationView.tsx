@@ -3,7 +3,7 @@ import type { StemRouting } from "@/api";
 import { MIN_ALPHA_SCALE, SETTLE_FRAMES, canvasTheme, hexToRgb, lerp } from "@/lib/canvasTheme";
 import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
-import { duckedFraction, speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo } from "@/lib/spatial";
+import { speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo } from "@/lib/spatial";
 import type { StemSpectrum } from "./audioEngine";
 
 // Secondary "elevation" view: a front-on cross-section showing the vertical
@@ -12,7 +12,7 @@ import type { StemSpectrum } from "./audioEngine";
 // unlike the radar, this uses actual routed coordinates for placement, not
 // spectral centroid, matching NUGEN Halo Upmix's height panel.
 
-type Voice = { key: string; stem: string; base: string; x: number; y: number; ducked: number; sizeScale: number };
+type Voice = { key: string; stem: string; base: string; x: number; y: number; sizeScale: number };
 type SmoothedVoice = { x: number; y: number; level: number };
 type SpeakerHitTarget = { channel: string; x: number; y: number; radius: number };
 
@@ -224,14 +224,13 @@ function ElevationViewImpl({
         const route = currentRouting[stem] || {};
         const base = stem.split("@", 1)[0];
         const stereo = (currentCounts?.[stem] ?? 2) >= 2;
-        const ducked = duckedFraction(route);
         if (stereo) {
           const { left, right } = stemPositionStereo(route);
-          voices.push({ key: `${stem}:L`, stem, base, x: left.x, y: left.y, ducked, sizeScale: 0.8 });
-          voices.push({ key: `${stem}:R`, stem, base, x: right.x, y: right.y, ducked, sizeScale: 0.8 });
+          voices.push({ key: `${stem}:L`, stem, base, x: left.x, y: left.y, sizeScale: 0.8 });
+          voices.push({ key: `${stem}:R`, stem, base, x: right.x, y: right.y, sizeScale: 0.8 });
         } else {
           const pos = stemPosition(route);
-          voices.push({ key: stem, stem, base, x: pos.x, y: pos.y, ducked, sizeScale: 1 });
+          voices.push({ key: stem, stem, base, x: pos.x, y: pos.y, sizeScale: 1 });
         }
       }
 
@@ -244,9 +243,7 @@ function ElevationViewImpl({
       const resolved: Resolved[] = [];
       for (const voice of voices) {
         const spectrum = stemSpectrum.current.get(voice.base);
-        // Thinned by the transient duck in proportion to how much of the stem
-        // is routed through the ducked sends — same weighting as HazeView.
-        const level = (spectrum?.level ?? 0) * (1 - voice.ducked * (1 - (spectrum?.duck ?? 1)));
+        const level = spectrum?.level ?? 0;
 
         const previous = smoothed.current.get(voice.key);
         const next: SmoothedVoice = previous

@@ -39,8 +39,6 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.height_high_shelf_gain = args.height_high_shelf_gain
     if args.height_directional_band_gain is not None:
         config.height_directional_band_gain = args.height_directional_band_gain
-    if args.stem_transient_duck is not None:
-        config.stem_transient_duck = max(0.0, min(1.0, args.stem_transient_duck))
     if args.fft_size is not None:
         config.fft_size = args.fft_size
         config.hop_size = args.fft_size // 4

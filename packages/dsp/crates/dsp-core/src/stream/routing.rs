@@ -10,7 +10,6 @@ use crate::routing::decorrelate::{
     velvet_pair_seeded, VelvetFir, VelvetLine, VELVET_SEED, VELVET_SEED_HEIGHT,
 };
 use crate::routing::sends::directional_band_sos;
-use crate::routing::transient::MultibandDucker;
 
 use super::conv::StreamingConvolver;
 use super::params::{SendParams, SendShape};
@@ -93,13 +92,6 @@ pub struct StemRouteState {
     pub eq: Option<(StreamingConvolver, StreamingConvolver)>,
     surround: [Send; 2],
     height: [Send; 2],
-    /// One ducker feeds both send pairs: its state depends only on the stem's
-    /// input, so a single trajectory is what the offline path's two separate
-    /// calls each reproduce.
-    ducker: MultibandDucker,
-    ducked: [Vec<f64>; 2],
-    /// Last block's per-frame duck gain, read by the UI's duck display.
-    duck_trace: Vec<f64>,
     /// Last block's shaped sends: surround L/R then height L/R.
     shaped: [Vec<f64>; 4],
 }
@@ -147,9 +139,6 @@ impl StemRouteState {
             }),
             surround: [surround_send(&surround_l), surround_send(&surround_r)],
             height: [height_send(&height_l), height_send(&height_r)],
-            ducker: MultibandDucker::new(sample_rate, p.stem_transient_duck),
-            ducked: Default::default(),
-            duck_trace: Default::default(),
             shaped: Default::default(),
         }
     }
@@ -162,7 +151,6 @@ impl StemRouteState {
         for s in self.surround.iter_mut().chain(self.height.iter_mut()) {
             s.reset();
         }
-        self.ducker.reset();
     }
 
     /// Adopt new send shaping and/or a new stem EQ in place, keeping every
@@ -185,7 +173,6 @@ impl StemRouteState {
             for s in self.height.iter_mut() {
                 s.retune_height(sample_rate, sends);
             }
-            self.ducker.retune(sample_rate, sends.stem_transient_duck);
         }
         if eq_changed {
             if eq_fir.is_empty() {
@@ -215,24 +202,6 @@ impl StemRouteState {
             out.clear();
             out.extend_from_slice(source);
         };
-        self.duck_trace.clear();
-        let (left, right) = if self.ducker.depth() > 0.0 {
-            self.ducked[0].clear();
-            self.ducked[1].clear();
-            self.ducked[0].reserve(left.len());
-            self.ducked[1].reserve(right.len());
-            self.duck_trace.reserve(left.len());
-            for (l, r) in left.iter().zip(right.iter()) {
-                let (dl, dr) = self.ducker.tick(*l, *r);
-                self.ducked[0].push(dl);
-                self.ducked[1].push(dr);
-                self.duck_trace.push(self.ducker.last_gain());
-            }
-            (&self.ducked[0][..], &self.ducked[1][..])
-        } else {
-            self.duck_trace.resize(left.len(), 1.0);
-            (left, right)
-        };
         for (i, source) in [left, right].into_iter().enumerate() {
             if surround {
                 self.surround[i].process(source, &mut self.shaped[i]);
@@ -251,12 +220,6 @@ impl StemRouteState {
     #[inline]
     pub fn send(&self, index: usize) -> &[f64] {
         &self.shaped[index]
-    }
-
-    /// Per-frame duck gain over the block [`Self::process`] just shaped, all
-    /// ones when the duck is off.
-    pub fn duck_trace(&self) -> &[f64] {
-        &self.duck_trace
     }
 }
 

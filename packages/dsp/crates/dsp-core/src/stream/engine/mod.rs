@@ -115,13 +115,9 @@ pub struct PreviewEngine {
     master_gain: OnePole,
     pre: Queue,
     post: Queue,
-    /// One channel per stem, carrying its per-frame duck gain. Routing runs a
-    /// whole look-ahead horizon ahead of what is emitted, so the duck readout
-    /// has to be queued and read back at the emit position like every other
-    /// meter, or it would flash before the hit that caused it.
-    duck: Queue,
     /// One channel, carrying the bus compressor's per-frame gain reduction in
-    /// dB. Queued and read at the emit position for the same reason `duck` is.
+    /// dB. Queued and read at the emit position, or it would flash before the
+    /// block that caused it.
     comp_gr: Queue,
     unify_done: usize,
     emitted: usize,
@@ -203,7 +199,6 @@ fn build_output(
 impl PreviewEngine {
     pub fn new(sample_rate: u32, params: EngineParams, stems: Vec<Arc<StemSource>>) -> Self {
         let n_channels = params.speakers.len();
-        let params_stems = params.stems.len();
         let routes = params
             .stems
             .iter()
@@ -267,7 +262,6 @@ impl PreviewEngine {
             limiter,
             pre: Queue::new(n_channels),
             post: Queue::new(n_channels),
-            duck: Queue::new(params_stems.max(1)),
             comp_gr: Queue::new(1),
             unify_done: 0,
             emitted: 0,
@@ -374,7 +368,6 @@ impl PreviewEngine {
         self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
         self.pre = Queue::new(n_channels);
         self.post = Queue::new(n_channels);
-        self.duck = Queue::new(self.params.stems.len().max(1));
         self.comp_gr = Queue::new(1);
         self.limiter_gr.clear();
         self.rebuild_loudness_meter();

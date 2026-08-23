@@ -17,10 +17,9 @@ impl PreviewEngine {
         self.unify_done = target;
         self.pre.base = target;
         self.post.base = target;
-        // The per-frame meter traces are based at the landing frame like the
-        // audio queues; leaving them at 0 would make the first `fill_pre`
-        // after a seek resize them across the whole skipped span.
-        self.duck.base = target;
+        // The per-frame meter trace is based at the landing frame like the
+        // audio queues; leaving it at 0 would make the first `fill_pre`
+        // after a seek resize it across the whole skipped span.
         self.comp_gr.base = target;
         // Rebuilt at the landing frame: their band splits carry a forward
         // pass and `rewind` left one starting at the top of the programme.

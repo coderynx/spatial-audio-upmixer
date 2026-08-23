@@ -3,7 +3,7 @@ import type { StemRouting } from "@/api";
 import { MIN_ALPHA_SCALE, SETTLE_FRAMES, canvasTheme, hexToRgb, lerp } from "@/lib/canvasTheme";
 import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
-import { duckedFraction, heightFraction, speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo, vecAngle } from "@/lib/spatial";
+import { heightFraction, speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo, vecAngle } from "@/lib/spatial";
 import type { StemSpectrum } from "./audioEngine";
 
 // NUGEN Halo Upmix-style "Haze View": a 2D radar where radius encodes
@@ -12,7 +12,7 @@ import type { StemSpectrum } from "./audioEngine";
 // outer ring shows height-channel content per stem, since this projection
 // is otherwise a flat floor-plan and would lose the y axis entirely.
 
-type Voice = { key: string; stem: string; base: string; angle: number; heightAngle: number | null; ducked: number; sizeScale: number };
+type Voice = { key: string; stem: string; base: string; angle: number; heightAngle: number | null; sizeScale: number };
 
 type SmoothedVoice = { angle: number; radius: number; heightRadius: number; level: number; heightLevel: number };
 
@@ -241,15 +241,14 @@ function HazeViewImpl({
           if (heightFraction(route) <= 0) return null;
           return vecAngle(stemPosition(route));
         })();
-        const ducked = duckedFraction(route);
         if (stereo) {
           const { left, right } = stemPositionStereo(route);
           // One height blob per stem, not per L/R voice — both would sit at
           // the same angle and just double-draw on top of each other.
-          voices.push({ key: `${stem}:L`, stem, base, angle: vecAngle(left), heightAngle: heightAngleValue, ducked, sizeScale: 0.8 });
-          voices.push({ key: `${stem}:R`, stem, base, angle: vecAngle(right), heightAngle: null, ducked, sizeScale: 0.8 });
+          voices.push({ key: `${stem}:L`, stem, base, angle: vecAngle(left), heightAngle: heightAngleValue, sizeScale: 0.8 });
+          voices.push({ key: `${stem}:R`, stem, base, angle: vecAngle(right), heightAngle: null, sizeScale: 0.8 });
         } else {
-          voices.push({ key: stem, stem, base, angle: vecAngle(stemPosition(route)), heightAngle: heightAngleValue, ducked, sizeScale: 1 });
+          voices.push({ key: stem, stem, base, angle: vecAngle(stemPosition(route)), heightAngle: heightAngleValue, sizeScale: 1 });
         }
       }
 
@@ -261,13 +260,9 @@ function HazeViewImpl({
       const resolved: Resolved[] = [];
       for (const voice of voices) {
         const spectrum = stemSpectrum.current.get(voice.base);
-        // The transient duck only attenuates the surround and height sends,
-        // so it thins a stem's blob by the share of it routed there — and
-        // thins the height ring, which is nothing but ducked send, in full.
-        const duck = spectrum?.duck ?? 1;
-        const level = (spectrum?.level ?? 0) * (1 - voice.ducked * (1 - duck));
+        const level = spectrum?.level ?? 0;
         const targetRadius = (spectrum ? spectrum.centroid : 0.42) * radius;
-        const targetHeightLevel = voice.heightAngle !== null ? (spectrum?.level ?? 0) * duck : 0;
+        const targetHeightLevel = voice.heightAngle !== null ? (spectrum?.level ?? 0) : 0;
 
         const previous = smoothed.current.get(voice.key);
         const next: SmoothedVoice = previous

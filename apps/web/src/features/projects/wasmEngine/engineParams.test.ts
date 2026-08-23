@@ -23,21 +23,18 @@ function input(overrides: Partial<BuildEngineParamsInput> = {}): BuildEnginePara
 describe("buildEngineParams", () => {
   it("prefers the track's send values over the served defaults", () => {
     const served = buildEngineParams(input()).sends as Record<string, number>;
-    expect(served.stem_transient_duck).toBe(constants.stemTransientDuck);
     expect(served.height_directional_band_gain).toBe(constants.heightShaping.directionalBandGain);
 
     // A track that carries its own values must preview with them, or the
-    // export ducks where the preview did not.
+    // export diverges from what the preview did.
     const overridden = buildEngineParams(
-      input({ sendOverrides: { stemTransientDuck: 0.7, heightDirectionalBandGain: 1.6 } }),
+      input({ sendOverrides: { heightDirectionalBandGain: 1.6 } }),
     ).sends as Record<string, number>;
-    expect(overridden.stem_transient_duck).toBe(0.7);
     expect(overridden.height_directional_band_gain).toBe(1.6);
   });
 
   it("keeps the served default when the track sets no value", () => {
     const partial = buildEngineParams(input({ sendOverrides: {} })).sends as Record<string, number>;
-    expect(partial.stem_transient_duck).toBe(constants.stemTransientDuck);
     expect(partial.height_directional_band_gain).toBe(constants.heightShaping.directionalBandGain);
   });
 

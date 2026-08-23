@@ -211,7 +211,6 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "height_low_rolloff_gain":    ("height_low_rolloff_gain",  float),
     "height_high_shelf_gain":     ("height_high_shelf_gain",   float),
     "height_directional_band_gain": ("height_directional_band_gain", float),
-    "stem_transient_duck":        ("stem_transient_duck",      float),
     "fft_size":                   ("fft_size",                 int),
     "block_size":                 ("block_size",               int),
     "normalize_output":           ("normalize_output",         bool),

@@ -51,7 +51,7 @@ export function useStemPreview(
   // The selected track's manifest `routing` block. Send values here are
   // per-track and must reach the worklet, or a track previews with the
   // served default while the export uses its own value.
-  routing?: { stem_transient_duck?: number; height_directional_band_gain?: number },
+  routing?: { height_directional_band_gain?: number },
   // Transport A/B state. Session-only, like outputMode — the caller has
   // already stripped the mastering block it passes above; this tells the
   // engine which of the two programmes it is rendering so it can measure and
@@ -243,8 +243,7 @@ export function useStemPreview(
     // Depend on the send values themselves, not the `routing` object: the
     // project page rebuilds its manifest every render, so the object identity
     // changes constantly while these numbers do not.
-  }, [mix, scene.stems, mastering, routing?.stem_transient_duck,
-      routing?.height_directional_band_gain, constants]);
+  }, [mix, scene.stems, mastering, routing?.height_directional_band_gain, constants]);
 
   // Profile switch: retune the already-built voicing chain (cheap, no graph
   // rebuild), swap in the new profile's decode filter set, then recalibrate.

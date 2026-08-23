@@ -183,7 +183,7 @@ pub unsafe extern "C" fn dsp_engine_meters(
     engine.meters().write(dst).min(capacity)
 }
 
-/// Copy each stem's `[level, centroid, duck]` triple for the haze/elevation
+/// Copy each stem's `[level, centroid]` pair for the haze/elevation
 /// displays. Returns the number of floats written.
 ///
 /// # Safety
@@ -197,13 +197,12 @@ pub unsafe extern "C" fn dsp_engine_stem_spectrum(
     let Some(engine) = engine.as_ref() else { return 0 };
     let dst = std::slice::from_raw_parts_mut(out, capacity);
     let mut i = 0;
-    for (level, centroid, duck) in engine.stem_spectrum() {
-        if i + 2 < dst.len() {
+    for (level, centroid) in engine.stem_spectrum() {
+        if i + 1 < dst.len() {
             dst[i] = level as f32;
             dst[i + 1] = centroid as f32;
-            dst[i + 2] = duck as f32;
         }
-        i += 3;
+        i += 2;
     }
     i.min(capacity)
 }

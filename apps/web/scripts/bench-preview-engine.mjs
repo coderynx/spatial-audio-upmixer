@@ -135,9 +135,6 @@ function params(mode, decodeTaps) {
       height_low_rolloff_hz: 150, height_low_rolloff_gain: 0.15,
       height_crossover_hz: 3000, height_high_shelf_gain: 1.5,
       height_directional_band_hz: 8000, height_directional_band_gain: 1,
-      // Worst case for the transient duck: full depth, so every stem runs the
-      // detector rather than taking the depth-0 skip that ships by default.
-      stem_transient_duck: 1,
       lfe_cutoff_hz: 120, lfe_filter_order: 4, lfe_gain: 0.316,
     },
     stems: Array.from({ length: STEMS }, () => ({

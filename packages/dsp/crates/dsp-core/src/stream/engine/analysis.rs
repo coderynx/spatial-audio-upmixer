@@ -154,22 +154,21 @@ impl PreviewEngine {
         &self.meters
     }
 
-    /// Per-stem `(level, spectral centroid, duck gain)` for the
-    /// haze/elevation displays — all roughly 0..1, `centroid` sqrt-scaled
-    /// toward the low end like a listener's own frequency perception and
-    /// `duck` the mean transient-duck gain, 1.0 for no reduction. Computed
-    /// here rather than kept current in `meters`/`render()`: the FFT this
-    /// needs is too heavy to run every 128-frame quantum, but is cheap enough
-    /// to run at the worklet's ~30Hz report cadence, called on demand from the
-    /// same trailing `METER_WINDOW_FRAMES` window the meters use.
-    pub fn stem_spectrum(&self) -> Vec<(f64, f64, f64)> {
+    /// Per-stem `(level, spectral centroid)` for the haze/elevation displays
+    /// — both roughly 0..1, `centroid` sqrt-scaled toward the low end like a
+    /// listener's own frequency perception. Computed here rather than kept
+    /// current in `meters`/`render()`: the FFT this needs is too heavy to run
+    /// every 128-frame quantum, but is cheap enough to run at the worklet's
+    /// ~30Hz report cadence, called on demand from the same trailing
+    /// `METER_WINDOW_FRAMES` window the meters use.
+    pub fn stem_spectrum(&self) -> Vec<(f64, f64)> {
         self.stems
             .iter()
             .enumerate()
             .map(|(i, stem)| {
                 let sp = self.params.stems.get(i);
                 if !sp.map(|p| p.enabled).unwrap_or(true) {
-                    return (0.0, 0.0, 1.0);
+                    return (0.0, 0.0);
                 }
                 let gain = sp
                     .map(|p| 10.0_f64.powf(p.rebalance_db / 20.0))
@@ -177,9 +176,8 @@ impl PreviewEngine {
                 let to = self.emitted.min(stem.len());
                 let win_start = to.saturating_sub(METER_WINDOW_FRAMES);
                 if to <= win_start {
-                    return (0.0, 0.0, 1.0);
+                    return (0.0, 0.0);
                 }
-                let duck = self.duck_gain(i, win_start, to);
 
                 let level = self
                     .meters
@@ -206,22 +204,8 @@ impl PreviewEngine {
                 } else {
                     0.0
                 };
-                (level, centroid, duck)
+                (level, centroid)
             })
             .collect()
-    }
-
-    /// Mean duck gain applied to stem `i` over `[from, to)` absolute frames.
-    /// The mean, not the window's deepest dip: at a 60 ms release against a
-    /// ~43 ms window a peak reading would sit pinned at the dip for as long
-    /// as it takes the display to notice the next one.
-    fn duck_gain(&self, i: usize, from: usize, to: usize) -> f64 {
-        let Some(trace) = self.duck.channels.get(i) else { return 1.0 };
-        let lo = from.saturating_sub(self.duck.base).min(trace.len());
-        let hi = to.saturating_sub(self.duck.base).min(trace.len());
-        if hi <= lo {
-            return 1.0;
-        }
-        trace[lo..hi].iter().sum::<f64>() / (hi - lo) as f64
     }
 }

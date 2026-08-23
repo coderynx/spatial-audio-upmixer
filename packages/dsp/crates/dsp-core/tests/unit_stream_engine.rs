@@ -477,7 +477,6 @@ mod routing {
             height_high_shelf_gain: 1.5,
             height_directional_band_hz: 8000.0,
             height_directional_band_gain: 1.0,
-            stem_transient_duck: 0.0,
             lfe_cutoff_hz: 120.0,
             lfe_filter_order: 4,
             lfe_gain: 0.31622776601683794,
@@ -556,96 +555,6 @@ mod routing {
                 }
             }
         }
-    }
-
-    /// The duck must land on the send input, before the filters and the
-    /// velvet line, exactly as `StemRouter.route` orders it offline — and
-    /// blocked ragged, since the preview chooses the block size.
-    #[test]
-    fn ducked_sends_match_the_offline_duck_then_shape_order() {
-        use upmixer_dsp_core::kernels::biquad::sosfilt;
-        use upmixer_dsp_core::routing::transient::transient_duck;
-
-        let sr = 48_000;
-        let signal: Vec<f64> = (0..24_000)
-            .map(|i| {
-                let bed = 0.2 * (i as f64 * 0.04).sin();
-                bed + if i % 6_000 < 24 { 0.8 } else { 0.0 }
-            })
-            .collect();
-        let p = SendParams { stem_transient_duck: 0.7, ..send_params() };
-
-        let mut state = StemRouteState::new(sr, &p, &[]);
-        let got = blocked(&mut state, &signal);
-
-        let (ducked, _) = transient_duck(&signal, &signal, sr, p.stem_transient_duck);
-        let hp = butter_sos(2, p.surround_bass_cutoff_hz / (sr as f64 / 2.0), BandType::High);
-        let shaped = sosfilt(&hp, &ducked);
-        let (left, right) = velvet_pair_seeded(sr, VELVET_SEED);
-
-        for (index, fir) in [(0, left), (1, right)] {
-            let want = fir.process(&shaped);
-            for (i, (a, b)) in got[index].iter().zip(want.iter()).enumerate() {
-                assert!((a - b).abs() < 1e-12, "send {index} sample {i}: {a} vs {b}");
-            }
-        }
-    }
-
-    /// Depth 0.0 must leave the shaped sends untouched, so every existing
-    /// render is bit for bit what it was.
-    #[test]
-    fn zero_duck_depth_leaves_the_sends_bit_for_bit() {
-        let sr = 48_000;
-        let signal: Vec<f64> = (0..12_000).map(|i| (i as f64 * 0.04).sin()).collect();
-
-        let mut off = StemRouteState::new(sr, &send_params(), &[]);
-        let want = blocked(&mut off, &signal);
-        let mut explicit = StemRouteState::new(
-            sr,
-            &SendParams { stem_transient_duck: 0.0, ..send_params() },
-            &[],
-        );
-        let got = blocked(&mut explicit, &signal);
-        assert_eq!(got, want);
-    }
-
-    /// The trace the duck display reads has to cover the block whatever the
-    /// depth, and has to actually move when a transient lands.
-    #[test]
-    fn the_duck_trace_covers_the_block_and_dips_on_a_transient() {
-        let sr = 48_000;
-        // A decaying strike ~30 dB over a quiet bed, spaced past the 250 ms
-        // reference — see `routing::transient`'s `hit_train_over_bed` for why
-        // a weaker or closer-spaced stimulus never reaches the threshold.
-        let signal: Vec<f64> = (0..48_000)
-            .map(|i| {
-                let t = i as f64 / sr as f64;
-                let bed = 0.03 * (2.0 * std::f64::consts::PI * 220.0 * t).sin();
-                let phase = i % 24_000;
-                let hit = if phase < 1_440 {
-                    0.9 * (-(phase as f64) / 240.0).exp()
-                        * (2.0 * std::f64::consts::PI * 1_800.0 * t).sin()
-                } else {
-                    0.0
-                };
-                bed + hit
-            })
-            .collect();
-
-        let mut off = StemRouteState::new(sr, &send_params(), &[]);
-        off.process(&signal, &signal, true, true);
-        assert_eq!(off.duck_trace(), vec![1.0; signal.len()]);
-
-        let p = SendParams { stem_transient_duck: 0.7, ..send_params() };
-        let mut on = StemRouteState::new(sr, &p, &[]);
-        on.process(&signal, &signal, true, true);
-        let trace = on.duck_trace();
-        assert_eq!(trace.len(), signal.len());
-        // Past the second hit, so the cold-start sample — where the reference
-        // envelope is still zero and anything saturates — cannot carry this.
-        let deepest = trace[24_000..].iter().cloned().fold(f64::INFINITY, f64::min);
-        assert!(deepest < 0.5, "trace barely dipped: {deepest}");
-        assert!(deepest >= 1.0 - p.stem_transient_duck - 1e-12, "trace {deepest} below depth");
     }
 
     /// The surround and height sends of one stem must not be copies of each

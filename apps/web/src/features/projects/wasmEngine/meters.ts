@@ -11,9 +11,7 @@ function level(rms: number, peak: number): MeterLevel {
 
 export type MeterFrame = { position: number; meters: number[]; spectrum: number[] };
 
-/** `duck` is the transient ducker's mean gain over the meter window, 1 for
- * no reduction — see `PreviewEngine::stem_spectrum`. */
-export type StemSpectrum = { level: number; centroid: number; duck: number };
+export type StemSpectrum = { level: number; centroid: number };
 
 /** The master strip's readouts — see `MasterMeters` in the core. Loudness is
  * LKFS over the delivered programme, gain reduction is dB downward. */
@@ -61,11 +59,10 @@ export function decodeMeterFrame(
     const bars = [level(meters[o] ?? 0, meters[o + 1] ?? 0)];
     if ((stemChannelCounts[i] ?? 1) >= 2) bars.push(level(meters[o + 2] ?? 0, meters[o + 3] ?? 0));
     stemLevels.set(stemOrder[i], bars);
-    const s = i * 3;
+    const s = i * 2;
     stemSpectrum.set(stemOrder[i], {
       level: frame.spectrum[s] ?? 0,
       centroid: frame.spectrum[s + 1] ?? 0,
-      duck: frame.spectrum[s + 2] ?? 1,
     });
   }
 

@@ -68,7 +68,6 @@ impl PreviewEngine {
                 }
             }
             route.process(&left, &right, needs_surround, needs_height);
-            self.duck.channels[stem_index].extend_from_slice(route.duck_trace());
 
             for i in 0..count {
                 let gain = smoother.tick(target_gain);
@@ -95,13 +94,6 @@ impl PreviewEngine {
                     bed[channel][i] += signal * weight * speaker.group_gain * gain;
                 }
             }
-        }
-
-        // A stem skipped above (muted and settled, or with no parameters)
-        // still has to advance in lockstep, at unity.
-        let duck_len = start + count - self.duck.base;
-        for trace in &mut self.duck.channels {
-            trace.resize(duck_len, 1.0);
         }
 
         if let Some(lfe) = self.params.lfe_index {
@@ -140,7 +132,7 @@ impl PreviewEngine {
         }
 
         // A bypassed, absent or LFE-only compressor still advances in
-        // lockstep, at no reduction — same discipline as the duck trace above.
+        // lockstep, at no reduction.
         self.comp_gr.channels[0].resize(start + count - self.comp_gr.base, 0.0);
 
         for (channel, block) in bed.into_iter().enumerate() {
@@ -336,7 +328,6 @@ impl PreviewEngine {
 
         self.emitted += emit;
         self.post.drain_to(self.emitted.saturating_sub(METER_WINDOW_FRAMES));
-        self.duck.drain_to(self.emitted.saturating_sub(METER_WINDOW_FRAMES));
         self.comp_gr.drain_to(self.emitted.saturating_sub(METER_WINDOW_FRAMES));
         self.pre.drain_to(self.emitted.saturating_sub(self.look_ahead()));
         emit

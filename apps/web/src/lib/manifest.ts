@@ -98,7 +98,6 @@ export type Manifest = {
     height_low_rolloff_gain: number;
     height_high_shelf_gain: number;
     height_directional_band_gain: number;
-    stem_transient_duck: number;
     content_mix_strength: number;
   };
   processing: {
@@ -221,7 +220,6 @@ export const defaultManifest: Manifest = {
     height_low_rolloff_gain: 0.15,
     height_high_shelf_gain: 1.5,
     height_directional_band_gain: 1,
-    stem_transient_duck: 0,
     content_mix_strength: 1,
   },
   processing: {

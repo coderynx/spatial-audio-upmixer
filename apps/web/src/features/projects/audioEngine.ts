@@ -86,7 +86,7 @@ export class PreviewAudioEngine {
   mastering?: MasterPreview;
   /** The manifest's `routing` block, in its manifest shape — the per-track
       send values the served constants only supply defaults for. */
-  routing?: { stem_transient_duck?: number; height_directional_band_gain?: number };
+  routing?: { height_directional_band_gain?: number };
   layoutChannels: string[] = POSITIONAL_CHANNELS;
   outputMode: OutputMode = "binaural";
   spatialProfile: SpatialProfile = "studio";
@@ -417,7 +417,6 @@ export class PreviewAudioEngine {
       constants: this.constants,
       layoutChannels: this.layoutChannels,
       sendOverrides: {
-        stemTransientDuck: this.routing?.stem_transient_duck,
         heightDirectionalBandGain: this.routing?.height_directional_band_gain,
       },
       speakerEnabled: this.speakerEnabled,

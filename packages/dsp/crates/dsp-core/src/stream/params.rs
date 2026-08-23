@@ -67,11 +67,6 @@ pub struct SendParams {
     pub height_high_shelf_gain: f64,
     pub height_directional_band_hz: f64,
     pub height_directional_band_gain: f64,
-    /// Depth of the surround/height transient duck; 0.0 is off, and off is
-    /// the pre-duck output bit for bit. Its time constants and ratio floor
-    /// are structural and live in `routing::transient`.
-    #[serde(default)]
-    pub stem_transient_duck: f64,
     pub lfe_cutoff_hz: f64,
     pub lfe_filter_order: usize,
     pub lfe_gain: f64,

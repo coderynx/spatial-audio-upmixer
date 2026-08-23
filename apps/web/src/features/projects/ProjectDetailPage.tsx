@@ -465,25 +465,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             <select className="flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px]" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets ?? []).map((name) => <option key={name}>{name}</option>)}</select>
             <Button className="mt-2.5 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 />Apply preset</Button>
           </InspectorGroup>
-          <InspectorGroup title="Diffuse sends">
-            <SliderField
-              label="Transient duck"
-              value={trackManifest.routing.stem_transient_duck}
-              min={0}
-              max={1}
-              step={0.01}
-              onChange={(stem_transient_duck) =>
-                updateTrackManifest({
-                  ...trackManifest,
-                  routing: { ...trackManifest.routing, stem_transient_duck },
-                }, true)
-              }
-            />
-            <p className="mt-1.5 text-[11px] text-muted-foreground">
-              Holds onsets in the front bed, so only sustain reaches the surround and height
-              sends. 0 is off.
-            </p>
-          </InspectorGroup>
           <InspectorGroup title="Stem">
             {selectedStem ? (() => {
               const SelectedStemIcon = getStemIcon(selectedStem);

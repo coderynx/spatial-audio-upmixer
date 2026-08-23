@@ -227,30 +227,6 @@ approximating any of it — see `docs/plans/mixing/phase7_mask_parity_report.md`
 A band gain of exactly 1.0 skips the section on both sides, so the default
 voicing is bit-identical to the pre-band one.
 
-Phase 11 added one more send scalar, `stem_transient_duck`: the depth of the
-transient/sustain split that both diffuse sends run on their input, before
-the filters and the velvet line. Its time constants and ratio floor are not
-served — `routing::transient`'s `DUCK_ATTACK_MS` / `DUCK_RELEASE_MS` /
-`DUCK_REFERENCE_MS` / `DUCK_THRESHOLD_RATIO` / `DUCK_FULL_RATIO` are
-structural, one detector shared by `transient_duck` offline and
-`StemRouteState`'s ducker in the preview. A depth of exactly 0.0, which is
-the default, returns the send input untouched on both sides.
-
-Phase 13 split that detector across three bands without adding a knob:
-`MultibandDucker` runs one `TransientDucker` per band over a Linkwitz-Riley
-crossover at `DUCK_BAND_LOW_HZ` / `DUCK_BAND_HIGH_HZ`, both structural like
-the time constants. `depth` remains the only value on the wire, and the
-bands are the low-passes plus their subtractive complements, so at unity gain
-they sum back to the input and depth 0.0 stays the untouched path on both
-sides.
-
-One ducker serves both send pairs in the streaming path where the offline
-path calls `transient_duck` once per pair. That is not a divergence: the
-detector's state depends only on the stem's input, so a single trajectory is
-what each of the offline calls independently reproduces —
-`stream::routing`'s `ducked_sends_match_the_offline_duck_then_shape_order`
-pins it against the offline order, blocked ragged.
-
 The delivery-target table (`upmixer.mastering.delivery`'s
 `DELIVERY_TARGETS`) is served the same way, as `constants.delivery_targets`
 plus a `choices.delivery_targets` name list. The web never re-types a
@@ -276,8 +252,8 @@ Both apply the same precedence — explicit `mastering.dynamic_eq.bands[]` beat
 the profile.
 
 Nothing else about the stage is served. Its soft knee stays structural in
-`mastering::dyneq`'s `KNEE_DB`, like the duck's time constants, and band
-bounds are enforced once in `manifest/validate.py`'s `_DYNEQ_BOUNDS`.
+`mastering::dyneq`'s `KNEE_DB`, and band bounds are enforced once in
+`manifest/validate.py`'s `_DYNEQ_BOUNDS`.
 
 Mastering phase 7's reference-match realization controls are the one block
 where the browser sends nothing to the core at all: it asks the server for a
@@ -292,7 +268,7 @@ realized. Unset controls are left **off** the URL rather than sent as a
 number, the same rule the delivery target's nullable pots follow: a value on
 the wire is an override, and the server's default has to stay the single
 source. The mask's raised-cosine ease width is structural and stays in
-`curve.py`'s `_MASK_EASE_OCT`, like the duck's time constants.
+`curve.py`'s `_MASK_EASE_OCT`.
 
 The stored curve is **raw** — unsmoothed, on the 1/24-octave log grid — so
 every control acts at realization and none of them can force a re-analysis
@@ -315,8 +291,8 @@ carry only user values from the manifest (`mastering.highpass.cutoff_hz`,
 `mastering.clip.clip_db` / `.knee`) plus one number that is already served:
 the clipper's asymptote is the delivery target's ceiling, which both sides
 read through their own `resolve_delivery_target`. The LFE DC blocker's 5 Hz
-corner is structural and stays in `mastering::head`'s `DC_BLOCK_HZ`, like the
-duck's time constants. The one thing to keep in step is that the clipper runs
+corner is structural and stays in `mastering::head`'s `DC_BLOCK_HZ`.
+The one thing to keep in step is that the clipper runs
 on the bed in *every* output mode — `MasteringChain` masters the bed before
 any collapse — while the limiter is native-only.
 
@@ -407,9 +383,9 @@ just arrive too late to be heard.
 `apps/web/scripts/bench-preview-engine.mjs` (`npm run bench:engine`) renders the
 worst case we ship — full 7.1.4 bed, nine stems, order-3 decode, whole
 mastering chain — one engine per process, and fails the build over budget.
-Stages that ship default-off are benched *on* (`decorrelate: 1`,
-`stem_transient_duck: 1`): the budget question is what the stage costs when a
-user reaches for it, not what the default costs:
+Stages that ship default-off are benched *on* (`decorrelate: 1`): the budget
+question is what the stage costs when a user reaches for it, not what the
+default costs:
 
 | Metric | Budget |
 |---|---|
@@ -471,8 +447,7 @@ with the entry that proved it:
 **Admission rule.** A row belongs here only if the preview's output can differ
 from the export's. A bug inside the shared core hits both sides equally and is
 not a parity finding — it belongs in the phase report and the commit, not in
-this table. D35–D40 are kept in the index below because code and reports cite
-their numbers, but they are of that second kind.
+this table.
 
 ### Index
 
@@ -516,11 +491,6 @@ numbers.
 | D32 | `StemRebalancer` soft-clipped boosts above +3 dB on the export path only, while the preview applied pure linear gain. | Fixed — tanh stage deleted, both sides linear |
 | D33 | The committed `.wasm` was two commits stale, so the preview ran an engine without mid-bass decorrelation. | Fixed — rebuilt; budget regained via `RollingBand` |
 | D34 | `spatial.ts` carried a hand-port of the panning law. | Fixed — deleted; routing reaches the preview only as core-computed maps |
-| D35 | The transient duck's per-sample detector put two `bench:engine` cases over budget at full depth. | Fixed before wiring — sub-threshold case taken before the divide |
-| D36 | The multiband duck ducked cymbals *unevenly* rather than more; validated only on narrowband synthetics. | **Reverted** (`git revert 42e797f`) — `phase13_report.md` §9 |
-| D37 | Haze/Elevation read the raw decoded stem, so routing-stage gain never showed; the live ducker gain would have flashed a horizon early. | Fixed — per-block duck trace read at the emit position |
-| D38 | At depth exactly 1.0 a saturating onset landed on gain 0.0 — the band annihilated, not ducked. | Fixed — `DUCK_MIN_GAIN` floors at −20 dB |
-| D39 | The duck's detector window sat inside ordinary crest variation, so sustained material ducked as hard as the onsets the stage exists to separate. | Fixed — threshold 2.5, span to 4.0 |
-| D40 | Every duck fixture was too weak to reach the detector, so D39 was invisible to 188 passing tests. | Fixed — `hit_train_over_bed` and siblings rebuilt |
+| D35–D40 | Findings from the transient/sustain duck (phases 11 and 13). Removed along with the whole feature — see git history. | Removed |
 | D41 | The look-ahead limiter linked LFE into the mains' gain curve, so an LFE-only peak ducked the whole bed one-for-one. | Fixed — separate LFE curve, offline and streaming (mastering phase 2) |
 | D42 | The master bypass compared a normalized mastered bed against a raw one, so the A/B was decided by level; the preview also metered RMS/peak only while the core already measured loudness and gain reduction. | Fixed — per-chain measurement plus a monitor match (P4), and `MasterMeters` (mastering phase 3) |
