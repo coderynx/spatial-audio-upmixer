@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { GainReductionMeters, LoudnessMeterPanel } from "./LoudnessMeters";
+import { LoudnessMeterPanel } from "./LoudnessMeters";
 import { SILENT_MASTER_METERS } from "./wasmEngine/meters";
 
 const SILENT_PAIR = {
@@ -84,29 +84,5 @@ describe("LoudnessMeterPanel", () => {
     );
     expect(screen.getByText("A/B")).toBeTruthy();
     expect(screen.getByText("+3.3")).toBeTruthy();
-  });
-});
-
-describe("GainReductionMeters", () => {
-  it("gives the LFE its own bar only where the layout has one", () => {
-    const { rerender } = render(
-      <GainReductionMeters
-        masterMeters={{ current: SILENT_MASTER_METERS }}
-        headphoneLevels={SILENT_PAIR}
-        active={false}
-        hasLfe
-      />,
-    );
-    expect(screen.getAllByRole("meter")).toHaveLength(3);
-
-    rerender(
-      <GainReductionMeters
-        masterMeters={{ current: SILENT_MASTER_METERS }}
-        headphoneLevels={SILENT_PAIR}
-        active={false}
-        hasLfe={false}
-      />,
-    );
-    expect(screen.getAllByRole("meter")).toHaveLength(2);
   });
 });

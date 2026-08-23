@@ -21,9 +21,6 @@ describe("decodeMeterFrame", () => {
     expect(decoded.master).toEqual({
       momentaryLkfs: -13.5,
       shortTermLkfs: -15.5,
-      compGrDb: 2.5,
-      limiterGrDb: 1.25,
-      limiterLfeGrDb: 4,
     });
     expect(decoded.headphoneLevels.left.rms).toBe(0.5);
     expect(decoded.channelLevels.get("FR")?.peak).toBe(0.45);
@@ -34,9 +31,6 @@ describe("decodeMeterFrame", () => {
     expect(decoded.master).toEqual({
       momentaryLkfs: -70,
       shortTermLkfs: -70,
-      compGrDb: 0,
-      limiterGrDb: 0,
-      limiterLfeGrDb: 0,
     });
   });
 });

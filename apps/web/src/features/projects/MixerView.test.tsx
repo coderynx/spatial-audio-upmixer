@@ -3,7 +3,6 @@ import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MixerView } from "./MixerView";
 import { stripMeterWidth } from "./StripMeter";
-import { SILENT_MASTER_METERS } from "./wasmEngine/meters";
 import type { MeterLevel } from "./useStemPreview";
 
 // This test environment has no real `window.localStorage` (it's `undefined`,
@@ -51,8 +50,6 @@ function renderMixer(overrides: Partial<React.ComponentProps<typeof MixerView>> 
       anchorStrength={0}
       onAnchorStrength={vi.fn()}
       headphoneLevels={headphoneLevels}
-      masterMeters={{ current: SILENT_MASTER_METERS }}
-      hasLfe
       volume={1}
       onVolume={vi.fn()}
       muted={false}

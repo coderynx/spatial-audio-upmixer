@@ -268,8 +268,6 @@ export function PreviewPanel(props: PreviewPanelProps) {
         anchorStrength={trackManifest.mixing.stem_source_anchor_strength}
         onAnchorStrength={onAnchorStrength}
         headphoneLevels={preview.headphoneLevels}
-        masterMeters={preview.masterMeters}
-        hasLfe={channels.includes("LFE")}
         volume={preview.volume}
         onVolume={preview.setVolume}
         muted={preview.muted}

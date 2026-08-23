@@ -15,13 +15,10 @@ import type { LoudnessSummary, MasterMeters, MeterLevel, OutputMode } from "./us
 import type { EngineRef } from "./wasmEngine/engineTypes";
 
 // The mastering readouts: EBU Tech 3341 M/S/I loudness with the delivery
-// target beside it, the crest metrics derived from those same numbers, and
-// one gain-reduction bar per dynamics stage. Numbers only — every value is
-// measured in the core (see `MasterMeters`), this file just draws them.
+// target beside it and the crest metrics derived from those same numbers.
+// Numbers only — every value is measured in the core (see `MasterMeters`),
+// this file just draws them.
 // Appearance follows the strip idiom of docs/web_ui_design.md §6.4.
-
-/** Deepest reduction a GR bar shows full-scale. */
-export const GR_FULL_SCALE_DB = 12;
 
 /** Below this the meter is reading silence, not a level. */
 const SILENT_LKFS = -70;
@@ -76,9 +73,6 @@ export type MasterReadout = MasterMeters & {
 const SILENT_READOUT: MasterReadout = {
   momentaryLkfs: SILENT_LKFS,
   shortTermLkfs: SILENT_LKFS,
-  compGrDb: 0,
-  limiterGrDb: 0,
-  limiterLfeGrDb: 0,
   shortPeakDb: -Infinity,
 };
 
@@ -423,71 +417,6 @@ export function LoudnessMeterPanel({
             tone="warn"
           />
         )}
-      </div>
-    </div>
-  );
-}
-
-function GrBar({ label, db, title }: { label: string; db: number; title: string }) {
-  const fill = Math.min(1, db / GR_FULL_SCALE_DB);
-  return (
-    <div className="flex min-w-0 flex-1 flex-col items-center gap-0.5" title={title}>
-      <div
-        className="relative h-full w-full overflow-hidden rounded-[2px]"
-        style={{ backgroundColor: canvasTheme.stripWell }}
-        role="meter"
-        aria-label={`${title} gain reduction`}
-        aria-valuenow={Number(db.toFixed(1))}
-        aria-valuemin={0}
-        aria-valuemax={GR_FULL_SCALE_DB}
-      >
-        {/* Fills downward from the top, the direction gain reduction moves. */}
-        <div
-          className="absolute inset-x-0 top-0"
-          style={{
-            height: `${fill * 100}%`,
-            backgroundColor: db > GR_FULL_SCALE_DB / 2 ? canvasTheme.meterHot : canvasTheme.meterWarn,
-          }}
-        />
-      </div>
-      <span className="text-[8px] font-semibold uppercase text-muted-foreground">{label}</span>
-    </div>
-  );
-}
-
-/** Compressor and limiter gain reduction, on the master strip beside the
- * level meter. The LFE bar is the limiter's own second curve — it is capped
- * independently of the mains (docs/standards/loudness_dsp_bs1770.md §"LFE and
- * true-peak"), so it reads separately or its reduction would look like the
- * mains'. */
-export function GainReductionMeters({
-  masterMeters,
-  headphoneLevels,
-  active,
-  hasLfe,
-  className,
-}: {
-  masterMeters: EngineRef<MasterMeters>;
-  headphoneLevels: EngineRef<{ left: MeterLevel; right: MeterLevel }>;
-  active: boolean;
-  hasLfe: boolean;
-  className?: string;
-}) {
-  const live = useMasterReadout(masterMeters, headphoneLevels, active);
-  const deepest = Math.max(live.compGrDb, live.limiterGrDb, live.limiterLfeGrDb);
-  return (
-    <div className={cn("flex w-10 shrink-0 flex-col items-stretch gap-0.5", className)}>
-      <span
-        className="rounded-[3px] py-px text-center text-[10px] font-medium tabular-nums"
-        style={{ backgroundColor: canvasTheme.stripWell, color: canvasTheme.meterWarn }}
-        title="Deepest gain reduction across the master chain"
-      >
-        {deepest >= 0.05 ? `-${deepest.toFixed(1)}` : "0.0"}
-      </span>
-      <div className="flex min-h-0 flex-1 items-stretch gap-0.5">
-        <GrBar label="Cm" db={live.compGrDb} title="Bus compressor" />
-        <GrBar label="Lm" db={live.limiterGrDb} title="Limiter, mains" />
-        {hasLfe && <GrBar label="Lf" db={live.limiterLfeGrDb} title="Limiter, LFE" />}
       </div>
     </div>
   );

@@ -15,11 +15,9 @@ import {
   StripToggle,
   stripWidth,
 } from "./ChannelStrip";
-import { GainReductionMeters } from "./LoudnessMeters";
 import { StripMeter } from "./StripMeter";
 import { useStripMeterLoop } from "./useStripMeterLoop";
-import type { MasterMeters, MeterLevel } from "./useStemPreview";
-import type { EngineRef } from "./wasmEngine/engineTypes";
+import type { MeterLevel } from "./useStemPreview";
 
 // Rack layout, strip anatomy and resize behavior: docs/web_ui_design.md §6.4.
 
@@ -129,8 +127,6 @@ function MasterStrip({
   muted,
   onToggleMasterMute,
   headphoneLevels,
-  masterMeters,
-  hasLfe,
   active,
   extraWidth,
   onExtraWidthChange,
@@ -141,8 +137,6 @@ function MasterStrip({
   muted: boolean;
   onToggleMasterMute: () => void;
   headphoneLevels: React.MutableRefObject<{ left: MeterLevel; right: MeterLevel }>;
-  masterMeters: EngineRef<MasterMeters>;
-  hasLfe: boolean;
   active: boolean;
   extraWidth: number;
   onExtraWidthChange: (px: number) => void;
@@ -158,7 +152,7 @@ function MasterStrip({
   return (
     <div
       className="relative flex shrink-0 flex-col items-center justify-end gap-1.5 border-l-2 bg-muted/40 px-1.5 py-1.5"
-      style={{ width: stripWidth(2) + 44 + extraWidth }}
+      style={{ width: stripWidth(2) + extraWidth }}
     >
       <StripResizeHandle
         label="Resize Master strip"
@@ -182,12 +176,6 @@ function MasterStrip({
           style={{ width: FADER_WIDTH }}
         />
         <StripMeter channels={2} ref={register} />
-        <GainReductionMeters
-          masterMeters={masterMeters}
-          headphoneLevels={headphoneLevels}
-          active={active}
-          hasLfe={hasLfe}
-        />
       </div>
       <div className="flex w-full gap-1">
         <StripToggle letter="M" active={muted} label={muted ? "Unmute monitor" : "Mute monitor"} onClick={onToggleMasterMute} />
@@ -220,8 +208,6 @@ function MixerViewImpl({
   anchorStrength,
   onAnchorStrength,
   headphoneLevels,
-  masterMeters,
-  hasLfe,
   volume,
   onVolume,
   muted,
@@ -303,8 +289,6 @@ function MixerViewImpl({
         muted={muted}
         onToggleMasterMute={onToggleMasterMute}
         headphoneLevels={headphoneLevels}
-        masterMeters={masterMeters}
-        hasLfe={hasLfe}
         active={active}
         extraWidth={stripWidths.master ?? 0}
         onExtraWidthChange={(px) => setLiveWidth("master", px)}
@@ -332,9 +316,6 @@ export type MixerViewProps = {
   anchorStrength: number;
   onAnchorStrength: (strength: number) => void;
   headphoneLevels: React.MutableRefObject<{ left: MeterLevel; right: MeterLevel }>;
-  masterMeters: EngineRef<MasterMeters>;
-  /** Whether the layout has an LFE, which gets its own limiter GR bar. */
-  hasLfe: boolean;
   /** Monitor fader position, 0..1 — the same value the Transport volume
    * control drives. MONITOR domain: never reaches the exported render. */
   volume: number;

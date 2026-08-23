@@ -13,22 +13,17 @@ export type MeterFrame = { position: number; meters: number[]; spectrum: number[
 
 export type StemSpectrum = { level: number; centroid: number };
 
-/** The master strip's readouts — see `MasterMeters` in the core. Loudness is
- * LKFS over the delivered programme, gain reduction is dB downward. */
+/** The master strip's readouts — see `MasterMeters` in the core. LKFS over
+ * the delivered programme; the core's gain-reduction floats follow these two
+ * on the wire and are not read. */
 export type MasterMeters = {
   momentaryLkfs: number;
   shortTermLkfs: number;
-  compGrDb: number;
-  limiterGrDb: number;
-  limiterLfeGrDb: number;
 };
 
 export const SILENT_MASTER_METERS: MasterMeters = {
   momentaryLkfs: -70,
   shortTermLkfs: -70,
-  compGrDb: 0,
-  limiterGrDb: 0,
-  limiterLfeGrDb: 0,
 };
 
 export type DecodedMeters = {
@@ -85,9 +80,6 @@ export function decodeMeterFrame(
     master: {
       momentaryLkfs: meters[masterBase] ?? -70,
       shortTermLkfs: meters[masterBase + 1] ?? -70,
-      compGrDb: meters[masterBase + 2] ?? 0,
-      limiterGrDb: meters[masterBase + 3] ?? 0,
-      limiterLfeGrDb: meters[masterBase + 4] ?? 0,
     },
   };
 }
