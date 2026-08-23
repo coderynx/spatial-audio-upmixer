@@ -12,7 +12,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, type Configuration, type StemRouting } from "@/api";
+import { api, type Configuration, type ProjectTrack, type StemRouting } from "@/api";
 import { useHeaderTitle } from "@/app/HeaderSlot";
 import { EmptyState } from "@/app/EmptyState";
 import { InspectorGroup } from "@/app/InspectorRow";
@@ -64,6 +64,11 @@ const STAGES = [
 
 const SETTINGS_SEGMENT = [{ value: "settings" as const, label: "Settings", icon: Settings }];
 
+// Matches `projectViewState.ts`'s save debounce: long enough that a drag's
+// continuous ticks never individually reach the backend, short enough that
+// stopping the drag feels like it saved immediately.
+const COMMIT_DEBOUNCE_MS = 350;
+
 export function ProjectDetailPage({ configuration }: { configuration: Configuration | null }) {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -84,7 +89,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const selectedTrack = selection?.trackId || null;
   const selectedLayout = selection?.layout || "7.1.4";
   const selected = project?.tracks.find((track) => track.id === selectedTrack) || null;
-  const trackManifest = React.useMemo(() => {
+  const serverTrackManifest = React.useMemo(() => {
     if (!manifest || !selected) return manifest;
     const overrides = (selected.layout_overrides[selectedLayout] || {}) as Partial<Manifest>;
     return normalizeManifest({
@@ -98,13 +103,45 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       format: { ...manifest.format, ...overrides.format },
     });
   }, [manifest, selected, selectedLayout]);
+  // A drag/wheel/keyboard edit shows its result instantly from here, without
+  // waiting on the network — `saveTrack` only fires after COMMIT_DEBOUNCE_MS
+  // of quiescence (see `updateTrackManifest`), so mid-drag ticks must not
+  // depend on a server round-trip to be visible.
+  const [pendingManifest, setPendingManifest] = React.useState<Manifest | null>(null);
+  const trackManifest = pendingManifest ?? serverTrackManifest;
+  const pendingSaveRef = React.useRef<{ track: ProjectTrack; layout: string; value: Manifest } | null>(null);
+  const saveTimerRef = React.useRef<number | null>(null);
+  // Flushes whatever edit is still pending — on track/layout switch (so the
+  // newly selected manifest isn't shadowed by a stale override) and on
+  // unmount (so navigating away mid-drag doesn't drop the edit entirely).
+  const resetPendingSave = React.useCallback(() => {
+    if (saveTimerRef.current) { window.clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
+    const pending = pendingSaveRef.current;
+    pendingSaveRef.current = null;
+    setPendingManifest(null);
+    if (pending) void saveTrack(pending.track, pending.layout, pending.value);
+  }, [saveTrack]);
+  React.useEffect(() => resetPendingSave, [selectedTrack, selectedLayout, resetPendingSave]);
   // `merge` collapses consecutive calls carrying the same manifest field into
-  // one undo step (a fader drag) — see `useEditHistory`.
+  // one undo step (a fader drag) — see `useEditHistory`. Network commits are
+  // debounced separately here so a drag's continuous ticks never each reach
+  // the backend — only the value in place once the user stops.
   const updateTrackManifest = React.useCallback((next: Manifest, merge?: boolean) => {
     if (!selected || !trackManifest) return;
     const track = selected;
     const layout = selectedLayout;
-    history.record(trackManifest, next, (value) => saveTrack(track, layout, value), merge);
+    history.record(trackManifest, next, (value) => {
+      setPendingManifest(value);
+      pendingSaveRef.current = { track, layout, value };
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = window.setTimeout(() => {
+        saveTimerRef.current = null;
+        pendingSaveRef.current = null;
+        void saveTrack(track, layout, value).then(() => {
+          setPendingManifest((current) => (current === value ? null : current));
+        });
+      }, COMMIT_DEBOUNCE_MS);
+    }, merge);
   }, [selected, selectedLayout, trackManifest, saveTrack, history]);
   const previewStems = selected?.stems.filter((stem) => project?.prepared_stems.includes(stem.stem_key.split("@", 1)[0])) || [];
   const stemChannelCounts = React.useMemo(() => {

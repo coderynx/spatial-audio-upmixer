@@ -90,9 +90,9 @@ export function useProjectState(projectId: string | undefined, onFirstLoad: (pro
   // Bound to the track and layout it was called for so an undo after
   // switching track or layout still targets what the edit was made on.
   const saveTrack = React.useCallback((track: ProjectTrack, layout: string, next: Manifest) => {
-    if (!projectId) return;
+    if (!projectId) return Promise.resolve();
     const seq = nextSeq();
-    void api.saveProjectTrackLayout(projectId, track.id, layout, {
+    return api.saveProjectTrackLayout(projectId, track.id, layout, {
       manifest_overrides: {
         engine: { stems: next.engine.stems }, mixing: next.mixing, routing: next.routing,
         mastering: next.mastering, processing: next.processing, format: next.format,
