@@ -251,7 +251,14 @@ export function loudnessWeight(channel: string): number {
  * keep a widely-routed stem from reading louder than a narrowly-routed one, not
  * an exact match (the real value measures the decoded buffers, K-weighted per
  * BS.1770 — ledger D3). The channel weights below are that measurement's, so
- * the estimate at least carries the surround channels' +1.5 dB. */
+ * the estimate at least carries the surround channels' +1.5 dB.
+ *
+ * It is what a stem plays at only until the engine has measured the real
+ * thing: `stream::scale`'s pass meters the signals the routing actually sends
+ * and renders on that instead, which is the only way to know how much of a
+ * stem a band-limited send carries. Keep this in step with the router all the
+ * same — it is what plays for the first second or two, and again after every
+ * routing edit. */
 export function estimateRouteScale(route: Record<string, number>, gains: ChannelGroupGains): number {
   const groupGain = (channel: string): number => {
     if (channel === "C") return gains.center;

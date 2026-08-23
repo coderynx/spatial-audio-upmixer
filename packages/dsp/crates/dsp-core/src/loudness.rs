@@ -75,6 +75,31 @@ pub fn retarget_biquad(section: [f64; 6], sample_rate: u32) -> [f64; 6] {
     ]
 }
 
+/// One channel's gated K-weighted mean square — BS.1770's `z_i`, from that
+/// channel's own integrated loudness. Zero when the material is too short or
+/// too quiet to gate, which is what `loudness.py::k_weighted_power` returns.
+pub fn gated_power(lkfs: f64) -> f64 {
+    if lkfs > ABS_GATE {
+        10.0_f64.powf((lkfs - LKFS_OFFSET) / 10.0)
+    } else {
+        0.0
+    }
+}
+
+/// BS.1770-4 Annex 1 Table 3's literal surround weight, +1.5 dB.
+const SURROUND_WEIGHT: f64 = 1.41;
+
+/// BS.1770-5 Annex 3 Table 5 channel weight, by speaker name. Only the
+/// ear-level side channels take the +1.5 dB; rear and upper channels are
+/// unity and LFE is excluded from the sum entirely.
+pub fn loudness_channel_weight(name: &str) -> f64 {
+    match name {
+        "SL" | "SR" => SURROUND_WEIGHT,
+        "LFE" => 0.0,
+        _ => 1.0,
+    }
+}
+
 /// K-weighting as two second-order sections at the given rate.
 pub fn k_weighting_sos(sample_rate: u32) -> Vec<[f64; 6]> {
     if sample_rate == 48_000 {

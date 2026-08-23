@@ -65,6 +65,9 @@ const FAST_EXCERPT_COUNT = 5;
 const FAST_EXCERPT_SECONDS = 3;
 const FAST_EXCERPT_PREROLL_SECONDS = 0.5;
 
+// Must match SCALE_FRAMES_PLAYING in public/dsp.worklet.js.
+const SCALE_FRAMES_PLAYING = 384;
+
 const CASES = {
   binaural: { mode: "binaural", decode: true, label: "binaural (order-3 decode)" },
   transaural: { mode: "transaural", decode: true, label: "transaural" },
@@ -97,6 +100,16 @@ const CASES = {
     kind: "playing-fast",
     budget: PLAYING_FAST_BUDGET,
     label: "measuring (fast excerpt, playing)",
+  },
+  // The route-scale pass shares the quantum with a real render the same way
+  // the fast measurement does, and for longer: it re-runs whenever a routing
+  // parameter moves. Held to the render budget, since starving the callback
+  // to learn a normalization would trade a level error for silence.
+  scalePlaying: {
+    mode: "binaural",
+    decode: true,
+    kind: "playing-scale",
+    label: "route scale (playing)",
   },
   // A mix edit (mute/solo, a fader, a mastering toggle) lands via
   // `dsp_engine_set_params` while playback continues. Regression guard for
@@ -273,6 +286,27 @@ function run(label, mode, decodeTaps, kind) {
       times.push(performance.now() - started);
       wasm.dsp_free(editPtr, encodedEdit.length);
     }
+  } else if (kind === "playing-scale") {
+    // Playing: a real render shares the quantum with the route-scale pass,
+    // which measures one stem's routing at a time until every stem is done.
+    let scale = wasm.dsp_scale_begin_excerpts(
+      engine,
+      FAST_EXCERPT_COUNT,
+      Math.round(FAST_EXCERPT_SECONDS * SR),
+      Math.round(FAST_EXCERPT_PREROLL_SECONDS * SR),
+    );
+    for (;;) {
+      const started = performance.now();
+      const written = wasm.dsp_engine_render(engine, out, CHANNELS.length, QUANTUM);
+      if (scale && wasm.dsp_scale_advance(scale, engine, SCALE_FRAMES_PLAYING)) {
+        wasm.dsp_scale_free(scale);
+        scale = 0;
+      }
+      const elapsed = performance.now() - started;
+      if (written === 0) break;
+      times.push(elapsed);
+    }
+    if (scale) wasm.dsp_scale_free(scale);
   } else if (kind === "playing-fast") {
     // Playing: a real render shares the quantum with a small measurement
     // slice, until the fast pass lands — then the render continues alone.

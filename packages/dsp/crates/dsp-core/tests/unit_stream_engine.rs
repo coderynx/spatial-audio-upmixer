@@ -495,7 +495,7 @@ mod routing {
             let n = (*size).min(rest.len());
             state.process(&rest[..n], &rest[..n], true, true);
             for (index, side) in out.iter_mut().enumerate() {
-                side.extend_from_slice(state.send(index));
+                side.extend_from_slice(state.signal(3 + index));
             }
             rest = &rest[n..];
         }

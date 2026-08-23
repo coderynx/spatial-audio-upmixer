@@ -14,6 +14,46 @@ use crate::stream::params::SendShape;
 use crate::stream::routing::shape_index;
 
 impl PreviewEngine {
+    /// Run one stem's routing chain over `count` frames from `start`, leaving
+    /// the routed signals in its [`StemRouteState`] for the caller to read.
+    ///
+    /// The render mixes them into the bed; [`RouteScalePass`] meters them.
+    /// Both go through here, so the normalization is measured off the signals
+    /// that are actually played rather than off a second assembly of the same
+    /// chain.
+    ///
+    /// [`RouteScalePass`]: crate::stream::scale::RouteScalePass
+    pub(crate) fn route_stem_block(&mut self, stem_index: usize, start: usize, count: usize) {
+        let Some(sp) = self.params.stems.get(stem_index) else { return };
+        let stem = &self.stems[stem_index];
+        let mut needs_surround = false;
+        let mut needs_height = false;
+        for (name, weight) in &sp.routing {
+            let Some(channel) = self.params.speaker_index(name).filter(|_| *weight != 0.0)
+            else {
+                continue;
+            };
+            match self.params.shapes[channel] {
+                SendShape::SurroundLeft | SendShape::SurroundRight => needs_surround = true,
+                SendShape::HeightLeft | SendShape::HeightRight => needs_height = true,
+                _ => {}
+            }
+        }
+        let mut left = Vec::with_capacity(count);
+        let mut right = Vec::with_capacity(count);
+        for i in 0..count {
+            let frame = start + i;
+            left.push(*stem.left.get(frame).unwrap_or(&0.0) as f64);
+            right.push(*stem.right.get(frame).unwrap_or(&0.0) as f64);
+        }
+        let route = &mut self.routes[stem_index];
+        if let Some((eq_l, eq_r)) = &mut route.eq {
+            left = eq_l.process(&left);
+            right = eq_r.process(&right);
+        }
+        route.process(&left, &right, needs_surround, needs_height);
+    }
+
     /// Route and run the causal chain until `pre` reaches `target` frames.
     fn fill_pre(&mut self, target: usize) {
         let target = target.min(self.total_frames);
@@ -27,70 +67,38 @@ impl PreviewEngine {
         let mut bed = vec![vec![0.0; count]; n_channels];
         let mut lfe_sum = vec![0.0; count];
 
-        for (stem_index, stem) in self.stems.iter().enumerate() {
+        for stem_index in 0..self.stems.len() {
             let Some(sp) = self.params.stems.get(stem_index) else { continue };
             let target_gain = if sp.enabled {
-                10.0_f64.powf(sp.rebalance_db / 20.0) * sp.route_scale
+                10.0_f64.powf(sp.rebalance_db / 20.0) * self.route_scale(stem_index)
             } else {
                 0.0
             };
-            let smoother = &mut self.stem_gain[stem_index];
-            if !sp.enabled && smoother.is_settled(0.0) {
+            if !sp.enabled && self.stem_gain[stem_index].is_settled(0.0) {
                 // Already faded out and staying muted — skip the routing and
                 // EQ work entirely, same as the old hard cut did.
                 continue;
             }
-            let route = &mut self.routes[stem_index];
+            self.route_stem_block(stem_index, start, count);
 
-            let mut left = Vec::with_capacity(count);
-            let mut right = Vec::with_capacity(count);
-            for i in 0..count {
-                let frame = start + i;
-                left.push(*stem.left.get(frame).unwrap_or(&0.0) as f64);
-                right.push(*stem.right.get(frame).unwrap_or(&0.0) as f64);
-            }
-            if let Some((eq_l, eq_r)) = &mut route.eq {
-                left = eq_l.process(&left);
-                right = eq_r.process(&right);
-            }
-
-            let mut needs_surround = false;
-            let mut needs_height = false;
-            for (name, weight) in &sp.routing {
-                let Some(channel) = self.params.speaker_index(name).filter(|_| *weight != 0.0)
-                else {
-                    continue;
-                };
-                match self.params.shapes[channel] {
-                    SendShape::SurroundLeft | SendShape::SurroundRight => needs_surround = true,
-                    SendShape::HeightLeft | SendShape::HeightRight => needs_height = true,
-                    _ => {}
-                }
-            }
-            route.process(&left, &right, needs_surround, needs_height);
+            let sp = &self.params.stems[stem_index];
+            let smoother = &mut self.stem_gain[stem_index];
+            let route = &self.routes[stem_index];
+            let shaped: [&[f64]; 7] = std::array::from_fn(|i| route.signal(i));
 
             for i in 0..count {
                 let gain = smoother.tick(target_gain);
-                let shaped = [
-                    left[i],
-                    right[i],
-                    (left[i] + right[i]) * 0.5,
-                    route.send(0)[i],
-                    route.send(1)[i],
-                    route.send(2)[i],
-                    route.send(3)[i],
-                ];
                 for (name, weight) in &sp.routing {
                     if *weight == 0.0 {
                         continue;
                     }
                     if name == "LFE" {
-                        lfe_sum[i] += shaped[shape_index(SendShape::Mono)] * weight * gain;
+                        lfe_sum[i] += shaped[shape_index(SendShape::Mono)][i] * weight * gain;
                         continue;
                     }
                     let Some(channel) = self.params.speaker_index(name) else { continue };
                     let speaker = &self.params.speakers[channel];
-                    let signal = shaped[shape_index(self.params.shapes[channel])];
+                    let signal = shaped[shape_index(self.params.shapes[channel])][i];
                     bed[channel][i] += signal * weight * speaker.group_gain * gain;
                 }
             }

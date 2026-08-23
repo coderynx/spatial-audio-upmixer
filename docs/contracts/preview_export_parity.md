@@ -330,7 +330,7 @@ ceremony beyond staying shaped like that response.
 
 ## 3. What can still differ
 
-Five behaviours are genuinely different by nature, not by drift. Nothing else
+Six behaviours are genuinely different by nature, not by drift. Nothing else
 should be.
 
 | # | Difference | Bound |
@@ -340,8 +340,9 @@ should be.
 | P3 | **Correction latency, in two stages.** The loudness/true-peak correction is a real BS.1770 measurement. A fast pass over a handful of excerpts lands first and is what the "calibrating loudness" UI waits for; an exact pass over the whole programme then keeps running in the background and refines the gain once it lands. Both are advanced in slices from the render callback (`stream::measure`), and the transport stays gated until the fast pass lands, so the preview never plays uncorrected; between the two, it plays on the fast pass's gain. Whatever the pass is meant to measure — parameter block and filter set both — has to reach the worklet before the `measure` message does, since the pass forks the engine as it stands (D29). | Fast pass: a few seconds, advances while paused or playing. Exact pass: ~2-3 min for an eight-minute track, only advances while paused (§4) |
 | P4 | **Monitor-only A/B compensation.** Bypassing the master chain — or, since mastering phase 7, the reference matcher alone (`monitorMastering`'s `matchBypassed`, which strips both the spectral curve and the level gain) — measures that programme on its own key and applies a compensating scalar so both sides monitor at the same delivered loudness. It lives in the preview's `master.output_gain` ramp (`audioEngine.ts`), never in a manifest or an export, and is zero whenever nothing is bypassed. The bypassed side is gated by the same calibration rule as a mode switch, so it never plays unmatched. A whole-chain bypass already strips the matcher, so the stage flag does not enter the measurement key there. | 0 dB unbypassed; the two sides' delivered-loudness difference otherwise, itself capped by the true-peak ceiling |
 | P5 | **The export's dithered tail.** Bit-depth reduction (`io.writer.dither_channels`, `dsp-core/src/dither.rs`) runs only on the export, after every stage in §1, because only the writer knows the delivery subtype. The preview plays float32 and has no such stage. The divergence is inaudible by construction: ±1 LSB of TPDF at 24-bit is ≈ −138 dBFS, below the float32 mantissa's own quantization of the same programme, and it is the last operation in the export — nothing in §1 sees it. See `docs/standards/loudness_dsp_bs1770.md` §"Export tail". | ≤ 1.5 LSB of the delivery subtype; ≈ −138 dBFS at PCM_24, ≈ −90 dBFS at PCM_16 |
+| P6 | **Route-scale latency.** Each stem's routed normalization is a real measurement of that stem's routed signals (`stream::scale`, below), and until it lands the engine renders on the served `estimateRouteScale`. The pass has the same two stages the loudness one does, and restarts whenever a routing parameter moves, so a user dragging a routing control plays on the estimate for as long as they keep dragging. It does not gate the transport — a stem at a slightly wrong level is better than a silent one — but a landed stage re-runs the loudness pass, so the delivered loudness is never left measured against the estimate. | The estimate's own error, which the routing table cannot bound in principle; excerpt stage lands in a second or two paused |
 
-Switching speaker layout is deliberately **not** a fifth entry. Selecting a
+Switching speaker layout is deliberately **not** a sixth entry. Selecting a
 different layout in the tracks panel rebuilds the preview from scratch — new
 `AudioContext`, new worklet node, stems re-decoded, loudness re-measured —
 rather than reaching the engine as a parameter change. An `AudioWorkletNode`'s
@@ -362,15 +363,51 @@ number than the export delivered. `audioEngine.ts::measureWeights` now sends
 the BS.1770 weights for the layout, and the core overrides them on a bed
 wider than 5.1 where the 5.1 re-render fixes its own.
 
-One remains open: `estimateRouteScale`
+So is the last one. `estimateRouteScale`
 (`apps/web/src/features/projects/masteringProfiles.ts`) still approximates
-`StemRouter.route`'s normalization from the routing table rather than the
-decoded stems (ledger D3). The core could compute it exactly — it owns the
-stems — but only on a debounce, since it needs a full pass per routing change.
-Since phase 9 that normalization is loudness-domain (BS.1770 channel weights
-over K-weighted, gated per-channel power) rather than raw energy; the estimate
-carries the channel weights, which it can evaluate from the table alone, but
-not the K-weighting, which needs the buffers.
+`StemRouter.route`'s normalization from the routing table, but it is only what
+the engine renders on until it has measured the real thing: `stream::scale`'s
+`RouteScalePass` runs each stem's routing chain — the same
+`PreviewEngine::route_stem_block` the render mixes from — over a forked engine,
+meters the gated K-weighted power of every signal the routing sends, and hands
+the engine the scalar `StemRouter._route_scale` computes from the same
+quantities. Measured against the export on the same 10 s stem, the two agree
+to within 3e-12 relative on a front-pair route, a surround route and a
+route with C, height and surround sends together.
+
+The same harness measures what the estimate was worth: −3.01 dB on the front
+pair, −3.41 dB with surrounds, −3.37 dB with height and centre as well. Most
+of that is one error the band-limited sends have nothing to do with — the
+estimate normalizes as if the stem were one channel rather than a pair, a flat
+`1/√2` — and the rest is the filtering it cannot see. A uniform offset is
+partly absorbed downstream by loudness normalization; the ~0.4 dB spread
+between routings is not, and neither is where the offset leaves the
+pre-normalization bed relative to `COMP_PROFILES`'s absolute thresholds (§2).
+
+The table cannot close that gap in principle. Since phase 9 the normalization
+is loudness-domain (BS.1770 channel weights over K-weighted, gated per-channel
+power) rather than raw energy: the estimate carries the channel weights, which
+it can evaluate from the table alone, but not the K-weighting, and how much of
+a stem a band-limited surround send or an elevation-EQ'd height send actually
+carries is a property of the stem, not of its weights. That is what the pass
+exists for. It runs in two stages like the loudness pass: five excerpts for an
+answer within a second or two, then the whole programme, which is the number
+that finally stands. It is dropped whenever a parameter the routing reads moves
+(`routing_changed` in `stream/engine/params_update.rs`), so a measurement never
+outlives its mix, and a fader or a mastering edit — neither of which changes a
+routed signal — keeps it.
+
+It does not gate the loudness pass. The cost of a route-scale stage is per
+stem, so a thirteen-stem bed's excerpt stage is a couple of seconds while
+paused but most of a minute while playing, and restarts on every routing
+edit — holding the correction behind it left the loudness readouts empty for
+as long as the user kept touching the mix. The two run side by side instead,
+and a landed scale stage re-runs the loudness pass against the levels the
+engine now renders at (`remeasure` in `dsp.worklet.js`). The first fast
+result still resolves what the "calibrating loudness" UI waits for; a re-run
+arrives afterwards on the refinement channel the exact pass uses, so a
+correction measured at the estimated scales is replaced rather than
+awaited.
 
 ## 4. Realtime budget
 
@@ -423,6 +460,15 @@ the fast pass's few-second window (`bench-preview-engine.mjs`'s
 `measuringFast` / `measuringPlaying` cases). A pass is kept across playback,
 so it resumes rather than restarts.
 
+The route-scale pass (P6) is the third, and it is held to the **render** budget
+above rather than the measurement one, for a reason the loudness pass does not
+have: it restarts on every routing edit, so its playing slice is not bounded to
+a window the way the fast measurement's is, and a user working a routing
+control would spend the whole session inside it
+(`bench-preview-engine.mjs`'s `scalePlaying` case). That is what sets its
+384-frame playing slice — 1024 is already over p99. Paused it takes a much
+larger one, on the same reasoning the fast measurement does.
+
 **Run this after any change to `packages/dsp`'s streaming path.** A change that
 is numerically perfect and 3× too slow is a change that ships silence.
 
@@ -441,7 +487,7 @@ with the entry that proved it:
 |---|---|---|
 | **Parameters** | Both sides run the same function on different inputs. The preview reads the project through `masteringProfiles.ts`/`engineParams.ts`, the export through `UpmixConfig`; a field one resolves and the other forwards by name is a real divergence with identical DSP. | D30 |
 | **Build provenance** | `apps/web/public/wasm/upmixer_dsp.wasm` is a committed binary. Shared source does not mean shared build — the preview runs whatever was last compiled. | D33 |
-| **Re-implementation drift** | DSP creeping back into TypeScript because a value is wanted before the engine can give it. | D34, and D3 still open |
+| **Re-implementation drift** | DSP creeping back into TypeScript because a value is wanted before the engine can give it. | D34, D3 |
 | **Unshared wrapper stages** | Anything one side wraps around the core call — the export's chain assembly, the preview's downmix matrix and collapse-mode switching. | D32 |
 
 **Admission rule.** A row belongs here only if the preview's output can differ
@@ -459,7 +505,7 @@ numbers.
 |---|---|---|
 | D1 | `spatial_audio_engine.md` §6 claimed a cross-engine acceptance test that did not exist. | Fixed |
 | D2 | Shared constants hand-duplicated with no automated cross-check. | Superseded by §2 (core serves them) |
-| D3 | `estimateRouteScale` approximates `route_scale` from the routing table, not decoded buffers, and sums the whole route regardless of layout. | **Open** — see §3 |
+| D3 | `estimateRouteScale` approximates `route_scale` from the routing table, not decoded buffers, and sums the whole route regardless of layout. | Fixed — the engine measures it (`stream::scale`); the estimate is what plays until the pass lands. See §3 |
 | D4 | Preview loudness omitted K-weighting and gating and read excerpts, not the programme. | Fixed by the port |
 | D5 | Bass mono-maker was missing from the preview. | Fixed by the port |
 | D6 | Center/back-fold coefficient: exact `1/√2` on the backend, truncated `0.7071` on the web. | Fixed — `itu_center_coeff` split from `surround_downmix_coeff` |

@@ -44,6 +44,25 @@ const MEASURE_FRAMES_FAST_PLAYING = 32;
 // playback starts, so it resumes where it left off on the next pause.
 const MEASURE_FRAMES_IDLE = 384;
 
+// Frames of the route-scale pass to advance per quantum, idle and playing.
+// It runs the routing chain of one stem at a time — no mastering, no decode —
+// so it is cheaper per frame than a measurement pass, but it shares the same
+// discipline: a generous slice while the output is silent anyway, a small one
+// while a real render needs the quantum.
+const SCALE_FRAMES_IDLE = 4096;
+const SCALE_FRAMES_PLAYING = 384;
+
+// The route-scale pass runs the two stages the loudness pass does: a handful
+// of excerpts for an answer within a second or two, then the whole programme,
+// which is the number the export normalizes by and the one that finally
+// stands. The cost is per stem, not per programme: measured at ~90x realtime
+// for one stem's routing, the excerpt plan below is a couple of seconds for a
+// thirteen-stem bed while paused, and most of a minute while playing, when
+// the slice has to share the quantum with a render.
+const SCALE_EXCERPT_COUNT = 5;
+const SCALE_EXCERPT_SECONDS = 3;
+const SCALE_EXCERPT_PREROLL_SECONDS = 0.5;
+
 class UpmixerDspProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
@@ -65,6 +84,9 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.measureReport = 0;
     this.measureStage = null;
     this.measureWeights = [1];
+    this.measureReported = false;
+    this.scalePass = 0;
+    this.scaleStage = null;
 
     try {
       this.instance = new WebAssembly.Instance(module);
@@ -168,6 +190,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
   setParams(encoded) {
     // A pass in flight measures a forked copy of the engine being replaced.
     this.endMeasure();
+    this.endScale();
     const { ptr, bytes } = this.copyBytes(encoded);
     const engine = this.wasm.dsp_engine_new(sampleRate, ptr, bytes);
     this.wasm.dsp_free(ptr, bytes);
@@ -201,6 +224,11 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.port.postMessage({ type: "error", message: "engine parameters rejected" });
       return;
     }
+    // A route-scale pass in flight forked the parameters it started on, so a
+    // mix edit invalidates it. Unlike the loudness pass it owes the main
+    // thread nothing, so it can simply be dropped and started again: the
+    // engine asks for a new one whenever the edit touched the routing.
+    this.endScale();
     this.channelCount = this.wasm.dsp_engine_output_channels(this.engine) || this.channelCount;
   }
 
@@ -238,6 +266,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
 
   dispose() {
     this.endMeasure();
+    this.endScale();
     if (this.engine) {
       this.wasm.dsp_engine_free(this.engine);
       this.engine = 0;
@@ -266,8 +295,13 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
   // callback keeps its deadline.
   measure(weights) {
     if (!this.engine) return;
-    this.endMeasure();
     this.measureWeights = weights.length ? weights : [1];
+    this.measureReported = false;
+    this.beginFastMeasure();
+  }
+
+  beginFastMeasure() {
+    this.endMeasure();
     const excerptFrames = Math.round(FAST_EXCERPT_SECONDS * sampleRate);
     const prerollFrames = Math.round(FAST_EXCERPT_PREROLL_SECONDS * sampleRate);
     this.beginMeasurePass("fast", (weightPtr, weightCount) =>
@@ -300,7 +334,64 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.port.postMessage({ type: "measuring", stage, progress: 0 });
   }
 
+  // Measure every stem's route normalization, then hand it to the engine.
+  //
+  // The host serves an estimate built from the routing weights, which cannot
+  // see how much of a stem a band-limited surround or height send actually
+  // carries. The engine measures the real thing off the signals it routes and
+  // renders on that instead.
+  advanceScale() {
+    if (!this.scalePass) {
+      if (!this.wasm.dsp_engine_wants_route_scale(this.engine)) return;
+      this.beginScale("fast");
+      if (!this.scalePass) return;
+    }
+    const step = this.playing ? SCALE_FRAMES_PLAYING : SCALE_FRAMES_IDLE;
+    const stage = this.scaleStage;
+    if (!this.wasm.dsp_scale_advance(this.scalePass, this.engine, step)) return;
+    this.endScale();
+    // The engine renders on the excerpt answer from here; refine it against
+    // the whole programme, which is what the export normalizes by.
+    if (stage === "fast") {
+      this.beginScale("exact");
+    }
+    // Every stem just moved by up to several dB, so a loudness correction
+    // measured before this one landed is measuring a different programme.
+    this.remeasure();
+  }
+
+  // Re-run the loudness pass against the levels the engine now renders at.
+  // Only when one is already in flight or has already reported: the host
+  // decides whether a programme is measured at all, and a pass in flight
+  // forked before the scales landed, so it is as stale as a finished one.
+  remeasure() {
+    if (!this.measurePass && !this.measureReported) return;
+    this.beginFastMeasure();
+  }
+
+  beginScale(stage) {
+    this.scalePass =
+      stage === "fast"
+        ? this.wasm.dsp_scale_begin_excerpts(
+            this.engine,
+            SCALE_EXCERPT_COUNT,
+            Math.round(SCALE_EXCERPT_SECONDS * sampleRate),
+            Math.round(SCALE_EXCERPT_PREROLL_SECONDS * sampleRate),
+          )
+        : this.wasm.dsp_scale_begin(this.engine);
+    this.scaleStage = this.scalePass ? stage : null;
+  }
+
+  endScale() {
+    if (this.scalePass) {
+      this.wasm.dsp_scale_free(this.scalePass);
+      this.scalePass = 0;
+    }
+    this.scaleStage = null;
+  }
+
   advanceMeasure() {
+    this.advanceScale();
     if (!this.measurePass) return;
     // The exact pass only advances while paused; the fast pass also advances
     // during playback, in a small slice, so pressing play right away doesn't
@@ -328,7 +419,13 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     const [lkfs, dbtp] = [result[0], result[1]];
     const stage = this.measureStage;
     this.endMeasure();
-    this.port.postMessage({ type: "measured", stage, lkfs, dbtp });
+    // The host awaits exactly one fast result, the one that clears its
+    // banner; a fast pass the route-scale measurement forced a re-run of
+    // arrives after that promise is settled, and travels the refinement
+    // channel the exact pass uses instead.
+    const reported = stage === "fast" && this.measureReported ? "exact" : stage;
+    this.measureReported = true;
+    this.port.postMessage({ type: "measured", stage: reported, lkfs, dbtp });
     if (stage === "fast") {
       this.beginMeasurePass("exact", (weightPtr, weightCount) =>
         this.wasm.dsp_measure_begin(this.engine, weightPtr, weightCount),

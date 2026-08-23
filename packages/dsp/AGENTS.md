@@ -69,6 +69,11 @@ refactoring:
   transformed **once**. The obvious implementation — `fftconvolve(block,
   kernel)` per call — re-transforms a 6,128-tap decode filter every 128
   samples and lands the binaural path at 1.4x realtime.
+- `stream::scale`'s `RouteScalePass` and the render read the same
+  `PreviewEngine::route_stem_block`. Do not give the pass its own copy of the
+  routing chain: the point is that the normalization is measured off the
+  signals that are played, and a second assembly of the same stages is the
+  seam `docs/contracts/preview_export_parity.md` §5 warns about.
 - The mono-maker advances in `MONO_STRIDE` frames, not one quantum at a time.
   Its zero-phase pass reads `MONO_HORIZON_MS` either side of what it emits, so
   per-quantum granularity redoes that context ~75 times over.

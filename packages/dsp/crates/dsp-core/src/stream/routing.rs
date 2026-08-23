@@ -92,8 +92,9 @@ pub struct StemRouteState {
     pub eq: Option<(StreamingConvolver, StreamingConvolver)>,
     surround: [Send; 2],
     height: [Send; 2],
-    /// Last block's shaped sends: surround L/R then height L/R.
-    shaped: [Vec<f64>; 4],
+    /// Last block's signals, indexed by [`shape_index`]: the dry pair, their
+    /// mono sum, then the four shaped sends.
+    shaped: [Vec<f64>; 7],
 }
 
 impl StemRouteState {
@@ -189,8 +190,8 @@ impl StemRouteState {
         }
     }
 
-    /// Shape a whole block into the four decorrelated sends, readable through
-    /// [`Self::send`].
+    /// Shape a whole block into the seven signals a speaker can draw on,
+    /// readable through [`Self::signal`].
     ///
     /// A send no speaker draws from is skipped and reads back as the dry
     /// signal, which is what `StemRouter.route`'s `needs_surround` /
@@ -202,29 +203,34 @@ impl StemRouteState {
             out.clear();
             out.extend_from_slice(source);
         };
+        dry(left, &mut self.shaped[0]);
+        dry(right, &mut self.shaped[1]);
+        self.shaped[2].clear();
+        self.shaped[2].extend(left.iter().zip(right).map(|(l, r)| (l + r) * 0.5));
         for (i, source) in [left, right].into_iter().enumerate() {
             if surround {
-                self.surround[i].process(source, &mut self.shaped[i]);
+                self.surround[i].process(source, &mut self.shaped[3 + i]);
             } else {
-                dry(source, &mut self.shaped[i]);
+                dry(source, &mut self.shaped[3 + i]);
             }
             if height {
-                self.height[i].process(source, &mut self.shaped[2 + i]);
+                self.height[i].process(source, &mut self.shaped[5 + i]);
             } else {
-                dry(source, &mut self.shaped[2 + i]);
+                dry(source, &mut self.shaped[5 + i]);
             }
         }
     }
 
-    /// One shaped send of the block [`Self::process`] just filtered.
+    /// One signal of the block [`Self::process`] just shaped, by
+    /// [`shape_index`].
     #[inline]
-    pub fn send(&self, index: usize) -> &[f64] {
+    pub fn signal(&self, index: usize) -> &[f64] {
         &self.shaped[index]
     }
 }
 
 /// Index into the seven signals a speaker can draw on: the three dry shapes,
-/// then [`StemRouteState::send`]'s four, offset by three.
+/// then the four shaped sends.
 pub fn shape_index(shape: SendShape) -> usize {
     match shape {
         SendShape::Left => 0,

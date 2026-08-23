@@ -15,4 +15,5 @@ pub mod meters;
 pub mod output;
 pub mod params;
 pub mod routing;
+pub mod scale;
 pub mod state;

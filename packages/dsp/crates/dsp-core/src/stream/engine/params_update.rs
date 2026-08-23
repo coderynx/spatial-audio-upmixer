@@ -7,6 +7,22 @@ use crate::stream::params::EngineParams;
 use crate::stream::routing::StemRouteState;
 use crate::stream::state::{OnePole, StreamingCompressor};
 
+/// Whether anything the per-stem routing reads has moved: the signals it
+/// builds, the speakers it sends them to, or the gains on the way.
+fn routing_changed(old: &EngineParams, new: &EngineParams) -> bool {
+    if old.stems.len() != new.stems.len() || old.shapes != new.shapes {
+        return true;
+    }
+    let gains: Vec<f64> = old.speakers.iter().map(|s| s.group_gain).collect();
+    if gains != new.speakers.iter().map(|s| s.group_gain).collect::<Vec<f64>>() {
+        return true;
+    }
+    old.stems
+        .iter()
+        .zip(&new.stems)
+        .any(|(a, b)| a.routing != b.routing || a.eq_fir != b.eq_fir)
+}
+
 impl PreviewEngine {
     /// Replace the parameter block, keeping the loaded stems, the playhead,
     /// and — outside a channel-layout change — every filter's carried state
@@ -43,6 +59,13 @@ impl PreviewEngine {
         let sends_changed = old.sends != self.params.sends;
         if sends_changed {
             self.lfe_bus.retune(self.sample_rate, &self.params.sends);
+        }
+        // A measured route scale belongs to the mix it was measured on. Every
+        // input the routing reads is compared here rather than the whole
+        // block, so a fader or a mastering edit — which change neither the
+        // routed signals nor their weights — keeps the measurement.
+        if sends_changed || routing_changed(&old, &self.params) {
+            self.clear_route_scales();
         }
         for (i, route) in self.routes.iter_mut().enumerate() {
             let new_eq = self.params.stems.get(i).map(|s| s.eq_fir.as_slice()).unwrap_or(&[]);

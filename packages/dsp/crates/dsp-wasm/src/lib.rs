@@ -7,6 +7,7 @@
 
 mod engine;
 mod measure;
+mod scale;
 mod offline;
 mod params;
 

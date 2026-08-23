@@ -94,6 +94,11 @@ pub struct PreviewEngine {
     params: EngineParams,
     stems: Vec<Arc<StemSource>>,
     routes: Vec<StemRouteState>,
+    /// Per-stem route normalization once `RouteScalePass` has measured it.
+    /// Empty until then, and cleared whenever a parameter the routing reads
+    /// moves, so the host's estimate stands in rather than a stale
+    /// measurement of a mix that no longer exists.
+    measured_scales: Vec<Option<f64>>,
     lfe_bus: LfeBus,
     causal: Vec<CausalChain>,
     dyn_eq: Option<DynamicEq>,
@@ -254,6 +259,7 @@ impl PreviewEngine {
             params,
             stems,
             routes,
+            measured_scales: Vec::new(),
             causal,
             dyn_eq,
             compressor,
@@ -287,6 +293,53 @@ impl PreviewEngine {
     pub fn push_stem(&mut self, stem: StemSource) {
         self.total_frames = self.total_frames.max(stem.len());
         self.stems.push(Arc::new(stem));
+    }
+
+    /// One stem's routing state, for a caller reading the signals
+    /// [`Self::route_stem_block`] just produced.
+    pub fn route(&self, index: usize) -> &crate::stream::routing::StemRouteState {
+        &self.routes[index]
+    }
+
+    /// Stems that have both a source and a parameter block, which is what a
+    /// caller walking them one at a time can safely index.
+    pub fn stem_count(&self) -> usize {
+        self.stems.len().min(self.params.stems.len())
+    }
+
+    pub fn stem_params(&self, index: usize) -> Option<&crate::stream::params::StemParams> {
+        self.params.stems.get(index)
+    }
+
+    pub fn params(&self) -> &EngineParams {
+        &self.params
+    }
+
+    /// The normalization one stem renders at: the measured scalar once the
+    /// route-scale pass has produced it, and the host's estimate until then.
+    pub fn route_scale(&self, index: usize) -> f64 {
+        self.measured_scales
+            .get(index)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| self.params.stems.get(index).map_or(1.0, |s| s.route_scale))
+    }
+
+    /// Whether a route-scale measurement is standing behind what this engine
+    /// renders.
+    pub fn has_route_scales(&self) -> bool {
+        !self.measured_scales.is_empty()
+    }
+
+    /// Adopt a finished route-scale measurement.
+    pub fn set_route_scales(&mut self, scales: &[f64]) {
+        self.measured_scales = scales.iter().map(|s| Some(*s)).collect();
+    }
+
+    /// Drop any measured scales, so the host's estimate stands until a new
+    /// pass lands. Called when a parameter the routing reads has moved.
+    pub fn clear_route_scales(&mut self) {
+        self.measured_scales.clear();
     }
 
     /// A second engine over the same stems and parameters, at the top of the
