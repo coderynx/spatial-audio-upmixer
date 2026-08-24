@@ -19,15 +19,16 @@ made the mix worse. This is the DSP answer.
 
 `packages/dsp/crates/dsp-core/src/routing/ambient.rs` — `AmbientSplit`:
 
-- inter-channel coherence mask, Avendaño & Jot, *Frequency Domain Techniques
-  for Stereo to Multichannel Upmix* (AES 22nd). Smoothed cross- and
-  auto-spectra per bin, ambience index `Φ = 1 − coherence`, `tanh` mapping
-  with a floor (the floor is not optional — at zero it is spectral
-  subtraction, with the musical noise that implies);
-- an equal-energy guard multiplying the mask, because a hard-panned primary
-  reads as incoherent for the same reason ambience does. Without it, a
-  hard-panned tone sends its full power to the surrounds; with it, under
-  1e-3 of it;
+- phase-aware primary/ambient decomposition after Paulus and Torcoli,
+  *Geometrically-Motivated Primary-Ambient Decomposition With Center-Channel
+  Extraction* (EUSIPCO 2022). Each ERB band estimates a complex stereo
+  covariance and applies its regularized 2×2 Wiener ambient matrix. This
+  preserves phase-coherent direct sources, including hard-panned and delayed
+  ones, while diffuse stereo reaches the ambient send;
+- five covariance frames and three matrix frames are averaged, then adjacent
+  ERB-band matrices are interpolated. This prevents the time-varying
+  spectral holes and broad timbral motion produced by the old `tanh`
+  coherence mask;
 - a first-order power-complementary tilt at `AMBIENT_TILT_HZ = 2000`, splitting
   the ambient half between the rear and height sends. Heights take the bright
   half because elevation perception keys on the 6–9 kHz spectral cues
@@ -65,9 +66,11 @@ instead, a stem gets quieter as its sends come up, since the sends are inside
 the routed sum. Pinned by
 `test_an_ambient_send_keeps_the_stem_at_its_own_loudness`.
 
-**Smoothing is 0.1 per frame (~53 ms).** An independent pair passes 0.76 of
-its power at that setting and 0.88 at half of it, but a slower estimate holds
-the ambient gain open across a note boundary.
+**The split is a complementary matrix decomposition, not a mask.** For each
+band `A = G_A X` and `P = X − A`; the complex off-diagonal matrix terms use
+the channels together instead of applying unrelated gain to each. Low-energy
+or invalid covariance yields `A = 0`, favoring a stable direct path over
+invented ambience.
 
 ## Cost
 
@@ -101,11 +104,8 @@ of it overhead. A real, darker tail lands further rearward.
 
 ## Known limits
 
-- **A near-mono stem has almost no ambient half to send.** Coherence cannot
-  tell one from its own dry signal, so its sliders are close to inert. Stated
-  as a test (`test_a_mono_stem_has_almost_no_ambient_half_to_send`), not left
-  to be discovered. The honest upgrade is a single-channel decay-model
-  estimator (Lebart + a decision-directed gain), which is its own project.
-- **No listening pass yet.** The defaults (`AMBIENCE_FLOOR` 0.1, threshold
-  0.5, slope 4.0, tilt 2 kHz) are the paper's values and one crossover choice,
-  not tuned by ear. That is the next thing this stage needs.
+- **A near-mono stem has almost no ambient half to send.** Its covariance is
+  rank one, so the Wiener ambient matrix rejects it. A single-channel
+  decay-model estimator remains a separate project.
+- **No listening pass yet.** The matrix is regression-tested on synthetic
+  direct and diffuse fields, but real separated stems remain final authority.

@@ -1,27 +1,8 @@
-//! Per-stem primary/ambient split, and the tilt that decides where the
-//! ambient half goes.
+//! Per-stem direct/ambient split for rear and height sends.
 //!
-//! Reference design: Avendaño & Jot, "Frequency Domain Techniques for Stereo
-//! to Multichannel Upmix" (AES 22nd) — a short-time inter-channel coherence
-//! index mapped through a smooth non-linear function into a per-bin gain. A
-//! separated stem is not a dry signal: it carries the room, plate and delay
-//! its source was mixed with, and that part of it belongs around the listener
-//! rather than in front.
-//!
-//! Two details from the paper are load-bearing:
-//!
-//! - the mask floor must stay above zero, or the output gets the
-//!   musical-noise artifacts of spectral subtraction;
-//! - coherence alone is not enough. A hard-panned primary reads as incoherent
-//!   for the same reason ambience does, so the mask is multiplied by an
-//!   equal-energy factor that only opens where both channels carry
-//!   comparable energy.
-//!
-//! The split reads *ahead* of the block it is asked for rather than delaying
-//! its output: a stem is resident in memory in both the preview and the
-//! export, so the frames covering a block can be computed when the block is
-//! asked for. Frames are scheduled at absolute sample positions, which is
-//! what keeps the output independent of the block size it was rendered in.
+//! The split uses a band-regularized complex multichannel Wiener estimate.
+//! It follows Paulus and Torcoli's primary/ambient decomposition, extending
+//! its real stereo covariance to preserve phase-coherent direct sources.
 
 use rustfft::num_complex::Complex64;
 
@@ -30,44 +11,27 @@ use crate::kernels::butter::{butter_sos, BandType};
 use crate::kernels::fft::RealFft;
 use crate::kernels::stft::hann_periodic;
 
-/// Analysis length. 21 ms at 48 kHz: long enough to resolve a reverb tail
-/// from the note that caused it, short enough to keep the look-ahead the
-/// engine has to hold in front of the playhead small.
+/// Analysis length. 21 ms at 48 kHz keeps the look-ahead small while
+/// resolving a reverb tail from the note that caused it.
 pub const AMBIENT_FFT_SIZE: usize = 1024;
 
-/// Overlap factor. Four gives the constant-overlap-add sum a square-root Hann
-/// pair needs for the mask to be re-weighted every hop without modulation.
+/// Four overlaps give constant overlap-add with the square-root Hann pair.
 pub const AMBIENT_OVERLAP: usize = 4;
 
-/// Mask floor `µ0`. Deliberately not zero — see the module note.
-pub const AMBIENCE_FLOOR: f64 = 0.1;
+/// Covariance frames in the primary/ambient estimate.
+pub const AMBIENT_COVARIANCE_FRAMES: usize = 5;
 
-/// Ambience-index threshold `Φ0`, the coherence the mask crosses at.
-pub const AMBIENCE_THRESHOLD: f64 = 0.5;
+/// Wiener-matrix frames averaged after covariance estimation.
+pub const AMBIENT_MATRIX_FRAMES: usize = 3;
 
-/// Mask slope `σ`.
-pub const AMBIENCE_SLOPE: f64 = 4.0;
+/// Smallest analysis band. Narrower low-frequency bands are too noisy.
+pub const AMBIENT_BAND_MIN_BINS: usize = 3;
 
-/// One-pole smoothing of the cross- and auto-spectra, per frame — about
-/// 53 ms of history at the default size. Slower than this passes more of a
-/// diffuse field (an independent pair reads 0.76 of its power through at this
-/// setting, 0.88 at half of it) but holds the ambient gain open across a note
-/// boundary; faster loses diffuse level to the variance of its own estimate.
-pub const COHERENCE_SMOOTHING: f64 = 0.1;
-
-/// Where the ambient half splits between the rear and height sends. Elevation
-/// perception keys on the 6-9 kHz spectral cues (Blauert's directional
-/// bands), so heights take the bright half; a crossover this low still leaves
-/// the rears the body of a reverb tail, which is where its energy is.
+/// Where the ambient half splits between rear and height sends.
 pub const AMBIENT_TILT_HZ: f64 = 2000.0;
 
 const EPS: f64 = 1e-20;
-
-/// Resolution of the tabulated mask. The curve is a fixed function of the
-/// ambience index and is evaluated once per bin per frame, where a `tanh`
-/// call each time is the single most expensive thing the stage does; at this
-/// many points, linear interpolation is within 1e-6 of the closed form.
-const MASK_TABLE_LEN: usize = 1024;
+const RELATIVE_ENERGY_FLOOR: f64 = 1e-6;
 
 /// One block of ambient signal, already split into its two destinations.
 pub struct AmbientBlock<'a> {
@@ -75,18 +39,107 @@ pub struct AmbientBlock<'a> {
     pub height: [&'a [f64]; 2],
 }
 
+#[derive(Clone, Copy, Default)]
+struct Covariance {
+    ll: f64,
+    lr: Complex64,
+    rr: f64,
+}
+
+impl Covariance {
+    fn add(self, other: Self) -> Self {
+        Self {
+            ll: self.ll + other.ll,
+            lr: self.lr + other.lr,
+            rr: self.rr + other.rr,
+        }
+    }
+
+    fn subtract(self, other: Self) -> Self {
+        Self {
+            ll: self.ll - other.ll,
+            lr: self.lr - other.lr,
+            rr: self.rr - other.rr,
+        }
+    }
+
+    fn scale(self, gain: f64) -> Self {
+        Self {
+            ll: self.ll * gain,
+            lr: self.lr * gain,
+            rr: self.rr * gain,
+        }
+    }
+}
+
+/// Hermitian ambient matrix: `[ll, lr; conj(lr), rr]`.
+#[derive(Clone, Copy, Default)]
+struct AmbientMatrix {
+    ll: f64,
+    lr: Complex64,
+    rr: f64,
+}
+
+impl AmbientMatrix {
+    fn add(self, other: Self) -> Self {
+        Self {
+            ll: self.ll + other.ll,
+            lr: self.lr + other.lr,
+            rr: self.rr + other.rr,
+        }
+    }
+
+    fn subtract(self, other: Self) -> Self {
+        Self {
+            ll: self.ll - other.ll,
+            lr: self.lr - other.lr,
+            rr: self.rr - other.rr,
+        }
+    }
+
+    fn scale(self, gain: f64) -> Self {
+        Self {
+            ll: self.ll * gain,
+            lr: self.lr * gain,
+            rr: self.rr * gain,
+        }
+    }
+
+    fn lerp(self, other: Self, amount: f64) -> Self {
+        self.scale(1.0 - amount).add(other.scale(amount))
+    }
+}
+
+struct Band {
+    start: usize,
+    end: usize,
+    centre_erb: f64,
+}
+
+#[derive(Clone, Copy)]
+struct BandInterpolation {
+    lower: usize,
+    upper: usize,
+    amount: f64,
+}
+
 pub struct AmbientSplit {
     fft: RealFft,
     n: usize,
     hop: usize,
     window: Vec<f64>,
-    /// Overlap-add normalization per hop phase.
     cola: Vec<f64>,
-    phi_lr: Vec<Complex64>,
-    phi_ll: Vec<f64>,
-    phi_rr: Vec<f64>,
+    bands: Vec<Band>,
+    interpolation: Vec<BandInterpolation>,
+    covariance_history: Vec<Vec<Covariance>>,
+    covariance_sum: Vec<Covariance>,
+    covariance_cursor: usize,
+    covariance_count: usize,
+    matrix_history: Vec<Vec<AmbientMatrix>>,
+    matrix_sum: Vec<AmbientMatrix>,
+    matrix_cursor: usize,
+    matrix_count: usize,
     masked: [Vec<Complex64>; 2],
-    primed: bool,
     next_frame: usize,
     ola: [Vec<f64>; 2],
     ring: usize,
@@ -95,7 +148,6 @@ pub struct AmbientSplit {
     rear: [Vec<f64>; 2],
     height: [Vec<f64>; 2],
     cursor: Option<usize>,
-    mask_table: Vec<f64>,
     frame: Vec<f64>,
     scratch: Vec<f64>,
     spectrum: [Vec<Complex64>; 2],
@@ -110,10 +162,10 @@ impl AmbientSplit {
         for (i, w) in window.iter().enumerate() {
             cola[i % hop] += w * w;
         }
-        // Both are powers of two, so the drain loop indexes with a mask
-        // rather than the modulo it would otherwise run four times a sample.
         let ring = (n + 4 * hop).next_power_of_two();
         let bins = n / 2 + 1;
+        let (bands, interpolation) = erb_bands(bins, sample_rate, n);
+        let band_count = bands.len();
         let nyq = sample_rate as f64 / 2.0;
         let wn = (AMBIENT_TILT_HZ / nyq).clamp(1e-6, 0.999_999);
         let lp_sos = butter_sos(1, wn, BandType::Low);
@@ -124,14 +176,23 @@ impl AmbientSplit {
             hop,
             window,
             cola,
-            phi_lr: vec![Complex64::new(0.0, 0.0); bins],
-            phi_ll: vec![0.0; bins],
-            phi_rr: vec![0.0; bins],
+            bands,
+            interpolation,
+            covariance_history: vec![
+                vec![Covariance::default(); band_count];
+                AMBIENT_COVARIANCE_FRAMES
+            ],
+            covariance_sum: vec![Covariance::default(); band_count],
+            covariance_cursor: 0,
+            covariance_count: 0,
+            matrix_history: vec![vec![AmbientMatrix::default(); band_count]; AMBIENT_MATRIX_FRAMES],
+            matrix_sum: vec![AmbientMatrix::default(); band_count],
+            matrix_cursor: 0,
+            matrix_count: 0,
             masked: [
                 vec![Complex64::new(0.0, 0.0); bins],
                 vec![Complex64::new(0.0, 0.0); bins],
             ],
-            primed: false,
             next_frame: 0,
             ola: [vec![0.0; ring], vec![0.0; ring]],
             ring,
@@ -140,9 +201,6 @@ impl AmbientSplit {
             rear: [Vec::new(), Vec::new()],
             height: [Vec::new(), Vec::new()],
             cursor: None,
-            mask_table: (0..=MASK_TABLE_LEN)
-                .map(|i| mask(i as f64 / MASK_TABLE_LEN as f64))
-                .collect(),
             frame: vec![0.0; n],
             scratch: vec![0.0; n],
             spectrum: [
@@ -158,14 +216,22 @@ impl AmbientSplit {
     }
 
     pub fn reset(&mut self) {
-        self.phi_lr.iter_mut().for_each(|v| *v = Complex64::new(0.0, 0.0));
-        self.phi_ll.iter_mut().for_each(|v| *v = 0.0);
-        self.phi_rr.iter_mut().for_each(|v| *v = 0.0);
-        self.primed = false;
+        for history in &mut self.covariance_history {
+            history.fill(Covariance::default());
+        }
+        self.covariance_sum.fill(Covariance::default());
+        self.covariance_cursor = 0;
+        self.covariance_count = 0;
+        for history in &mut self.matrix_history {
+            history.fill(AmbientMatrix::default());
+        }
+        self.matrix_sum.fill(AmbientMatrix::default());
+        self.matrix_cursor = 0;
+        self.matrix_count = 0;
         self.next_frame = 0;
         self.cursor = None;
-        for channel in self.ola.iter_mut() {
-            channel.iter_mut().for_each(|v| *v = 0.0);
+        for channel in &mut self.ola {
+            channel.fill(0.0);
         }
         for filter in self.lp.iter_mut().chain(self.hp.iter_mut()) {
             filter.reset();
@@ -174,9 +240,8 @@ impl AmbientSplit {
 
     /// Ambient rear and height pairs for `[start, start + len)` of a stem.
     ///
-    /// `left`/`right` cover `[base, base + left.len())` of the stem and must
-    /// reach [`Self::look_ahead`] past the block: the mask for a block is
-    /// computed from frames that end after it does.
+    /// `left` and `right` cover `[base, base + left.len())` and must reach
+    /// [`Self::look_ahead`] past the block.
     pub fn advance(
         &mut self,
         base: usize,
@@ -196,9 +261,6 @@ impl AmbientSplit {
             self.height[channel].resize(len, 0.0);
         }
 
-        // Frames are produced hop by hop as the block is drained rather than
-        // all at once: the overlap-add ring holds one frame plus slack, so a
-        // whole-signal call would otherwise wrap onto itself.
         let mut done = 0;
         while done < len {
             let position = start + done;
@@ -237,40 +299,58 @@ impl AmbientSplit {
         self.windowed(left, base, frame_start, 0);
         self.windowed(right, base, frame_start, 1);
 
-        let alpha = if self.primed { COHERENCE_SMOOTHING } else { 1.0 };
-        self.primed = true;
+        let mut total_power = 0.0;
+        for bin in 0..self.spectrum[0].len() {
+            total_power += self.spectrum[0][bin].norm_sqr() + self.spectrum[1][bin].norm_sqr();
+        }
+        let gate = (total_power / self.spectrum[0].len() as f64 * RELATIVE_ENERGY_FLOOR).max(EPS);
+        let covariance_divisor = (self.covariance_count + 1).min(AMBIENT_COVARIANCE_FRAMES) as f64;
+        let matrix_divisor = (self.matrix_count + 1).min(AMBIENT_MATRIX_FRAMES) as f64;
 
-        for bin in 0..self.phi_lr.len() {
-            let l = self.spectrum[0][bin];
-            let r = self.spectrum[1][bin];
-            self.phi_lr[bin] = self.phi_lr[bin] * (1.0 - alpha) + l * r.conj() * alpha;
-            self.phi_ll[bin] = self.phi_ll[bin] * (1.0 - alpha) + l.norm_sqr() * alpha;
-            self.phi_rr[bin] = self.phi_rr[bin] * (1.0 - alpha) + r.norm_sqr() * alpha;
+        for band_index in 0..self.bands.len() {
+            let band = &self.bands[band_index];
+            let mut covariance = Covariance::default();
+            for bin in band.start..band.end {
+                let l = self.spectrum[0][bin];
+                let r = self.spectrum[1][bin];
+                covariance.ll += l.norm_sqr();
+                covariance.lr += l * r.conj();
+                covariance.rr += r.norm_sqr();
+            }
+            covariance = covariance.scale(1.0 / (band.end - band.start) as f64);
 
-            let auto = self.phi_ll[bin] * self.phi_rr[bin];
-            let coherence = (self.phi_lr[bin].norm() / (auto.sqrt() + EPS)).min(1.0);
-            let balance = 2.0 * auto.sqrt() / (self.phi_ll[bin] + self.phi_rr[bin] + EPS);
-            let gain = balance * self.tabulated_mask(1.0 - coherence);
+            let old_covariance = self.covariance_history[self.covariance_cursor][band_index];
+            self.covariance_history[self.covariance_cursor][band_index] = covariance;
+            self.covariance_sum[band_index] = self.covariance_sum[band_index]
+                .add(covariance)
+                .subtract(old_covariance);
+            let estimate = self.covariance_sum[band_index].scale(1.0 / covariance_divisor);
+            let target = ambient_matrix(estimate, gate);
 
-            self.masked[0][bin] = l * gain;
-            self.masked[1][bin] = r * gain;
+            let old_matrix = self.matrix_history[self.matrix_cursor][band_index];
+            self.matrix_history[self.matrix_cursor][band_index] = target;
+            self.matrix_sum[band_index] =
+                self.matrix_sum[band_index].add(target).subtract(old_matrix);
+        }
+        self.covariance_cursor = (self.covariance_cursor + 1) % AMBIENT_COVARIANCE_FRAMES;
+        self.covariance_count = (self.covariance_count + 1).min(AMBIENT_COVARIANCE_FRAMES);
+        self.matrix_cursor = (self.matrix_cursor + 1) % AMBIENT_MATRIX_FRAMES;
+        self.matrix_count = (self.matrix_count + 1).min(AMBIENT_MATRIX_FRAMES);
+
+        for bin in 0..self.spectrum[0].len() {
+            let interpolation = self.interpolation[bin];
+            let lower = self.matrix_sum[interpolation.lower].scale(1.0 / matrix_divisor);
+            let upper = self.matrix_sum[interpolation.upper].scale(1.0 / matrix_divisor);
+            let matrix = lower.lerp(upper, interpolation.amount);
+            let left = self.spectrum[0][bin];
+            let right = self.spectrum[1][bin];
+            self.masked[0][bin] = left * matrix.ll + right * matrix.lr;
+            self.masked[1][bin] = left * matrix.lr.conj() + right * matrix.rr;
         }
         self.overlap_add(frame_start);
     }
 
-    /// [`mask`] read off the table, linearly interpolated.
-    #[inline]
-    fn tabulated_mask(&self, ambience_index: f64) -> f64 {
-        let position = ambience_index.clamp(0.0, 1.0) * MASK_TABLE_LEN as f64;
-        let index = position as usize;
-        let fraction = position - index as f64;
-        let low = self.mask_table[index];
-        let high = self.mask_table[(index + 1).min(MASK_TABLE_LEN)];
-        low + (high - low) * fraction
-    }
-
-    /// Windowed transform of one channel at `base`, zero-padded past the end,
-    /// left in `spectrum[side]`.
+    /// Windowed transform of one channel at `base`, left in `spectrum[side]`.
     fn windowed(&mut self, signal: &[f64], base: usize, frame_start: usize, side: usize) {
         for i in 0..self.n {
             let sample = (frame_start + i)
@@ -280,7 +360,8 @@ impl AmbientSplit {
                 .unwrap_or(0.0);
             self.frame[i] = sample * self.window[i];
         }
-        self.fft.rfft_into(&mut self.frame, &mut self.spectrum[side]);
+        self.fft
+            .rfft_into(&mut self.frame, &mut self.spectrum[side]);
     }
 
     fn overlap_add(&mut self, base: usize) {
@@ -295,9 +376,88 @@ impl AmbientSplit {
     }
 }
 
-/// Avendaño & Jot's mapping of the ambience index `Φ = 1 − coherence` onto a
-/// gain, floored at `AMBIENCE_FLOOR`.
-fn mask(ambience_index: f64) -> f64 {
-    let shifted = AMBIENCE_SLOPE * std::f64::consts::PI * (ambience_index - AMBIENCE_THRESHOLD);
-    ((1.0 - AMBIENCE_FLOOR) / 2.0) * shifted.tanh() + (1.0 + AMBIENCE_FLOOR) / 2.0
+fn ambient_matrix(mut covariance: Covariance, gate: f64) -> AmbientMatrix {
+    if !covariance.ll.is_finite()
+        || !covariance.rr.is_finite()
+        || !covariance.lr.re.is_finite()
+        || !covariance.lr.im.is_finite()
+        || covariance.ll + covariance.rr <= gate
+    {
+        return AmbientMatrix::default();
+    }
+    covariance.ll = covariance.ll.max(0.0);
+    covariance.rr = covariance.rr.max(0.0);
+    let cross_limit = (covariance.ll * covariance.rr).sqrt();
+    if covariance.lr.norm() > cross_limit {
+        covariance.lr *= cross_limit / covariance.lr.norm();
+    }
+    let lambda_max = (covariance.ll
+        + covariance.rr
+        + ((covariance.ll - covariance.rr).powi(2) + 4.0 * covariance.lr.norm_sqr()).sqrt())
+        * 0.5;
+    if lambda_max <= EPS || !lambda_max.is_finite() {
+        return AmbientMatrix::default();
+    }
+    AmbientMatrix {
+        ll: covariance.rr / lambda_max,
+        lr: -covariance.lr / lambda_max,
+        rr: covariance.ll / lambda_max,
+    }
+}
+
+fn erb_bands(bins: usize, sample_rate: u32, n: usize) -> (Vec<Band>, Vec<BandInterpolation>) {
+    let bin_hz = sample_rate as f64 / n as f64;
+    let mut bands: Vec<Band> = Vec::new();
+    let mut start = 0;
+    while start < bins {
+        let remaining = bins - start;
+        if remaining < AMBIENT_BAND_MIN_BINS && !bands.is_empty() {
+            bands.last_mut().expect("band exists").end = bins;
+            break;
+        }
+        let start_hz = start as f64 * bin_hz;
+        let end_hz = erb_hz(erb_rate(start_hz) + 1.0);
+        let mut end = (end_hz / bin_hz).ceil() as usize;
+        end = end.max(start + AMBIENT_BAND_MIN_BINS).min(bins);
+        if bins - end < AMBIENT_BAND_MIN_BINS {
+            end = bins;
+        }
+        let centre_erb = (erb_rate(start_hz) + erb_rate((end - 1) as f64 * bin_hz)) * 0.5;
+        bands.push(Band {
+            start,
+            end,
+            centre_erb,
+        });
+        start = end;
+    }
+
+    let mut interpolation = Vec::with_capacity(bins);
+    let mut lower = 0;
+    for bin in 0..bins {
+        let rate = erb_rate(bin as f64 * bin_hz);
+        while lower + 1 < bands.len() && rate > bands[lower + 1].centre_erb {
+            lower += 1;
+        }
+        let upper = (lower + 1).min(bands.len() - 1);
+        let amount = if lower == upper {
+            0.0
+        } else {
+            ((rate - bands[lower].centre_erb) / (bands[upper].centre_erb - bands[lower].centre_erb))
+                .clamp(0.0, 1.0)
+        };
+        interpolation.push(BandInterpolation {
+            lower,
+            upper,
+            amount,
+        });
+    }
+    (bands, interpolation)
+}
+
+fn erb_rate(hz: f64) -> f64 {
+    21.4 * (1.0 + 0.00437 * hz).log10()
+}
+
+fn erb_hz(rate: f64) -> f64 {
+    (10.0_f64.powf(rate / 21.4) - 1.0) / 0.00437
 }
