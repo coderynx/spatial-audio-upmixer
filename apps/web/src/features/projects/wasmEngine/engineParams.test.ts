@@ -233,6 +233,11 @@ describe("buildEngineParams", () => {
     expect(stems[0].ambient_height).toBe(0);
   });
 
+  it("forwards the downmix lock", () => {
+    const params = buildEngineParams(input({ spatialDownmixLock: true }));
+    expect(params.spatial_downmix_lock).toBe(true);
+  });
+
   it("produces a block the core accepts", () => {
     const wasmPath = resolve(process.cwd(), "public/wasm/upmixer_dsp.wasm");
     const wasm = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(wasmPath)))

@@ -355,3 +355,11 @@ def test_a_project_stored_before_a_field_was_retired_still_saves(layouts_client,
     saved = response.json()["tracks"][0]["layout_overrides"]["7.1.4"]["mixing"]
     assert saved["stem_ambient_rear"] == {"Vocals": 0.4}
     assert "spatial" not in saved
+
+    response = layouts_client.put(
+        f"/api/v1/projects/{project_id}/tracks/{track_id}/layouts/7.1.4/settings",
+        json={"manifest_overrides": {"mixing": {"spatial_downmix_lock": True}}},
+    )
+    assert response.status_code == 200, response.text
+    saved = response.json()["tracks"][0]["layout_overrides"]["7.1.4"]["mixing"]
+    assert saved["spatial_downmix_lock"] is True

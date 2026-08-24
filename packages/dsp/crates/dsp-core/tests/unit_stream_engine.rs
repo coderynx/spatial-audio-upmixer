@@ -612,7 +612,7 @@ mod ambient_sends {
 
     /// A 5.1.2 bed whose stem is routed to the fronts only, so anything that
     /// reaches SL/SR or the heights got there through an ambient send.
-    fn engine(rear: f64, height: f64) -> PreviewEngine {
+    fn engine(rear: f64, height: f64, downmix_lock: bool) -> PreviewEngine {
         let params: EngineParams = serde_json::from_str(&format!(
             r#"{{
                 "speakers": [
@@ -627,6 +627,7 @@ mod ambient_sends {
                            "height_left", "height_right"],
                 "surround_downmix_coeff": 0.7071067811865476,
                 "height_downmix_coeff": 0.7071067811865476,
+                "spatial_downmix_lock": {downmix_lock},
                 "sends": {{"surround_bass_cutoff_hz": 250.0,
                           "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
                           "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
@@ -646,7 +647,7 @@ mod ambient_sends {
     }
 
     fn render(rear: f64, height: f64) -> Vec<Vec<f64>> {
-        let mut engine = engine(rear, height);
+        let mut engine = engine(rear, height, false);
         let mut out = vec![0.0; CHANNELS * N];
         let emitted = engine.render(&mut out, N);
         (0..CHANNELS)
@@ -706,5 +707,20 @@ mod ambient_sends {
         let full = render(0.8, 0.0);
         let ratio = energy(&full[2]) / energy(&half[2]);
         assert!((ratio - 4.0).abs() < 0.2, "doubling the slider scaled power by {ratio:.3}");
+    }
+
+    #[test]
+    fn downmix_lock_restores_the_streaming_stem_pair() {
+        let source = stem();
+        let mut engine = engine(0.8, 0.8, true);
+        let mut out = vec![0.0; CHANNELS * N];
+        let emitted = engine.render(&mut out, N);
+
+        for i in 0..emitted {
+            let left = out[i] + 0.7071067811865476 * (out[2 * N + i] + out[4 * N + i]);
+            let right = out[N + i] + 0.7071067811865476 * (out[3 * N + i] + out[5 * N + i]);
+            assert!((left - source.left[i] as f64).abs() < 1e-9, "left at {i}");
+            assert!((right - source.right[i] as f64).abs() < 1e-9, "right at {i}");
+        }
     }
 }

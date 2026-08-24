@@ -11,6 +11,7 @@ export type MixPreviewShape = {
   stem_eq?: Record<string, string>;
   stem_ambient_rear?: Record<string, number>;
   stem_ambient_height?: Record<string, number>;
+  spatial_downmix_lock?: boolean;
   stem_source_anchor_strength?: number;
 };
 

@@ -47,6 +47,7 @@ Every stage below is one function, called from both sides:
 |---|---|---|---|
 | Per-stem EQ | `spatial`/`kernels::fir_design` | `separation/stem_eq.py` | `stream::routing` |
 | Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate}` | `separation/stem_router.py` | `stream::routing` |
+| Routing downmix lock | `spatial::downmix::apply_stereo_downmix_lock` | `separation/stem_router.py` | `stream::engine::render` |
 | Primary/ambient split | `routing::ambient` | `separation/stem_router.py` (`upmixer_dsp.ambient_split`) | `stream::routing` |
 | Placement → speaker gains | `spatial::{panner,presets}` | `separation/stem_placement.py` | `wasmEngine/panner.ts` |
 | Chain head (subsonic / DC) | `mastering::head` | `mastering/head.py` | `stream::master` |
@@ -105,6 +106,13 @@ driven by it. Only the two configurable coefficients reach `EngineParams`, as
 `surround_downmix_coeff` / `height_downmix_coeff`. `itu_center_coeff` stays
 the crate's own constant (ledger D6) and is no longer served at all: the web
 read it only to build the matrix it no longer builds.
+
+When `mixing.spatial_downmix_lock` is enabled, the router applies
+`spatial::downmix::apply_stereo_downmix_lock` after route normalization for
+each stem. It adds only the residual needed on FL/FR for the shared BS.775
+fold to reproduce that stem's EQ'd/rebalanced input pair; LFE is outside the
+fold and remains unchanged. The guarantee ends at routing: mastering may
+change the delivered fold.
 
 The 5.1 re-render row's matrix is shared code too, but unlike the
 stereo-downmix row above it, its two coefficients are deliberately not

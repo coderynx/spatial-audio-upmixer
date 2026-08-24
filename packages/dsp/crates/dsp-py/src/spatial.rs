@@ -35,6 +35,28 @@ fn itu_downmix_stereo<'py>(
 }
 
 #[pyfunction]
+fn apply_stereo_downmix_lock<'py>(
+    py: Python<'py>,
+    names: Vec<String>,
+    channels: Vec<PyReadonlyArray1<'py, f64>>,
+    input_left: PyReadonlyArray1<'py, f64>,
+    input_right: PyReadonlyArray1<'py, f64>,
+    surround_coeff: f64,
+    height_coeff: f64,
+) -> Vec<Bound<'py, PyArray1<f64>>> {
+    let mut bed = to_bed(channels);
+    downmix::apply_stereo_downmix_lock(
+        names.iter().map(|name| DownmixRole::from_name(name)),
+        &mut bed,
+        &input_left.as_array().to_vec(),
+        &input_right.as_array().to_vec(),
+        surround_coeff,
+        height_coeff,
+    );
+    bed.into_iter().map(|channel| PyArray1::from_vec(py, channel)).collect()
+}
+
+#[pyfunction]
 fn itu_downmix_mono<'py>(
     py: Python<'py>,
     names: Vec<String>,
@@ -197,6 +219,7 @@ fn ambient_split<'py>(
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(itu_downmix_stereo, m)?)?;
+    m.add_function(wrap_pyfunction!(apply_stereo_downmix_lock, m)?)?;
     m.add_function(wrap_pyfunction!(itu_downmix_mono, m)?)?;
     m.add_function(wrap_pyfunction!(fold_to_51, m)?)?;
     m.add("FOLD_51_CHANNELS", downmix::FOLD_51_CHANNELS)?;

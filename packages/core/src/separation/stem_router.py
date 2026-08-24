@@ -567,8 +567,25 @@ class StemRouter:
                 route_items.append((label, gain, signal))
 
             route_scale = self._route_scale(route_items, input_L, input_R)
-            for label, gain, signal in route_items:
-                channels[label.value][:n] += route_scale * gain * signal
+            if self._config.spatial_downmix_lock:
+                routed = {
+                    label.value: np.zeros(n, dtype=np.float64) for label in self._fmt.channels
+                }
+                for label, gain, signal in route_items:
+                    routed[label.value] += route_scale * gain * signal
+                corrected = upmixer_dsp.apply_stereo_downmix_lock(
+                    [label.value for label in self._fmt.channels],
+                    [routed[label.value] for label in self._fmt.channels],
+                    np.ascontiguousarray(input_L, dtype=np.float64),
+                    np.ascontiguousarray(input_R, dtype=np.float64),
+                    self._config.surround_downmix_coeff,
+                    self._config.height_downmix_coeff,
+                )
+                for label, signal in zip(self._fmt.channels, corrected):
+                    channels[label.value][:n] += signal
+            else:
+                for label, gain, signal in route_items:
+                    channels[label.value][:n] += route_scale * gain * signal
 
         if "LFE" in channels:
             channels["LFE"] += self._lfe_gain * upmixer_dsp.lfe_lowpass(

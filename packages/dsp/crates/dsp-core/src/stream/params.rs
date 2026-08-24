@@ -163,6 +163,9 @@ pub struct EngineParams {
     /// centre/back-fold coefficient is not among them (ledger D6).
     pub surround_downmix_coeff: f64,
     pub height_downmix_coeff: f64,
+    /// Restore every routed stem's stereo fold at the routing boundary.
+    #[serde(default)]
+    pub spatial_downmix_lock: bool,
     #[serde(default)]
     pub stems: Vec<StemParams>,
     #[serde(default)]

@@ -22,6 +22,7 @@ from upmixer.separation.stem_router import (
     fold_route_to_stereo,
 )
 from upmixer.utils import ITU_CENTER_COEFF
+from upmixer.utils import itu_downmix_stereo
 
 
 def _audio(n: int = 48000, frequency: float = 440.0) -> np.ndarray:
@@ -448,3 +449,40 @@ def test_an_ambient_send_keeps_the_stem_at_its_own_loudness():
     # Not exact: the normalization matches K-weighted power per routed
     # signal, where this measures the gated loudness of the assembled bed.
     assert abs(loud - quiet) < 0.5, (quiet, loud)
+
+
+@pytest.mark.parametrize("audio", [
+    _audio(),
+    np.column_stack([_audio()[:, 0], -_audio()[:, 0]]),
+    _reverberant(),
+])
+def test_downmix_lock_restores_each_routed_stem_pair(audio: np.ndarray):
+    config = UpmixConfig(
+        output_format="7.1.4",
+        spatial_downmix_lock=True,
+        stem_routing={"Other": {"FL": 0.3, "FR": 0.2, "C": 0.4, "SL": 0.8, "SR": 0.8, "TFL": 0.7, "TFR": 0.7}},
+        stem_ambient_rear={"Other": 0.8},
+        stem_ambient_height={"Other": 0.8},
+    )
+    channels = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route({"Other": audio}, len(audio))
+    left, right = itu_downmix_stereo(channels, config.surround_downmix_coeff, config.height_downmix_coeff)
+    residual = np.column_stack([left - audio[:, 0], right - audio[:, 1]])
+    peak = np.max(np.abs(residual))
+    rms = np.sqrt(np.mean(residual ** 2))
+
+    assert peak < 1e-9, f"fold residual peak={peak:.3e}, rms={rms:.3e}"
+
+
+def test_downmix_lock_off_is_identical_to_the_existing_route():
+    stems = {"Other": _reverberant()}
+    plain = _router(stem_ambient_rear={"Other": 0.8}, stem_ambient_height={"Other": 0.8}).route(
+        stems, len(stems["Other"])
+    )
+    locked_off = _router(
+        spatial_downmix_lock=False,
+        stem_ambient_rear={"Other": 0.8},
+        stem_ambient_height={"Other": 0.8},
+    ).route(stems, len(stems["Other"]))
+
+    for channel in plain:
+        assert np.array_equal(plain[channel], locked_off[channel])

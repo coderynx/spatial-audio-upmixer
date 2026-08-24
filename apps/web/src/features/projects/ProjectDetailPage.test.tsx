@@ -317,6 +317,20 @@ describe("ProjectDetailPage tabs", () => {
     expect(saved.mixing.stem_ambient_height.Vocals).toBeCloseTo(0.01);
   });
 
+  it("writes the downmix lock to the mixing block", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Mixer" }));
+    await user.click(screen.getByRole("switch", { name: "Downmix lock" }));
+
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());
+    const [, , , payload] = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)!;
+    const saved = payload.manifest_overrides as unknown as { mixing: { spatial_downmix_lock: boolean } };
+    expect(saved.mixing.spatial_downmix_lock).toBe(true);
+  });
+
   it("hides the LFE send slider for a layout without an LFE channel", async () => {
     const config = {
       choices: { layout_channels: { "7.1.4": ["FL", "FR"] } },

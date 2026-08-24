@@ -204,6 +204,54 @@ pub fn itu_downmix_stereo(
     (left, right)
 }
 
+/// Add the front residual that makes a routed bed fold back to `input`.
+///
+/// LFE has no [`DownmixRole`], so it is intentionally unchanged.
+pub fn apply_stereo_downmix_lock<I>(
+    roles: I,
+    bed: &mut [Vec<f64>],
+    input_left: &[f64],
+    input_right: &[f64],
+    surround_coeff: f64,
+    height_coeff: f64,
+) where
+    I: IntoIterator<Item = Option<DownmixRole>>,
+{
+    let n = input_left.len().min(input_right.len());
+    let mut residual_left = input_left[..n].to_vec();
+    let mut residual_right = input_right[..n].to_vec();
+    let mut front = [None; 2];
+
+    for (index, role) in roles.into_iter().enumerate() {
+        let Some(role) = role else { continue };
+        let Some(channel) = bed.get(index) else {
+            continue;
+        };
+        let (left_gain, right_gain) = stereo_pair(role, surround_coeff, height_coeff);
+        for (residual, sample) in residual_left.iter_mut().zip(channel.iter()) {
+            *residual -= left_gain * sample;
+        }
+        for (residual, sample) in residual_right.iter_mut().zip(channel.iter()) {
+            *residual -= right_gain * sample;
+        }
+        match role {
+            DownmixRole::Fl => front[0] = Some(index),
+            DownmixRole::Fr => front[1] = Some(index),
+            _ => {}
+        }
+    }
+
+    let (Some(left), Some(right)) = (front[0], front[1]) else {
+        return;
+    };
+    for (target, residual) in bed[left].iter_mut().zip(residual_left) {
+        *target += residual;
+    }
+    for (target, residual) in bed[right].iter_mut().zip(residual_right) {
+        *target += residual;
+    }
+}
+
 /// `M = (1/√2)·(FL + FR + k_h·(TFL + TFR)) + C
 ///      + k_s·(SL + SR + (1/√2)·(BL + BR) + k_h·(TBL + TBR))`.
 pub fn itu_downmix_mono(

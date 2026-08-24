@@ -60,6 +60,24 @@ def add_stem_args(parser: argparse.ArgumentParser) -> None:
             "preserving the pair's combined magnitude."
         ),
     )
+    parser.add_argument(
+        "--spatial-downmix-lock",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Keep each routed stem's BS.775 stereo fold equal to its input pair (default: disabled).",
+    )
+    parser.add_argument(
+        "--stem-ambient-rear",
+        default=None,
+        metavar="STEM=AMOUNT[,...]",
+        help="Per-stem ambient send to surrounds, 0.0-1.0 (stem mode only).",
+    )
+    parser.add_argument(
+        "--stem-ambient-height",
+        default=None,
+        metavar="STEM=AMOUNT[,...]",
+        help="Per-stem ambient send to heights, 0.0-1.0 (stem mode only).",
+    )
 
     parser.add_argument(
         "--stem-cache-dir",

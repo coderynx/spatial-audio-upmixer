@@ -159,6 +159,19 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
             config.stem_routing = {}
         for stem, pan in pans.items():
             config.stem_routing[stem] = apply_stem_pan(config.stem_routing.get(stem, {}), pan)
+    if args.spatial_downmix_lock is not None:
+        config.spatial_downmix_lock = args.spatial_downmix_lock
+    for arg, field in (
+        (args.stem_ambient_rear, "stem_ambient_rear"),
+        (args.stem_ambient_height, "stem_ambient_height"),
+    ):
+        if arg is None:
+            continue
+        sends = _parse_key_value_pairs(arg, float)
+        for stem, amount in sends.items():
+            if not math.isfinite(amount) or not 0.0 <= amount <= 1.0:
+                raise SystemExit(f"--{field.replace('_', '-')} amount for '{stem}' must be in 0.0..1.0, got {amount}.")
+        setattr(config, field, {**(getattr(config, field) or {}), **sends})
     if args.stem_cache_dir is not None:
         config.stem_cache_dir = args.stem_cache_dir
     if args.stem_batch_size is not None:

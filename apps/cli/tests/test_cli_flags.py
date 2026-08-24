@@ -79,6 +79,33 @@ def test_stem_pan_rejects_a_value_outside_the_unit_range():
         _apply_cli_flags(config, args, sample_rate_set=False)
 
 
+def test_spatial_downmix_lock_and_ambient_flags_override_the_manifest():
+    config = UpmixConfig(
+        spatial_downmix_lock=False,
+        stem_ambient_rear={"Vocals": 0.2},
+        stem_ambient_height={"Vocals": 0.3},
+    )
+    args = _parsed([
+        "--spatial-downmix-lock", "--stem-ambient-rear", "Vocals=0.8",
+        "--stem-ambient-height", "Vocals=0.9",
+    ])
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    assert config.spatial_downmix_lock is True
+    assert config.stem_ambient_rear == {"Vocals": 0.8}
+    assert config.stem_ambient_height == {"Vocals": 0.9}
+
+
+def test_ambient_flags_merge_into_other_manifest_stem_values():
+    config = UpmixConfig(stem_ambient_rear={"Bass": 0.2})
+    args = _parsed(["--stem-ambient-rear", "Vocals=0.8"])
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    assert config.stem_ambient_rear == {"Bass": 0.2, "Vocals": 0.8}
+
+
 def test_format_accepts_the_stereo_layout():
     config = UpmixConfig()
     args = _parsed(["--format", "stereo"])

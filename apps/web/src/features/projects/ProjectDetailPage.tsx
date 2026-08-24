@@ -19,7 +19,7 @@ import { InspectorGroup } from "@/app/InspectorRow";
 import { SegmentedControl } from "@/app/SegmentedControl";
 import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
 import { Button } from "@/components/ui/button";
-import { SliderField } from "@/components/forms/fields";
+import { SliderField, SwitchRow } from "@/components/forms/fields";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { isStereoLayout, outputModeForLayoutSwitch } from "@/lib/layouts";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
@@ -302,6 +302,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     }
     updateTrackManifest({ ...trackManifest, mixing }, true);
   };
+  const setSpatialDownmixLock = (spatial_downmix_lock: boolean) => {
+    if (!trackManifest) return;
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, spatial_downmix_lock } }, true);
+  };
   /** The placement is what the user edits; the gain table is derived from it
    * here so the manifest the export reads never lags behind the UI. */
   const updatePlacement = (stem: string, placement: StemPlacement) => {
@@ -568,6 +572,13 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             <Button className="mt-2.5 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 />Apply preset</Button>
           </InspectorGroup>
           <InspectorGroup title="Stem">
+            <div className="mb-3">
+              <SwitchRow
+                label="Downmix lock"
+                checked={trackManifest.mixing.spatial_downmix_lock}
+                onChange={setSpatialDownmixLock}
+              />
+            </div>
             {selectedStem ? (() => {
               const SelectedStemIcon = getStemIcon(selectedStem);
               const stemMuted = trackManifest.mixing.stem_enabled[selectedStem] === false;

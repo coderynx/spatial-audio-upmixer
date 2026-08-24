@@ -132,6 +132,49 @@ mod downmix {
         assert!(signal[0] > 0.95 && signal[0] <= 1.0);
         assert!((signal[0] + signal[1]).abs() < 1e-15);
     }
+
+    #[test]
+    fn downmix_lock_restores_the_input_pair_without_touching_lfe() {
+        let roles = [
+            Some(DownmixRole::Fl),
+            Some(DownmixRole::Fr),
+            Some(DownmixRole::C),
+            None,
+            Some(DownmixRole::Sl),
+            Some(DownmixRole::Sr),
+            Some(DownmixRole::Tfl),
+            Some(DownmixRole::Tfr),
+        ];
+        let mut bed = vec![
+            vec![0.2, -0.1],
+            vec![-0.3, 0.4],
+            vec![0.1, 0.2],
+            vec![0.9, -0.8],
+            vec![0.4, 0.1],
+            vec![0.2, -0.2],
+            vec![0.1, -0.3],
+            vec![-0.1, 0.5],
+        ];
+        let lfe = bed[3].clone();
+        let input_left = [0.7, -0.6];
+        let input_right = [-0.4, 0.8];
+
+        apply_stereo_downmix_lock(roles, &mut bed, &input_left, &input_right, 0.7071, 0.7071);
+        let inputs: Vec<_> = roles
+            .into_iter()
+            .zip(&bed)
+            .filter_map(|(role, channel)| role.map(|role| (role, channel.as_slice())))
+            .collect();
+        let (left, right) = itu_downmix_stereo(&inputs, 0.7071, 0.7071);
+
+        for (actual, expected) in left.iter().zip(input_left) {
+            assert!((actual - expected).abs() < 1e-12);
+        }
+        for (actual, expected) in right.iter().zip(input_right) {
+            assert!((actual - expected).abs() < 1e-12);
+        }
+        assert_eq!(bed[3], lfe);
+    }
 }
 
 mod ambisonics {

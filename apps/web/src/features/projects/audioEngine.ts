@@ -420,6 +420,7 @@ export class PreviewAudioEngine {
         heightDirectionalBandGain: this.routing?.height_directional_band_gain,
       },
       speakerEnabled: this.speakerEnabled,
+      spatialDownmixLock: this.mix?.spatial_downmix_lock ?? false,
       stems: resolveStemMixes({
         stems: this.previewableStems(),
         scene: this.scene,

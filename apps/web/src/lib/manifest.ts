@@ -34,6 +34,7 @@ export type Manifest = {
     stem_eq: Record<string, string>;
     stem_ambient_rear: Record<string, number>;
     stem_ambient_height: Record<string, number>;
+    spatial_downmix_lock: boolean;
     stem_routing: Record<string, Record<string, number>>;
     stem_placement: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; spread_deg: number }>;
     stem_enabled: Record<string, boolean>;
@@ -168,6 +169,7 @@ export const defaultManifest: Manifest = {
     stem_eq: {},
     stem_ambient_rear: {},
     stem_ambient_height: {},
+    spatial_downmix_lock: false,
     stem_placement: {},
     stem_routing: {},
     stem_enabled: {},

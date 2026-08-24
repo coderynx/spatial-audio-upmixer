@@ -14,6 +14,9 @@ export type MixPreview = {
   stem_routing?: Record<string, Record<string, number>>;
   stem_rebalance?: Record<string, number>;
   stem_eq?: Record<string, string>;
+  stem_ambient_rear?: Record<string, number>;
+  stem_ambient_height?: Record<string, number>;
+  spatial_downmix_lock?: boolean;
   stem_enabled?: Record<string, boolean>;
   stem_solo?: string[];
   stem_source_anchor_strength?: number;

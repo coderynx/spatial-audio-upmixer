@@ -114,6 +114,8 @@ export type BuildEngineParamsInput = {
   sendOverrides?: { heightDirectionalBandGain?: number };
   /** Per-speaker mute; a muted speaker contributes nothing to any render. */
   speakerEnabled?: Record<string, boolean>;
+  /** Restore each routed stem's stereo fold at the routing boundary. */
+  spatialDownmixLock?: boolean;
   /** Transport A/B: render the bed without any mastering stage. */
   bypassMastering?: boolean;
   /** BS.1770 weights for the live loudness meters, in delivered-channel
@@ -158,6 +160,7 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
     shapes: speakers.map((name) => CHANNEL_SHAPE[name] ?? "mono"),
     surround_downmix_coeff: c.surroundDownmixCoeff,
     height_downmix_coeff: c.heightDownmixCoeff,
+    spatial_downmix_lock: input.spatialDownmixLock ?? false,
     sends: {
       surround_bass_cutoff_hz: c.surroundBassCutoffHz,
       height_low_rolloff_hz: c.heightShaping.lowRolloffHz,
