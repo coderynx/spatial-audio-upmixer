@@ -560,3 +560,4 @@ numbers.
 | D43 | The realtime (STFT coherence) pipeline was a second, Python-only routing path with no preview half at all — everything it did diverged from the preview by construction. | Removed — stem mode is the only mode |
 | D44 | The ambient split needs the EQ'd stem the export routes, but a streaming convolver cannot be read ahead of the block it fills, so the preview would have had to split a different signal. | Fixed — the stem EQ runs ahead of the render position into a carried buffer both paths read (mixing phase 15) |
 | D45 | The route normalization measured the dry pair *after* the ambient sends took their share, so a stem got quieter as its sliders came up. | Fixed — the pre-split pair is its own signal (`STEM_INPUT`) on both sides |
+| D46 | The preview reused one loudness calibration when the downmix lock changed, even though the lock changes the routed programme. | Fixed — lock-on and lock-off have separate cached measurement keys |

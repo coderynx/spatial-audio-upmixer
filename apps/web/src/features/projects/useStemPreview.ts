@@ -238,7 +238,7 @@ export function useStemPreview(
 
   React.useEffect(() => {
     if (!constants) return;
-    engine.apply();
+    engine.applyMix();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
     // Depend on the send values themselves, not the `routing` object: the
     // project page rebuilds its manifest every render, so the object identity

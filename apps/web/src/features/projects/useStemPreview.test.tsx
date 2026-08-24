@@ -351,6 +351,25 @@ describe("useStemPreview loudness calibration", () => {
     expect(measureCalls).toHaveLength(2);
   });
 
+  it("re-measures each downmix-lock state once", async () => {
+    const result = await renderPreview({ mix: { spatial_downmix_lock: false } });
+    expect(measureCalls).toHaveLength(1);
+
+    await act(async () => {
+      result.rerender(<Harness mix={{ spatial_downmix_lock: true }} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(measureCalls).toHaveLength(2);
+
+    await act(async () => {
+      result.rerender(<Harness mix={{ spatial_downmix_lock: false }} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(measureCalls).toHaveLength(2);
+  });
+
   it("loads the new profile's decode filter set before it re-measures", async () => {
     const result = await renderPreview({ spatialProfile: "studio" });
     callOrder.length = 0;

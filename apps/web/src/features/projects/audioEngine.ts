@@ -114,6 +114,7 @@ export class PreviewAudioEngine {
   private duration = 0;
   private scrubbing = false;
   private loadToken = 0;
+  private appliedDownmixLock = false;
 
   private readonly taps = new FilterTapCache();
   private readonly calibration = new LoudnessCalibration({
@@ -365,6 +366,14 @@ export class PreviewAudioEngine {
     this.client.updateParams(this.buildParams());
   }
 
+  applyMix() {
+    const downmixLock = this.mix?.spatial_downmix_lock ?? false;
+    const changed = downmixLock !== this.appliedDownmixLock;
+    this.appliedDownmixLock = downmixLock;
+    this.apply();
+    if (changed) void this.measureIfNeeded();
+  }
+
   private buildParams() {
     // Resolve the profile against the project's per-field overrides here, so
     // a moved pot reaches the worklet instead of being replaced by the bare
@@ -496,7 +505,8 @@ export class PreviewAudioEngine {
     // A whole-chain bypass already strips the matcher, so the stage flag adds
     // no programme of its own there — and must not cost a second pass.
     const chain = bypassed ? "bypassed" : matchBypassed ? "match-bypassed" : "mastered";
-    return `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}:${chain}`;
+    const downmixLock = this.mix?.spatial_downmix_lock ? "locked" : "unlocked";
+    return `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}:${chain}:${downmixLock}`;
   }
 
   /** BS.1770 weights for the channels the measurement sees. Every collapse
