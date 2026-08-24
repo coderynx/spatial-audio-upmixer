@@ -101,6 +101,23 @@ pub unsafe extern "C" fn dsp_preset_placement(
     0
 }
 
+/// Write one preset's default ambient sends as `[rear, height]`.
+/// Returns 0 on success, -1 when the preset or stem is unknown.
+///
+/// # Safety
+/// `out` must point to at least two writable `f64`.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_preset_ambient(preset: usize, stem: usize, out: *mut f64) -> i32 {
+    let Some(name) = presets::PRESET_NAMES.get(preset) else { return -1 };
+    let Some((stem_name, _)) = preset_stem(preset, stem) else { return -1 };
+    let Some((rear, height)) = presets::preset_ambient(name, stem_name) else { return -1 };
+    if out.is_null() {
+        return -1;
+    }
+    std::slice::from_raw_parts_mut(out, 2).copy_from_slice(&[rear, height]);
+    0
+}
+
 /// Pan a placement into `channels`, writing one gain per channel into `out`.
 /// Returns 0 on success, -1 on a bad channel index or null pointer.
 ///

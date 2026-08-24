@@ -93,6 +93,39 @@ describe("StemControls", () => {
     expect(left).toBeGreaterThan(right);
   });
 
+  it("reads a preset's image width back onto the front/back slider", () => {
+    renderControls({ placement: { ...WIDE, width_deg: 180 } });
+
+    expect(screen.getByLabelText("Front to back")).toHaveAttribute("aria-valuenow", "0.5");
+  });
+
+  it("reads a rear placement as behind, however wide it is", () => {
+    renderControls({ placement: { ...WIDE, azimuth_deg: 180, width_deg: 120 } });
+
+    const value = screen.getByLabelText("Front to back").getAttribute("aria-valuenow");
+    expect(Number(value)).toBeCloseTo(1 - 120 / 360, 9);
+  });
+
+  it("wraps the image outward over the slider's front half", () => {
+    const { onPlacement } = renderControls({ placement: { ...WIDE, width_deg: 0 } });
+
+    step("Front to back", 1);
+
+    const next = onPlacement.mock.calls.at(-1)?.[0] as StemPlacement;
+    expect(next.width_deg).toBeCloseTo(0.01 * 360, 9);
+    expect(next.azimuth_deg).toBeCloseTo(0, 9);
+  });
+
+  it("turns the image around past the halfway point without moving it sideways", () => {
+    const { onPlacement } = renderControls({ placement: { ...WIDE, width_deg: 180 } });
+
+    step("Front to back", 1);
+
+    const next = onPlacement.mock.calls.at(-1)?.[0] as StemPlacement;
+    expect(Math.abs(next.azimuth_deg)).toBeCloseTo(180, 9);
+    expect(next.width_deg).toBeCloseTo(0.49 * 360, 9);
+  });
+
   it("scales the height slider by what the layout can reproduce", () => {
     const { onPlacement } = renderControls({ maxElevationDeg: 35 });
 

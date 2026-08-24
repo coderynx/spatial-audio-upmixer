@@ -70,6 +70,18 @@ describe("wasm panner", () => {
     expect(instance.presetPlacements("no-such-preset")).toEqual({});
   });
 
+  it("carries the preset's LFE weight and room sends alongside the placement", () => {
+    const instance = panner();
+    const balanced = instance.presetSends("balanced");
+
+    expect(balanced.Kick.lfe).toBeCloseTo(0.85, 9);
+    expect(balanced["Lead Vocals"]).toEqual({ lfe: 0, rear: 0, height: 0 });
+    expect(balanced.Crowd.rear).toBeGreaterThan(balanced.Guitar.rear);
+    expect(instance.presetSends("intimate").Crowd.rear)
+      .toBeLessThan(instance.presetSends("live").Crowd.rear);
+    expect(instance.presetSends("no-such-preset")).toEqual({});
+  });
+
   it("reports the elevation a layout can reach", () => {
     const instance = panner();
 

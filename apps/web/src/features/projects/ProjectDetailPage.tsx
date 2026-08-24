@@ -319,15 +319,22 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const applyPreset = () => {
     if (!trackManifest || !stemNames.length || !panner) return;
     const table = panner.presetPlacements(preset);
+    const sends = panner.presetSends(preset);
     const nextPlacements: Record<string, StemPlacement> = {};
     const nextRouting: StemRouting = {};
+    const nextRear = { ...trackManifest.mixing.stem_ambient_rear };
+    const nextHeight = { ...trackManifest.mixing.stem_ambient_height };
     for (const stem of stemNames) {
-      const placement = table[stem.split("@", 1)[0]];
+      const name = stem.split("@", 1)[0];
+      const placement = table[name];
       if (!placement) continue;
+      const send = sends[name] ?? { lfe: 0, rear: 0, height: 0 };
       nextPlacements[stem] = placement;
-      nextRouting[stem] = panner.placementRoute(placement, channels, routing[stem]?.LFE ?? 0);
+      nextRouting[stem] = panner.placementRoute(placement, channels, send.lfe);
+      nextRear[stem] = send.rear;
+      nextHeight[stem] = send.height;
     }
-    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_placement: nextPlacements, stem_routing: nextRouting } });
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_placement: nextPlacements, stem_routing: nextRouting, stem_ambient_rear: nextRear, stem_ambient_height: nextHeight } });
   };
   const toggleEnabled = React.useCallback((stem: string) => {
     if (!trackManifest) return;

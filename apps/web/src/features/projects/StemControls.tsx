@@ -9,6 +9,10 @@ import type { StemPlacement } from "./wasmEngine/panner";
  * resolves to front. */
 type Position = { lateral: number; depth: number };
 
+/** Half the slider spends the image out to the side pair; the rest turns it
+ * around. A placement wider than the full arc reads as fully wrapped. */
+const SIDE_ARC_DEG = 180;
+
 /** `azimuth = atan2(-x, -z)`, matching `binaural/geometry.py`'s convention:
  * 0 = front, positive = left, listener facing -Z. */
 export function azimuthFromPosition({ lateral, depth }: Position): number {
@@ -62,6 +66,24 @@ export const StemControls = React.memo(function StemControls({
     onPlacement({ ...placement, azimuth_deg: azimuthFromPosition(next) });
   };
 
+  // Front/back as the panner expresses it: width is what carries a centred
+  // image off the front wall out to the sides — half the slider — and past the
+  // sides it is the azimuth that turns the image around. Keeping both on one
+  // control is what the routing presets vary, and it leaves the left/right
+  // slider the only thing that moves a stem laterally.
+  const facesRear = Math.abs(placement.azimuth_deg) > 90;
+  const wrap = Math.min(1, placement.width_deg / (SIDE_ARC_DEG * 2));
+  const depth = facesRear ? 1 - wrap : wrap;
+  const moveDepth = (value: number) => {
+    const behind = value > 0.5;
+    setPosition((current) => ({ ...current, depth: behind ? 1 : 0 }));
+    onPlacement({
+      ...placement,
+      azimuth_deg: azimuthFromPosition({ lateral: position.lateral, depth: behind ? 1 : 0 }),
+      width_deg: (behind ? 1 - value : value) * SIDE_ARC_DEG * 2,
+    });
+  };
+
   const stereo = channels.length === 2;
   const hasHeight = channels.includes("TFL") || channels.includes("TFR")
     || channels.includes("TBL") || channels.includes("TBR");
@@ -98,7 +120,7 @@ export const StemControls = React.memo(function StemControls({
       <label className="block text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1"><ArrowUpDown className="h-3 w-3" />Front <span className="ml-auto">Back</span></span>
         <Slider aria-label="Front to back" className="mt-1.5" min={0} max={1} step={0.01}
-          value={[position.depth]} onValueChange={([depth]) => move({ depth })} />
+          value={[depth]} onValueChange={([value]) => moveDepth(value)} />
       </label>
       {hasHeight && (
         <label className="block text-[11px] text-muted-foreground">

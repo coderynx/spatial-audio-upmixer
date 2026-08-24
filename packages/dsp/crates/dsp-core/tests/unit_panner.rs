@@ -175,3 +175,25 @@ fn panning_is_deterministic() {
         assert_eq!(placement_route(&placement, &FULL), first);
     }
 }
+
+#[test]
+fn preset_ambient_keeps_the_pulse_dry_and_scales_the_room_per_preset() {
+    use upmixer_dsp_core::spatial::presets::{preset_ambient, preset_stems, PRESET_NAMES};
+
+    for preset in PRESET_NAMES {
+        for (stem, _) in preset_stems(preset) {
+            let (rear, height) = preset_ambient(preset, stem).unwrap();
+            assert!((0.0..=0.9).contains(&rear), "{preset}/{stem} rear {rear}");
+            assert!((0.0..=0.9).contains(&height), "{preset}/{stem} height {height}");
+            if matches!(*stem, "Lead Vocals" | "Kick" | "Snare" | "Bass") {
+                assert_eq!((rear, height), (0.0, 0.0), "{preset}/{stem}");
+            }
+        }
+    }
+    let intimate = preset_ambient("intimate", "Crowd").unwrap();
+    let live = preset_ambient("live", "Crowd").unwrap();
+    assert!(live.0 > intimate.0 && live.1 > intimate.1);
+    assert!(preset_ambient("immersive", "Crowd").unwrap().1 > live.1);
+    assert!(preset_ambient("balanced", "nope").is_none());
+    assert!(preset_ambient("nope", "Crowd").is_none());
+}

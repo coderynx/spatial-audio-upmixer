@@ -15,6 +15,9 @@ export const NEUTRAL_PLACEMENT: StemPlacement = {
   azimuth_deg: 0, elevation_deg: 0, width_deg: 0, spread_deg: 60,
 };
 
+/** What a preset sends a stem outside its panned image. */
+export type PresetSends = { lfe: number; rear: number; height: number };
+
 type PannerExports = {
   memory: WebAssembly.Memory;
   dsp_alloc(bytes: number): number;
@@ -29,6 +32,7 @@ type PannerExports = {
   dsp_preset_stem_name_len(preset: number, stem: number): number;
   dsp_preset_stem_name_ptr(preset: number, stem: number): number;
   dsp_preset_placement(preset: number, stem: number, out: number): number;
+  dsp_preset_ambient(preset: number, stem: number, out: number): number;
   dsp_placement_route(
     azimuth: number, elevation: number, width: number, spread: number, lfe: number,
     channels: number, nChannels: number, out: number,
@@ -122,6 +126,32 @@ export class Panner {
         if (this.exports.dsp_preset_placement(index, stem, ptr) !== 0) continue;
         const [azimuth_deg, elevation_deg, width_deg, spread_deg] = this.read(ptr, 5);
         out[name] = { azimuth_deg, elevation_deg, width_deg, spread_deg };
+      }
+    } finally {
+      this.exports.dsp_free(ptr, bytes);
+    }
+    return out;
+  }
+
+  /** A preset's per-stem sends: the LFE weight the placement carries, and how
+   * much of the stem's ambient half the preset moves behind and above. */
+  presetSends(preset: string): Record<string, PresetSends> {
+    const index = this.presetNames.indexOf(preset);
+    if (index < 0) return {};
+    const out: Record<string, PresetSends> = {};
+    const bytes = 5 * 8;
+    const ptr = this.exports.dsp_alloc(bytes);
+    try {
+      for (let stem = 0; stem < this.exports.dsp_preset_stem_count(index); stem += 1) {
+        const name = this.readString(
+          this.exports.dsp_preset_stem_name_ptr(index, stem),
+          this.exports.dsp_preset_stem_name_len(index, stem),
+        );
+        if (this.exports.dsp_preset_placement(index, stem, ptr) !== 0) continue;
+        const lfe = this.read(ptr, 5)[4];
+        if (this.exports.dsp_preset_ambient(index, stem, ptr) !== 0) continue;
+        const [rear, height] = this.read(ptr, 2);
+        out[name] = { lfe, rear, height };
       }
     } finally {
       this.exports.dsp_free(ptr, bytes);

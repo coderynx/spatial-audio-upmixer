@@ -162,3 +162,50 @@ pub fn preset_placement(preset: &str, stem: &str) -> Option<StemPlacement> {
 pub fn preset_stems(preset: &str) -> &'static [(&'static str, StemPlacement)] {
     preset_table(preset).unwrap_or(&[])
 }
+
+/// How readily a stem's ambient half leaves the front wall, at `balanced`'s
+/// scale. The pulse — lead vocal, kick, snare, bass — never does: smearing it
+/// around the listener is what costs a music mix its centre.
+const AMBIENT_SUSCEPTIBILITY: [(&str, f64, f64); 17] = [
+    ("Lead Vocals", 0.0, 0.0),
+    ("Vocals", 0.06, 0.04),
+    ("Backing Vocals", 0.20, 0.16),
+    ("Bass", 0.0, 0.0),
+    ("Kick", 0.0, 0.0),
+    ("Snare", 0.0, 0.0),
+    ("Toms", 0.08, 0.05),
+    ("Drums", 0.10, 0.06),
+    ("Hi-Hat", 0.10, 0.10),
+    ("Ride", 0.12, 0.12),
+    ("Crash", 0.16, 0.16),
+    ("Guitar", 0.14, 0.08),
+    ("Piano", 0.14, 0.10),
+    ("Other", 0.22, 0.18),
+    ("Instrumental", 0.16, 0.12),
+    ("Crowd", 0.55, 0.35),
+    ("Vocals Reverb", 0.65, 0.45),
+];
+
+/// How much each preset leans on the room, against the susceptibility table.
+const AMBIENT_SCALE: [(&str, f64, f64); 6] = [
+    ("balanced", 1.0, 1.0),
+    ("intimate", 0.45, 0.35),
+    ("stage", 0.85, 0.70),
+    ("wide", 1.25, 1.10),
+    ("immersive", 1.35, 1.75),
+    ("live", 1.55, 1.30),
+];
+
+/// The ambient half is a move, not a copy, so a send this high already leaves
+/// the stem's dry image thin.
+const AMBIENT_MAX: f64 = 0.9;
+
+/// A preset's default surround/height sends for one stem's ambient half.
+/// `None` when the preset or the stem is unknown.
+pub fn preset_ambient(preset: &str, stem: &str) -> Option<(f64, f64)> {
+    let (_, rear_scale, height_scale) =
+        *AMBIENT_SCALE.iter().find(|(name, _, _)| *name == preset)?;
+    let (_, rear, height) =
+        *AMBIENT_SUSCEPTIBILITY.iter().find(|(name, _, _)| *name == stem)?;
+    Some(((rear * rear_scale).min(AMBIENT_MAX), (height * height_scale).min(AMBIENT_MAX)))
+}
