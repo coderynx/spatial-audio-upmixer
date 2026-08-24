@@ -18,7 +18,7 @@ from upmixer.manifest import (
     ManifestError,
     apply_asset_job,
     list_manifest_keys,
-    migrate_format_block,
+    migrate_manifest,
     parse_manifest,
     manifest_parameter_schema,
     validate_manifest,
@@ -402,28 +402,28 @@ class TestValidateCodecDelivery:
 
 class TestMigrateFormatBlock:
     def test_rewrites_the_legacy_wav_type_and_seeds_a_codec(self):
-        migrated = migrate_format_block({"format": {"type": "wav", "subtype": "PCM_24"}})
+        migrated = migrate_manifest({"format": {"type": "wav", "subtype": "PCM_24"}})
         assert migrated["format"] == {
             "type": "multichannel", "codec": "wav_pcm", "subtype": "PCM_24",
         }
 
     def test_migrates_per_asset_format_overrides(self):
-        migrated = migrate_format_block({
+        migrated = migrate_manifest({
             "assets": [{"input": "a.flac", "output": "a.wav", "format": {"type": "wav"}}],
         })
         assert migrated["assets"][0]["format"] == {"type": "multichannel", "codec": "wav_pcm"}
 
     def test_leaves_an_explicit_codec_alone(self):
-        migrated = migrate_format_block({"format": {"type": "binaural", "codec": "flac"}})
+        migrated = migrate_manifest({"format": {"type": "binaural", "codec": "flac"}})
         assert migrated["format"]["codec"] == "flac"
 
     def test_does_not_mutate_its_input(self):
         original = {"format": {"type": "wav"}}
-        migrate_format_block(original)
+        migrate_manifest(original)
         assert original == {"format": {"type": "wav"}}
 
     def test_a_migrated_legacy_manifest_validates_and_parses(self):
-        migrated = migrate_format_block(_minimal(format={"type": "wav"}))
+        migrated = migrate_manifest(_minimal(format={"type": "wav"}))
         validate_manifest(migrated)
         _meta, jobs = parse_manifest(migrated)
         config = UpmixConfig()

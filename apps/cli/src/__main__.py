@@ -66,11 +66,11 @@ def main() -> None:
 
     if args.manifest is not None:
         from upmixer.manifest import (
-            load_manifest, migrate_format_block, validate_manifest, parse_manifest,
+            load_manifest, migrate_manifest, validate_manifest, parse_manifest,
             ManifestError,
         )
         try:
-            _raw = migrate_format_block(load_manifest(args.manifest))
+            _raw = migrate_manifest(load_manifest(args.manifest))
             validate_manifest(_raw)
         except ManifestError as exc:
             parser.error(str(exc))

@@ -76,21 +76,47 @@ def _migrate_format(block: Any) -> Any:
     return migrated
 
 
-def migrate_format_block(data: dict) -> dict:
-    """Fold the pre-codec ``format`` shape into the current one.
+# Blocks and keys the pipeline no longer has. A stored project or manifest
+# written while they existed still carries them, and validation rejects an
+# unknown field, so they are dropped rather than allowed to fail a load.
+_RETIRED_FIELDS: dict[str, set[str]] = {
+    "mixing": {"spatial"},
+    "routing": {
+        "center_extraction_gain",
+        "center_attenuation",
+        "content_mix_strength",
+        "content_hf_analysis_hz",
+    },
+    "processing": {"block_size"},
+}
 
-    Applied to the root and to every asset override before validation, so
-    manifests and stored projects written before codecs existed keep loading.
-    """
+
+def _migrate_blocks(data: dict) -> dict:
     migrated = dict(data)
     if "format" in migrated:
         migrated["format"] = _migrate_format(migrated["format"])
+    for block_name, retired in _RETIRED_FIELDS.items():
+        block = migrated.get(block_name)
+        if isinstance(block, dict) and retired.intersection(block):
+            migrated[block_name] = {k: v for k, v in block.items() if k not in retired}
+    engine = migrated.get("engine")
+    if isinstance(engine, dict) and engine.get("mode") == "realtime":
+        migrated["engine"] = {**engine, "mode": "stem"}
+    return migrated
+
+
+def migrate_manifest(data: dict) -> dict:
+    """Fold retired manifest shapes into the current one.
+
+    Applied to the root and to every asset override before validation, so
+    manifests and stored projects written before codecs existed — or before
+    the realtime pipeline was removed — keep loading.
+    """
+    migrated = _migrate_blocks(data)
     assets = migrated.get("assets")
     if isinstance(assets, list):
         migrated["assets"] = [
-            {**asset, "format": _migrate_format(asset["format"])}
-            if isinstance(asset, dict) and "format" in asset
-            else asset
+            _migrate_blocks(asset) if isinstance(asset, dict) else asset
             for asset in assets
         ]
     return migrated

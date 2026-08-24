@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from upmixer.manifest import migrate_manifest
+
 from upmixer_web.features.projects.schemas import ProjectView, ReferenceMatchAssetView
 from upmixer_web.features.projects.layouts import track_layouts
 from upmixer_web.features.projects.storage import ProjectStemStorage
@@ -23,6 +25,10 @@ def project_view(
     manager: WorkerManager | None = None,
 ) -> ProjectView:
     view = ProjectView.model_validate(project)
+    # A project stored before a manifest field was retired still carries it.
+    # Migrating on the way out keeps the client from echoing a field the
+    # validator now rejects back into its next save.
+    view.manifest = migrate_manifest(view.manifest)
     if manager is not None:
         view.reference_match_pending = manager.reference_match_pending(project.id)
         view.peaks_pending = manager.peaks_pending(project.id)
@@ -33,6 +39,10 @@ def project_view(
     # so the URL must use the track's own asset, not the project's.
     for track, track_orm in zip(view.tracks, project.tracks, strict=True):
         track.layouts = track_layouts(track_orm, project)
+        track.layout_overrides = {
+            layout: migrate_manifest(block)
+            for layout, block in track.layout_overrides.items()
+        }
         track.asset.audio_url = (
             f"{root_path}/api/v1/imports/{track_orm.asset.import_id}/assets/{track.asset.id}/audio"
         )

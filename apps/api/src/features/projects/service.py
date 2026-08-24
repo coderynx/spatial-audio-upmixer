@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from upmixer.codecs import DEFAULT_CODEC
 from upmixer.config import UpmixConfig
-from upmixer.manifest import apply_asset_job, migrate_format_block, parse_manifest
+from upmixer.manifest import apply_asset_job, migrate_manifest, parse_manifest
 from upmixer.separation.stem_plan import normalize_stems
 from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_router import build_stem_routing
@@ -140,7 +140,7 @@ def _normalized_track_layout_block(
     so a per-track two-channel layout used to keep an unfolded multichannel
     routing.
     """
-    block = copy.deepcopy(overrides)
+    block = migrate_manifest(copy.deepcopy(overrides))
     _validate_track_overrides(project, block)
     normalize_layout_mix(block, layout, list(project.requested_stems))
     normalize_job_manifest(_deep_merge(project.manifest, block))
@@ -169,7 +169,7 @@ def list_projects(session: Session, limit: int = 100, offset: int = 0) -> list[P
 
 
 def _normalized_project_manifest(manifest: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    migrated = migrate_format_block(migrate_legacy_binaural_shape(manifest))
+    migrated = migrate_manifest(migrate_legacy_binaural_shape(manifest))
     migrated_mixing = migrated.setdefault("mixing", {})
     migrated_format = migrated.setdefault("format", {})
     if isinstance(migrated_mixing, dict) and isinstance(migrated_format, dict):

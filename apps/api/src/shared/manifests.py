@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from upmixer.codecs import DEFAULT_CODEC, codec_extension
-from upmixer.manifest import migrate_format_block, parse_manifest, validate_manifest
+from upmixer.manifest import migrate_manifest, parse_manifest, validate_manifest
 from upmixer_web.shared.models import Job
 
 # Import-time side effect: registers manifest block keys. MasteringChain only
@@ -35,7 +35,7 @@ def ensure_stem_separation_available(
 
 def normalize_job_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     """Validate user-configurable blocks without trusting user file paths."""
-    normalized = migrate_format_block(copy.deepcopy(manifest))
+    normalized = migrate_manifest(copy.deepcopy(manifest))
     normalized.setdefault("version", "1.0.0")
     normalized.pop("assets", None)
     mastering = normalized.get("mastering")
@@ -69,7 +69,7 @@ def materialize_manifest(
     ordinary (non-project) job has no snapshot and uses the shared
     `stem_cache_dir` as before.
     """
-    data = migrate_format_block(copy.deepcopy(job.manifest))
+    data = migrate_manifest(copy.deepcopy(job.manifest))
     root_codec = (data.get("format") or {}).get("codec", DEFAULT_CODEC)
     track_snapshots = (job.project_snapshot or {}).get("tracks", {})
     assets = []

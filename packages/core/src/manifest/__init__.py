@@ -81,7 +81,7 @@ from __future__ import annotations
 from upmixer.manifest.load import (  # noqa: F401
     apply_asset_job,
     load_manifest,
-    migrate_format_block,
+    migrate_manifest,
     parse_manifest,
 )
 from upmixer.manifest.schema import (  # noqa: F401
