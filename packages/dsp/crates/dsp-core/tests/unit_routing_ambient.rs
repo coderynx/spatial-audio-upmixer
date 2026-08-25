@@ -4,6 +4,9 @@ mod ambient {
     use super::common;
     use upmixer_dsp_core::kernels::rng::next_unit;
     use upmixer_dsp_core::routing::ambient::*;
+    use upmixer_dsp_core::routing::ambient_expander::{
+        ambient_expander_fir, FixedAmbientExpander714,
+    };
 
     const SR: u32 = 48_000;
     const N: usize = 48_000;
@@ -315,5 +318,84 @@ mod ambient {
         split.reset();
         let second: Vec<f64> = split.advance(0, &left, &right, 0, 4096).rear[0].to_vec();
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn fixed_expander_is_partition_invariant_and_has_no_tail_past_its_fir() {
+        let inputs = [
+            noise(41, 4096),
+            noise(42, 4096),
+            noise(43, 4096),
+            noise(44, 4096),
+        ];
+        let refs = [&inputs[0][..], &inputs[1], &inputs[2], &inputs[3]];
+        let mut whole = FixedAmbientExpander714::new(SR);
+        let expected = whole.process(refs);
+
+        let mut blocked = FixedAmbientExpander714::new(SR);
+        let mut actual: [Vec<f64>; 8] = Default::default();
+        for start in (0..inputs[0].len()).step_by(127) {
+            let end = (start + 127).min(inputs[0].len());
+            for (output, block) in actual.iter_mut().zip(blocked.process([
+                &inputs[0][start..end],
+                &inputs[1][start..end],
+                &inputs[2][start..end],
+                &inputs[3][start..end],
+            ])) {
+                output.extend(block);
+            }
+        }
+        assert_eq!(actual, expected);
+
+        let impulse = [vec![1.0], vec![0.0], vec![0.0], vec![0.0]];
+        let tail = [
+            vec![0.0; 1441],
+            vec![0.0; 1441],
+            vec![0.0; 1441],
+            vec![0.0; 1441],
+        ];
+        let span = ["SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"]
+            .into_iter()
+            .map(|destination| ambient_expander_fir(SR, destination).unwrap().span())
+            .max()
+            .unwrap();
+        let mut expander = FixedAmbientExpander714::new(SR);
+        let _ = expander.process([&impulse[0], &impulse[1], &impulse[2], &impulse[3]]);
+        for output in expander.process([&tail[0], &tail[1], &tail[2], &tail[3]]) {
+            assert!(output[span..].iter().all(|sample| *sample == 0.0));
+        }
+    }
+
+    #[test]
+    fn fixed_expander_uses_a_unique_filter_per_destination() {
+        let input = noise(45, 4096);
+        let mut expander = FixedAmbientExpander714::new(SR);
+        let output = expander.process([&input, &input, &input, &input]);
+        for (index, destination) in ["SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"]
+            .iter()
+            .enumerate()
+        {
+            let expected = ambient_expander_fir(SR, destination)
+                .expect("canonical destination")
+                .process(&input);
+            assert_eq!(output[index], expected, "{destination}");
+        }
+        assert_ne!(output[0], output[2]);
+        assert_ne!(output[4], output[6]);
+        let energy = |signal: &[f64]| signal[1440..].iter().map(|sample| sample * sample).sum::<f64>();
+        let mut correlation = 0.0;
+        let mut pairs = 0;
+        for left in 0..output.len() {
+            for right in left + 1..output.len() {
+                let dot = output[left][1440..]
+                    .iter()
+                    .zip(&output[right][1440..])
+                    .map(|(a, b)| a * b)
+                    .sum::<f64>();
+                correlation += (dot / (energy(&output[left]) * energy(&output[right])).sqrt()).abs();
+                pairs += 1;
+            }
+        }
+        assert!(correlation / (pairs as f64) < 0.1);
     }
 }

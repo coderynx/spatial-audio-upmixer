@@ -1,5 +1,6 @@
 mod decorrelate {
     use upmixer_dsp_core::kernels::rng::next_unit;
+    use upmixer_dsp_core::routing::ambient_expander::{ambient_expander_fir, AMBIENT_EXPANDER_714};
     use upmixer_dsp_core::routing::decorrelate::*;
     use upmixer_dsp_core::kernels::fft::RealFft;
 
@@ -204,6 +205,17 @@ mod decorrelate {
         let mut impulse = vec![1.0, 0.0];
         line.process(&mut impulse);
         assert_eq!(impulse[0], left.taps()[0].1 * f64::from(left.taps()[0].0 == 0));
+    }
+
+    #[test]
+    fn ambient_expander_filters_stay_within_the_velvet_fixture_budget() {
+        for (destination, _, _) in AMBIENT_EXPANDER_714 {
+            let fir = ambient_expander_fir(SR, destination).expect("canonical destination");
+            assert!(
+                third_octave_worst(&impulse_response(&fir)) < 3.5,
+                "{destination} exceeds the third-octave fixture budget"
+            );
+        }
     }
 
     #[test]
