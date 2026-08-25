@@ -22,7 +22,7 @@ export default function App() {
   const projectDetailRoute = /^\/projects\/[^/]+/.test(location.pathname);
   const jobsRoute = location.pathname.startsWith("/jobs");
   const storageRoute = location.pathname.startsWith("/storage");
-  const { jobs, configuration, loading, error, refresh, action } = useJobs(jobsRoute || storageRoute);
+  const { jobs, loading, error, refresh, action } = useJobs(jobsRoute || storageRoute);
   const projectsState = useProjects();
   const navigate = useNavigate();
   const [composerOpen, setComposerOpen] = React.useState(false);
@@ -36,7 +36,7 @@ export default function App() {
     setRemix(job);
     setComposerOpen(true);
   };
-  const effectiveConfiguration = projectsState.configuration || configuration;
+  const effectiveConfiguration = projectsState.configuration;
   // Projects and jobs are fetched independently; the cache and storage views
   // read both, so a refresh from those routes has to reload each of them.
   const refreshAll = () => {
@@ -110,7 +110,7 @@ export default function App() {
         open={composerOpen}
         onOpenChange={setComposerOpen}
         remix={remix}
-        configuration={configuration}
+        configuration={effectiveConfiguration}
         onCreated={() => void refresh(true)}
       />
       <CreateProjectDialog

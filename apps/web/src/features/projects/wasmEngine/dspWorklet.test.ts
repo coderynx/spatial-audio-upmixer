@@ -92,6 +92,17 @@ function quantum(processor: any, elapsed = QUANTUM / SAMPLE_RATE): void {
 }
 
 describe("preview worklet background passes", () => {
+  it("drops a primed block when an update changes output channels", () => {
+    const { processor } = loadProcessor();
+    processor.port.onmessage({ data: { type: "start", frame: 0, loop: false } });
+    expect(processor.primedFrames).toBeGreaterThan(0);
+
+    processor.port.onmessage({
+      data: { type: "update", bytes: new TextEncoder().encode(JSON.stringify({ ...PARAMS, output_mode: "stereo" })) },
+    });
+    expect(processor.primedFrames).toBe(0);
+  });
+
   it("reports missed audio deadlines", () => {
     workletTime = 0;
     const { processor, posted } = loadProcessor();

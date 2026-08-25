@@ -39,7 +39,10 @@ vi.mock("./wasmEngine/engineClient", () => ({
         updateParams: (params: Record<string, unknown>) => sentParams.push(params),
         setTransport: (state: { playing?: boolean; loop?: boolean }) => transportCalls.push(state),
         seek: (frame: number) => seekCalls.push(frame),
-        prime: async () => {},
+        start: (frame: number) => {
+          seekCalls.push(frame);
+          transportCalls.push({ playing: true });
+        },
         measure: async (weights: number[]) => {
           measureCalls.push(measureCalls.length);
           measureWeights.push(weights);
@@ -89,7 +92,9 @@ class FakeAudioContext {
     contextCalls.push("suspend");
     this.state = "suspended";
   }
-  async close() {}
+  async close() {
+    contextCalls.push("close");
+  }
   async decodeAudioData() {
     return {
       duration: 2,
@@ -108,14 +113,14 @@ function Harness(props: Record<string, unknown>) {
   const preview = useStemPreview(
     (props.stems as ProjectStem[]) ?? STEMS,
     { stems: {} },
-    props.mix as never,
+    (props.noManifest ? undefined : props.mix ?? {}) as never,
     null,
     props.mastering as never,
     ["FL", "FR", "C", "LFE", "SL", "SR"],
     (props.outputMode as never) ?? "binaural",
     (props.spatialProfile as never) ?? "studio",
     (props.transauralProfile as never) ?? "stereo",
-    TEST_ENGINE_CONSTANTS,
+    (props.constants ?? TEST_ENGINE_CONSTANTS) as never,
   );
   (globalThis as Record<string, unknown>).preview = preview;
   return null;
@@ -227,10 +232,10 @@ describe("useStemPreview transport", () => {
       await preview.playPause();
     });
     expect(transportCalls.at(-1)).toMatchObject({ playing: true });
-    expect(contextCalls.slice(-2)).toEqual(["suspend", "resume"]);
+    expect(contextCalls).toEqual(["resume"]);
   });
 
-  it("resets the output clock before resuming a playing seek", async () => {
+  it("restarts a playing seek in one worklet command", async () => {
     await renderPreview();
     const preview = (globalThis as unknown as Record<string, unknown>).preview as {
       playPause: () => Promise<void>;
@@ -244,8 +249,8 @@ describe("useStemPreview transport", () => {
       await preview.seek(1);
     });
 
-    expect(transportCalls.slice(-2)).toEqual([{ playing: false }, { playing: true, loop: false }]);
-    expect(contextCalls).toEqual(["suspend", "resume"]);
+    expect(transportCalls.at(-1)).toMatchObject({ playing: true });
+    expect(contextCalls).toEqual([]);
   });
 
   it("seeks in frames at the pinned 48 kHz context rate", async () => {
@@ -257,6 +262,26 @@ describe("useStemPreview transport", () => {
       await preview.seek(1);
     });
     expect(seekCalls.at(-1)).toBe(48000);
+  });
+});
+
+describe("useStemPreview initialization", () => {
+  it("waits for a manifest before creating the preview engine", async () => {
+    const { DspEngineClient } = await import("./wasmEngine/engineClient");
+    const create = DspEngineClient.create as ReturnType<typeof vi.fn>;
+    const calls = create.mock.calls.length;
+    await renderPreview({ noManifest: true });
+    expect(create).toHaveBeenCalledTimes(calls);
+  });
+
+  it("closes the previous context when constants are replaced", async () => {
+    const result = await renderPreview();
+    await act(async () => {
+      result.rerender(<Harness constants={{ ...TEST_ENGINE_CONSTANTS }} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(contextCalls).toContain("close");
   });
 });
 

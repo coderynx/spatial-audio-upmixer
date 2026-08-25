@@ -1,12 +1,10 @@
 import * as React from "react";
-import { api, type Configuration, type Job } from "@/api";
+import { api, type Job } from "@/api";
 
 export type JobAction = "pause" | "resume" | "delete";
 
 export function useJobs(poll: boolean) {
   const [jobs, setJobs] = React.useState<Job[]>([]);
-  const [configuration, setConfiguration] =
-    React.useState<Configuration | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const refresh = React.useCallback(async (quiet = false) => {
@@ -22,10 +20,6 @@ export function useJobs(poll: boolean) {
   }, []);
   React.useEffect(() => {
     void refresh();
-    void api
-      .getConfiguration()
-      .then(setConfiguration)
-      .catch((nextError) => setError((nextError as Error).message));
   }, [refresh]);
   // Only `/jobs` and `/storage` render `jobs` (see App.tsx's `poll` argument)
   // — everywhere else (notably the project preview page) this poll would
@@ -58,5 +52,5 @@ export function useJobs(poll: boolean) {
     },
     [refresh],
   );
-  return { jobs, configuration, loading, error, refresh, action };
+  return { jobs, loading, error, refresh, action };
 }

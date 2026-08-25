@@ -65,8 +65,6 @@ export class DspEngineClient {
   readonly ready: Promise<string>;
 
   private pendingMeasure: ((result: { lkfs: number; dbtp: number } | null) => void) | null = null;
-  private primePromise: Promise<void> | null = null;
-  private resolvePrime: (() => void) | null = null;
   private nextSeekId = 0;
   private readonly pendingSeeks = new Map<number, () => void>();
   /** Latest params awaiting the next coalesced `updateParams` post. */
@@ -142,9 +140,6 @@ export class DspEngineClient {
           }
           break;
         }
-        case "primed":
-          client?.finishPrime();
-          break;
         case "seeked":
           client?.resolveSeek(Number(message.id));
           break;
@@ -244,14 +239,8 @@ export class DspEngineClient {
     });
   }
 
-  /** Render and hold the next quantum before playback starts or resumes. */
-  prime(): Promise<void> {
-    if (this.primePromise) return this.primePromise;
-    this.primePromise = new Promise((resolve) => {
-      this.resolvePrime = resolve;
-    });
-    this.post({ type: "prime" });
-    return this.primePromise;
+  start(frame: number, loop: boolean): void {
+    this.post({ type: "start", frame: Math.max(0, Math.round(frame)), loop });
   }
 
   /**
@@ -297,12 +286,6 @@ export class DspEngineClient {
     this.pendingMeasure = null;
   }
 
-  private finishPrime(): void {
-    this.resolvePrime?.();
-    this.resolvePrime = null;
-    this.primePromise = null;
-  }
-
   private resolveSeek(id: number): void {
     this.pendingSeeks.get(id)?.();
     this.pendingSeeks.delete(id);
@@ -313,7 +296,6 @@ export class DspEngineClient {
     this.pendingUpdate = null;
     this.pendingMeasure?.(null);
     this.pendingMeasure = null;
-    this.finishPrime();
     for (const resolve of this.pendingSeeks.values()) resolve();
     this.pendingSeeks.clear();
     this.node.port.postMessage({ type: "dispose" });

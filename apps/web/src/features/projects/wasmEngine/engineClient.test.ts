@@ -63,15 +63,16 @@ describe("DspEngineClient message ordering", () => {
     expect(port.messages.map((message) => message.type)).toEqual(["update", "transport"]);
   });
 
-  it("flushes parameters and waits for the worklet to prime playback", async () => {
+  it("flushes parameters before the worklet-side start command", async () => {
     const { client, port } = await makeClient();
 
     client.updateParams({ marker: "current" });
-    const primed = client.prime();
+    client.start(48000, true);
 
-    expect(port.messages.map((message) => message.type)).toEqual(["update", "prime"]);
-    port.onmessage?.({ data: { type: "primed" } } as MessageEvent);
-    await primed;
+    expect(port.messages).toMatchObject([
+      { type: "update" },
+      { type: "start", frame: 48000, loop: true },
+    ]);
   });
 
   it("waits for the worklet to finish warming a seek", async () => {

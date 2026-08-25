@@ -160,6 +160,7 @@ export function useStemPreview(
     setSpeakerEnabled(Object.fromEntries([...positionalChannels, "LFE"].map((channel) => [channel, true])));
   }, [layoutChannelsKey, positionalChannels]);
 
+  const hasManifest = Boolean(mix);
   const key = `${stems.map((stem) => `${stem.id}:${stem.preview_url || stem.audio_url}`).join("|")}|${sourcePreviewUrl || ""}|${layoutChannelsKey}`;
   // Value-stable key: `mastering` is a fresh object every render (the project
   // page rebuilds its manifest on every edit, including unrelated mixing
@@ -261,15 +262,15 @@ export function useStemPreview(
   }, [transauralProfile, ready, constants]);
 
   React.useEffect(() => {
-    if (!constants) return;
+    if (!constants || !hasManifest) return;
     engine.initialize().catch(() => {
       // error state already set inside initialize
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [key, constants]);
+  }, [key, constants, hasManifest]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  React.useEffect(() => () => engine.reset(), [key]);
+  React.useEffect(() => () => engine.reset(), [key, hasManifest]);
   React.useEffect(() => {
     setError(null);
   }, [key]);

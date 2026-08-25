@@ -114,14 +114,12 @@ export class PreviewAudioEngine {
   private duration = 0;
   private scrubbing = false;
   private loadToken = 0;
-  private seekToken = 0;
   private appliedDownmixLock = false;
 
   private readonly taps = new FilterTapCache();
   private readonly calibration = new LoudnessCalibration({
     measure: (weights) => this.client?.measure(weights) ?? Promise.resolve(null),
     apply: () => this.apply(),
-    prime: () => this.client?.prime() ?? Promise.resolve(),
     onMeasuring: (measuring) => this.callbacks.onMeasuring(measuring),
     onProgress: (progress) => this.callbacks.onMeasureProgress(progress),
     pause: () => {
@@ -194,19 +192,13 @@ export class PreviewAudioEngine {
     // that invalidate this (see its callers), so the gate lifts on its own.
     if (!this.calibration.covers(this.measureKey())) return false;
     if (this.context.state === "suspended") await this.context.resume();
-    if (time !== this.currentTimeRef.current) await this.moveTo(time);
-    await this.client.prime();
-    await this.resetOutputClock();
+    const frame = Math.max(0, Math.min(time, this.duration)) * CONTEXT_SAMPLE_RATE;
+    this.currentTimeRef.current = frame / CONTEXT_SAMPLE_RATE;
+    this.callbacks.onCurrentTime(this.currentTimeRef.current);
     this.playing = true;
-    this.client.setTransport({ playing: true, loop: this.loop });
+    this.client.start(frame, this.loop);
     this.callbacks.onPlaying(true);
     return true;
-  }
-
-  private async resetOutputClock() {
-    if (!this.context || this.context.state === "closed") return;
-    await this.context.suspend();
-    await this.context.resume();
   }
 
   pause() {
@@ -248,13 +240,15 @@ export class PreviewAudioEngine {
   }
 
   async seek(time: number) {
-    const token = ++this.seekToken;
     const wasPlaying = this.playing;
-    if (wasPlaying) this.client?.setTransport({ playing: false });
-    await this.moveTo(time);
-    if (token !== this.seekToken || !wasPlaying || !this.client) return;
-    await this.resetOutputClock();
-    this.client.setTransport({ playing: true, loop: this.loop });
+    const clamped = Math.max(0, Math.min(time, this.duration));
+    this.currentTimeRef.current = clamped;
+    this.callbacks.onCurrentTime(clamped);
+    if (wasPlaying) {
+      this.client?.start(clamped * CONTEXT_SAMPLE_RATE, this.loop);
+      return;
+    }
+    await this.client?.seek(clamped * CONTEXT_SAMPLE_RATE);
   }
 
   beginScrub() {
@@ -542,6 +536,7 @@ export class PreviewAudioEngine {
 
   async initialize(): Promise<void> {
     if (!this.supported || !this.constants) return;
+    this.reset();
     const token = ++this.loadToken;
     this.loaded = false;
     this.callbacks.onError(null);

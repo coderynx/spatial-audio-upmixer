@@ -168,6 +168,9 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
         if (message.playing !== undefined) this.playing = Boolean(message.playing);
         if (message.loop !== undefined) this.loop = Boolean(message.loop);
         break;
+      case "start":
+        this.start(message.frame, message.loop);
+        break;
       case "seek":
         if (this.engine) {
           this.wasm.dsp_engine_seek(this.engine, message.frame >>> 0);
@@ -176,10 +179,6 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
           this.prime();
         }
         this.port.postMessage({ type: "seeked", id: message.id });
-        break;
-      case "prime":
-        this.prime();
-        this.port.postMessage({ type: "primed" });
         break;
       case "measure":
         this.measure(message.weights || []);
@@ -234,7 +233,9 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     // thread nothing, so it can simply be dropped and started again: the
     // engine asks for a new one whenever the edit touched the routing.
     this.endScale();
-    this.channelCount = this.wasm.dsp_engine_output_channels(this.engine) || this.channelCount;
+    const channelCount = this.wasm.dsp_engine_output_channels(this.engine) || this.channelCount;
+    if (channelCount !== this.channelCount) this.primedFrames = 0;
+    this.channelCount = channelCount;
   }
 
   addStem(left, right) {
@@ -493,6 +494,16 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.channelCount,
       RENDER_QUANTUM,
     );
+  }
+
+  start(frame, loop) {
+    if (!this.engine) return;
+    this.wasm.dsp_engine_seek(this.engine, frame >>> 0);
+    this.ended = false;
+    this.primedFrames = 0;
+    this.prime();
+    this.loop = Boolean(loop);
+    this.playing = true;
   }
 
   process(_inputs, outputs) {
