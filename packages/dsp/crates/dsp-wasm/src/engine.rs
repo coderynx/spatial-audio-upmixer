@@ -94,13 +94,8 @@ pub unsafe extern "C" fn dsp_engine_render(
     n_frames: usize,
 ) -> usize {
     let Some(engine) = engine.as_mut() else { return 0 };
-    let mut scratch = vec![0.0_f64; n_channels * n_frames];
-    let written = engine.render(&mut scratch, n_frames);
     let dst = std::slice::from_raw_parts_mut(out, n_channels * n_frames);
-    for (d, s) in dst.iter_mut().zip(scratch.iter()) {
-        *d = *s as f32;
-    }
-    written
+    engine.render_f32(dst, n_frames)
 }
 
 /// Total frames the loaded stems span.

@@ -16,6 +16,7 @@ use crate::kernels::stft::hann_periodic;
 use crate::loudness_stream::WindowLoudnessMeter;
 use crate::mastering::dyneq::DynamicEq;
 use crate::spatial::downmix::FoldTo51;
+use crate::spatial::panner::PannerLayout;
 
 use crate::stream::master::{CausalChain, LfUnifier, StreamingDecorrelator, StreamingLimiter};
 use crate::stream::meters::Meters;
@@ -23,6 +24,7 @@ use crate::stream::output::OutputStage;
 use crate::stream::params::EngineParams;
 use crate::stream::routing::{LfeBus, StemRouteState};
 use crate::stream::state::{OnePole, StreamingCompressor};
+use render::{build_stem_mix_routes, StemMixRoute};
 
 /// Run-up rendered and discarded before a seek lands, long enough to cover
 /// the Haas delays, the compressor's release, and the LF unifier's horizon.
@@ -97,6 +99,8 @@ pub struct PreviewEngine {
     params: EngineParams,
     stems: Vec<Arc<StemSource>>,
     routes: Vec<StemRouteState>,
+    panner_layout: PannerLayout,
+    stem_mix_routes: Vec<StemMixRoute>,
     /// Per-stem route normalization once `RouteScalePass` has measured it.
     /// Empty until then, and cleared whenever a parameter the routing reads
     /// moves, so the host's estimate stands in rather than a stale
@@ -149,6 +153,7 @@ pub struct PreviewEngine {
     /// `METER_WINDOW_FRAMES` length rather than replanned on every call.
     spectrum_fft: RealFft,
     spectrum_window: Vec<f64>,
+    render_scratch: Vec<f64>,
 }
 
 /// `OutputStage::new` reads its taps from whichever engine field currently
@@ -207,6 +212,13 @@ fn build_output(
 impl PreviewEngine {
     pub fn new(sample_rate: u32, params: EngineParams, stems: Vec<Arc<StemSource>>) -> Self {
         let n_channels = params.speakers.len();
+        let speaker_names: Vec<&str> = params
+            .speakers
+            .iter()
+            .map(|speaker| speaker.name.as_str())
+            .collect();
+        let panner_layout = PannerLayout::new(&speaker_names);
+        let stem_mix_routes = build_stem_mix_routes(&params, &panner_layout);
         let routes = params
             .stems
             .iter()
@@ -268,6 +280,8 @@ impl PreviewEngine {
             params,
             stems,
             routes,
+            panner_layout,
+            stem_mix_routes,
             measured_scales: Vec::new(),
             causal,
             dyn_eq,
@@ -289,6 +303,7 @@ impl PreviewEngine {
             output_meter_tail: vec![Vec::new(); 2],
             spectrum_fft: RealFft::new(METER_WINDOW_FRAMES),
             spectrum_window: hann_periodic(METER_WINDOW_FRAMES),
+            render_scratch: Vec::new(),
         };
         engine.rebuild_loudness_meter();
         engine
@@ -318,6 +333,10 @@ impl PreviewEngine {
 
     pub fn stem_params(&self, index: usize) -> Option<&crate::stream::params::StemParams> {
         self.params.stems.get(index)
+    }
+
+    pub(crate) fn stem_mix_route(&self, index: usize) -> Option<&StemMixRoute> {
+        self.stem_mix_routes.get(index)
     }
 
     pub fn params(&self) -> &EngineParams {
@@ -355,16 +374,30 @@ impl PreviewEngine {
     /// programme. Used to measure without disturbing the live transport; the
     /// stems are shared, not copied, so this costs filter state only.
     pub fn fork(&self) -> Self {
-        let mut engine = Self::new(self.sample_rate, self.params.clone(), self.stems.clone());
+        let mut params = self.params.clone();
+        if let Some(taps) = &self.decode_taps_override {
+            params.decode_taps = taps.clone();
+        }
+        if let Some(taps) = &self.xtc_taps_override {
+            params.xtc_taps = taps.clone();
+        }
+        let mut engine = Self::new(self.sample_rate, params, self.stems.clone());
         engine.decode_taps_override = self.decode_taps_override.clone();
         engine.xtc_taps_override = self.xtc_taps_override.clone();
-        engine.output = build_output(
-            engine.sample_rate,
-            &engine.params,
-            &engine.decode_taps_override,
-            &engine.xtc_taps_override,
-        );
         engine
+    }
+
+    /// Render directly into the Web Audio sample format without allocating a
+    /// temporary f64 block for every worklet callback.
+    pub fn render_f32(&mut self, out: &mut [f32], n_frames: usize) -> usize {
+        let mut scratch = std::mem::take(&mut self.render_scratch);
+        scratch.resize(self.output.output_channels() * n_frames, 0.0);
+        let written = self.render(&mut scratch, n_frames);
+        for (dst, source) in out.iter_mut().zip(&scratch) {
+            *dst = *source as f32;
+        }
+        self.render_scratch = scratch;
+        written
     }
 
     /// Replace the binaural decode bank, independent of `update_params` — it

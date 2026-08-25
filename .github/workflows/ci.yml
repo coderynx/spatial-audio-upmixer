@@ -62,6 +62,7 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
+      - run: sudo apt-get update && sudo apt-get install -y binaryen
       - run: npm ci
       # The committed public/wasm artifact is rebuilt so the parity tests run
       # against this commit's Rust, not whatever was last checked in.

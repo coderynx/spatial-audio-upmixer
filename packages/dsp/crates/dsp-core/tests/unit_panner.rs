@@ -2,7 +2,7 @@
 
 use upmixer_dsp_core::spatial::panner::{
     build_stem_routing, fold_route_to_stereo, has_height, object_routes, placement_route, project,
-    StemPlacement,
+    PannerLayout, StemPlacement,
 };
 
 const FULL: [&str; 12] = [
@@ -227,6 +227,14 @@ fn panning_is_deterministic() {
     for _ in 0..8 {
         assert_eq!(placement_route(&placement, &FULL), first);
     }
+}
+
+#[test]
+fn cached_layout_matches_the_one_shot_panner() {
+    let placement = StemPlacement::new(33.0, 12.0, 70.0, 55.0, 0.2);
+    let cached = PannerLayout::new(&FULL);
+    assert_eq!(cached.placement_route(&placement), placement_route(&placement, &FULL));
+    assert_eq!(cached.object_routes(&placement), object_routes(&placement, &FULL));
 }
 
 #[test]

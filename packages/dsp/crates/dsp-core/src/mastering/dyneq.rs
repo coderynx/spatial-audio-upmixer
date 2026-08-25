@@ -56,7 +56,8 @@ struct Band {
     fast: f64,
     slow: f64,
     /// Design constants of the bell that do not depend on its gain.
-    wn: f64,
+    alpha: f64,
+    cos_w0: f64,
     /// Gain the bell sections currently realize, so the design is rebuilt
     /// only when the detector actually moves it.
     gain: f64,
@@ -68,6 +69,7 @@ impl Band {
         let nyq = sample_rate as f64 / 2.0;
         let wn = (params.freq_hz / nyq).clamp(1e-4, 0.999);
         let q = params.q.max(0.1);
+        let w0 = std::f64::consts::PI * wn;
         Self {
             detect: vec![Sos::new(bandpass_sos(wn, q)); n_bed],
             bell: vec![Sos::new(peaking_sos(wn, q, 1.0)); n_bed],
@@ -75,7 +77,8 @@ impl Band {
             release: alpha(params.release_ms, sample_rate),
             fast: 0.0,
             slow: 0.0,
-            wn,
+            alpha: w0.sin() / (2.0 * q),
+            cos_w0: w0.cos(),
             gain: 1.0,
             peak_cut_db: 0.0,
             params,
@@ -118,7 +121,15 @@ impl Band {
     #[inline]
     fn apply(&mut self, bed: &mut super::Bed, channels: &[usize], frame: usize, gain: f64) {
         if gain != self.gain {
-            let coeffs = peaking_sos(self.wn, self.params.q.max(0.1), gain);
+            let a = gain.sqrt();
+            let coeffs = [
+                1.0 + self.alpha * a,
+                -2.0 * self.cos_w0,
+                1.0 - self.alpha * a,
+                1.0 + self.alpha / a,
+                -2.0 * self.cos_w0,
+                1.0 - self.alpha / a,
+            ];
             for section in &mut self.bell {
                 section.retune(coeffs);
             }

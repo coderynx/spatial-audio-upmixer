@@ -444,6 +444,98 @@ impl Layout {
     }
 }
 
+/// A speaker layout whose hull is built once and reused for static object
+/// placements during streaming playback.
+pub struct PannerLayout {
+    layout: Layout,
+    positional_channels: Vec<usize>,
+    channels: usize,
+    lfe_index: Option<usize>,
+}
+
+impl PannerLayout {
+    pub fn new(channels: &[&str]) -> Self {
+        let positional_channels: Vec<usize> = channels
+            .iter()
+            .enumerate()
+            .filter_map(|(index, name)| is_positional(name).then_some(index))
+            .collect();
+        let positional_names: Vec<&str> = positional_channels
+            .iter()
+            .map(|&index| channels[index])
+            .collect();
+        Self {
+            layout: Layout::new(&positional_names),
+            positional_channels,
+            channels: channels.len(),
+            lfe_index: channels.iter().position(|name| *name == "LFE"),
+        }
+    }
+
+    pub fn placement_route(&self, placement: &StemPlacement) -> Vec<f64> {
+        let gains = self.layout_gains(placement);
+        let norm = gains
+            .iter()
+            .filter(|gain| **gain > MINIMUM_SEND)
+            .map(|gain| gain * gain)
+            .sum::<f64>()
+            .sqrt();
+        let mut route = vec![0.0; self.channels];
+        if norm <= 0.0 {
+            return route;
+        }
+        for (&channel, gain) in self.positional_channels.iter().zip(gains) {
+            if gain > MINIMUM_SEND {
+                route[channel] = gain / norm;
+            }
+        }
+        if placement.lfe > 0.0 {
+            if let Some(index) = self.lfe_index {
+                route[index] = placement.lfe;
+            }
+        }
+        route
+    }
+
+    pub fn object_routes(&self, placement: &StemPlacement) -> [Vec<f64>; 2] {
+        let half_width = placement.width_deg * 0.5;
+        [
+            self.placement_route(&StemPlacement::new(
+                placement.azimuth_deg + half_width,
+                placement.elevation_deg,
+                0.0,
+                placement.spread_deg,
+                0.0,
+            )),
+            self.placement_route(&StemPlacement::new(
+                placement.azimuth_deg - half_width,
+                placement.elevation_deg,
+                0.0,
+                placement.spread_deg,
+                0.0,
+            )),
+        ]
+    }
+
+    fn layout_gains(&self, placement: &StemPlacement) -> Vec<f64> {
+        if self.positional_channels.is_empty() {
+            return Vec::new();
+        }
+        let mut summed = vec![0.0; self.positional_channels.len()];
+        for source in self.layout.virtual_sources(placement) {
+            for (speaker, gain) in self.layout.pan(source).iter().enumerate() {
+                summed[speaker] += gain;
+            }
+        }
+        let norm = summed.iter().map(|value| value * value).sum::<f64>().sqrt();
+        if norm <= 0.0 {
+            vec![0.0; self.positional_channels.len()]
+        } else {
+            summed.into_iter().map(|value| value / norm).collect()
+        }
+    }
+}
+
 /// Constant-power speaker gains for one placement, one entry per name in
 /// `speakers`. Names with no known position contribute nothing.
 pub fn panning_gains(placement: &StemPlacement, speakers: &[&str]) -> Vec<f64> {

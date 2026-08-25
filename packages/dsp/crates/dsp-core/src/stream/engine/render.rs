@@ -10,10 +10,44 @@
 use super::{PreviewEngine, METER_WINDOW_FRAMES, UNIFY_STRIDE};
 use crate::mastering::clip::ClipCurve;
 use crate::spatial::downmix::{apply_stereo_downmix_lock, DownmixRole};
-use crate::spatial::panner::{object_routes, placement_route, StemPlacement};
+use crate::spatial::panner::{PannerLayout, StemPlacement};
 use crate::stream::meters::Level;
 use crate::stream::params::{ObjectMode, SendShape};
 use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND, SIGNALS, STEM_INPUT};
+
+pub(crate) struct StemMixRoute {
+    pub regular: Vec<(usize, usize, f64)>,
+    pub lfe_weight: f64,
+    pub objects: Option<Vec<(usize, usize, f64)>>,
+}
+
+pub(crate) fn build_stem_mix_routes(
+    params: &crate::stream::params::EngineParams,
+    layout: &PannerLayout,
+) -> Vec<StemMixRoute> {
+    params
+        .stems
+        .iter()
+        .map(|stem| {
+            let objects = direct_object_routes(params, stem, layout);
+            let mut lfe_weight = 0.0;
+            let mut regular = Vec::new();
+            for (name, weight) in &stem.routing {
+                if *weight == 0.0 {
+                    continue;
+                }
+                if name == "LFE" {
+                    lfe_weight += weight;
+                } else if objects.is_none() {
+                    if let Some(channel) = params.speaker_index(name) {
+                        regular.push((channel, shape_index(params.shapes[channel]), *weight));
+                    }
+                }
+            }
+            StemMixRoute { regular, lfe_weight, objects }
+        })
+        .collect()
+}
 
 impl PreviewEngine {
     /// Run one stem's routing chain over `count` frames from `start`, leaving
@@ -101,12 +135,12 @@ impl PreviewEngine {
             let route = &self.routes[stem_index];
             let shaped: [&[f64]; SIGNALS] = std::array::from_fn(|i| route.signal(i));
             let ambient = route.has_ambient().then(|| ambient_feeds(&self.params, sp));
-            let objects = direct_object_routes(&self.params, sp);
+            let mix = &self.stem_mix_routes[stem_index];
 
             if !self.params.spatial_downmix_lock {
                 for i in 0..count {
                     let gain = smoother.tick(target_gain);
-                    if let Some(objects) = &objects {
+                    if let Some(objects) = &mix.objects {
                         for (channel, signal, weight) in objects {
                             bed[*channel][i] += shaped[*signal][i]
                                 * weight
@@ -114,23 +148,14 @@ impl PreviewEngine {
                                 * gain;
                         }
                     }
-                    for (name, weight) in &sp.routing {
-                        if objects.is_some() && name != "LFE" {
-                            continue;
-                        }
-                        if *weight == 0.0 {
-                            continue;
-                        }
-                        if name == "LFE" {
-                            lfe_sum[i] += shaped[shape_index(SendShape::Mono)][i] * weight * gain;
-                            continue;
-                        }
-                        let Some(channel) = self.params.speaker_index(name) else {
-                            continue;
-                        };
-                        let speaker = &self.params.speakers[channel];
-                        let signal = shaped[shape_index(self.params.shapes[channel])][i];
-                        bed[channel][i] += signal * weight * speaker.group_gain * gain;
+                    if mix.lfe_weight != 0.0 {
+                        lfe_sum[i] += shaped[shape_index(SendShape::Mono)][i] * mix.lfe_weight * gain;
+                    }
+                    for (channel, signal, weight) in &mix.regular {
+                        bed[*channel][i] += shaped[*signal][i]
+                            * weight
+                            * self.params.speakers[*channel].group_gain
+                            * gain;
                     }
                     if let Some(feeds) = &ambient {
                         for (channel, slot, weight) in feeds {
@@ -146,7 +171,7 @@ impl PreviewEngine {
                     let gain = smoother.tick(target_gain);
                     input_left[i] = shaped[STEM_INPUT][i] * gain;
                     input_right[i] = shaped[STEM_INPUT + 1][i] * gain;
-                    if let Some(objects) = &objects {
+                    if let Some(objects) = &mix.objects {
                         for (channel, signal, weight) in objects {
                             routed[*channel][i] += shaped[*signal][i]
                                 * weight
@@ -154,23 +179,14 @@ impl PreviewEngine {
                                 * gain;
                         }
                     }
-                    for (name, weight) in &sp.routing {
-                        if objects.is_some() && name != "LFE" {
-                            continue;
-                        }
-                        if *weight == 0.0 {
-                            continue;
-                        }
-                        if name == "LFE" {
-                            lfe_sum[i] += shaped[shape_index(SendShape::Mono)][i] * weight * gain;
-                            continue;
-                        }
-                        let Some(channel) = self.params.speaker_index(name) else {
-                            continue;
-                        };
-                        let speaker = &self.params.speakers[channel];
-                        let signal = shaped[shape_index(self.params.shapes[channel])][i];
-                        routed[channel][i] += signal * weight * speaker.group_gain * gain;
+                    if mix.lfe_weight != 0.0 {
+                        lfe_sum[i] += shaped[shape_index(SendShape::Mono)][i] * mix.lfe_weight * gain;
+                    }
+                    for (channel, signal, weight) in &mix.regular {
+                        routed[*channel][i] += shaped[*signal][i]
+                            * weight
+                            * self.params.speakers[*channel].group_gain
+                            * gain;
                     }
                     if let Some(feeds) = &ambient {
                         for (channel, slot, weight) in feeds {
@@ -458,14 +474,10 @@ impl PreviewEngine {
 pub(crate) fn direct_object_routes(
     params: &crate::stream::params::EngineParams,
     sp: &crate::stream::params::StemParams,
+    layout: &PannerLayout,
 ) -> Option<Vec<(usize, usize, f64)>> {
     let mode = sp.object_mode?;
     let placement = sp.object_placement?;
-    let names: Vec<&str> = params
-        .speakers
-        .iter()
-        .map(|speaker| speaker.name.as_str())
-        .collect();
     let point = StemPlacement::new(
         placement.azimuth_deg,
         placement.elevation_deg,
@@ -474,13 +486,13 @@ pub(crate) fn direct_object_routes(
         0.0,
     );
     let routes: Vec<(usize, Vec<f64>)> = match mode {
-        ObjectMode::LinkedStereo => object_routes(&point, &names)
+        ObjectMode::LinkedStereo => layout.object_routes(&point)
             .into_iter()
             .enumerate()
             .collect(),
         ObjectMode::Mono => vec![(
             2,
-            placement_route(
+            layout.placement_route(
                 &StemPlacement::new(
                     placement.azimuth_deg,
                     placement.elevation_deg,
@@ -488,7 +500,6 @@ pub(crate) fn direct_object_routes(
                     placement.spread_deg,
                     0.0,
                 ),
-                &names,
             ),
         )],
     };

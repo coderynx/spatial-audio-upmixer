@@ -19,9 +19,8 @@ use crate::loudness::{gated_power, loudness_channel_weight};
 use crate::loudness_stream::IntegratedLoudnessMeter;
 use crate::stream::params::SendShape;
 use crate::stream::params::StemParams;
-use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND, STEM_INPUT};
+use crate::stream::routing::{AMBIENT_HEIGHT, AMBIENT_SURROUND, STEM_INPUT};
 
-use super::engine::render::direct_object_routes;
 use super::engine::PreviewEngine;
 
 /// The stem's own level, which the routed sum is matched to.
@@ -199,7 +198,7 @@ impl RouteScalePass {
                 .cloned()
                 .unwrap_or_default();
             self.scales
-                .push(scale_from(&meters.finish(), &params, &self.engine));
+                .push(scale_from(&meters.finish(), self.stem, &params, &self.engine));
             self.stem += 1;
             self.cursor = 0;
             self.excerpt = 0;
@@ -234,31 +233,30 @@ impl RouteScalePass {
 /// signal powers: routed loudness matched to the stem's own, K-weighted, with
 /// LFE outside both sums and raw energy as the fallback for material too short
 /// or too quiet to gate.
-fn scale_from(measured: &(Vec<f64>, Vec<f64>), sp: &StemParams, engine: &PreviewEngine) -> f64 {
+fn scale_from(
+    measured: &(Vec<f64>, Vec<f64>),
+    stem: usize,
+    sp: &StemParams,
+    engine: &PreviewEngine,
+) -> f64 {
     let (powers, energies) = measured;
     let params = engine.params();
     let mut routed_power = 0.0;
     let mut routed_energy = 0.0;
-    if let Some(objects) = direct_object_routes(params, sp) {
+    let route = engine.stem_mix_route(stem);
+    if let Some(objects) = route.and_then(|route| route.objects.as_ref()) {
         for (channel, signal, weight) in objects {
-            let speaker = &params.speakers[channel];
-            let gain = weight * speaker.group_gain;
-            routed_power += loudness_channel_weight(&speaker.name) * gain * gain * powers[signal];
-            routed_energy += gain * gain * energies[signal];
+            let speaker = &params.speakers[*channel];
+            let gain = *weight * speaker.group_gain;
+            routed_power += loudness_channel_weight(&speaker.name) * gain * gain * powers[*signal];
+            routed_energy += gain * gain * energies[*signal];
         }
     } else {
-        for (name, weight) in &sp.routing {
-            if *weight == 0.0 || name == "LFE" {
-                continue;
-            }
-            let Some(channel) = params.speaker_index(name) else {
-                continue;
-            };
-            let speaker = &params.speakers[channel];
-            let gain = weight * speaker.group_gain;
-            let signal = shape_index(params.shapes[channel]);
-            routed_power += loudness_channel_weight(name) * gain * gain * powers[signal];
-            routed_energy += gain * gain * energies[signal];
+        for (channel, signal, weight) in route.into_iter().flat_map(|route| &route.regular) {
+            let speaker = &params.speakers[*channel];
+            let gain = *weight * speaker.group_gain;
+            routed_power += loudness_channel_weight(&speaker.name) * gain * gain * powers[*signal];
+            routed_energy += gain * gain * energies[*signal];
         }
     }
 

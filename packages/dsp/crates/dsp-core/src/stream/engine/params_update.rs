@@ -1,7 +1,8 @@
 //! Live parameter edits and the rebuilds a topology change forces.
 
-use super::{build_decorrelator, build_unifier, PreviewEngine, GAIN_RAMP_MS};
+use super::{build_decorrelator, build_stem_mix_routes, build_unifier, PreviewEngine, GAIN_RAMP_MS};
 use crate::mastering::dyneq::DynamicEq;
+use crate::spatial::panner::PannerLayout;
 use crate::stream::master::StreamingLimiter;
 use crate::stream::params::{EngineParams, SendParams, StemParams};
 use crate::stream::routing::StemRouteState;
@@ -27,7 +28,14 @@ pub(crate) fn build_route(
 /// Whether anything the per-stem routing reads has moved: the signals it
 /// builds, the speakers it sends them to, or the gains on the way.
 fn routing_changed(old: &EngineParams, new: &EngineParams) -> bool {
-    if old.stems.len() != new.stems.len() || old.shapes != new.shapes {
+    if old.stems.len() != new.stems.len()
+        || old.shapes != new.shapes
+        || old
+            .speakers
+            .iter()
+            .map(|speaker| &speaker.name)
+            .ne(new.speakers.iter().map(|speaker| &speaker.name))
+    {
         return true;
     }
     let gains: Vec<f64> = old.speakers.iter().map(|s| s.group_gain).collect();
@@ -92,8 +100,12 @@ impl PreviewEngine {
         // input the routing reads is compared here rather than the whole
         // block, so a fader or a mastering edit — which change neither the
         // routed signals nor their weights — keeps the measurement.
-        if sends_changed || routing_changed(&old, &self.params) {
+        let routes_changed = routing_changed(&old, &self.params);
+        if sends_changed || routes_changed {
             self.clear_route_scales();
+        }
+        if routes_changed {
+            self.stem_mix_routes = build_stem_mix_routes(&self.params, &self.panner_layout);
         }
         for (i, route) in self.routes.iter_mut().enumerate() {
             let new_eq = self
@@ -208,6 +220,13 @@ impl PreviewEngine {
     fn rebuild_for_new_topology(&mut self) {
         let n_channels = self.params.speakers.len();
         self.collapsed = vec![Vec::new(); n_channels.max(2)];
+        let speaker_names: Vec<&str> = self
+            .params
+            .speakers
+            .iter()
+            .map(|speaker| speaker.name.as_str())
+            .collect();
+        self.panner_layout = PannerLayout::new(&speaker_names);
         self.rebuild_routes();
         self.lfe_bus.retune(self.sample_rate, &self.params.sends);
         self.dyn_eq = DynamicEq::new(
@@ -249,5 +268,6 @@ impl PreviewEngine {
                 OnePole::new_at(GAIN_RAMP_MS, self.sample_rate as f64, target)
             })
             .collect();
+        self.stem_mix_routes = build_stem_mix_routes(&self.params, &self.panner_layout);
     }
 }

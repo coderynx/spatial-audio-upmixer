@@ -64,27 +64,26 @@ impl Send {
         ));
     }
 
-    #[inline]
-    fn shape(&mut self, x: f64) -> f64 {
+    fn process_in_place(&mut self, buffer: &mut Vec<f64>) {
         match self.elevation {
-            None => self.filters[0].tick(x),
-            Some((low_gain, high_gain, band_gain)) => {
-                let low = self.filters[0].tick(x);
-                let bass_shaped = x - low * (1.0 - low_gain);
-                let high = self.filters[1].tick(bass_shaped);
-                let shelved = bass_shaped + high * (high_gain - 1.0);
-                if band_gain == 1.0 {
-                    shelved
-                } else {
-                    self.filters[2].tick(shelved)
+            None => {
+                for x in buffer.iter_mut() {
+                    *x = self.filters[0].tick(*x);
                 }
             }
-        }
-    }
-
-    fn process_in_place(&mut self, buffer: &mut Vec<f64>) {
-        for x in buffer.iter_mut() {
-            *x = self.shape(*x);
+            Some((low_gain, high_gain, band_gain)) => {
+                for x in buffer.iter_mut() {
+                    let low = self.filters[0].tick(*x);
+                    let bass_shaped = *x - low * (1.0 - low_gain);
+                    let high = self.filters[1].tick(bass_shaped);
+                    let shelved = bass_shaped + high * (high_gain - 1.0);
+                    *x = if band_gain == 1.0 {
+                        shelved
+                    } else {
+                        self.filters[2].tick(shelved)
+                    };
+                }
+            }
         }
         if let Some(velvet) = &mut self.velvet {
             velvet.process(buffer);

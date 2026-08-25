@@ -40,6 +40,12 @@ impl Sos {
         let y = self.b[0] * x + self.z[0];
         self.z[0] = self.b[1] * x - self.a[1] * y + self.z[1];
         self.z[1] = self.b[2] * x - self.a[2] * y;
+        if self.z[0].abs() < 1e-20 {
+            self.z[0] = 0.0;
+        }
+        if self.z[1].abs() < 1e-20 {
+            self.z[1] = 0.0;
+        }
         y
     }
 

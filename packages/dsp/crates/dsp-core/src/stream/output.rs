@@ -16,7 +16,11 @@ use super::params::{EngineParams, OutputMode, SpeakerParams};
 
 /// The voicing chain with carried filter state.
 pub struct StreamingVoicing {
-    params: VoicingParams,
+    crossfeed_amount: f64,
+    bass_gain: f64,
+    air_gain: f64,
+    presence_gain: f64,
+    stereo_widen: f64,
     crossfeed: [SosFilter; 2],
     bass: [SosFilter; 2],
     air: [SosFilter; 2],
@@ -39,7 +43,11 @@ impl StreamingVoicing {
         };
         let pair = |sos: &Vec<[f64; 6]>| [SosFilter::from_flat(sos), SosFilter::from_flat(sos)];
         Self {
-            params: p,
+            crossfeed_amount: p.crossfeed_amount,
+            bass_gain: 10.0_f64.powf(p.bass_shelf_gain_db / 20.0) - 1.0,
+            air_gain: 10.0_f64.powf(p.air_shelf_gain_db / 20.0) - 1.0,
+            presence_gain: 10.0_f64.powf(p.presence_gain_db / 20.0) - 1.0,
+            stereo_widen: p.stereo_widen,
             crossfeed: pair(&crossfeed_sos),
             bass: pair(&bass_sos),
             air: pair(&air_sos),
@@ -49,36 +57,32 @@ impl StreamingVoicing {
 
     #[inline]
     pub fn tick(&mut self, left: f64, right: f64) -> (f64, f64) {
-        let p = self.params;
         let (mut l, mut r) = (left, right);
 
-        if p.crossfeed_amount > 0.0 {
+        if self.crossfeed_amount > 0.0 {
             let bleed_l = self.crossfeed[0].tick(l);
             let bleed_r = self.crossfeed[1].tick(r);
-            let a = p.crossfeed_amount;
+            let a = self.crossfeed_amount;
             let next_l = l * (1.0 - a) + bleed_r * a;
             let next_r = r * (1.0 - a) + bleed_l * a;
             l = next_l;
             r = next_r;
         }
-        if p.bass_shelf_gain_db != 0.0 {
-            let gain = 10.0_f64.powf(p.bass_shelf_gain_db / 20.0) - 1.0;
-            l += self.bass[0].tick(l) * gain;
-            r += self.bass[1].tick(r) * gain;
+        if self.bass_gain != 0.0 {
+            l += self.bass[0].tick(l) * self.bass_gain;
+            r += self.bass[1].tick(r) * self.bass_gain;
         }
-        if p.air_shelf_gain_db != 0.0 {
-            let gain = 10.0_f64.powf(p.air_shelf_gain_db / 20.0) - 1.0;
-            l += self.air[0].tick(l) * gain;
-            r += self.air[1].tick(r) * gain;
+        if self.air_gain != 0.0 {
+            l += self.air[0].tick(l) * self.air_gain;
+            r += self.air[1].tick(r) * self.air_gain;
         }
-        if p.presence_gain_db != 0.0 {
-            let gain = 10.0_f64.powf(p.presence_gain_db / 20.0) - 1.0;
-            l += self.presence[0].tick(l) * gain;
-            r += self.presence[1].tick(r) * gain;
+        if self.presence_gain != 0.0 {
+            l += self.presence[0].tick(l) * self.presence_gain;
+            r += self.presence[1].tick(r) * self.presence_gain;
         }
-        if p.stereo_widen != 0.0 {
+        if self.stereo_widen != 0.0 {
             let mid = (l + r) * 0.5;
-            let side = (l - r) * 0.5 * (1.0 + p.stereo_widen);
+            let side = (l - r) * 0.5 * (1.0 + self.stereo_widen);
             l = mid + side;
             r = mid - side;
         }

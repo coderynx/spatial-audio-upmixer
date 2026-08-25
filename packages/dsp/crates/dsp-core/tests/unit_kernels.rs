@@ -82,6 +82,14 @@ mod biquad {
             assert!((v - gain).abs() < 1e-12);
         }
     }
+
+    #[test]
+    fn tiny_delay_registers_flush_to_zero() {
+        let mut section = Sos::new([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+        section.z = [1e-21, -1e-21];
+        section.tick(0.0);
+        assert_eq!(section.z, [0.0, 0.0]);
+    }
 }
 
 mod butter {
