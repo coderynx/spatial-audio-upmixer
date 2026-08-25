@@ -93,7 +93,13 @@ impl CausalChain {
     /// bass sub/mid filters are cheap to rebuild outright (a few biquad
     /// sections), so they're only touched — and only reset — when `new.bass`
     /// actually differs from what this chain was built with.
-    pub fn retune(&mut self, sample_rate: u32, old: &MasterParams, new: &MasterParams) {
+    pub fn retune(
+        &mut self,
+        sample_rate: u32,
+        old: &MasterParams,
+        new: &MasterParams,
+        firs_changed: bool,
+    ) {
         self.reference_gain = new.reference_gain;
         self.eq_strength = new.eq_strength;
 
@@ -103,7 +109,7 @@ impl CausalChain {
                 .map(|h| SosFilter::from_flat(&head_sos(sample_rate, &h, self.is_lfe)));
         }
 
-        if !self.is_lfe && old.reference_fir != new.reference_fir {
+        if firs_changed && !self.is_lfe && old.reference_fir != new.reference_fir {
             if new.reference_fir.is_empty() {
                 self.reference = None;
             } else if let Some(conv) = &mut self.reference {
@@ -113,7 +119,7 @@ impl CausalChain {
             }
         }
 
-        if !self.is_lfe && old.eq_fir != new.eq_fir {
+        if firs_changed && !self.is_lfe && old.eq_fir != new.eq_fir {
             if new.eq_fir.is_empty() {
                 self.eq = None;
             } else if let Some(conv) = &mut self.eq {
@@ -139,6 +145,32 @@ impl CausalChain {
                     10.0_f64.powf(b.mid_gain_db / 20.0),
                 )
             });
+        }
+    }
+
+    pub fn set_reference_fir(&mut self, taps: &[f64]) {
+        if self.is_lfe {
+            return;
+        }
+        if taps.is_empty() {
+            self.reference = None;
+        } else if let Some(conv) = &mut self.reference {
+            conv.retune_kernel(taps.to_vec());
+        } else {
+            self.reference = Some(StreamingConvolver::new(taps.to_vec()));
+        }
+    }
+
+    pub fn set_eq_fir(&mut self, taps: &[f64]) {
+        if self.is_lfe {
+            return;
+        }
+        if taps.is_empty() {
+            self.eq = None;
+        } else if let Some(conv) = &mut self.eq {
+            conv.retune_kernel(taps.to_vec());
+        } else {
+            self.eq = Some(StreamingConvolver::new(taps.to_vec()));
         }
     }
 
@@ -523,4 +555,3 @@ impl StreamingLimiter {
         }
     }
 }
-

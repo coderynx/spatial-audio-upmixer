@@ -199,6 +199,9 @@ pub struct EngineParams {
     pub stems: Vec<StemParams>,
     #[serde(default)]
     pub master: MasterParams,
+    /// FIR taps travel separately from a live JSON update in the worklet.
+    #[serde(default)]
+    pub transferred_firs: bool,
     pub output_mode: OutputMode,
     /// Flattened `[acn][ear][tap]` binaural decode bank.
     #[serde(default)]

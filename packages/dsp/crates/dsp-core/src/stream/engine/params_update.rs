@@ -27,7 +27,7 @@ pub(crate) fn build_route(
 
 /// Whether anything the per-stem routing reads has moved: the signals it
 /// builds, the speakers it sends them to, or the gains on the way.
-fn routing_changed(old: &EngineParams, new: &EngineParams) -> bool {
+fn routing_changed(old: &EngineParams, new: &EngineParams, firs_changed: bool) -> bool {
     if old.stems.len() != new.stems.len()
         || old.shapes != new.shapes
         || old
@@ -50,7 +50,7 @@ fn routing_changed(old: &EngineParams, new: &EngineParams) -> bool {
     }
     old.stems.iter().zip(&new.stems).any(|(a, b)| {
         a.routing != b.routing
-            || a.eq_fir != b.eq_fir
+            || (firs_changed && a.eq_fir != b.eq_fir)
             || a.ambient_rear != b.ambient_rear
             || a.ambient_height != b.ambient_height
             || a.ambient_height_crossover_hz != b.ambient_height_crossover_hz
@@ -59,7 +59,66 @@ fn routing_changed(old: &EngineParams, new: &EngineParams) -> bool {
     })
 }
 
+fn master_changed_without_firs(
+    old: &crate::stream::params::MasterParams,
+    new: &crate::stream::params::MasterParams,
+) -> bool {
+    old.head != new.head
+        || old.reference_gain != new.reference_gain
+        || old.eq_strength != new.eq_strength
+        || old.dynamic_eq != new.dynamic_eq
+        || old.compressor != new.compressor
+        || old.bass != new.bass
+        || old.clip != new.clip
+        || old.limiter != new.limiter
+        || old.lf_targets != new.lf_targets
+        || old.output_gain != new.output_gain
+}
+
 impl PreviewEngine {
+    /// Replace one stem's FIR without putting every tap through JSON.
+    pub fn set_stem_eq_taps(&mut self, index: usize, taps: Vec<f64>) {
+        let Some(stem) = self.params.stems.get_mut(index) else {
+            return;
+        };
+        if stem.eq_fir == taps {
+            return;
+        }
+        stem.eq_fir = taps;
+        if let Some(route) = self.routes.get_mut(index) {
+            route.retune(
+                self.sample_rate,
+                &self.params.sends,
+                &self.params.stems[index].eq_fir,
+                false,
+                true,
+            );
+        }
+        self.clear_route_scales();
+    }
+
+    /// Replace the mastering EQ FIR without putting its taps through JSON.
+    pub fn set_master_eq_taps(&mut self, taps: Vec<f64>) {
+        if self.params.master.eq_fir == taps {
+            return;
+        }
+        self.params.master.eq_fir = taps;
+        for chain in &mut self.causal {
+            chain.set_eq_fir(&self.params.master.eq_fir);
+        }
+    }
+
+    /// Replace the reference-match FIR without putting its taps through JSON.
+    pub fn set_reference_taps(&mut self, taps: Vec<f64>) {
+        if self.params.master.reference_fir == taps {
+            return;
+        }
+        self.params.master.reference_fir = taps;
+        for chain in &mut self.causal {
+            chain.set_reference_fir(&self.params.master.reference_fir);
+        }
+    }
+
     /// Replace the parameter block, keeping the loaded stems, the playhead,
     /// and — outside a channel-layout change — every filter's carried state
     /// and both look-ahead queues.
@@ -73,18 +132,22 @@ impl PreviewEngine {
     /// params has drained — audible lag on the order of the LF unifier's
     /// horizon plus the limiter's lookahead, not audible silence.
     pub fn update_params(&mut self, params: EngineParams) {
-        let old = std::mem::replace(&mut self.params, params);
+        let firs_changed = !params.transferred_firs;
+        let mut old = std::mem::replace(&mut self.params, params);
+        if !firs_changed {
+            for (new, old) in self.params.stems.iter_mut().zip(&mut old.stems) {
+                new.eq_fir = std::mem::take(&mut old.eq_fir);
+            }
+            self.params.master.reference_fir = std::mem::take(&mut old.master.reference_fir);
+            self.params.master.eq_fir = std::mem::take(&mut old.master.eq_fir);
+        }
 
         let topology_changed = old.speakers.len() != self.params.speakers.len()
             || old.lfe_index != self.params.lfe_index;
         if topology_changed {
-            // Rare — the web client tears the whole worklet down for a
-            // speaker-layout change before this can even fire in practice —
-            // so it keeps the old full-rebuild-then-seek behavior rather
-            // than earning its own diff logic.
             let position = self.emitted;
             self.rebuild_for_new_topology();
-            self.seek(position);
+            self.begin_seek(position);
             return;
         }
 
@@ -100,7 +163,7 @@ impl PreviewEngine {
         // input the routing reads is compared here rather than the whole
         // block, so a fader or a mastering edit — which change neither the
         // routed signals nor their weights — keeps the measurement.
-        let routes_changed = routing_changed(&old, &self.params);
+        let routes_changed = routing_changed(&old, &self.params, firs_changed);
         if sends_changed || routes_changed {
             self.clear_route_scales();
         }
@@ -115,7 +178,7 @@ impl PreviewEngine {
                 .map(|s| s.eq_fir.as_slice())
                 .unwrap_or(&[]);
             let old_eq = old.stems.get(i).map(|s| s.eq_fir.as_slice()).unwrap_or(&[]);
-            let eq_changed = new_eq != old_eq;
+            let eq_changed = firs_changed && new_eq != old_eq;
             if sends_changed || eq_changed {
                 route.retune(
                     self.sample_rate,
@@ -176,9 +239,11 @@ impl PreviewEngine {
                 build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);
         }
 
-        if old.master != self.params.master {
+        if (firs_changed && old.master != self.params.master)
+            || (!firs_changed && master_changed_without_firs(&old.master, &self.params.master))
+        {
             for chain in &mut self.causal {
-                chain.retune(self.sample_rate, &old.master, &self.params.master);
+                chain.retune(self.sample_rate, &old.master, &self.params.master, firs_changed);
             }
         }
 

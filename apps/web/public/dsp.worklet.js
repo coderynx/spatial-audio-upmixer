@@ -11,6 +11,10 @@
 // over through processorOptions, where instantiation is synchronous.
 
 const RENDER_QUANTUM = 128;
+const RENDER_BUDGET_MS = (RENDER_QUANTUM / sampleRate) * 1000;
+const BACKGROUND_RENDER_LIMIT_MS = RENDER_BUDGET_MS * 0.6;
+const SEEK_FRAMES = RENDER_QUANTUM;
+const SCALE_RESTART_DELAY_SECONDS = 0.15;
 
 // Measurement runs in two stages: a fast excerpt pass clears the "calibrating
 // loudness" UI in a few seconds, then an exact whole-programme pass refines
@@ -31,7 +35,7 @@ const MEASURE_FRAMES_FAST_IDLE = 2048;
 // the quantum with a real render: an overrun here drops real audio, not
 // silence. Bench-measured worst-case headroom on the heaviest configuration
 // (order-3 binaural decode, 9 stems) is what sets this value.
-const MEASURE_FRAMES_FAST_PLAYING = 32;
+const MEASURE_FRAMES_FAST_PLAYING = 16;
 
 // Frames of the exact whole-programme pass to advance per quantum while the
 // transport is idle. Measuring the whole programme costs ~0.12x realtime, so
@@ -50,7 +54,7 @@ const MEASURE_FRAMES_IDLE = 384;
 // discipline: a generous slice while the output is silent anyway, a small one
 // while a real render needs the quantum.
 const SCALE_FRAMES_IDLE = 4096;
-const SCALE_FRAMES_PLAYING = 384;
+const SCALE_FRAMES_PLAYING = 64;
 
 // The route-scale pass runs the two stages the loudness pass does: a handful
 // of excerpts for an answer within a second or two, then the whole programme,
@@ -90,6 +94,9 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.measureReported = false;
     this.scalePass = 0;
     this.scaleStage = null;
+    this.scaleRestartAt = 0;
+    this.backgroundTurn = "scale";
+    this.pendingSeekId = null;
 
     try {
       this.instance = new WebAssembly.Instance(module);
@@ -147,6 +154,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       case "params":
         this.primedFrames = 0;
         this.setParams(message.bytes);
+        this.setFirs(message.firs);
         break;
       case "stem":
         this.addStem(message.left, message.right);
@@ -163,6 +171,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
         break;
       case "update":
         this.updateParams(message.bytes);
+        this.setFirs(message.firs);
         break;
       case "transport":
         if (message.playing !== undefined) this.playing = Boolean(message.playing);
@@ -173,12 +182,8 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
         break;
       case "seek":
         if (this.engine) {
-          this.wasm.dsp_engine_seek(this.engine, message.frame >>> 0);
-          this.ended = false;
-          this.primedFrames = 0;
-          this.prime();
+          this.beginSeek(message.frame, message.id);
         }
-        this.port.postMessage({ type: "seeked", id: message.id });
         break;
       case "measure":
         this.measure(message.weights || []);
@@ -232,9 +237,14 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     // mix edit invalidates it. Unlike the loudness pass it owes the main
     // thread nothing, so it can simply be dropped and started again: the
     // engine asks for a new one whenever the edit touched the routing.
-    this.endScale();
+    if (this.wasm.dsp_engine_wants_route_scale(this.engine)) {
+      this.endScale();
+      this.scaleRestartAt = currentTime + SCALE_RESTART_DELAY_SECONDS;
+    }
     const channelCount = this.wasm.dsp_engine_output_channels(this.engine) || this.channelCount;
-    if (channelCount !== this.channelCount) this.primedFrames = 0;
+    if (channelCount !== this.channelCount || this.wasm.dsp_engine_is_seeking(this.engine)) {
+      this.primedFrames = 0;
+    }
     this.channelCount = channelCount;
   }
 
@@ -267,6 +277,29 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     if (!this.engine) return;
     const { ptr, bytes } = this.copyF64(taps);
     this.wasm.dsp_engine_set_xtc_taps(this.engine, ptr, taps.length);
+    this.wasm.dsp_free(ptr, bytes);
+  }
+
+  setFirs(firs) {
+    if (!this.engine || !firs) return;
+    if (firs.masterEq) this.setFir(firs.masterEq, this.wasm.dsp_engine_set_master_eq_taps);
+    if (firs.reference) this.setFir(firs.reference, this.wasm.dsp_engine_set_reference_taps);
+    for (const { index, taps } of firs.stemEq || []) {
+      this.setFir(taps, this.wasm.dsp_engine_set_stem_eq_taps, index);
+    }
+    if (firs.stemEq?.length && this.wasm.dsp_engine_wants_route_scale(this.engine)) {
+      this.endScale();
+      this.scaleRestartAt = currentTime + SCALE_RESTART_DELAY_SECONDS;
+    }
+  }
+
+  setFir(taps, setter, index) {
+    const { ptr, bytes } = this.copyF64(taps);
+    if (index === undefined) {
+      setter(this.engine, ptr, taps.length);
+    } else {
+      setter(this.engine, index, ptr, taps.length);
+    }
     this.wasm.dsp_free(ptr, bytes);
   }
 
@@ -348,13 +381,14 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
   // renders on that instead.
   advanceScale() {
     if (!this.scalePass) {
+      if (currentTime < this.scaleRestartAt) return false;
       if (!this.wasm.dsp_engine_wants_route_scale(this.engine)) return;
       this.beginScale("fast");
-      if (!this.scalePass) return;
+      if (!this.scalePass) return false;
     }
     const step = this.playing ? SCALE_FRAMES_PLAYING : SCALE_FRAMES_IDLE;
     const stage = this.scaleStage;
-    if (!this.wasm.dsp_scale_advance(this.scalePass, this.engine, step)) return;
+    if (!this.wasm.dsp_scale_advance(this.scalePass, this.engine, step)) return true;
     this.endScale();
     // The engine renders on the excerpt answer from here; refine it against
     // the whole programme, which is what the export normalizes by.
@@ -364,6 +398,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     // Every stem just moved by up to several dB, so a loudness correction
     // measured before this one landed is measuring a different programme.
     this.remeasure();
+    return true;
   }
 
   // Re-run the loudness pass against the levels the engine now renders at.
@@ -397,12 +432,11 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
   }
 
   advanceMeasure() {
-    this.advanceScale();
-    if (!this.measurePass) return;
+    if (!this.measurePass) return false;
     // The exact pass only advances while paused; the fast pass also advances
     // during playback, in a small slice, so pressing play right away doesn't
     // stall the banner.
-    if (this.playing && this.measureStage !== "fast") return;
+    if (this.playing && this.measureStage !== "fast") return false;
     const step = this.playing
       ? MEASURE_FRAMES_FAST_PLAYING
       : this.measureStage === "fast"
@@ -419,7 +453,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
           progress: this.wasm.dsp_measure_progress(this.measurePass),
         });
       }
-      return;
+      return true;
     }
     const result = new Float64Array(this.wasm.memory.buffer, this.measureOut, 2);
     const [lkfs, dbtp] = [result[0], result[1]];
@@ -437,6 +471,17 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
         this.wasm.dsp_measure_begin(this.engine, weightPtr, weightCount),
       );
     }
+    return true;
+  }
+
+  advanceBackground(renderMs = 0) {
+    if (this.playing && renderMs > BACKGROUND_RENDER_LIMIT_MS) return;
+    const first = this.backgroundTurn;
+    this.backgroundTurn = first === "scale" ? "measure" : "scale";
+    if (first === "scale" ? this.advanceScale() : this.advanceMeasure()) return;
+    const second = this.backgroundTurn;
+    this.backgroundTurn = second === "scale" ? "measure" : "scale";
+    second === "scale" ? this.advanceScale() : this.advanceMeasure();
   }
 
   endMeasure() {
@@ -498,12 +543,35 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
 
   start(frame, loop) {
     if (!this.engine) return;
-    this.wasm.dsp_engine_seek(this.engine, frame >>> 0);
-    this.ended = false;
-    this.primedFrames = 0;
-    this.prime();
     this.loop = Boolean(loop);
     this.playing = true;
+    this.beginSeek(frame);
+  }
+
+  beginSeek(frame, id = null) {
+    this.wasm.dsp_engine_begin_seek(this.engine, frame >>> 0);
+    this.ended = false;
+    this.primedFrames = 0;
+    this.pendingSeekId = id;
+    this.wasm.dsp_engine_advance_seek(this.engine, 0);
+    if (!this.wasm.dsp_engine_is_seeking(this.engine)) {
+      this.prime();
+      this.finishSeek();
+    }
+  }
+
+  advanceSeek() {
+    if (!this.wasm.dsp_engine_is_seeking(this.engine)) return true;
+    if (!this.wasm.dsp_engine_advance_seek(this.engine, SEEK_FRAMES)) return false;
+    this.finishSeek();
+    return true;
+  }
+
+  finishSeek() {
+    if (this.pendingSeekId !== null) {
+      this.port.postMessage({ type: "seeked", id: this.pendingSeekId });
+      this.pendingSeekId = null;
+    }
   }
 
   process(_inputs, outputs) {
@@ -520,17 +588,23 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     const frames = output[0].length || RENDER_QUANTUM;
     if (!this.playing) {
       for (const channel of output) channel.fill(0);
-      this.advanceMeasure();
+      if (this.advanceSeek()) this.advanceBackground();
+      return true;
+    }
+    if (!this.advanceSeek()) {
+      for (const channel of output) channel.fill(0);
       return true;
     }
     this.ensureOutput(frames);
 
+    const renderStart = performance.now();
     const written = this.primedFrames || this.wasm.dsp_engine_render(
       this.engine,
       this.outPtr,
       this.channelCount,
       frames,
     );
+    const renderMs = performance.now() - renderStart;
     this.primedFrames = 0;
     const rendered = this.heapF32(this.outPtr, this.channelCount * frames);
     for (let channel = 0; channel < output.length; channel += 1) {
@@ -559,7 +633,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.reportCountdown = sampleRate / 30;
       this.report();
     }
-    this.advanceMeasure();
+    this.advanceBackground(renderMs);
     return true;
   }
 }

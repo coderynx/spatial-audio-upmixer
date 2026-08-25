@@ -116,6 +116,18 @@ describe("preview worklet background passes", () => {
     expect(frame?.underruns).toBe(2);
   });
 
+  it("slices a seek's discarded run-up across callbacks", () => {
+    workletTime = 0;
+    const { processor, posted } = loadProcessor();
+    processor.port.onmessage({ data: { type: "seek", id: 7, frame: SAMPLE_RATE } });
+    expect(posted.some((message) => message.type === "seeked")).toBe(false);
+
+    for (let i = 0; i < 200 && !posted.some((message) => message.type === "seeked"); i += 1) {
+      quantum(processor);
+    }
+    expect(posted).toContainEqual({ type: "seeked", id: 7 });
+  });
+
   it("advances the loudness pass while the route-scale pass is still running", () => {
     workletTime = 0;
     const { processor, posted } = loadProcessor();

@@ -6,6 +6,12 @@
 
 export type DspEngineParams = Record<string, unknown>;
 
+type FirUpdate = {
+  masterEq?: Float64Array;
+  reference?: Float64Array;
+  stemEq?: Array<{ index: number; taps: Float64Array }>;
+};
+
 /** `[rms, peak]` pairs: stems, then bed channels, then the output pair. */
 export type DspMeterFrame = {
   position: number;
@@ -71,6 +77,9 @@ export class DspEngineClient {
   private pendingUpdate: DspEngineParams | null = null;
   private updateScheduled = false;
   private disposed = false;
+  private masterEqFir: ArrayLike<number> | null = null;
+  private referenceFir: ArrayLike<number> | null = null;
+  private stemEqFir: Array<ArrayLike<number> | null> = [];
 
   private constructor(
     node: AudioWorkletNode,
@@ -165,8 +174,11 @@ export class DspEngineClient {
   setParams(params: DspEngineParams): void {
     // Supersedes any coalesced update: this block builds a fresh engine.
     this.pendingUpdate = null;
-    const bytes = encodeParams(params);
-    this.node.port.postMessage({ type: "params", bytes }, [bytes.buffer]);
+    this.masterEqFir = null;
+    this.referenceFir = null;
+    this.stemEqFir = [];
+    const { bytes, firs, transfer } = this.prepareParams(params, true);
+    this.node.port.postMessage({ type: "params", bytes, firs }, transfer);
   }
 
   /**
@@ -193,8 +205,54 @@ export class DspEngineClient {
     const latest = this.pendingUpdate;
     this.pendingUpdate = null;
     if (!latest || this.disposed) return;
-    const bytes = encodeParams(latest);
-    this.node.port.postMessage({ type: "update", bytes }, [bytes.buffer]);
+    const { bytes, firs, transfer } = this.prepareParams(latest);
+    this.node.port.postMessage({ type: "update", bytes, firs }, transfer);
+  }
+
+  private prepareParams(
+    params: DspEngineParams,
+    force = false,
+  ): { bytes: Uint8Array; firs: FirUpdate; transfer: Transferable[] } {
+    const firs: FirUpdate = {};
+    const transfer: Transferable[] = [];
+    const master = params.master as Record<string, unknown> | undefined;
+    const take = (
+      source: unknown,
+      previous: ArrayLike<number> | null,
+      setPrevious: (value: ArrayLike<number> | null) => void,
+    ): Float64Array | undefined => {
+      const value = source as ArrayLike<number> | undefined;
+      if (!force && value === previous) return undefined;
+      setPrevious(value ?? null);
+      if (!value && !previous) return undefined;
+      const taps = value ? new Float64Array(value) : new Float64Array();
+      transfer.push(taps.buffer);
+      return taps;
+    };
+
+    if (master) {
+      firs.masterEq = take(master.eq_fir, this.masterEqFir, (value) => (this.masterEqFir = value));
+      firs.reference = take(master.reference_fir, this.referenceFir, (value) => (this.referenceFir = value));
+      delete master.eq_fir;
+      delete master.reference_fir;
+    }
+    const stems = params.stems as Array<Record<string, unknown>> | undefined;
+    if (stems) {
+      const updates: Array<{ index: number; taps: Float64Array }> = [];
+      for (const [index, stem] of stems.entries()) {
+        const taps = take(stem.eq_fir, this.stemEqFir[index] ?? null, (value) => {
+          this.stemEqFir[index] = value ?? null;
+        });
+        if (taps) updates.push({ index, taps });
+        delete stem.eq_fir;
+      }
+      this.stemEqFir.length = stems.length;
+      if (updates.length) firs.stemEq = updates;
+    }
+    params.transferred_firs = true;
+    const bytes = encodeParams(params);
+    transfer.unshift(bytes.buffer);
+    return { bytes, firs, transfer };
   }
 
   /**

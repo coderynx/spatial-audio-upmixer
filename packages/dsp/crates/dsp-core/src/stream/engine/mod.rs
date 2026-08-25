@@ -18,17 +18,16 @@ use crate::mastering::dyneq::DynamicEq;
 use crate::spatial::downmix::FoldTo51;
 use crate::spatial::panner::PannerLayout;
 
-use crate::stream::master::{CausalChain, LfUnifier, StreamingDecorrelator, StreamingLimiter};
+use crate::stream::master::{
+    CausalChain, LfUnifier, StreamingDecorrelator, StreamingLimiter, DECORR_HORIZON_MS,
+    UNIFY_HORIZON_MS,
+};
 use crate::stream::meters::Meters;
 use crate::stream::output::OutputStage;
 use crate::stream::params::EngineParams;
 use crate::stream::routing::{LfeBus, StemRouteState};
 use crate::stream::state::{OnePole, StreamingCompressor};
 use render::{build_stem_mix_routes, StemMixRoute};
-
-/// Run-up rendered and discarded before a seek lands, long enough to cover
-/// the Haas delays, the compressor's release, and the LF unifier's horizon.
-const SEEK_PREROLL_MS: f64 = 500.0;
 
 /// Frames the LF unifier advances per call. Larger amortizes its zero-phase
 /// context further but raises the worst-case cost of a single render.
@@ -133,6 +132,8 @@ pub struct PreviewEngine {
     comp_gr: Queue,
     unify_done: usize,
     emitted: usize,
+    seek_target: Option<usize>,
+    seek_scratch: Vec<f64>,
     total_frames: usize,
     meters: Meters,
     /// EBU Tech 3341 windows over the delivered programme, or `None` when the
@@ -294,6 +295,8 @@ impl PreviewEngine {
             comp_gr: Queue::new(1),
             unify_done: 0,
             emitted: 0,
+            seek_target: None,
+            seek_scratch: Vec::new(),
             total_frames,
             meters: Meters::default(),
             loudness: None,
@@ -446,6 +449,7 @@ impl PreviewEngine {
 
     /// Reset transport and every filter state to the top of the programme.
     pub fn rewind(&mut self) {
+        self.seek_target = None;
         for route in &mut self.routes {
             route.reset();
         }

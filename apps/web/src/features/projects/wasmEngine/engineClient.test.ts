@@ -96,4 +96,19 @@ describe("DspEngineClient message ordering", () => {
 
     expect(port.messages.filter((message) => message.type === "update")).toHaveLength(1);
   });
+
+  it("transfers FIR taps only when they change", async () => {
+    const { client, port } = await makeClient();
+    const stem = new Float64Array([0.2, 0.6, 0.2]);
+    const master = new Float64Array([0.1, 0.8, 0.1]);
+
+    client.setParams({ stems: [{ eq_fir: stem }], master: { eq_fir: master } });
+    const initial = port.messages.at(-1)!;
+    expect(initial.firs).toMatchObject({ masterEq: master, stemEq: [{ index: 0, taps: stem }] });
+    expect(new TextDecoder().decode(initial.bytes as Uint8Array)).not.toContain("eq_fir");
+
+    client.updateParams({ stems: [{ eq_fir: stem }], master: { eq_fir: master } });
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    expect(port.messages.at(-1)?.firs).toEqual({});
+  });
 });

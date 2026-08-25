@@ -1,6 +1,8 @@
 //! Playhead moves: cold jumps and warmed seeks.
 
-use super::{build_decorrelator, build_unifier, PreviewEngine, SEEK_PREROLL_MS};
+use super::{
+    build_decorrelator, build_unifier, PreviewEngine, DECORR_HORIZON_MS, UNIFY_HORIZON_MS,
+};
 use crate::stream::meters::Level;
 
 impl PreviewEngine {
@@ -52,18 +54,46 @@ impl PreviewEngine {
     /// lets every state settle, so a seek lands on the audio the export
     /// would have produced there.
     pub fn seek(&mut self, frame: usize) {
-        let target = frame.min(self.total_frames);
-        let preroll = (self.sample_rate as f64 * SEEK_PREROLL_MS / 1000.0) as usize;
-        self.jump_to(target.saturating_sub(preroll));
+        self.begin_seek(frame);
+        while !self.advance_seek(4096) {}
+    }
 
-        let block = 4096;
-        let width = self.params.speakers.len().max(2);
-        let mut scratch = vec![0.0; width * block];
-        while self.emitted < target {
-            let step = block.min(target - self.emitted);
-            if self.render(&mut scratch, step) == 0 {
-                break;
-            }
+    /// Start a seek without blocking the caller on its discarded run-up.
+    pub fn begin_seek(&mut self, frame: usize) {
+        let target = frame.min(self.total_frames);
+        let release = self
+            .params
+            .master
+            .compressor
+            .map_or(0.0, |compressor| compressor.release_ms);
+        let preroll_ms = release.max(DECORR_HORIZON_MS) + UNIFY_HORIZON_MS;
+        let preroll = (self.sample_rate as f64 * preroll_ms / 1000.0) as usize;
+        self.jump_to(target.saturating_sub(preroll));
+        self.seek_target = Some(target);
+    }
+
+    /// Render up to `frames` of a seek's discarded run-up. Returns true once
+    /// the engine is ready to emit audio at the requested frame.
+    pub fn advance_seek(&mut self, frames: usize) -> bool {
+        let Some(target) = self.seek_target else {
+            return true;
+        };
+        let step = frames.min(target.saturating_sub(self.emitted));
+        if step > 0 {
+            let width = self.params.speakers.len().max(2);
+            let mut scratch = std::mem::take(&mut self.seek_scratch);
+            scratch.resize(width * step, 0.0);
+            self.render(&mut scratch, step);
+            self.seek_scratch = scratch;
         }
+        if self.emitted >= target {
+            self.seek_target = None;
+        }
+        self.seek_target.is_none()
+    }
+
+    /// Whether a seek's run-up still needs to be rendered.
+    pub fn is_seeking(&self) -> bool {
+        self.seek_target.is_some()
     }
 }

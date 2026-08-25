@@ -79,6 +79,67 @@ pub unsafe extern "C" fn dsp_engine_set_xtc_taps(
     engine.set_xtc_taps(std::slice::from_raw_parts(taps_ptr, n_taps).to_vec());
 }
 
+/// Replace one stem's EQ FIR through the binary tap channel.
+///
+/// # Safety
+/// `taps_ptr` must address `n_taps` readable f64 samples.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_set_stem_eq_taps(
+    engine: *mut PreviewEngine,
+    index: usize,
+    taps_ptr: *const f64,
+    n_taps: usize,
+) {
+    if let Some(engine) = engine.as_mut() {
+        let taps = if n_taps == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(taps_ptr, n_taps).to_vec()
+        };
+        engine.set_stem_eq_taps(index, taps);
+    }
+}
+
+/// Replace the master EQ FIR through the binary tap channel.
+///
+/// # Safety
+/// `taps_ptr` must address `n_taps` readable f64 samples.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_set_master_eq_taps(
+    engine: *mut PreviewEngine,
+    taps_ptr: *const f64,
+    n_taps: usize,
+) {
+    if let Some(engine) = engine.as_mut() {
+        let taps = if n_taps == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(taps_ptr, n_taps).to_vec()
+        };
+        engine.set_master_eq_taps(taps);
+    }
+}
+
+/// Replace the reference-match FIR through the binary tap channel.
+///
+/// # Safety
+/// `taps_ptr` must address `n_taps` readable f64 samples.
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_set_reference_taps(
+    engine: *mut PreviewEngine,
+    taps_ptr: *const f64,
+    n_taps: usize,
+) {
+    if let Some(engine) = engine.as_mut() {
+        let taps = if n_taps == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(taps_ptr, n_taps).to_vec()
+        };
+        engine.set_reference_taps(taps);
+    }
+}
+
 /// Render `n_frames` into `out`, channel-major, as f32 for Web Audio.
 ///
 /// Returns the number of frames written; a short count means the programme
@@ -141,6 +202,37 @@ pub unsafe extern "C" fn dsp_engine_seek(engine: *mut PreviewEngine, frame: usiz
     if let Some(engine) = engine.as_mut() {
         engine.seek(frame);
     }
+}
+
+/// Begin a seek whose discarded run-up is advanced separately.
+///
+/// # Safety
+/// `engine` must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_begin_seek(engine: *mut PreviewEngine, frame: usize) {
+    if let Some(engine) = engine.as_mut() {
+        engine.begin_seek(frame);
+    }
+}
+
+/// Advance a pending seek by at most `frames`; returns 1 once it is ready.
+///
+/// # Safety
+/// `engine` must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_advance_seek(engine: *mut PreviewEngine, frames: usize) -> i32 {
+    engine
+        .as_mut()
+        .is_some_and(|engine| engine.advance_seek(frames)) as i32
+}
+
+/// Whether a seek's discarded run-up is still in progress.
+///
+/// # Safety
+/// `engine` must come from [`dsp_engine_new`].
+#[no_mangle]
+pub unsafe extern "C" fn dsp_engine_is_seeking(engine: *const PreviewEngine) -> i32 {
+    engine.as_ref().is_some_and(PreviewEngine::is_seeking) as i32
 }
 
 /// Frames emitted so far, which is the playhead.

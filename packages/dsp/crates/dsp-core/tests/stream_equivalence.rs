@@ -358,7 +358,8 @@ fn seeking_resumes_the_same_audio_the_first_pass_produced() {
 
     // Seek past the point where every filter state has settled, then compare.
     let target = 12_000;
-    engine.seek(target);
+    engine.begin_seek(target);
+    while !engine.advance_seek(128) {}
     assert_eq!(engine.position(), target);
     let written = engine.render(&mut scratch, block);
     assert_eq!(written, block);
@@ -568,4 +569,3 @@ fn clearing_the_limiter_through_update_params_actually_removes_it() {
         "removing the limiter should free the peak above its old ceiling, got {unlimited_peak}"
     );
 }
-
