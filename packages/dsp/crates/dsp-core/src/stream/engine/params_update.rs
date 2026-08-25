@@ -31,7 +31,13 @@ fn routing_changed(old: &EngineParams, new: &EngineParams) -> bool {
         return true;
     }
     let gains: Vec<f64> = old.speakers.iter().map(|s| s.group_gain).collect();
-    if gains != new.speakers.iter().map(|s| s.group_gain).collect::<Vec<f64>>() {
+    if gains
+        != new
+            .speakers
+            .iter()
+            .map(|s| s.group_gain)
+            .collect::<Vec<f64>>()
+    {
         return true;
     }
     old.stems.iter().zip(&new.stems).any(|(a, b)| {
@@ -40,6 +46,8 @@ fn routing_changed(old: &EngineParams, new: &EngineParams) -> bool {
             || a.ambient_rear != b.ambient_rear
             || a.ambient_height != b.ambient_height
             || a.ambient_height_crossover_hz != b.ambient_height_crossover_hz
+            || a.object_mode != b.object_mode
+            || a.object_placement != b.object_placement
     })
 }
 
@@ -59,8 +67,8 @@ impl PreviewEngine {
     pub fn update_params(&mut self, params: EngineParams) {
         let old = std::mem::replace(&mut self.params, params);
 
-        let topology_changed =
-            old.speakers.len() != self.params.speakers.len() || old.lfe_index != self.params.lfe_index;
+        let topology_changed = old.speakers.len() != self.params.speakers.len()
+            || old.lfe_index != self.params.lfe_index;
         if topology_changed {
             // Rare — the web client tears the whole worklet down for a
             // speaker-layout change before this can even fire in practice —
@@ -88,11 +96,22 @@ impl PreviewEngine {
             self.clear_route_scales();
         }
         for (i, route) in self.routes.iter_mut().enumerate() {
-            let new_eq = self.params.stems.get(i).map(|s| s.eq_fir.as_slice()).unwrap_or(&[]);
+            let new_eq = self
+                .params
+                .stems
+                .get(i)
+                .map(|s| s.eq_fir.as_slice())
+                .unwrap_or(&[]);
             let old_eq = old.stems.get(i).map(|s| s.eq_fir.as_slice()).unwrap_or(&[]);
             let eq_changed = new_eq != old_eq;
             if sends_changed || eq_changed {
-                route.retune(self.sample_rate, &self.params.sends, new_eq, sends_changed, eq_changed);
+                route.retune(
+                    self.sample_rate,
+                    &self.params.sends,
+                    new_eq,
+                    sends_changed,
+                    eq_changed,
+                );
             }
             let wants_ambient = self.params.stems.get(i).is_some_and(|s| s.wants_ambient());
             let crossover_changed = old.stems.get(i).is_none_or(|stem| {
@@ -111,7 +130,11 @@ impl PreviewEngine {
         let n_channels = self.params.speakers.len();
         // Rebuilt only when the band list actually moved: a rebuild restarts
         // every detector envelope cold.
-        if !self.dyn_eq.as_ref().is_some_and(|s| s.matches(&self.params.master.dynamic_eq)) {
+        if !self
+            .dyn_eq
+            .as_ref()
+            .is_some_and(|s| s.matches(&self.params.master.dynamic_eq))
+        {
             self.dyn_eq = DynamicEq::new(
                 self.sample_rate,
                 n_channels,
@@ -198,8 +221,7 @@ impl PreviewEngine {
             .master
             .compressor
             .map(|c| StreamingCompressor::new(c, self.sample_rate, n_channels));
-        self.unifier =
-            build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
+        self.unifier = build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
         self.decorrelator =
             build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);
     }

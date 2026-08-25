@@ -14,6 +14,21 @@ use crate::mastering::{
 use crate::routing::ambient::AMBIENT_HEIGHT_CROSSOVER_HZ;
 use crate::spatial::voicing::VoicingParams;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ObjectMode {
+    LinkedStereo,
+    Mono,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+pub struct ObjectPlacement {
+    pub azimuth_deg: f64,
+    pub elevation_deg: f64,
+    pub width_deg: f64,
+    pub spread_deg: f64,
+}
+
 /// How the mastered bed reaches the listener.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -98,6 +113,11 @@ pub struct StemParams {
     /// height sends.
     #[serde(default = "ambient_height_crossover_default")]
     pub ambient_height_crossover_hz: f64,
+    /// Presence makes this stem a direct object over its ambient bed.
+    #[serde(default)]
+    pub object_mode: Option<ObjectMode>,
+    #[serde(default)]
+    pub object_placement: Option<ObjectPlacement>,
 }
 
 fn ambient_height_crossover_default() -> f64 {
@@ -214,8 +234,13 @@ impl EngineParams {
         let class = |s: SendShape| {
             matches!(
                 (shape, s),
-                (SendShape::SurroundLeft | SendShape::SurroundRight, SendShape::SurroundLeft | SendShape::SurroundRight)
-                    | (SendShape::HeightLeft | SendShape::HeightRight, SendShape::HeightLeft | SendShape::HeightRight)
+                (
+                    SendShape::SurroundLeft | SendShape::SurroundRight,
+                    SendShape::SurroundLeft | SendShape::SurroundRight
+                ) | (
+                    SendShape::HeightLeft | SendShape::HeightRight,
+                    SendShape::HeightLeft | SendShape::HeightRight
+                )
             )
         };
         let count = self.shapes.iter().filter(|s| class(**s)).count();

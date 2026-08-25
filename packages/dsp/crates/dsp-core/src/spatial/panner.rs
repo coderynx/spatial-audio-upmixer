@@ -135,8 +135,45 @@ impl StemPlacement {
         spread_deg: f64,
         lfe: f64,
     ) -> Self {
-        Self { azimuth_deg, elevation_deg, width_deg, spread_deg, lfe }
+        Self {
+            azimuth_deg,
+            elevation_deg,
+            width_deg,
+            spread_deg,
+            lfe,
+        }
     }
+}
+
+/// MDAP routes for a linked stereo object's left and right feeds.
+///
+/// The feeds are independent mono objects at the two ends of the placement's
+/// width.  Their spread remains linked, while width zero deliberately puts
+/// both at the same point.
+pub fn object_routes(placement: &StemPlacement, speakers: &[&str]) -> [Vec<f64>; 2] {
+    let half_width = placement.width_deg * 0.5;
+    [
+        placement_route(
+            &StemPlacement::new(
+                placement.azimuth_deg + half_width,
+                placement.elevation_deg,
+                0.0,
+                placement.spread_deg,
+                0.0,
+            ),
+            speakers,
+        ),
+        placement_route(
+            &StemPlacement::new(
+                placement.azimuth_deg - half_width,
+                placement.elevation_deg,
+                0.0,
+                placement.spread_deg,
+                0.0,
+            ),
+            speakers,
+        ),
+    ]
 }
 
 /// Azimuth/elevation of one speaker label, in the geometry convention above.
@@ -145,7 +182,10 @@ impl StemPlacement {
 /// stays the same round trip `binaural/geometry.py` performs: the anchor
 /// points are not unit length, and the conversion is what normalizes them.
 fn speaker_azimuth_elevation(name: &str) -> Option<(f64, f64)> {
-    let position = SPEAKER_COORDINATES.iter().find(|(label, _)| *label == name)?.1;
+    let position = SPEAKER_COORDINATES
+        .iter()
+        .find(|(label, _)| *label == name)?
+        .1;
     let [x, y, z] = position;
     let radius = (x * x + y * y + z * z).sqrt();
     if radius == 0.0 {
@@ -195,7 +235,12 @@ fn determinant(basis: &[f64], dim: usize) -> f64 {
 /// Inverse of a row-major `dim × dim` matrix by the adjugate, `dim` ∈ {2, 3}.
 fn invert(basis: &[f64], dim: usize, det: f64) -> Vec<f64> {
     match dim {
-        2 => vec![basis[3] / det, -basis[1] / det, -basis[2] / det, basis[0] / det],
+        2 => vec![
+            basis[3] / det,
+            -basis[1] / det,
+            -basis[2] / det,
+            basis[0] / det,
+        ],
         _ => {
             let cofactor = [
                 basis[4] * basis[8] - basis[5] * basis[7],
@@ -281,7 +326,9 @@ impl Layout {
             let outside = coordinates.iter().any(|point| {
                 let sum: f64 = (0..dim)
                     .map(|column| {
-                        (0..dim).map(|row| point[row] * inverse[row * dim + column]).sum::<f64>()
+                        (0..dim)
+                            .map(|row| point[row] * inverse[row * dim + column])
+                            .sum::<f64>()
                     })
                     .sum();
                 sum > 1.0 + FACET_EPS
@@ -292,7 +339,13 @@ impl Layout {
             members.push(combination);
             inverses.push(inverse);
         }
-        Self { coordinates, axes, max_elevation_deg, members, inverses }
+        Self {
+            coordinates,
+            axes,
+            max_elevation_deg,
+            members,
+            inverses,
+        }
     }
 
     /// VBAP gains for one direction, one entry per speaker.
@@ -311,7 +364,9 @@ impl Layout {
         for inverse in &self.inverses {
             let gains: Vec<f64> = (0..dim)
                 .map(|column| {
-                    (0..dim).map(|row| point[row] * inverse[row * dim + column]).sum::<f64>()
+                    (0..dim)
+                        .map(|row| point[row] * inverse[row * dim + column])
+                        .sum::<f64>()
                 })
                 .collect();
             minimum.push(gains.iter().copied().fold(f64::INFINITY, f64::min));
@@ -368,15 +423,18 @@ impl Layout {
             (2.0_f64).max((width / VIRTUAL_SOURCE_STEP_DEG).ceil() + 1.0) as usize
         };
         let ring = SPREAD_RING_FACTOR * placement.spread_deg.max(0.0);
-        let offsets: &[f64] = if ring <= 0.0 { &[0.0] } else { &[-ring, 0.0, ring] };
+        let offsets: &[f64] = if ring <= 0.0 {
+            &[0.0]
+        } else {
+            &[-ring, 0.0, ring]
+        };
 
         let mut sources = Vec::with_capacity(count * offsets.len());
         for index in 0..count {
             let azimuth = if count == 1 {
                 placement.azimuth_deg
             } else {
-                placement.azimuth_deg - width / 2.0
-                    + width * index as f64 / (count - 1) as f64
+                placement.azimuth_deg - width / 2.0 + width * index as f64 / (count - 1) as f64
             };
             for offset in offsets {
                 sources.push(direction(azimuth + offset, elevation));
@@ -409,7 +467,9 @@ pub fn panning_gains(placement: &StemPlacement, speakers: &[&str]) -> Vec<f64> {
 /// True when a channel name carries a virtual-loudspeaker position — i.e.
 /// everything except LFE.
 pub fn is_positional(channel: &str) -> bool {
-    SPEAKER_COORDINATES.iter().any(|(label, _)| *label == channel)
+    SPEAKER_COORDINATES
+        .iter()
+        .any(|(label, _)| *label == channel)
 }
 
 /// The highest elevation a channel set can reproduce, in degrees. Placements
@@ -424,7 +484,9 @@ pub fn max_elevation_deg(channels: &[&str]) -> f64 {
 
 /// True when the channel set has a height pair.
 pub fn has_height(channels: &[&str]) -> bool {
-    channels.iter().any(|name| matches!(*name, "TFL" | "TFR" | "TBL" | "TBR"))
+    channels
+        .iter()
+        .any(|name| matches!(*name, "TFL" | "TFR" | "TBL" | "TBR"))
 }
 
 /// Pan one placement into `channels`, constant power, one gain per channel.
@@ -433,7 +495,11 @@ pub fn has_height(channels: &[&str]) -> bool {
 /// and renormalizes so dropping the floored sends does not cost the map its
 /// constant power. Channels the image does not reach read back as zero.
 pub fn placement_route(placement: &StemPlacement, channels: &[&str]) -> Vec<f64> {
-    let speakers: Vec<&str> = channels.iter().copied().filter(|name| is_positional(name)).collect();
+    let speakers: Vec<&str> = channels
+        .iter()
+        .copied()
+        .filter(|name| is_positional(name))
+        .collect();
     let gains = panning_gains(placement, &speakers);
     let norm = gains
         .iter()
@@ -480,8 +546,7 @@ pub fn project(placement: &StemPlacement, channels: &[&str]) -> StemPlacement {
     }
     StemPlacement {
         elevation_deg: 0.0,
-        width_deg: placement.width_deg
-            + HEIGHT_FLATTEN_WIDTH_FACTOR * placement.elevation_deg,
+        width_deg: placement.width_deg + HEIGHT_FLATTEN_WIDTH_FACTOR * placement.elevation_deg,
         ..*placement
     }
 }
@@ -513,11 +578,7 @@ pub fn fold_route_to_stereo(route: &[f64], channels: &[&str]) -> (f64, f64) {
 }
 
 /// The placement a preset gives one stem, realized on `channels`.
-pub fn resolve_placement(
-    preset: &str,
-    stem: &str,
-    channels: &[&str],
-) -> Option<StemPlacement> {
+pub fn resolve_placement(preset: &str, stem: &str, channels: &[&str]) -> Option<StemPlacement> {
     super::presets::preset_placement(preset, stem).map(|placement| project(&placement, channels))
 }
 
@@ -532,8 +593,11 @@ pub fn build_stem_routing(
     preset: &str,
 ) -> Vec<(String, Vec<f64>)> {
     let to_stereo = channels.len() == 2;
-    let panning_channels: Vec<&str> =
-        if to_stereo { STEREO_PLACEMENT_CHANNELS.to_vec() } else { channels.to_vec() };
+    let panning_channels: Vec<&str> = if to_stereo {
+        STEREO_PLACEMENT_CHANNELS.to_vec()
+    } else {
+        channels.to_vec()
+    };
 
     let mut routing = Vec::new();
     for stem in stems {

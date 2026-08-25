@@ -167,6 +167,7 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
     choices = {
         "engine.mode": {"stem"},
         "mixing.channel_layout": set(FORMAT_MAP),
+        "mixing.spatial_render_model": {"bed", "object-bed"},
         "format.type": {"multichannel", "adm-bwf", "binaural", "transaural"},
         "format.codec": set(CODECS),
         "format.subtype": set(WAV_SUBTYPES),
@@ -351,6 +352,15 @@ def validate_manifest(data: dict) -> None:
             for stem_key in solo:
                 if not _valid_route_stem(stem_key):
                     raise ManifestError(f"Unknown solo stem '{stem_key}'.")
+        object_modes = mixing.get("stem_object_mode")
+        if object_modes is not None:
+            if not isinstance(object_modes, dict):
+                raise ManifestError(f"{location}.mixing.stem_object_mode must be a mapping.")
+            for stem_key, mode in object_modes.items():
+                if not _valid_route_stem(stem_key) or mode not in {"linked-stereo", "mono"}:
+                    raise ManifestError(
+                        f"{location}.mixing.stem_object_mode.{stem_key} must be linked-stereo or mono."
+                    )
         placement = mixing.get("stem_placement")
         if placement is not None:
             if not isinstance(placement, dict):

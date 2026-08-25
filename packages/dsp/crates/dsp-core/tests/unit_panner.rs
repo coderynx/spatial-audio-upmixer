@@ -1,7 +1,7 @@
 //! MDAP panner invariants: hull behaviour, symmetry, and constant power.
 
 use upmixer_dsp_core::spatial::panner::{
-    build_stem_routing, fold_route_to_stereo, has_height, placement_route, project,
+    build_stem_routing, fold_route_to_stereo, has_height, object_routes, placement_route, project,
     StemPlacement,
 };
 
@@ -15,7 +15,10 @@ fn point(azimuth: f64, elevation: f64) -> StemPlacement {
 }
 
 fn gain(route: &[f64], channels: &[&str], channel: &str) -> f64 {
-    let index = channels.iter().position(|name| *name == channel).expect("channel present");
+    let index = channels
+        .iter()
+        .position(|name| *name == channel)
+        .expect("channel present");
     route[index]
 }
 
@@ -32,9 +35,16 @@ fn power(route: &[f64], channels: &[&str]) -> f64 {
 #[test]
 fn a_point_placement_lands_on_the_speaker_it_names() {
     let route = placement_route(&point(0.0, 0.0), &FULL);
-    assert!(gain(&route, &FULL, "C") > 0.99, "front centre should be all C");
+    assert!(
+        gain(&route, &FULL, "C") > 0.99,
+        "front centre should be all C"
+    );
     for channel in ["SL", "SR", "BL", "BR", "TBL", "TBR"] {
-        assert_eq!(gain(&route, &FULL, channel), 0.0, "{channel} should be silent");
+        assert_eq!(
+            gain(&route, &FULL, channel),
+            0.0,
+            "{channel} should be silent"
+        );
     }
 }
 
@@ -58,7 +68,10 @@ fn mirrored_azimuths_mirror_the_speaker_gains() {
     for (side, mirror) in [("FL", "FR"), ("SL", "SR"), ("BL", "BR"), ("TFL", "TFR")] {
         let a = gain(&left, &FULL, side);
         let b = gain(&right, &FULL, mirror);
-        assert!((a - b).abs() < 1e-12, "{side}/{mirror} broke mirror symmetry: {a} vs {b}");
+        assert!(
+            (a - b).abs() < 1e-12,
+            "{side}/{mirror} broke mirror symmetry: {a} vs {b}"
+        );
     }
 }
 
@@ -83,8 +96,14 @@ fn a_rear_placement_pins_to_the_side_pair_on_a_bed_with_no_rears() {
     let route = placement_route(&point(180.0, 0.0), &BED_51);
     let left = gain(&route, &BED_51, "SL");
     let right = gain(&route, &BED_51, "SR");
-    assert!(left > 0.4 && right > 0.4, "rear should project onto SL/SR, got {left}/{right}");
-    assert!((left - right).abs() < 1e-12, "a centred rear should stay centred");
+    assert!(
+        left > 0.4 && right > 0.4,
+        "rear should project onto SL/SR, got {left}/{right}"
+    );
+    assert!(
+        (left - right).abs() < 1e-12,
+        "a centred rear should stay centred"
+    );
     assert_eq!(gain(&route, &BED_51, "C"), 0.0, "rear must not leak into C");
 }
 
@@ -95,7 +114,8 @@ fn elevation_is_clamped_to_what_the_layout_spans() {
     for index in 0..FULL.len() {
         assert!(
             (overhead[index] - ceiling[index]).abs() < 0.05,
-            "{} differed past the height layer", FULL[index],
+            "{} differed past the height layer",
+            FULL[index],
         );
     }
     let below = placement_route(&point(0.0, -45.0), &FULL);
@@ -110,7 +130,11 @@ fn a_flat_layout_spends_elevation_on_width() {
     let flattened = project(&placement, &BED_51);
     assert_eq!(flattened.elevation_deg, 0.0);
     assert_eq!(flattened.width_deg, 80.0);
-    assert_eq!(project(&placement, &FULL), placement, "a height layout keeps it");
+    assert_eq!(
+        project(&placement, &FULL),
+        placement,
+        "a height layout keeps it"
+    );
 }
 
 #[test]
@@ -118,7 +142,10 @@ fn width_widens_the_image_instead_of_moving_it() {
     let narrow = placement_route(&StemPlacement::new(0.0, 0.0, 0.0, 40.0, 0.0), &FULL);
     let wide = placement_route(&StemPlacement::new(0.0, 0.0, 120.0, 40.0, 0.0), &FULL);
     let reach = |route: &[f64]| route.iter().filter(|gain| **gain > 0.0).count();
-    assert!(reach(&wide) > reach(&narrow), "a wide image should touch more speakers");
+    assert!(
+        reach(&wide) > reach(&narrow),
+        "a wide image should touch more speakers"
+    );
     assert!(
         gain(&wide, &FULL, "FL") > gain(&narrow, &FULL, "FL"),
         "widening should push energy into the front pair",
@@ -126,11 +153,34 @@ fn width_widens_the_image_instead_of_moving_it() {
 }
 
 #[test]
+fn linked_object_endpoints_follow_width_and_co_locate_at_zero() {
+    let point = StemPlacement::new(20.0, 15.0, 0.0, 30.0, 0.0);
+    let [left, right] = object_routes(&point, &FULL);
+    assert_eq!(left, right);
+
+    let [left, right] = object_routes(
+        &StemPlacement {
+            width_deg: 80.0,
+            ..point
+        },
+        &FULL,
+    );
+    assert_ne!(left, right);
+    assert!(gain(&left, &FULL, "FL") > gain(&right, &FULL, "FL"));
+}
+
+#[test]
 fn the_lfe_send_passes_through_untouched() {
     let placement = StemPlacement::new(0.0, 0.0, 60.0, 40.0, 0.75);
     let route = placement_route(&placement, &FULL);
     assert_eq!(gain(&route, &FULL, "LFE"), 0.75);
-    let no_lfe = placement_route(&StemPlacement { lfe: 0.0, ..placement }, &FULL);
+    let no_lfe = placement_route(
+        &StemPlacement {
+            lfe: 0.0,
+            ..placement
+        },
+        &FULL,
+    );
     assert_eq!(gain(&no_lfe, &FULL, "LFE"), 0.0);
     assert!(
         (power(&route, &FULL) - power(&no_lfe, &FULL)).abs() < 1e-12,
@@ -157,7 +207,10 @@ fn stereo_routing_reaches_only_the_front_pair() {
     assert_eq!(routing.len(), 2);
     for (stem, route) in routing {
         assert_eq!(route.len(), 2, "{stem} should fold to two channels");
-        assert!(route.iter().all(|gain| *gain > 0.0), "{stem} lost a side in the fold");
+        assert!(
+            route.iter().all(|gain| *gain > 0.0),
+            "{stem} lost a side in the fold"
+        );
     }
 }
 
@@ -186,9 +239,15 @@ fn preset_ambient_keeps_the_pulse_dry_and_scales_the_room_per_preset() {
         for (stem, _) in preset_stems(preset) {
             let (rear, height) = preset_ambient(preset, stem).unwrap();
             assert!((0.0..=0.9).contains(&rear), "{preset}/{stem} rear {rear}");
-            assert!((0.0..=0.9).contains(&height), "{preset}/{stem} height {height}");
+            assert!(
+                (0.0..=0.9).contains(&height),
+                "{preset}/{stem} height {height}"
+            );
             let crossover = preset_ambient_height_crossover(preset, stem).unwrap();
-            assert!([500.0, 2000.0, 4000.0].contains(&crossover), "{preset}/{stem}");
+            assert!(
+                [500.0, 2000.0, 4000.0].contains(&crossover),
+                "{preset}/{stem}"
+            );
             if matches!(*stem, "Lead Vocals" | "Kick" | "Snare" | "Bass") {
                 assert_eq!((rear, height), (0.0, 0.0), "{preset}/{stem}");
             }
@@ -200,8 +259,17 @@ fn preset_ambient_keeps_the_pulse_dry_and_scales_the_room_per_preset() {
     assert!(preset_ambient("immersive", "Crowd").unwrap().1 > live.1);
     assert!(preset_ambient("balanced", "nope").is_none());
     assert!(preset_ambient("nope", "Crowd").is_none());
-    assert_eq!(preset_ambient_height_crossover("balanced", "Vocals Reverb"), Some(500.0));
-    assert_eq!(preset_ambient_height_crossover("balanced", "Vocals"), Some(4000.0));
-    assert_eq!(preset_ambient_height_crossover("balanced", "Guitar"), Some(2000.0));
+    assert_eq!(
+        preset_ambient_height_crossover("balanced", "Vocals Reverb"),
+        Some(500.0)
+    );
+    assert_eq!(
+        preset_ambient_height_crossover("balanced", "Vocals"),
+        Some(4000.0)
+    );
+    assert_eq!(
+        preset_ambient_height_crossover("balanced", "Guitar"),
+        Some(2000.0)
+    );
     assert_eq!(preset_ambient_height_crossover("nope", "Crowd"), None);
 }

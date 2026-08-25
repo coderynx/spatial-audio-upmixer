@@ -98,6 +98,16 @@ def test_spatial_downmix_lock_and_ambient_flags_override_the_manifest():
     assert config.stem_ambient_height_crossover_hz == {"Vocals": 500.0}
 
 
+def test_object_bed_flags_override_the_manifest():
+    config = UpmixConfig(spatial_render_model="bed", stem_object_mode={"Vocals": "linked-stereo"})
+    args = _parsed(["--spatial-render-model", "object-bed", "--stem-object-mode", "Vocals=mono"])
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    assert config.spatial_render_model == "object-bed"
+    assert config.stem_object_mode == {"Vocals": "mono"}
+
+
 def test_ambient_height_crossover_rejects_an_out_of_range_value():
     config = UpmixConfig()
     args = _parsed(["--stem-ambient-height-crossover", "Vocals=4001"])

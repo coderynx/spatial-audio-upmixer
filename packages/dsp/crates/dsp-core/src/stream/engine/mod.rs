@@ -6,7 +6,7 @@
 
 mod analysis;
 mod params_update;
-mod render;
+pub(crate) mod render;
 mod transport;
 
 use std::sync::Arc;
@@ -17,9 +17,7 @@ use crate::loudness_stream::WindowLoudnessMeter;
 use crate::mastering::dyneq::DynamicEq;
 use crate::spatial::downmix::FoldTo51;
 
-use crate::stream::master::{
-    CausalChain, LfUnifier, StreamingDecorrelator, StreamingLimiter,
-};
+use crate::stream::master::{CausalChain, LfUnifier, StreamingDecorrelator, StreamingLimiter};
 use crate::stream::meters::Meters;
 use crate::stream::output::OutputStage;
 use crate::stream::params::EngineParams;
@@ -70,7 +68,10 @@ struct Queue {
 
 impl Queue {
     fn new(n_channels: usize) -> Self {
-        Self { base: 0, channels: vec![Vec::new(); n_channels] }
+        Self {
+            base: 0,
+            channels: vec![Vec::new(); n_channels],
+        }
     }
 
     fn end(&self) -> usize {
@@ -78,7 +79,9 @@ impl Queue {
     }
 
     fn drain_to(&mut self, absolute: usize) {
-        let keep_from = absolute.saturating_sub(self.base).min(self.channels[0].len());
+        let keep_from = absolute
+            .saturating_sub(self.base)
+            .min(self.channels[0].len());
         if keep_from == 0 {
             return;
         }
@@ -242,11 +245,17 @@ impl PreviewEngine {
                 OnePole::new_at(GAIN_RAMP_MS, sample_rate as f64, target)
             })
             .collect();
-        let master_gain = OnePole::new_at(GAIN_RAMP_MS, sample_rate as f64, params.master.output_gain);
+        let master_gain =
+            OnePole::new_at(GAIN_RAMP_MS, sample_rate as f64, params.master.output_gain);
 
         let decode_taps_override = None;
         let xtc_taps_override = None;
-        let output = build_output(sample_rate, &params, &decode_taps_override, &xtc_taps_override);
+        let output = build_output(
+            sample_rate,
+            &params,
+            &decode_taps_override,
+            &xtc_taps_override,
+        );
         let mut engine = Self {
             sample_rate,
             lfe_bus: LfeBus::new(sample_rate, &params.sends),
@@ -364,13 +373,23 @@ impl PreviewEngine {
     /// spatial profile does, unlike the rest of the mix.
     pub fn set_decode_taps(&mut self, taps: Vec<f64>) {
         self.decode_taps_override = Some(taps);
-        self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
+        self.output = build_output(
+            self.sample_rate,
+            &self.params,
+            &self.decode_taps_override,
+            &self.xtc_taps_override,
+        );
     }
 
     /// Replace the crosstalk-cancellation matrix. See `set_decode_taps`.
     pub fn set_xtc_taps(&mut self, taps: Vec<f64>) {
         self.xtc_taps_override = Some(taps);
-        self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
+        self.output = build_output(
+            self.sample_rate,
+            &self.params,
+            &self.decode_taps_override,
+            &self.xtc_taps_override,
+        );
     }
 
     pub fn total_frames(&self) -> usize {
@@ -392,7 +411,6 @@ impl PreviewEngine {
             .collect()
     }
 
-
     /// Reset transport and every filter state to the top of the programme.
     pub fn rewind(&mut self) {
         for route in &mut self.routes {
@@ -410,15 +428,23 @@ impl PreviewEngine {
         self.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params, 0);
         self.causal = (0..n_channels)
             .map(|i| {
-                CausalChain::new(self.sample_rate, &self.params.master, self.params.lfe_index == Some(i))
+                CausalChain::new(
+                    self.sample_rate,
+                    &self.params.master,
+                    self.params.lfe_index == Some(i),
+                )
             })
             .collect();
-        self.limiter = self
-            .params
-            .master
-            .limiter
-            .map(|l| StreamingLimiter::new(l, self.sample_rate, n_channels, self.params.lfe_index));
-        self.output = build_output(self.sample_rate, &self.params, &self.decode_taps_override, &self.xtc_taps_override);
+        self.limiter =
+            self.params.master.limiter.map(|l| {
+                StreamingLimiter::new(l, self.sample_rate, n_channels, self.params.lfe_index)
+            });
+        self.output = build_output(
+            self.sample_rate,
+            &self.params,
+            &self.decode_taps_override,
+            &self.xtc_taps_override,
+        );
         self.pre = Queue::new(n_channels);
         self.post = Queue::new(n_channels);
         self.comp_gr = Queue::new(1);

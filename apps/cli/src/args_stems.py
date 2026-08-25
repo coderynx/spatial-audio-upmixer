@@ -67,6 +67,18 @@ def add_stem_args(parser: argparse.ArgumentParser) -> None:
         help="Keep each routed stem's BS.775 stereo fold equal to its input pair (default: disabled).",
     )
     parser.add_argument(
+        "--spatial-render-model",
+        choices=("bed", "object-bed"),
+        default=None,
+        help="Render direct stems as objects over the ambient bed (default: bed).",
+    )
+    parser.add_argument(
+        "--stem-object-mode",
+        default=None,
+        metavar="STEM=MODE[,...]",
+        help="Object feed mode per stem: linked-stereo or mono.",
+    )
+    parser.add_argument(
         "--stem-ambient-rear",
         default=None,
         metavar="STEM=AMOUNT[,...]",

@@ -17,6 +17,9 @@ export type MixPreview = {
   stem_ambient_rear?: Record<string, number>;
   stem_ambient_height?: Record<string, number>;
   stem_ambient_height_crossover_hz?: Record<string, number>;
+  spatial_render_model?: "bed" | "object-bed";
+  stem_object_mode?: Record<string, "linked-stereo" | "mono">;
+  stem_placement?: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; spread_deg: number }>;
   spatial_downmix_lock?: boolean;
   stem_enabled?: Record<string, boolean>;
   stem_solo?: string[];

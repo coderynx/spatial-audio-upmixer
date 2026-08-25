@@ -61,6 +61,19 @@ fn placement_route(
 }
 
 #[pyfunction]
+fn object_routes(
+    azimuth_deg: f64,
+    elevation_deg: f64,
+    width_deg: f64,
+    spread_deg: f64,
+    channels: Vec<String>,
+) -> (Vec<f64>, Vec<f64>) {
+    let value = placement((azimuth_deg, elevation_deg, width_deg, spread_deg, 0.0));
+    let [left, right] = panner::object_routes(&value, &as_refs(&channels));
+    (left, right)
+}
+
+#[pyfunction]
 fn project_placement(
     azimuth_deg: f64,
     elevation_deg: f64,
@@ -104,6 +117,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(direction, m)?)?;
     m.add_function(wrap_pyfunction!(panning_gains, m)?)?;
     m.add_function(wrap_pyfunction!(placement_route, m)?)?;
+    m.add_function(wrap_pyfunction!(object_routes, m)?)?;
     m.add_function(wrap_pyfunction!(project_placement, m)?)?;
     m.add_function(wrap_pyfunction!(build_stem_routing, m)?)?;
     m.add_function(wrap_pyfunction!(fold_route_to_stereo, m)?)?;
@@ -112,7 +126,13 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("VIRTUAL_SOURCE_STEP_DEG", panner::VIRTUAL_SOURCE_STEP_DEG)?;
     m.add("SPREAD_RING_FACTOR", panner::SPREAD_RING_FACTOR)?;
     m.add("MINIMUM_SEND", panner::MINIMUM_SEND)?;
-    m.add("HEIGHT_FLATTEN_WIDTH_FACTOR", panner::HEIGHT_FLATTEN_WIDTH_FACTOR)?;
-    m.add("STEREO_PLACEMENT_CHANNELS", panner::STEREO_PLACEMENT_CHANNELS)?;
+    m.add(
+        "HEIGHT_FLATTEN_WIDTH_FACTOR",
+        panner::HEIGHT_FLATTEN_WIDTH_FACTOR,
+    )?;
+    m.add(
+        "STEREO_PLACEMENT_CHANNELS",
+        panner::STEREO_PLACEMENT_CHANNELS,
+    )?;
     Ok(())
 }

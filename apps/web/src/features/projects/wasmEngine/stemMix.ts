@@ -13,6 +13,9 @@ export type MixPreviewShape = {
   stem_ambient_height?: Record<string, number>;
   stem_ambient_height_crossover_hz?: Record<string, number>;
   spatial_downmix_lock?: boolean;
+  spatial_render_model?: "bed" | "object-bed";
+  stem_object_mode?: Record<string, "linked-stereo" | "mono">;
+  stem_placement?: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; spread_deg: number }>;
   stem_source_anchor_strength?: number;
 };
 
@@ -57,6 +60,17 @@ export function resolveStemMixes(options: {
     const crossover = mix?.stem_ambient_height_crossover_hz?.[stem.stem_key]
       ?? mix?.stem_ambient_height_crossover_hz?.[base]
       ?? 2000;
+    const placement = mix?.stem_placement?.[stem.stem_key]
+      ?? mix?.stem_placement?.[base]
+      ?? (scene.azimuth_deg != null ? {
+        azimuth_deg: scene.azimuth_deg,
+        elevation_deg: scene.elevation_deg ?? 0,
+        width_deg: 0,
+        spread_deg: 60,
+      } : undefined);
+    const objectMode = mix?.spatial_render_model === "object-bed" && placement
+      ? mix.stem_object_mode?.[stem.stem_key] ?? mix.stem_object_mode?.[base] ?? "linked-stereo"
+      : undefined;
 
     const anchorDb = 20 * Math.log10(Math.max(1 - anchor * frontFraction, 1e-6));
     return {
@@ -69,6 +83,8 @@ export function resolveStemMixes(options: {
       ambientRear: send(mix?.stem_ambient_rear),
       ambientHeight: send(mix?.stem_ambient_height),
       ambientHeightCrossoverHz: Math.min(4000, Math.max(500, crossover)),
+      objectMode,
+      objectPlacement: placement,
     };
   });
 }

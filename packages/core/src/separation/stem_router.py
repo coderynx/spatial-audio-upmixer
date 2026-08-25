@@ -44,7 +44,13 @@ from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
 from upmixer.manifest import register_block as _rb
 from upmixer.loudness import CHANNEL_WEIGHT, k_weighted_power
-from upmixer.separation.stem_placement import STEM_ROUTING_PRESET_NAMES, preset_routing
+from upmixer.separation.stem_placement import (
+    STEM_ROUTING_PRESET_NAMES,
+    STEM_ROUTING_PRESETS,
+    StemPlacement,
+    placement_route,
+    preset_routing,
+)
 from upmixer.utils import (
     HEIGHT_VELVET_SEED,
     SURROUND_VELVET_SEED,
@@ -305,6 +311,38 @@ class StemRouter:
         self._sr = sample_rate
         self._lfe_gain = config.lfe_gain
 
+    def _object_routes_for(self, stem_key: str) -> list[dict[str, float]] | None:
+        if self._config.spatial_render_model != "object-bed":
+            return None
+        stem_name = stem_key.rsplit("@", 1)[0]
+        overrides = self._config.stem_placement or {}
+        raw = overrides.get(stem_key, overrides.get(stem_name, {}))
+        default = STEM_ROUTING_PRESETS[DEFAULT_ROUTING_PRESET].get(stem_name)
+        if not raw and default is None:
+            return None
+        placement = StemPlacement(
+            float(raw.get("azimuth_deg", default.azimuth_deg if default else 0.0)),
+            float(raw.get("elevation_deg", default.elevation_deg if default else 0.0)),
+            float(raw.get("width_deg", default.width_deg if default else 0.0)),
+            float(raw.get("spread_deg", default.spread_deg if default else 60.0)),
+        )
+        mode = (self._config.stem_object_mode or {}).get(
+            stem_key, (self._config.stem_object_mode or {}).get(stem_name, "linked-stereo")
+        )
+        if mode == "mono":
+            return [placement_route(StemPlacement(
+                placement.azimuth_deg, placement.elevation_deg, 0.0, placement.spread_deg
+            ), self._fmt)]
+        labels = [label.value for label in self._fmt.channels if label != ChannelLabel.LFE]
+        left, right = upmixer_dsp.object_routes(
+            placement.azimuth_deg, placement.elevation_deg, placement.width_deg,
+            placement.spread_deg, labels,
+        )
+        return [
+            {label: gain for label, gain in zip(labels, left) if gain > 0.0},
+            {label: gain for label, gain in zip(labels, right) if gain > 0.0},
+        ]
+
     def _routing_for(self, stem_key: str) -> dict[str, float] | None:
         if "@" in stem_key:
             stem_name, zone = stem_key.rsplit("@", 1)
@@ -468,6 +506,7 @@ class StemRouter:
 
             if not stem_routing:
                 continue
+            object_routes = self._object_routes_for(stem_key)
 
             n = min(len(audio), n_samples)
             stem_L = audio[:n, 0].astype(np.float64, copy=False)
@@ -512,6 +551,9 @@ class StemRouter:
                 label in _HEIGHT_CHANNELS and label.value in stem_routing
                 for label in self._fmt.channels
             )
+            if object_routes is not None:
+                needs_surround = False
+                needs_height = False
             surround_L = (
                 velvet_send(self._surround_send(stem_L), self._sr, "left", SURROUND_VELVET_SEED)
                 if needs_surround else stem_L
@@ -535,28 +577,37 @@ class StemRouter:
 
             route_items: list[tuple[ChannelLabel, float, np.ndarray]] = []
             for label in self._fmt.channels:
-                ch = label.value
-                if ch in skip or ch not in stem_routing:
-                    continue
+                if label.value not in skip and label == ChannelLabel.LFE:
+                    lfe_bus[:n] += stem_routing.get("LFE", 0.0) * stem_mono
 
-                gain = stem_routing[ch] * self._channel_gain(label)
-                if c_redirect > 0.0 and label in (ChannelLabel.FL, ChannelLabel.FR):
-                    gain += c_redirect
-
-                if label == ChannelLabel.LFE:
-                    lfe_bus[:n] += gain * stem_mono
-                elif label in _LEFT_CHANNELS:
-                    signal = height_L if label in _HEIGHT_CHANNELS else (
-                        surround_L if label in _SURROUND_CHANNELS else stem_L
-                    )
+            if object_routes is None:
+                for label in self._fmt.channels:
+                    ch = label.value
+                    if ch in skip or ch not in stem_routing or label == ChannelLabel.LFE:
+                        continue
+                    gain = stem_routing[ch] * self._channel_gain(label)
+                    if c_redirect > 0.0 and label in (ChannelLabel.FL, ChannelLabel.FR):
+                        gain += c_redirect
+                    if label in _LEFT_CHANNELS:
+                        signal = height_L if label in _HEIGHT_CHANNELS else (
+                            surround_L if label in _SURROUND_CHANNELS else stem_L
+                        )
+                    elif label in _RIGHT_CHANNELS:
+                        signal = height_R if label in _HEIGHT_CHANNELS else (
+                            surround_R if label in _SURROUND_CHANNELS else stem_R
+                        )
+                    else:
+                        signal = stem_mono
                     route_items.append((label, gain, signal))
-                elif label in _RIGHT_CHANNELS:
-                    signal = height_R if label in _HEIGHT_CHANNELS else (
-                        surround_R if label in _SURROUND_CHANNELS else stem_R
-                    )
-                    route_items.append((label, gain, signal))
-                elif label == ChannelLabel.C:
-                    route_items.append((label, gain, stem_mono))
+            else:
+                direct = [stem_mono] if len(object_routes) == 1 else [stem_L, stem_R]
+                for route, signal in zip(object_routes, direct):
+                    for label in self._fmt.channels:
+                        if label.value in skip or label == ChannelLabel.LFE:
+                            continue
+                        gain = route.get(label.value, 0.0) * self._channel_gain(label)
+                        if gain > 0.0:
+                            route_items.append((label, gain, signal))
 
             for label in self._fmt.channels:
                 if label.value in skip:

@@ -74,6 +74,8 @@ export type StemMix = {
   ambientRear?: number;
   ambientHeight?: number;
   ambientHeightCrossoverHz?: number;
+  objectMode?: "linked-stereo" | "mono";
+  objectPlacement?: { azimuth_deg: number; elevation_deg: number; width_deg: number; spread_deg: number };
 };
 
 export type MasterMix = {
@@ -184,6 +186,8 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
       ambient_rear: stem.ambientRear ?? 0,
       ambient_height: stem.ambientHeight ?? 0,
       ambient_height_crossover_hz: stem.ambientHeightCrossoverHz ?? 2000,
+      object_mode: stem.objectMode ?? null,
+      object_placement: stem.objectPlacement ?? null,
     })),
     master: {
       head: master.highpassHz != null ? { cutoff_hz: master.highpassHz } : null,

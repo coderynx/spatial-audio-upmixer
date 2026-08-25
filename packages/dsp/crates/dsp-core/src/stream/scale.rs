@@ -17,10 +17,11 @@
 
 use crate::loudness::{gated_power, loudness_channel_weight};
 use crate::loudness_stream::IntegratedLoudnessMeter;
-use crate::stream::params::StemParams;
 use crate::stream::params::SendShape;
+use crate::stream::params::StemParams;
 use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND, STEM_INPUT};
 
+use super::engine::render::direct_object_routes;
 use super::engine::PreviewEngine;
 
 /// The stem's own level, which the routed sum is matched to.
@@ -60,7 +61,11 @@ impl Meters {
     }
 
     fn finish(mut self) -> (Vec<f64>, Vec<f64>) {
-        let powers = self.gated.iter_mut().map(|m| gated_power(m.finish())).collect();
+        let powers = self
+            .gated
+            .iter_mut()
+            .map(|m| gated_power(m.finish()))
+            .collect();
         (powers, self.energy)
     }
 }
@@ -149,7 +154,9 @@ impl RouteScalePass {
 
     /// Position the cursor at the current excerpt's preroll.
     fn enter_excerpt(&mut self) {
-        let Some(excerpt) = self.schedule.get(self.excerpt) else { return };
+        let Some(excerpt) = self.schedule.get(self.excerpt) else {
+            return;
+        };
         self.cursor = excerpt.start - excerpt.preroll;
         self.skip = excerpt.preroll;
     }
@@ -186,8 +193,13 @@ impl RouteScalePass {
         if self.remaining() == 0 {
             let sample_rate = self.engine.sample_rate();
             let meters = std::mem::replace(&mut self.meters, Meters::new(sample_rate));
-            let params = self.engine.stem_params(self.stem).cloned().unwrap_or_default();
-            self.scales.push(scale_from(&meters.finish(), &params, &self.engine));
+            let params = self
+                .engine
+                .stem_params(self.stem)
+                .cloned()
+                .unwrap_or_default();
+            self.scales
+                .push(scale_from(&meters.finish(), &params, &self.engine));
             self.stem += 1;
             self.cursor = 0;
             self.excerpt = 0;
@@ -204,7 +216,11 @@ impl RouteScalePass {
     pub fn progress(&self) -> f64 {
         let stems = self.engine.stem_count().max(1);
         let spans = self.schedule.len().max(1);
-        let within = if self.total == 0 { 1.0 } else { self.cursor as f64 / self.total as f64 };
+        let within = if self.total == 0 {
+            1.0
+        } else {
+            self.cursor as f64 / self.total as f64
+        };
         let stem_fraction = if self.schedule.is_empty() {
             within
         } else {
@@ -218,25 +234,32 @@ impl RouteScalePass {
 /// signal powers: routed loudness matched to the stem's own, K-weighted, with
 /// LFE outside both sums and raw energy as the fallback for material too short
 /// or too quiet to gate.
-fn scale_from(
-    measured: &(Vec<f64>, Vec<f64>),
-    sp: &StemParams,
-    engine: &PreviewEngine,
-) -> f64 {
+fn scale_from(measured: &(Vec<f64>, Vec<f64>), sp: &StemParams, engine: &PreviewEngine) -> f64 {
     let (powers, energies) = measured;
     let params = engine.params();
     let mut routed_power = 0.0;
     let mut routed_energy = 0.0;
-    for (name, weight) in &sp.routing {
-        if *weight == 0.0 || name == "LFE" {
-            continue;
+    if let Some(objects) = direct_object_routes(params, sp) {
+        for (channel, signal, weight) in objects {
+            let speaker = &params.speakers[channel];
+            let gain = weight * speaker.group_gain;
+            routed_power += loudness_channel_weight(&speaker.name) * gain * gain * powers[signal];
+            routed_energy += gain * gain * energies[signal];
         }
-        let Some(channel) = params.speaker_index(name) else { continue };
-        let speaker = &params.speakers[channel];
-        let gain = weight * speaker.group_gain;
-        let signal = shape_index(params.shapes[channel]);
-        routed_power += loudness_channel_weight(name) * gain * gain * powers[signal];
-        routed_energy += gain * gain * energies[signal];
+    } else {
+        for (name, weight) in &sp.routing {
+            if *weight == 0.0 || name == "LFE" {
+                continue;
+            }
+            let Some(channel) = params.speaker_index(name) else {
+                continue;
+            };
+            let speaker = &params.speakers[channel];
+            let gain = weight * speaker.group_gain;
+            let signal = shape_index(params.shapes[channel]);
+            routed_power += loudness_channel_weight(name) * gain * gain * powers[signal];
+            routed_energy += gain * gain * energies[signal];
+        }
     }
 
     // The ambient sends reach their whole speaker class rather than the

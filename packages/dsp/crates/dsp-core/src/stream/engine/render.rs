@@ -10,8 +10,9 @@
 use super::{PreviewEngine, METER_WINDOW_FRAMES, UNIFY_STRIDE};
 use crate::mastering::clip::ClipCurve;
 use crate::spatial::downmix::{apply_stereo_downmix_lock, DownmixRole};
+use crate::spatial::panner::{object_routes, placement_route, StemPlacement};
 use crate::stream::meters::Level;
-use crate::stream::params::SendShape;
+use crate::stream::params::{ObjectMode, SendShape};
 use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND, SIGNALS, STEM_INPUT};
 
 impl PreviewEngine {
@@ -40,6 +41,10 @@ impl PreviewEngine {
                 SendShape::HeightLeft | SendShape::HeightRight => needs_height = true,
                 _ => {}
             }
+        }
+        if sp.object_mode.is_some() {
+            needs_surround = false;
+            needs_height = false;
         }
         // A send the layout has no speaker for gets no ambient: the amount
         // is taken out of the dry pair, so sending it nowhere would be a hole
@@ -96,11 +101,23 @@ impl PreviewEngine {
             let route = &self.routes[stem_index];
             let shaped: [&[f64]; SIGNALS] = std::array::from_fn(|i| route.signal(i));
             let ambient = route.has_ambient().then(|| ambient_feeds(&self.params, sp));
+            let objects = direct_object_routes(&self.params, sp);
 
             if !self.params.spatial_downmix_lock {
                 for i in 0..count {
                     let gain = smoother.tick(target_gain);
+                    if let Some(objects) = &objects {
+                        for (channel, signal, weight) in objects {
+                            bed[*channel][i] += shaped[*signal][i]
+                                * weight
+                                * self.params.speakers[*channel].group_gain
+                                * gain;
+                        }
+                    }
                     for (name, weight) in &sp.routing {
+                        if objects.is_some() && name != "LFE" {
+                            continue;
+                        }
                         if *weight == 0.0 {
                             continue;
                         }
@@ -129,7 +146,18 @@ impl PreviewEngine {
                     let gain = smoother.tick(target_gain);
                     input_left[i] = shaped[STEM_INPUT][i] * gain;
                     input_right[i] = shaped[STEM_INPUT + 1][i] * gain;
+                    if let Some(objects) = &objects {
+                        for (channel, signal, weight) in objects {
+                            routed[*channel][i] += shaped[*signal][i]
+                                * weight
+                                * self.params.speakers[*channel].group_gain
+                                * gain;
+                        }
+                    }
                     for (name, weight) in &sp.routing {
+                        if objects.is_some() && name != "LFE" {
+                            continue;
+                        }
                         if *weight == 0.0 {
                             continue;
                         }
@@ -424,6 +452,60 @@ impl PreviewEngine {
             .drain_to(self.emitted.saturating_sub(self.look_ahead()));
         emit
     }
+}
+
+/// Direct-object routes as `(speaker, shaped-signal slot, gain)`.
+pub(crate) fn direct_object_routes(
+    params: &crate::stream::params::EngineParams,
+    sp: &crate::stream::params::StemParams,
+) -> Option<Vec<(usize, usize, f64)>> {
+    let mode = sp.object_mode?;
+    let placement = sp.object_placement?;
+    let names: Vec<&str> = params
+        .speakers
+        .iter()
+        .map(|speaker| speaker.name.as_str())
+        .collect();
+    let point = StemPlacement::new(
+        placement.azimuth_deg,
+        placement.elevation_deg,
+        placement.width_deg,
+        placement.spread_deg,
+        0.0,
+    );
+    let routes: Vec<(usize, Vec<f64>)> = match mode {
+        ObjectMode::LinkedStereo => object_routes(&point, &names)
+            .into_iter()
+            .enumerate()
+            .collect(),
+        ObjectMode::Mono => vec![(
+            2,
+            placement_route(
+                &StemPlacement::new(
+                    placement.azimuth_deg,
+                    placement.elevation_deg,
+                    0.0,
+                    placement.spread_deg,
+                    0.0,
+                ),
+                &names,
+            ),
+        )],
+    };
+    Some(
+        routes
+            .into_iter()
+            .flat_map(|(signal, route)| {
+                route
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(move |(channel, gain)| {
+                        (params.lfe_index != Some(channel) && gain > 0.0)
+                            .then_some((channel, signal, gain))
+                    })
+            })
+            .collect(),
+    )
 }
 
 /// Which speakers one stem's ambient sends reach, and at what weight:

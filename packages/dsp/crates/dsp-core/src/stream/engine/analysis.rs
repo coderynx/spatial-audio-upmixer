@@ -22,8 +22,8 @@ impl PreviewEngine {
                 .map(|i| self.params.meter_weights.get(i).copied().unwrap_or(1.0))
                 .collect(),
         };
-        self.loudness = (!weights.is_empty())
-            .then(|| WindowLoudnessMeter::new(&weights, self.sample_rate));
+        self.loudness =
+            (!weights.is_empty()).then(|| WindowLoudnessMeter::new(&weights, self.sample_rate));
     }
 
     /// Fold the loudness readouts and the dynamics stages' gain reduction of
@@ -45,8 +45,12 @@ impl PreviewEngine {
             .unwrap_or(0);
         if let Some(meter) = &mut self.loudness {
             if frames > 0 {
-                let slices: Vec<&[f64]> =
-                    self.collapsed.iter().take(channels).map(|c| &c[..frames]).collect();
+                let slices: Vec<&[f64]> = self
+                    .collapsed
+                    .iter()
+                    .take(channels)
+                    .map(|c| &c[..frames])
+                    .collect();
                 match &self.meter_fold {
                     Some(fold) => {
                         fold.apply(&slices, frames, &mut self.meter_folded);
@@ -61,7 +65,8 @@ impl PreviewEngine {
             self.meters.master.short_term_lkfs = meter.short_term();
         }
 
-        self.limiter_gr.push((emit, limiter.max_gr_db, limiter.lfe_max_gr_db));
+        self.limiter_gr
+            .push((emit, limiter.max_gr_db, limiter.lfe_max_gr_db));
         let mut held: usize = self.limiter_gr.iter().map(|entry| entry.0).sum();
         let mut stale = 0;
         for entry in &self.limiter_gr {
@@ -72,18 +77,21 @@ impl PreviewEngine {
             stale += 1;
         }
         self.limiter_gr.drain(..stale);
-        self.meters.master.limiter_gr_db =
-            self.limiter_gr.iter().fold(0.0_f64, |m, entry| m.max(entry.1));
-        self.meters.master.limiter_lfe_gr_db =
-            self.limiter_gr.iter().fold(0.0_f64, |m, entry| m.max(entry.2));
+        self.meters.master.limiter_gr_db = self
+            .limiter_gr
+            .iter()
+            .fold(0.0_f64, |m, entry| m.max(entry.1));
+        self.meters.master.limiter_lfe_gr_db = self
+            .limiter_gr
+            .iter()
+            .fold(0.0_f64, |m, entry| m.max(entry.2));
 
         let to = self.emitted + emit;
         let from = to.saturating_sub(METER_WINDOW_FRAMES);
         let trace = &self.comp_gr.channels[0];
         let lo = from.saturating_sub(self.comp_gr.base).min(trace.len());
         let hi = to.saturating_sub(self.comp_gr.base).min(trace.len());
-        self.meters.master.comp_gr_db =
-            trace[lo..hi].iter().copied().fold(0.0_f64, f64::max);
+        self.meters.master.comp_gr_db = trace[lo..hi].iter().copied().fold(0.0_f64, f64::max);
     }
 
     /// The 5.1 re-render integrated loudness is measured on, for a native
@@ -94,7 +102,12 @@ impl PreviewEngine {
         if self.params.output_mode != OutputMode::Native {
             return None;
         }
-        let names: Vec<&str> = self.params.speakers.iter().map(|s| s.name.as_str()).collect();
+        let names: Vec<&str> = self
+            .params
+            .speakers
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
         FoldTo51::new(&names)
     }
 
@@ -135,7 +148,11 @@ impl PreviewEngine {
             Some(fold) => {
                 let frames = refs.first().map(|c| c.len()).unwrap_or(0);
                 fold.apply(&refs, frames, &mut folded);
-                FOLD_51_WEIGHTS.iter().copied().zip(folded.iter().map(|c| c.as_slice())).collect()
+                FOLD_51_WEIGHTS
+                    .iter()
+                    .copied()
+                    .zip(folded.iter().map(|c| c.as_slice()))
+                    .collect()
             }
             None => refs
                 .iter()
@@ -188,7 +205,8 @@ impl PreviewEngine {
 
                 let mut windowed = vec![0.0; self.spectrum_window.len()];
                 for (j, w) in self.spectrum_window.iter().enumerate().take(to - win_start) {
-                    let sample = (stem.left[win_start + j] as f64 + stem.right[win_start + j] as f64) * 0.5;
+                    let sample =
+                        (stem.left[win_start + j] as f64 + stem.right[win_start + j] as f64) * 0.5;
                     windowed[j] = sample * gain * w;
                 }
                 let bins = self.spectrum_fft.rfft(&windowed);

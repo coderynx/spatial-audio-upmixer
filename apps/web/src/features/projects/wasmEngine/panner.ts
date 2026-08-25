@@ -42,6 +42,10 @@ type PannerExports = {
     azimuth: number, elevation: number, width: number, spread: number, lfe: number,
     channels: number, nChannels: number, out: number,
   ): number;
+  dsp_object_routes(
+    azimuth: number, elevation: number, width: number, spread: number,
+    channels: number, nChannels: number, left: number, right: number,
+  ): number;
   dsp_project_placement(
     azimuth: number, elevation: number, width: number, spread: number, lfe: number,
     channels: number, nChannels: number, out: number,
@@ -183,6 +187,23 @@ export class Panner {
       if (gains[index] > 0) route[channel] = gains[index];
     });
     return route;
+  }
+
+  /** MDAP routes for the linked left/right direct-object feeds. */
+  objectRoutes(placement: StemPlacement, channels: string[]): [Record<string, number>, Record<string, number>] {
+    const [left, right] = this.withBuffers(channels, channels.length * 2, (channelPtr, outPtr) => {
+      const rightPtr = outPtr + channels.length * 8;
+      const status = this.exports.dsp_object_routes(
+        placement.azimuth_deg, placement.elevation_deg, placement.width_deg,
+        placement.spread_deg, channelPtr, channels.length, outPtr, rightPtr,
+      );
+      if (status !== 0) throw new Error("object_routes rejected the channel set");
+      return [this.read(outPtr, channels.length), this.read(rightPtr, channels.length)];
+    });
+    return [
+      Object.fromEntries(channels.map((channel, index) => [channel, left[index]])),
+      Object.fromEntries(channels.map((channel, index) => [channel, right[index]])),
+    ];
   }
 
   /** The highest elevation `channels` can reproduce; placements above it are
