@@ -73,6 +73,7 @@ export type StemMix = {
    * heights. Both 0..1; zero is a stem routed the way it always was. */
   ambientRear?: number;
   ambientHeight?: number;
+  ambientHeightCrossoverHz?: number;
 };
 
 export type MasterMix = {
@@ -182,6 +183,7 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
       route_scale: stem.routeScale ?? 1,
       ambient_rear: stem.ambientRear ?? 0,
       ambient_height: stem.ambientHeight ?? 0,
+      ambient_height_crossover_hz: stem.ambientHeightCrossoverHz ?? 2000,
     })),
     master: {
       head: master.highpassHz != null ? { cutoff_hz: master.highpassHz } : null,

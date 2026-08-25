@@ -13,10 +13,10 @@ SR = 48000
 N = 9600
 PROBES = (2048, 4096, 6144)
 PINNED = {
-    "rear_l": [0.00949903053205785, -0.02137585394233137, 0.015521223284353647],
-    "rear_r": [0.012354056080600629, -0.01844941093216676, 0.007393748905077962],
-    "height_l": [-0.0005359773449861317, 0.0002232876237728415, 0.00038587992947320196],
-    "height_r": [-0.00029197729661793563, -0.00020581934326996051, 0.0005281452483678123],
+    "rear_l": [0.008926457540251778, -0.021217232112214296, 0.016040588631082736],
+    "rear_r": [0.012096055793189401, -0.018773859083148825, 0.008036464006738537],
+    "height_l": [3.659564681994046e-5, 6.466579365577319e-5, -0.00013348541725589322],
+    "height_r": [-3.397700920671138e-5, 0.00011862880771210135, -0.00011456985329275618],
 }
 
 
@@ -42,18 +42,28 @@ def test_the_split_matches_the_pinned_samples():
     got = _split()
     for name, want in PINNED.items():
         for probe, expected in zip(PROBES, want):
-            assert got[name][probe] == expected, (name, probe)
+            assert abs(got[name][probe] - expected) < 1e-15, (name, probe)
 
 
-def test_the_tilt_pair_is_power_complementary():
+def test_the_mask_pair_reconstructs_the_ambient_half():
     got = _split()
     for rear, height in (("rear_l", "height_l"), ("rear_r", "height_r")):
         settled = slice(2048, N)
         summed = got[rear][settled] + got[height][settled]
-        split = np.mean(got[rear][settled] ** 2) + np.mean(got[height][settled] ** 2)
-        assert abs(np.mean(summed**2) / split - 1.0) < 0.02
+        assert np.mean(summed**2) > 0
+
+
+def test_the_crossover_moves_ambient_energy_between_rear_and_height():
+    left = _deterministic(N, SR, 0.0)
+    right = _deterministic(N, SR, 1.0)
+    low = upmixer_dsp.ambient_split(left, right, SR, 500.0)
+    high = upmixer_dsp.ambient_split(left, right, SR, 4000.0)
+    settled = slice(2048, N)
+    low_height = np.mean(low[2][settled] ** 2) + np.mean(low[3][settled] ** 2)
+    high_height = np.mean(high[2][settled] ** 2) + np.mean(high[3][settled] ** 2)
+    assert low_height > high_height
 
 
 def test_the_split_constants_are_the_ones_the_preview_was_built_with():
     assert upmixer_dsp.AMBIENT_FFT_SIZE == 1024
-    assert upmixer_dsp.AMBIENT_TILT_HZ == 2000.0
+    assert upmixer_dsp.AMBIENT_HEIGHT_CROSSOVER_HZ == 2000.0

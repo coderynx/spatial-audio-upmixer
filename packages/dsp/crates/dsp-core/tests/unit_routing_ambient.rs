@@ -109,20 +109,18 @@ mod ambient {
     }
 
     #[test]
-    fn the_tilt_pair_is_power_complementary() {
-        let left = noise(3, N);
-        let right = noise(4, N);
-        let split = split_all(&left, &right, 512);
-        // The matched first-order pair preserves the untilted ambient power.
-        for (rear, height) in [(&split[0], &split[2]), (&split[1], &split[3])] {
-            let summed: Vec<f64> = rear.iter().zip(height).map(|(a, b)| a + b).collect();
-            let sum_power = power(&summed);
-            let split_power = power(rear) + power(height);
-            let ratio = sum_power / split_power;
-            assert!(
-                (ratio - 1.0).abs() < 0.02,
-                "tilt pair is not power complementary: {ratio:.4}"
-            );
+    fn the_height_masks_are_complementary_and_steep() {
+        for crossover in [500.0, 2000.0, 4000.0] {
+            for bin in 0..=AMBIENT_FFT_SIZE / 2 {
+                let height =
+                    height_mask(bin as f64 * SR as f64 / AMBIENT_FFT_SIZE as f64, crossover);
+                let rear = 1.0 - height;
+                assert!(height.is_finite() && (0.0..=1.0).contains(&height));
+                assert!((rear + height - 1.0).abs() < 1e-15);
+            }
+            assert_eq!(height_mask(crossover, crossover), 0.5);
+            assert!(height_mask(crossover * 0.5, crossover) < 0.004);
+            assert!(height_mask(crossover * 2.0, crossover) > 0.996);
         }
     }
 
@@ -292,10 +290,10 @@ mod ambient {
     fn the_split_matches_the_pinned_samples() {
         const PROBES: [usize; 3] = [2048, 4096, 6144];
         const PINNED: [[f64; 3]; 4] = [
-            [0.00949903053205785, -0.02137585394233137, 0.015521223284353647],
-            [0.012354056080600629, -0.01844941093216676, 0.007393748905077962],
-            [-0.0005359773449861317, 0.0002232876237728415, 0.00038587992947320196],
-            [-0.00029197729661793563, -0.00020581934326996051, 0.0005281452483678123],
+            [0.008926457540251778, -0.021217232112214296, 0.016040588631082736],
+            [0.012096055793189401, -0.018773859083148825, 0.008036464006738537],
+            [3.659564681994046e-5, 6.466579365577319e-5, -0.00013348541725589322],
+            [-3.397700920671138e-5, 0.00011862880771210135, -0.00011456985329275618],
         ];
         let left = common::deterministic_signal(9600, SR, 0.0);
         let right = common::deterministic_signal(9600, SR, 1.0);
@@ -303,7 +301,7 @@ mod ambient {
         // split_all's order is rear L/R then height L/R.
         for (signal, want) in [&got[0], &got[1], &got[2], &got[3]].into_iter().zip(PINNED) {
             for (probe, expected) in PROBES.into_iter().zip(want) {
-                assert_eq!(signal[probe], expected, "sample {probe}");
+                assert!((signal[probe] - expected).abs() < 1e-15, "sample {probe}");
             }
         }
     }

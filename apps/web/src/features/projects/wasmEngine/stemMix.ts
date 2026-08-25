@@ -11,6 +11,7 @@ export type MixPreviewShape = {
   stem_eq?: Record<string, string>;
   stem_ambient_rear?: Record<string, number>;
   stem_ambient_height?: Record<string, number>;
+  stem_ambient_height_crossover_hz?: Record<string, number>;
   spatial_downmix_lock?: boolean;
   stem_source_anchor_strength?: number;
 };
@@ -53,6 +54,9 @@ export function resolveStemMixes(options: {
       const value = table?.[stem.stem_key] ?? table?.[base] ?? 0;
       return Math.min(1, Math.max(0, value));
     };
+    const crossover = mix?.stem_ambient_height_crossover_hz?.[stem.stem_key]
+      ?? mix?.stem_ambient_height_crossover_hz?.[base]
+      ?? 2000;
 
     const anchorDb = 20 * Math.log10(Math.max(1 - anchor * frontFraction, 1e-6));
     return {
@@ -64,6 +68,7 @@ export function resolveStemMixes(options: {
       routeScale: estimateRouteScale(routing, constants.channelGains),
       ambientRear: send(mix?.stem_ambient_rear),
       ambientHeight: send(mix?.stem_ambient_height),
+      ambientHeightCrossoverHz: Math.min(4000, Math.max(500, crossover)),
     };
   });
 }

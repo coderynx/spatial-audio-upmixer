@@ -300,6 +300,7 @@ class StemRouter:
         self._stem_enabled = config.stem_enabled or {}
         self._ambient_rear = config.stem_ambient_rear or {}
         self._ambient_height = config.stem_ambient_height or {}
+        self._ambient_height_crossover = config.stem_ambient_height_crossover_hz or {}
         self._stem_solo = set(config.stem_solo or [])
         self._sr = sample_rate
         self._lfe_gain = config.lfe_gain
@@ -344,6 +345,13 @@ class StemRouter:
             return max(0.0, min(1.0, float(value)))
 
         return amount(self._ambient_rear), amount(self._ambient_height)
+
+    def _ambient_height_crossover_for(self, stem_key: str) -> float:
+        stem_name = stem_key.rsplit("@", 1)[0]
+        value = self._ambient_height_crossover.get(
+            stem_key, self._ambient_height_crossover.get(stem_name, 2000.0)
+        )
+        return float(value)
 
     def _class_share(self, labels: set[ChannelLabel]) -> float:
         """Per-speaker share of an ambient send: the amount is spread over the
@@ -484,6 +492,7 @@ class StemRouter:
                     np.ascontiguousarray(stem_L, dtype=np.float64),
                     np.ascontiguousarray(stem_R, dtype=np.float64),
                     self._sr,
+                    self._ambient_height_crossover_for(stem_key),
                 )
                 stem_L = stem_L - rear_amount * rear_L - height_amount * height_L_amb
                 stem_R = stem_R - rear_amount * rear_R - height_amount * height_R_amb

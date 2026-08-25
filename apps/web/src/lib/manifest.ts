@@ -34,6 +34,7 @@ export type Manifest = {
     stem_eq: Record<string, string>;
     stem_ambient_rear: Record<string, number>;
     stem_ambient_height: Record<string, number>;
+    stem_ambient_height_crossover_hz: Record<string, number>;
     spatial_downmix_lock: boolean;
     stem_routing: Record<string, Record<string, number>>;
     stem_placement: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; spread_deg: number }>;
@@ -169,6 +170,7 @@ export const defaultManifest: Manifest = {
     stem_eq: {},
     stem_ambient_rear: {},
     stem_ambient_height: {},
+    stem_ambient_height_crossover_hz: {},
     spatial_downmix_lock: false,
     stem_placement: {},
     stem_routing: {},
@@ -258,6 +260,10 @@ export function normalizeManifest(source: Record<string, unknown>): Manifest {
       stem_ambient_height: {
         ...defaultManifest.mixing.stem_ambient_height,
         ...value.mixing?.stem_ambient_height,
+      },
+      stem_ambient_height_crossover_hz: {
+        ...defaultManifest.mixing.stem_ambient_height_crossover_hz,
+        ...value.mixing?.stem_ambient_height_crossover_hz,
       },
       stem_routing: { ...defaultManifest.mixing.stem_routing, ...value.mixing?.stem_routing },
       stem_enabled: { ...defaultManifest.mixing.stem_enabled, ...value.mixing?.stem_enabled },

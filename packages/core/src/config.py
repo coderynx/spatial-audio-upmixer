@@ -143,6 +143,7 @@ class UpmixConfig:
     # surround speakers, and the height speakers.  Keyed like stem_rebalance.
     stem_ambient_rear: dict | None = None
     stem_ambient_height: dict | None = None
+    stem_ambient_height_crossover_hz: dict | None = None
     spatial_downmix_lock: bool = False
 
     # Explicit per-stem speaker-bed routing.  Each value maps a canonical stem

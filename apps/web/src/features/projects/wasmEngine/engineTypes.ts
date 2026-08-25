@@ -16,6 +16,7 @@ export type MixPreview = {
   stem_eq?: Record<string, string>;
   stem_ambient_rear?: Record<string, number>;
   stem_ambient_height?: Record<string, number>;
+  stem_ambient_height_crossover_hz?: Record<string, number>;
   spatial_downmix_lock?: boolean;
   stem_enabled?: Record<string, boolean>;
   stem_solo?: string[];

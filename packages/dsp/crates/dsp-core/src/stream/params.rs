@@ -11,6 +11,7 @@ use crate::mastering::{
     bass::BassParams, clip::ClipParams, compressor::CompParams, dyneq::BandParams,
     head::HeadParams, limiter::LimiterParams,
 };
+use crate::routing::ambient::AMBIENT_HEIGHT_CROSSOVER_HZ;
 use crate::spatial::voicing::VoicingParams;
 
 /// How the mastered bed reaches the listener.
@@ -93,6 +94,14 @@ pub struct StemParams {
     pub ambient_rear: f64,
     #[serde(default)]
     pub ambient_height: f64,
+    /// Per-stem crossover which shares the ambient half between rear and
+    /// height sends.
+    #[serde(default = "ambient_height_crossover_default")]
+    pub ambient_height_crossover_hz: f64,
+}
+
+fn ambient_height_crossover_default() -> f64 {
+    AMBIENT_HEIGHT_CROSSOVER_HZ
 }
 
 impl StemParams {

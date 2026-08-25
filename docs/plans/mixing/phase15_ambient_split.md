@@ -29,11 +29,9 @@ made the mix worse. This is the DSP answer.
   ERB-band matrices are interpolated. This prevents the time-varying
   spectral holes and broad timbral motion produced by the old `tanh`
   coherence mask;
-- a first-order power-complementary tilt at `AMBIENT_TILT_HZ = 2000`, splitting
-  the ambient half between the rear and height sends. Heights take the bright
-  half because elevation perception keys on the 6–9 kHz spectral cues
-  (Blauert's directional bands) that `routing::sends::elevation_eq` already
-  voices for.
+- complementary STFT-bin allocation between rear and height sends. The
+  per-stem 2000 Hz default and its 500–4000 Hz control shipped in spatial
+  phase 2; `routing::sends::elevation_eq` still voices the height send.
 
 Two per-stem amounts drive it: `mixing.stem_ambient_rear` and
 `mixing.stem_ambient_height`, 0..1, keyed like `stem_rebalance`. They reach

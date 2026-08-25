@@ -87,7 +87,7 @@ def test_spatial_downmix_lock_and_ambient_flags_override_the_manifest():
     )
     args = _parsed([
         "--spatial-downmix-lock", "--stem-ambient-rear", "Vocals=0.8",
-        "--stem-ambient-height", "Vocals=0.9",
+        "--stem-ambient-height", "Vocals=0.9", "--stem-ambient-height-crossover", "Vocals=500",
     ])
 
     _apply_cli_flags(config, args, sample_rate_set=False)
@@ -95,6 +95,15 @@ def test_spatial_downmix_lock_and_ambient_flags_override_the_manifest():
     assert config.spatial_downmix_lock is True
     assert config.stem_ambient_rear == {"Vocals": 0.8}
     assert config.stem_ambient_height == {"Vocals": 0.9}
+    assert config.stem_ambient_height_crossover_hz == {"Vocals": 500.0}
+
+
+def test_ambient_height_crossover_rejects_an_out_of_range_value():
+    config = UpmixConfig()
+    args = _parsed(["--stem-ambient-height-crossover", "Vocals=4001"])
+
+    with pytest.raises(SystemExit):
+        _apply_cli_flags(config, args, sample_rate_set=False)
 
 
 def test_ambient_flags_merge_into_other_manifest_stem_values():

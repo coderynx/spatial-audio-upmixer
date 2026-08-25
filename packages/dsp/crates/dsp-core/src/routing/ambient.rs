@@ -6,8 +6,6 @@
 
 use rustfft::num_complex::Complex64;
 
-use crate::kernels::biquad::SosFilter;
-use crate::kernels::butter::{butter_sos, BandType};
 use crate::kernels::fft::RealFft;
 use crate::kernels::stft::hann_periodic;
 
@@ -27,8 +25,11 @@ pub const AMBIENT_MATRIX_FRAMES: usize = 3;
 /// Smallest analysis band. Narrower low-frequency bands are too noisy.
 pub const AMBIENT_BAND_MIN_BINS: usize = 3;
 
-/// Where the ambient half splits between rear and height sends.
-pub const AMBIENT_TILT_HZ: f64 = 2000.0;
+/// Default frequency where the ambient half is shared equally by rear and
+/// height sends.
+pub const AMBIENT_HEIGHT_CROSSOVER_HZ: f64 = 2000.0;
+pub const AMBIENT_HEIGHT_CROSSOVER_MIN_HZ: f64 = 500.0;
+pub const AMBIENT_HEIGHT_CROSSOVER_MAX_HZ: f64 = 4000.0;
 
 const EPS: f64 = 1e-20;
 const RELATIVE_ENERGY_FLOOR: f64 = 1e-6;
@@ -127,6 +128,7 @@ pub struct AmbientSplit {
     fft: RealFft,
     n: usize,
     hop: usize,
+    bin_hz: f64,
     window: Vec<f64>,
     cola: Vec<f64>,
     bands: Vec<Band>,
@@ -139,22 +141,25 @@ pub struct AmbientSplit {
     matrix_sum: Vec<AmbientMatrix>,
     matrix_cursor: usize,
     matrix_count: usize,
-    masked: [Vec<Complex64>; 2],
+    masked: [[Vec<Complex64>; 2]; 2],
     next_frame: usize,
-    ola: [Vec<f64>; 2],
+    ola: [[Vec<f64>; 2]; 2],
     ring: usize,
-    lp: [SosFilter; 2],
-    hp: [SosFilter; 2],
+    height_crossover_hz: f64,
+    target_height_crossover_hz: f64,
     rear: [Vec<f64>; 2],
     height: [Vec<f64>; 2],
     cursor: Option<usize>,
     frame: Vec<f64>,
-    scratch: Vec<f64>,
     spectrum: [Vec<Complex64>; 2],
 }
 
 impl AmbientSplit {
     pub fn new(sample_rate: u32) -> Self {
+        Self::with_height_crossover(sample_rate, AMBIENT_HEIGHT_CROSSOVER_HZ)
+    }
+
+    pub fn with_height_crossover(sample_rate: u32, height_crossover_hz: f64) -> Self {
         let n = AMBIENT_FFT_SIZE;
         let hop = n / AMBIENT_OVERLAP;
         let window: Vec<f64> = hann_periodic(n).into_iter().map(f64::sqrt).collect();
@@ -166,14 +171,12 @@ impl AmbientSplit {
         let bins = n / 2 + 1;
         let (bands, interpolation) = erb_bands(bins, sample_rate, n);
         let band_count = bands.len();
-        let nyq = sample_rate as f64 / 2.0;
-        let wn = (AMBIENT_TILT_HZ / nyq).clamp(1e-6, 0.999_999);
-        let lp_sos = butter_sos(1, wn, BandType::Low);
-        let hp_sos = butter_sos(1, wn, BandType::High);
+        let height_crossover_hz = valid_height_crossover(height_crossover_hz);
         Self {
             fft: RealFft::new(n),
             n,
             hop,
+            bin_hz: sample_rate as f64 / n as f64,
             window,
             cola,
             bands,
@@ -189,20 +192,18 @@ impl AmbientSplit {
             matrix_sum: vec![AmbientMatrix::default(); band_count],
             matrix_cursor: 0,
             matrix_count: 0,
-            masked: [
-                vec![Complex64::new(0.0, 0.0); bins],
-                vec![Complex64::new(0.0, 0.0); bins],
-            ],
+            masked: std::array::from_fn(|_| {
+                std::array::from_fn(|_| vec![Complex64::new(0.0, 0.0); bins])
+            }),
             next_frame: 0,
-            ola: [vec![0.0; ring], vec![0.0; ring]],
+            ola: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; ring])),
             ring,
-            lp: [SosFilter::from_flat(&lp_sos), SosFilter::from_flat(&lp_sos)],
-            hp: [SosFilter::from_flat(&hp_sos), SosFilter::from_flat(&hp_sos)],
+            height_crossover_hz,
+            target_height_crossover_hz: height_crossover_hz,
             rear: [Vec::new(), Vec::new()],
             height: [Vec::new(), Vec::new()],
             cursor: None,
             frame: vec![0.0; n],
-            scratch: vec![0.0; n],
             spectrum: [
                 vec![Complex64::new(0.0, 0.0); bins],
                 vec![Complex64::new(0.0, 0.0); bins],
@@ -213,6 +214,11 @@ impl AmbientSplit {
     /// Samples the split reads past the end of the block it is asked for.
     pub fn look_ahead(&self) -> usize {
         self.n
+    }
+
+    /// Move a live crossover edit at the analysis-frame cadence.
+    pub fn set_height_crossover(&mut self, height_crossover_hz: f64) {
+        self.target_height_crossover_hz = valid_height_crossover(height_crossover_hz);
     }
 
     pub fn reset(&mut self) {
@@ -230,11 +236,10 @@ impl AmbientSplit {
         self.matrix_count = 0;
         self.next_frame = 0;
         self.cursor = None;
-        for channel in &mut self.ola {
-            channel.fill(0.0);
-        }
-        for filter in self.lp.iter_mut().chain(self.hp.iter_mut()) {
-            filter.reset();
+        for destination in &mut self.ola {
+            for channel in destination {
+                channel.fill(0.0);
+            }
         }
     }
 
@@ -273,16 +278,13 @@ impl AmbientSplit {
             for offset in position..until {
                 let slot = offset & (self.ring - 1);
                 let cola = self.cola[offset & (self.hop - 1)];
-                let value = self.ola[0][slot] / cola;
-                self.ola[0][slot] = 0.0;
                 let index = offset - start;
-                self.rear[0][index] = self.lp[0].tick(value);
-                self.height[0][index] = self.hp[0].tick(value);
-
-                let value = self.ola[1][slot] / cola;
-                self.ola[1][slot] = 0.0;
-                self.rear[1][index] = self.lp[1].tick(value);
-                self.height[1][index] = self.hp[1].tick(value);
+                for channel in 0..2 {
+                    self.rear[channel][index] = self.ola[0][channel][slot] / cola;
+                    self.height[channel][index] = self.ola[1][channel][slot] / cola;
+                    self.ola[0][channel][slot] = 0.0;
+                    self.ola[1][channel][slot] = 0.0;
+                }
             }
             done += until - position;
         }
@@ -295,6 +297,8 @@ impl AmbientSplit {
     }
 
     fn process_frame(&mut self, base: usize, left: &[f64], right: &[f64], index: usize) {
+        self.height_crossover_hz +=
+            (self.target_height_crossover_hz - self.height_crossover_hz) * 0.5;
         let frame_start = index * self.hop;
         self.windowed(left, base, frame_start, 0);
         self.windowed(right, base, frame_start, 1);
@@ -344,8 +348,13 @@ impl AmbientSplit {
             let matrix = lower.lerp(upper, interpolation.amount);
             let left = self.spectrum[0][bin];
             let right = self.spectrum[1][bin];
-            self.masked[0][bin] = left * matrix.ll + right * matrix.lr;
-            self.masked[1][bin] = left * matrix.lr.conj() + right * matrix.rr;
+            let ambient_left = left * matrix.ll + right * matrix.lr;
+            let ambient_right = left * matrix.lr.conj() + right * matrix.rr;
+            let height = height_mask(bin as f64 * self.bin_hz, self.height_crossover_hz);
+            self.masked[0][0][bin] = ambient_left * (1.0 - height);
+            self.masked[0][1][bin] = ambient_right * (1.0 - height);
+            self.masked[1][0][bin] = ambient_left * height;
+            self.masked[1][1][bin] = ambient_right * height;
         }
         self.overlap_add(frame_start);
     }
@@ -365,14 +374,37 @@ impl AmbientSplit {
     }
 
     fn overlap_add(&mut self, base: usize) {
-        for channel in 0..2 {
-            self.fft
-                .irfft_into(&mut self.masked[channel], &mut self.scratch);
-            for i in 0..self.n {
-                let slot = (base + i) & (self.ring - 1);
-                self.ola[channel][slot] += self.scratch[i] * self.window[i];
+        for destination in 0..2 {
+            for channel in 0..2 {
+                self.fft
+                    .irfft_into(&mut self.masked[destination][channel], &mut self.frame);
+                for i in 0..self.n {
+                    let slot = (base + i) & (self.ring - 1);
+                    self.ola[destination][channel][slot] += self.frame[i] * self.window[i];
+                }
             }
         }
+    }
+}
+
+fn valid_height_crossover(value: f64) -> f64 {
+    if value.is_finite()
+        && (AMBIENT_HEIGHT_CROSSOVER_MIN_HZ..=AMBIENT_HEIGHT_CROSSOVER_MAX_HZ).contains(&value)
+    {
+        value
+    } else {
+        AMBIENT_HEIGHT_CROSSOVER_HZ
+    }
+}
+
+/// Height's real-valued share of one ambient STFT bin.
+pub fn height_mask(frequency_hz: f64, crossover_hz: f64) -> f64 {
+    let ratio = (frequency_hz.max(0.0) / valid_height_crossover(crossover_hz)).max(0.0);
+    if ratio <= 1.0 {
+        let power = ratio.powi(8);
+        power / (1.0 + power)
+    } else {
+        1.0 / (1.0 + ratio.recip().powi(8))
     }
 }
 

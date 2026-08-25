@@ -31,7 +31,7 @@ export function positionFromAzimuth(azimuthDeg: number): Position {
 }
 
 export const StemControls = React.memo(function StemControls({
-  placement, route, channels, eq, maxElevationDeg, ambientRear, ambientHeight,
+  placement, route, channels, eq, maxElevationDeg, ambientRear, ambientHeight, ambientHeightCrossoverHz,
   onPlacement, onRoute, onEq, onAmbient, stemEqProfiles,
 }: {
   placement: StemPlacement;
@@ -42,10 +42,11 @@ export const StemControls = React.memo(function StemControls({
   /** Fraction of the stem's ambient half sent to the surrounds / heights. */
   ambientRear: number;
   ambientHeight: number;
+  ambientHeightCrossoverHz: number;
   onPlacement: (next: StemPlacement) => void;
   onRoute: (patch: Record<string, number>) => void;
   onEq: (eq: string) => void;
-  onAmbient: (patch: { rear?: number; height?: number }) => void;
+  onAmbient: (patch: { rear?: number; height?: number; heightCrossoverHz?: number }) => void;
   stemEqProfiles?: string[];
 }) {
   // The sliders are the Cartesian face of a direction, so a round trip through
@@ -93,6 +94,8 @@ export const StemControls = React.memo(function StemControls({
   const height = maxElevationDeg > 0
     ? Math.min(1, Math.max(0, placement.elevation_deg / maxElevationDeg))
     : 0;
+  const heightCrossover = Math.min(4000, Math.max(500, ambientHeightCrossoverHz));
+  const heightCrossoverPosition = Math.log(heightCrossover / 500) / Math.log(8);
 
   const lateralSlider = (
     <label className="block text-[11px] text-muted-foreground">
@@ -138,11 +141,18 @@ export const StemControls = React.memo(function StemControls({
         </label>
       )}
       {hasHeight && (
-        <label className="block text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1"><CloudFog className="h-3 w-3" />Ambience to height</span>
-          <Slider aria-label="Ambience to height" className="mt-1.5" min={0} max={1} step={0.01}
-            value={[ambientHeight]} onValueChange={([height]) => onAmbient({ height })} />
-        </label>
+        <>
+          <label className="block text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1"><CloudFog className="h-3 w-3" />Ambience to height</span>
+            <Slider aria-label="Ambience to height" className="mt-1.5" min={0} max={1} step={0.01}
+              value={[ambientHeight]} onValueChange={([height]) => onAmbient({ height })} />
+          </label>
+          <label className="block text-[11px] text-muted-foreground">
+            <span className="flex items-center gap-1"><MoveVertical className="h-3 w-3" />Height crossover <span className="ml-auto">{Math.round(heightCrossover)} Hz</span></span>
+            <Slider aria-label="Height crossover" className="mt-1.5" min={0} max={1} step={0.01}
+              value={[heightCrossoverPosition]} onValueChange={([value]) => onAmbient({ heightCrossoverHz: 500 * 8 ** value })} />
+          </label>
+        </>
       )}
       {hasLfe && (
         <label className="block text-[11px] text-muted-foreground">

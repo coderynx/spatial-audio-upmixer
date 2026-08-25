@@ -415,6 +415,13 @@ def test_the_zone_key_beats_the_stem_name_for_an_ambient_send():
     assert router._ambient_for("Other@surround") == (0.8, 0.0)
 
 
+def test_the_zone_key_beats_the_stem_name_for_an_ambient_height_crossover():
+    router = _router(
+        stem_ambient_height_crossover_hz={"Other": 4000.0, "Other@surround": 500.0},
+    )
+    assert router._ambient_height_crossover_for("Other@surround") == 500.0
+
+
 def test_a_mono_stem_has_almost_no_ambient_half_to_send():
     """Coherence cannot tell a mono stem apart from its own dry signal, so the
     send carries only the mask floor. Stated here because it is a real limit of

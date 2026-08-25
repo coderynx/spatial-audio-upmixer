@@ -48,7 +48,7 @@ Every stage below is one function, called from both sides:
 | Per-stem EQ | `spatial`/`kernels::fir_design` | `separation/stem_eq.py` | `stream::routing` |
 | Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate}` | `separation/stem_router.py` | `stream::routing` |
 | Routing downmix lock | `spatial::downmix::apply_stereo_downmix_lock` | `separation/stem_router.py` | `stream::engine::render` |
-| Primary/ambient split | `routing::ambient` | `separation/stem_router.py` (`upmixer_dsp.ambient_split`) | `stream::routing` |
+| Primary/ambient split and height allocation | `routing::ambient` | `separation/stem_router.py` (`upmixer_dsp.ambient_split`) | `stream::routing` |
 | Placement → speaker gains | `spatial::{panner,presets}` | `separation/stem_placement.py` | `wasmEngine/panner.ts` |
 | Chain head (subsonic / DC) | `mastering::head` | `mastering/head.py` | `stream::master` |
 | Reference match | `match_reference::{spectrum,curve}` | `mastering/match_reference/` | `stream::master` |
@@ -113,6 +113,12 @@ each stem. It adds only the residual needed on FL/FR for the shared BS.775
 fold to reproduce that stem's EQ'd/rebalanced input pair; LFE is outside the
 fold and remains unchanged. The guarantee ends at routing: mastering may
 change the delivered fold.
+
+`mixing.stem_ambient_height_crossover_hz` is a per-stem 500–4000 Hz map,
+defaulting to 2000 Hz. `routing::ambient` applies its complementary bin masks
+inside the shared STFT; PyO3 receives the same value from `StemRouter`, and
+the worklet receives it in `StemParams`. Live worklet edits move at the STFT
+matrix-update cadence.
 
 The 5.1 re-render row's matrix is shared code too, but unlike the
 stereo-downmix row above it, its two coefficients are deliberately not

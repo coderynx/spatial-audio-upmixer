@@ -9,9 +9,18 @@ use crate::stream::state::{OnePole, StreamingCompressor};
 
 /// One stem's routing state, including the ambient half when the stem asks
 /// for one. Both the initial build and a stem-count change come through here.
-pub(crate) fn build_route(sample_rate: u32, sends: &SendParams, stem: &StemParams) -> StemRouteState {
+pub(crate) fn build_route(
+    sample_rate: u32,
+    sends: &SendParams,
+    stem: &StemParams,
+) -> StemRouteState {
     let mut route = StemRouteState::new(sample_rate, sends, &stem.eq_fir);
-    route.set_ambient(sample_rate, sends, stem.wants_ambient());
+    route.set_ambient(
+        sample_rate,
+        sends,
+        stem.wants_ambient(),
+        stem.ambient_height_crossover_hz,
+    );
     route
 }
 
@@ -30,6 +39,7 @@ fn routing_changed(old: &EngineParams, new: &EngineParams) -> bool {
             || a.eq_fir != b.eq_fir
             || a.ambient_rear != b.ambient_rear
             || a.ambient_height != b.ambient_height
+            || a.ambient_height_crossover_hz != b.ambient_height_crossover_hz
     })
 }
 
@@ -85,8 +95,16 @@ impl PreviewEngine {
                 route.retune(self.sample_rate, &self.params.sends, new_eq, sends_changed, eq_changed);
             }
             let wants_ambient = self.params.stems.get(i).is_some_and(|s| s.wants_ambient());
-            if wants_ambient != route.has_ambient() || sends_changed {
-                route.set_ambient(self.sample_rate, &self.params.sends, wants_ambient);
+            let crossover_changed = old.stems.get(i).is_none_or(|stem| {
+                stem.ambient_height_crossover_hz != self.params.stems[i].ambient_height_crossover_hz
+            });
+            if wants_ambient != route.has_ambient() || sends_changed || crossover_changed {
+                route.set_ambient(
+                    self.sample_rate,
+                    &self.params.sends,
+                    wants_ambient,
+                    self.params.stems[i].ambient_height_crossover_hz,
+                );
             }
         }
 

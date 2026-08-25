@@ -78,6 +78,12 @@ def add_stem_args(parser: argparse.ArgumentParser) -> None:
         metavar="STEM=AMOUNT[,...]",
         help="Per-stem ambient send to heights, 0.0-1.0 (stem mode only).",
     )
+    parser.add_argument(
+        "--stem-ambient-height-crossover",
+        default=None,
+        metavar="STEM=HZ[,...]",
+        help="Per-stem ambient height crossover, 500-4000 Hz (stem mode only).",
+    )
 
     parser.add_argument(
         "--stem-cache-dir",

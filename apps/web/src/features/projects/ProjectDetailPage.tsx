@@ -291,7 +291,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   /** The stem's reverb and room, split out of it and sent around and above
    * the listener. Both amounts leave the front, so this is a move, not a
    * copy — see `routing::ambient`. */
-  const updateAmbient = (stem: string, patch: { rear?: number; height?: number }) => {
+  const updateAmbient = (stem: string, patch: { rear?: number; height?: number; heightCrossoverHz?: number }) => {
     if (!trackManifest) return;
     const mixing = { ...trackManifest.mixing };
     if (patch.rear !== undefined) {
@@ -299,6 +299,12 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     }
     if (patch.height !== undefined) {
       mixing.stem_ambient_height = { ...mixing.stem_ambient_height, [stem]: patch.height };
+    }
+    if (patch.heightCrossoverHz !== undefined) {
+      mixing.stem_ambient_height_crossover_hz = {
+        ...mixing.stem_ambient_height_crossover_hz,
+        [stem]: patch.heightCrossoverHz,
+      };
     }
     updateTrackManifest({ ...trackManifest, mixing }, true);
   };
@@ -588,7 +594,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                   <span className="min-w-0 flex-1 truncate">{selectedStem}</span>
                   <span className="text-[11px] font-normal text-muted-foreground">{stemMuted ? "muted" : "enabled"}</span>
                 </p>
-                <StemControls key={selectedStem} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} ambientRear={trackManifest.mixing.stem_ambient_rear[selectedStem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[selectedStem] ?? 0} onAmbient={(patch) => updateAmbient(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
+                <StemControls key={selectedStem} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} ambientRear={trackManifest.mixing.stem_ambient_rear[selectedStem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[selectedStem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[selectedStem] ?? 2000} onAmbient={(patch) => updateAmbient(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
                   stemEqProfiles={configuration?.choices.stem_eq_profiles}
                 />
                 <div className="mt-3 flex justify-center border-t pt-3">

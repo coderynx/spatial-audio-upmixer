@@ -22,6 +22,7 @@ function renderControls(props: Partial<React.ComponentProps<typeof StemControls>
       maxElevationDeg={35}
       ambientRear={0}
       ambientHeight={0}
+      ambientHeightCrossoverHz={2000}
       onPlacement={onPlacement}
       onRoute={vi.fn()}
       onEq={vi.fn()}
@@ -180,11 +181,18 @@ describe("ambience sends", () => {
     renderControls({ channels: ["FL", "FR", "C", "LFE", "SL", "SR"] });
     expect(screen.getByLabelText("Ambience to rear")).toBeInTheDocument();
     expect(screen.queryByLabelText("Ambience to height")).toBeNull();
+    expect(screen.queryByLabelText("Height crossover")).toBeNull();
   });
 
   it("offers neither send on a stereo layout", () => {
     renderControls({ channels: ["FL", "FR"] });
     expect(screen.queryByLabelText("Ambience to rear")).toBeNull();
     expect(screen.queryByLabelText("Ambience to height")).toBeNull();
+  });
+
+  it("writes a logarithmic height crossover", () => {
+    const { onAmbient } = renderControls({ ambientHeightCrossoverHz: 2000 });
+    step("Height crossover", 1);
+    expect(onAmbient).toHaveBeenLastCalledWith({ heightCrossoverHz: expect.any(Number) });
   });
 });

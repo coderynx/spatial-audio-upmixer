@@ -238,13 +238,24 @@ impl StemRouteState {
     }
 
     /// Build or drop the ambient half.
-    pub fn set_ambient(&mut self, sample_rate: u32, p: &SendParams, wanted: bool) {
+    pub fn set_ambient(
+        &mut self,
+        sample_rate: u32,
+        p: &SendParams,
+        wanted: bool,
+        height_crossover_hz: f64,
+    ) {
         if !wanted {
             self.split = None;
             return;
         }
         if self.split.is_none() {
-            self.split = Some(AmbientSplit::new(sample_rate));
+            self.split = Some(AmbientSplit::with_height_crossover(
+                sample_rate,
+                height_crossover_hz,
+            ));
+        } else if let Some(split) = &mut self.split {
+            split.set_height_crossover(height_crossover_hz);
         }
         for s in self.ambient_surround.iter_mut() {
             s.retune_surround(sample_rate, p);

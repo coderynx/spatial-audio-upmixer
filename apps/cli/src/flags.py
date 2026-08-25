@@ -172,6 +172,17 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
             if not math.isfinite(amount) or not 0.0 <= amount <= 1.0:
                 raise SystemExit(f"--{field.replace('_', '-')} amount for '{stem}' must be in 0.0..1.0, got {amount}.")
         setattr(config, field, {**(getattr(config, field) or {}), **sends})
+    if args.stem_ambient_height_crossover is not None:
+        crossovers = _parse_key_value_pairs(args.stem_ambient_height_crossover, float)
+        for stem, crossover in crossovers.items():
+            if not math.isfinite(crossover) or not 500.0 <= crossover <= 4000.0:
+                raise SystemExit(
+                    f"--stem-ambient-height-crossover value for '{stem}' must be in 500..4000, got {crossover}."
+                )
+        config.stem_ambient_height_crossover_hz = {
+            **(config.stem_ambient_height_crossover_hz or {}),
+            **crossovers,
+        }
     if args.stem_cache_dir is not None:
         config.stem_cache_dir = args.stem_cache_dir
     if args.stem_batch_size is not None:

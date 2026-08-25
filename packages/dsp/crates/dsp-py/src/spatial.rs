@@ -192,12 +192,13 @@ fn elevation_response<'py>(
 /// same signal the preview's split reads: the engine runs that EQ ahead of
 /// the block for exactly this reason.
 #[pyfunction]
-#[pyo3(signature = (left, right, sample_rate))]
+#[pyo3(signature = (left, right, sample_rate, height_crossover_hz = ambient::AMBIENT_HEIGHT_CROSSOVER_HZ))]
 fn ambient_split<'py>(
     py: Python<'py>,
     left: PyReadonlyArray1<'py, f64>,
     right: PyReadonlyArray1<'py, f64>,
     sample_rate: u32,
+    height_crossover_hz: f64,
 ) -> (
     Bound<'py, PyArray1<f64>>,
     Bound<'py, PyArray1<f64>>,
@@ -207,7 +208,7 @@ fn ambient_split<'py>(
     let left = left.as_array().to_vec();
     let right = right.as_array().to_vec();
     let n = left.len().min(right.len());
-    let mut split = ambient::AmbientSplit::new(sample_rate);
+    let mut split = ambient::AmbientSplit::with_height_crossover(sample_rate, height_crossover_hz);
     let block = split.advance(0, &left, &right, 0, n);
     (
         PyArray1::from_slice(py, block.rear[0]),
@@ -234,6 +235,9 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("VELVET_WET", decorrelate::VELVET_WET)?;
     m.add_function(wrap_pyfunction!(ambient_split, m)?)?;
     m.add("AMBIENT_FFT_SIZE", ambient::AMBIENT_FFT_SIZE)?;
-    m.add("AMBIENT_TILT_HZ", ambient::AMBIENT_TILT_HZ)?;
+    m.add(
+        "AMBIENT_HEIGHT_CROSSOVER_HZ",
+        ambient::AMBIENT_HEIGHT_CROSSOVER_HZ,
+    )?;
     Ok(())
 }

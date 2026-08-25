@@ -164,6 +164,7 @@ function params(mode, decodeTaps, ambient = false) {
       routing: CHANNELS.map((name) => [name, 0.3]),
       rebalance_db: 0, enabled: true, eq_fir: [], route_scale: 1,
       ambient_rear: ambient ? 0.8 : 0, ambient_height: ambient ? 0.8 : 0,
+      ambient_height_crossover_hz: 2000,
     })),
     master: {
       // Both default-off stages benched on, per parity contract §4.

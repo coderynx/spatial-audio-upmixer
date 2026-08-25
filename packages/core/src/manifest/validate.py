@@ -396,6 +396,23 @@ def validate_manifest(data: dict) -> None:
                     raise ManifestError(
                         f"{location}.mixing.{field}.{stem_key} must be in 0..1."
                     )
+        crossovers = mixing.get("stem_ambient_height_crossover_hz")
+        if crossovers is not None:
+            if not isinstance(crossovers, dict):
+                raise ManifestError(
+                    f"{location}.mixing.stem_ambient_height_crossover_hz must be a mapping."
+                )
+            for stem_key, value in crossovers.items():
+                if not _valid_route_stem(stem_key):
+                    raise ManifestError(f"Unknown stem routing key '{stem_key}'.")
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ManifestError(
+                        f"{location}.mixing.stem_ambient_height_crossover_hz.{stem_key} must be a number in 500..4000."
+                    )
+                if not math.isfinite(float(value)) or not 500.0 <= float(value) <= 4000.0:
+                    raise ManifestError(
+                        f"{location}.mixing.stem_ambient_height_crossover_hz.{stem_key} must be in 500..4000."
+                    )
         routing = mixing.get("stem_routing")
         if routing is None:
             return
