@@ -12,6 +12,7 @@ export type DspMeterFrame = {
   meters: number[];
   /** `[level, centroid]` pairs, one per stem — see `stem_spectrum` in the core. */
   spectrum: number[];
+  underruns: number;
 };
 
 export type DspEngineCallbacks = {
@@ -126,6 +127,7 @@ export class DspEngineClient {
             position: Number(message.position),
             meters: (message.meters as number[]) ?? [],
             spectrum: (message.spectrum as number[]) ?? [],
+            underruns: Number(message.underruns),
           });
           break;
         case "measuring":

@@ -14,6 +14,12 @@ const QUANTUM = 128;
 const SECONDS = 4;
 const STEMS = 3;
 const CHANNELS = 3;
+let workletTime = 0;
+
+Object.defineProperty(globalThis, "currentTime", {
+  configurable: true,
+  get: () => workletTime,
+});
 
 const PARAMS = {
   speakers: [
@@ -80,12 +86,27 @@ function loadProcessor(): { processor: any; posted: Posted[] } {
 
 /** One paused render callback, which is where both background passes are
  * advanced from. */
-function quantum(processor: any): void {
+function quantum(processor: any, elapsed = QUANTUM / SAMPLE_RATE): void {
+  workletTime += elapsed;
   processor.process([], [Array.from({ length: CHANNELS }, () => new Float32Array(QUANTUM))]);
 }
 
 describe("preview worklet background passes", () => {
+  it("reports missed audio deadlines", () => {
+    workletTime = 0;
+    const { processor, posted } = loadProcessor();
+    processor.port.onmessage({ data: { type: "transport", playing: true } });
+
+    quantum(processor, 0);
+    quantum(processor, (QUANTUM / SAMPLE_RATE) * 3);
+    for (let i = 0; i < 20; i += 1) quantum(processor);
+
+    const frame = posted.filter((message) => message.type === "frame").at(-1);
+    expect(frame?.underruns).toBe(2);
+  });
+
   it("advances the loudness pass while the route-scale pass is still running", () => {
+    workletTime = 0;
     const { processor, posted } = loadProcessor();
     processor.port.onmessage({ data: { type: "measure", weights: [1, 1, 0] } });
 
@@ -111,6 +132,7 @@ describe("preview worklet background passes", () => {
   });
 
   it("re-measures loudness once the route-scale pass lands, as a refinement", () => {
+    workletTime = 0;
     const { processor, posted } = loadProcessor();
     processor.port.onmessage({ data: { type: "measure", weights: [1, 1, 0] } });
 

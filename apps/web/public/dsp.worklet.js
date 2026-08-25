@@ -80,6 +80,8 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.loop = false;
     this.primedFrames = 0;
     this.reportCountdown = 0;
+    this.lastProcessTime = null;
+    this.underruns = 0;
     this.measurePass = 0;
     this.measureOut = 0;
     this.measureReport = 0;
@@ -468,6 +470,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       position: this.wasm.dsp_engine_position(this.engine),
       meters: Array.from(this.heapF32(this.meterPtr, written)),
       spectrum: Array.from(this.heapF32(this.spectrumPtr, spectrumWritten)),
+      underruns: this.underruns,
     });
   }
 
@@ -493,6 +496,12 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
   }
 
   process(_inputs, outputs) {
+    if (this.lastProcessTime !== null) {
+      const elapsed = currentTime - this.lastProcessTime;
+      const expected = RENDER_QUANTUM / sampleRate;
+      if (elapsed > expected * 1.5) this.underruns += Math.max(1, Math.round(elapsed / expected) - 1);
+    }
+    this.lastProcessTime = currentTime;
     const output = outputs[0];
     if (!this.wasm || !this.engine || !output || output.length === 0) {
       return true;

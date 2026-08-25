@@ -68,3 +68,4 @@ jobs:
       - run: npm run build:wasm
       - run: npm run build
       - run: npm test
+      - run: BENCH_RUNS=3 npm run bench:engine

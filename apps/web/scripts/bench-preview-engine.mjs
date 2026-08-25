@@ -17,6 +17,7 @@ const SR = 48000;
 const QUANTUM = 128;
 const DEADLINE_MS = (QUANTUM / SR) * 1000;
 const SECONDS = 5;
+const RUNS = Number.parseInt(process.env.BENCH_RUNS ?? "3", 10);
 
 // Worst case we ship: a full 7.1.4 bed, every stem a separation can produce,
 // order-3 binaural decode, and the whole mastering chain lit up.
@@ -27,17 +28,19 @@ const SHAPES = [
   "height_left", "height_right", "height_left", "height_right",
 ];
 const DECODE_TAPS = 6128;
-const STEMS = 9;
+const STEMS = 13;
+const PRODUCTION_FIR_TAPS = 8700;
 
 // A render must stay well inside the deadline on average; the mono-maker's
 // stride makes one block in every few noticeably dearer, so the tail is
 // budgeted separately. The first render fills both look-ahead queues from
-// cold and is reported but not budgeted — it is paid once per play or seek.
-const BUDGET = { mean: 0.4, p99: 1.0, worst: 1.5 };
+// cold and has its own wall-time budget because it is paid once per play or
+// seek.
+const BUDGET = { mean: 0.4, p99: 1.0, worst: 1.5, cold: 200 };
 
 // A paused measurement is *meant* to spend the quantum the render is not
 // using, so only the overrun limits apply to it.
-const IDLE_BUDGET = { mean: 0.9, p99: 1.0, worst: 1.5 };
+const IDLE_BUDGET = { ...BUDGET, mean: 0.9, p99: 1.0, worst: 1.5 };
 
 // The fast excerpt pass's idle slice is deliberately sized past a quantum's
 // budget: the node is the *source* and its output is already zero-filled
@@ -45,7 +48,7 @@ const IDLE_BUDGET = { mean: 0.9, p99: 1.0, worst: 1.5 };
 // glitch — see MEASURE_FRAMES_FAST_IDLE's comment in public/dsp.worklet.js.
 // Its budget is looser accordingly; only a regression far past what that
 // slice size implies should trip it.
-const FAST_IDLE_BUDGET = { mean: 5, p99: 6, worst: 8 };
+const FAST_IDLE_BUDGET = { ...BUDGET, mean: 5, p99: 6, worst: 8 };
 
 // Unlike the idle cases, this shares the quantum with a real render, so an
 // overrun here is not silence-safe — it can drop a live render quantum.
@@ -54,7 +57,7 @@ const FAST_IDLE_BUDGET = { mean: 5, p99: 6, worst: 8 };
 // accepted trade against the alternative (no progress at all while playing,
 // which is what MEASURE_FRAMES_FAST_PLAYING replaces). p99/worst stay looser
 // than BUDGET for that reason; mean must stay close to a plain render's.
-const PLAYING_FAST_BUDGET = { mean: 0.6, p99: 1.6, worst: 2.5 };
+const PLAYING_FAST_BUDGET = { ...BUDGET, mean: 0.6, p99: 1.6, worst: 2.5 };
 
 // Must match MEASURE_FRAMES_IDLE / _FAST_IDLE / _FAST_PLAYING and the
 // FAST_EXCERPT_* constants in public/dsp.worklet.js.
@@ -71,6 +74,13 @@ const SCALE_FRAMES_PLAYING = 384;
 const CASES = {
   binaural: { mode: "binaural", decode: true, label: "binaural (order-3 decode)" },
   transaural: { mode: "transaural", decode: true, label: "transaural" },
+  transauralMeasuring: {
+    mode: "transaural",
+    decode: true,
+    kind: "playing-fast",
+    budget: PLAYING_FAST_BUDGET,
+    label: "transaural + measurement",
+  },
   native: { mode: "native", decode: false, label: "native 7.1.4 + limiter" },
   stereo: { mode: "stereo", decode: false, label: "stereo downmix" },
   // The exact whole-programme pass advances only while paused, so its slice
@@ -132,7 +142,27 @@ const CASES = {
     mode: "native",
     decode: false,
     kind: "playing-update",
+    productionFirs: true,
     label: "mix edit (mute + compressor, playing)",
+  },
+  seek: { mode: "binaural", decode: true, kind: "seek", label: "seek preroll" },
+  objectNative: {
+    mode: "native",
+    decode: false,
+    objectMode: true,
+    label: "native 7.1.4 + object placement",
+  },
+  downmixLock: {
+    mode: "native",
+    decode: false,
+    downmixLock: true,
+    label: "native 7.1.4 + downmix lock",
+  },
+  silenceTail: {
+    mode: "native",
+    decode: false,
+    silenceTail: true,
+    label: "native decay to silence",
   },
 };
 
@@ -141,7 +171,12 @@ function instantiate() {
   return new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
 }
 
-function params(mode, decodeTaps, ambient = false) {
+function params(mode, decodeTaps, options = {}) {
+  const { ambient = false, objectMode = false, downmixLock = false, productionFirs = false } = options;
+  const fir = Array.from(
+    { length: productionFirs ? PRODUCTION_FIR_TAPS / 2 : 1023 },
+    (_, i) => (i === 511 ? 1 : Math.sin(i * 0.01) * 1e-3),
+  );
   return {
     speakers: CHANNELS.map((name, i) => ({
       name,
@@ -153,6 +188,7 @@ function params(mode, decodeTaps, ambient = false) {
     shapes: SHAPES,
     surround_downmix_coeff: 0.7071067811865476,
     height_downmix_coeff: 0.7071067811865476,
+    spatial_downmix_lock: downmixLock,
     sends: {
       surround_bass_cutoff_hz: 250,
       height_low_rolloff_hz: 150, height_low_rolloff_gain: 0.15,
@@ -165,13 +201,17 @@ function params(mode, decodeTaps, ambient = false) {
       rebalance_db: 0, enabled: true, eq_fir: [], route_scale: 1,
       ambient_rear: ambient ? 0.8 : 0, ambient_height: ambient ? 0.8 : 0,
       ambient_height_crossover_hz: 2000,
+      object_mode: objectMode ? "linked-stereo" : null,
+      object_placement: objectMode
+        ? { azimuth_deg: 45, elevation_deg: 20, width_deg: 60, spread_deg: 40 }
+        : null,
     })),
     master: {
       // Both default-off stages benched on, per parity contract §4.
       head: { cutoff_hz: 20 },
       clip: { ceiling_dbtp: -1, clip_db: 1, knee: 0.5 },
-      reference_gain: 1, reference_fir: [],
-      eq_fir: Array.from({ length: 1023 }, (_, i) => (i === 511 ? 1 : Math.sin(i * 0.01) * 1e-3)),
+      reference_gain: 1, reference_fir: productionFirs ? fir : [],
+      eq_fir: fir,
       eq_strength: 1,
       // Every band the stage accepts, all of them driven into gain reduction
       // so none of them coasts on the redesign-only-when-the-gain-moves path.
@@ -225,9 +265,11 @@ function decodeBank() {
   return bank;
 }
 
-function run(label, mode, decodeTaps, kind, ambient = false) {
+function run({ label, mode, decode, kind, ambient, objectMode, downmixLock, productionFirs, silenceTail }) {
   const wasm = instantiate();
-  const encoded = new TextEncoder().encode(JSON.stringify(params(mode, decodeTaps, ambient)));
+  const decodeTaps = decode ? decodeBank() : [];
+  const options = { ambient, objectMode, downmixLock, productionFirs };
+  const encoded = new TextEncoder().encode(JSON.stringify(params(mode, decodeTaps, options)));
   const ptr = wasm.dsp_alloc(encoded.length);
   new Uint8Array(wasm.memory.buffer, ptr, encoded.length).set(encoded);
   const engine = wasm.dsp_engine_new(SR, ptr, encoded.length);
@@ -236,7 +278,9 @@ function run(label, mode, decodeTaps, kind, ambient = false) {
 
   const frames = SR * SECONDS;
   const tone = new Float32Array(frames);
-  for (let i = 0; i < frames; i += 1) tone[i] = 0.3 * Math.sin((2 * Math.PI * 220 * i) / SR);
+  for (let i = 0; i < frames; i += 1) {
+    tone[i] = silenceTail && i >= SR ? 0 : 0.3 * Math.sin((2 * Math.PI * 220 * i) / SR);
+  }
   for (let s = 0; s < STEMS; s += 1) {
     const left = wasm.dsp_alloc(frames * 4);
     new Float32Array(wasm.memory.buffer, left, frames).set(tone);
@@ -287,7 +331,7 @@ function run(label, mode, decodeTaps, kind, ambient = false) {
       const written = wasm.dsp_engine_render(engine, out, CHANNELS.length, QUANTUM);
       if (written === 0) break;
       toggle = !toggle;
-      const edited = params(mode, decodeTaps);
+      const edited = params(mode, decodeTaps, options);
       edited.stems[0].enabled = toggle;
       edited.master.compressor.threshold_db = toggle ? -20 : -18;
       const encodedEdit = new TextEncoder().encode(JSON.stringify(edited));
@@ -297,6 +341,12 @@ function run(label, mode, decodeTaps, kind, ambient = false) {
       wasm.dsp_engine_set_params(engine, editPtr, encodedEdit.length);
       times.push(performance.now() - started);
       wasm.dsp_free(editPtr, encodedEdit.length);
+    }
+  } else if (kind === "seek") {
+    for (let frame = 0; frame < frames; frame += SR / 4) {
+      const started = performance.now();
+      wasm.dsp_engine_seek(engine, frame);
+      times.push(performance.now() - started);
     }
   } else if (kind === "playing-scale") {
     // Playing: a real render shares the quantum with the route-scale pass,
@@ -364,38 +414,63 @@ function run(label, mode, decodeTaps, kind, ambient = false) {
   };
 }
 
-// One engine per process: four instances in one runtime measure each other's
-// garbage collection, not the DSP.
+if (!Number.isInteger(RUNS) || RUNS < 1) {
+  throw new Error("BENCH_RUNS must be a positive integer");
+}
+
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function summary(results, field) {
+  const values = results.map((result) => result[field]);
+  return { min: Math.min(...values), median: median(values), max: Math.max(...values) };
+}
+
+function reportRange(label, result) {
+  const fraction = (ms) => `${(ms / DEADLINE_MS).toFixed(2)}x`;
+  return `${label} ${result.min.toFixed(3)}/${result.median.toFixed(3)}/${result.max.toFixed(3)}ms ` +
+    `(${fraction(result.median)})`;
+}
+
 const requested = process.argv[2];
 if (requested) {
-  const { mode, decode, label, kind, ambient } = CASES[requested];
-  process.stdout.write(
-    JSON.stringify(run(label, mode, decode ? decodeBank() : [], kind, ambient)),
-  );
+  const definition = CASES[requested];
+  if (!definition) throw new Error(`unknown benchmark case: ${requested}`);
+  process.stdout.write(JSON.stringify(run(definition)));
 } else {
   const self = fileURLToPath(import.meta.url);
-  console.log(`deadline ${DEADLINE_MS.toFixed(2)} ms per ${QUANTUM}-frame quantum at ${SR} Hz\n`);
+  console.log(
+    `deadline ${DEADLINE_MS.toFixed(2)} ms per ${QUANTUM}-frame quantum at ${SR} Hz; ` +
+      `${RUNS} runs, reporting min/median/max\n`,
+  );
   let failed = false;
   for (const name of Object.keys(CASES)) {
-    const r = JSON.parse(execFileSync(process.execPath, [self, name], { encoding: "utf8" }));
+    const results = Array.from({ length: RUNS }, () => (
+      JSON.parse(execFileSync(process.execPath, [self, name], { encoding: "utf8" }))
+    ));
     const budget = CASES[name].budget ?? BUDGET;
-    const fraction = (ms) => `${(ms / DEADLINE_MS).toFixed(2)}x`;
+    const mean = summary(results, "mean");
+    const p99 = summary(results, "p99");
+    const worst = summary(results, "worst");
+    const cold = summary(results, "cold");
     const bad =
-      r.mean / DEADLINE_MS > budget.mean ||
-      r.p99 / DEADLINE_MS > budget.p99 ||
-      r.worst / DEADLINE_MS > budget.worst;
+      mean.median / DEADLINE_MS > budget.mean ||
+      p99.median / DEADLINE_MS > budget.p99 ||
+      worst.median / DEADLINE_MS > budget.worst ||
+      cold.median > budget.cold;
     failed = failed || bad;
     console.log(
-      `${bad ? "FAIL" : "ok  "} ${r.label.padEnd(26)} ` +
-        `mean ${r.mean.toFixed(3)}ms (${fraction(r.mean)})  ` +
-        `p99 ${r.p99.toFixed(3)}ms (${fraction(r.p99)})  ` +
-        `worst ${r.worst.toFixed(3)}ms (${fraction(r.worst)})  ` +
-        `cold ${r.cold.toFixed(1)}ms`,
+      `${bad ? "FAIL" : "ok  "} ${results[0].label.padEnd(34)} ` +
+        `${reportRange("mean", mean)}  ${reportRange("p99", p99)}  ` +
+        `${reportRange("worst", worst)}  cold ${cold.min.toFixed(1)}/${cold.median.toFixed(1)}/${cold.max.toFixed(1)}ms`,
     );
   }
   console.log(
     `\nbudget: mean <= ${BUDGET.mean}x, p99 <= ${BUDGET.p99}x, worst <= ${BUDGET.worst}x of the` +
-      ` deadline (a paused measurement may use ${IDLE_BUDGET.mean}x of the mean)`,
+      ` deadline, cold median <= ${BUDGET.cold}ms (a paused measurement may use ${IDLE_BUDGET.mean}x of the mean)`,
   );
   if (failed) {
     console.error("\nOver budget. The audio thread starves at these numbers, which is silence, not a glitch.");
