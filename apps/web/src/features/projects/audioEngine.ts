@@ -114,12 +114,14 @@ export class PreviewAudioEngine {
   private duration = 0;
   private scrubbing = false;
   private loadToken = 0;
+  private seekToken = 0;
   private appliedDownmixLock = false;
 
   private readonly taps = new FilterTapCache();
   private readonly calibration = new LoudnessCalibration({
     measure: (weights) => this.client?.measure(weights) ?? Promise.resolve(null),
     apply: () => this.apply(),
+    prime: () => this.client?.prime() ?? Promise.resolve(),
     onMeasuring: (measuring) => this.callbacks.onMeasuring(measuring),
     onProgress: (progress) => this.callbacks.onMeasureProgress(progress),
     pause: () => {
@@ -192,11 +194,19 @@ export class PreviewAudioEngine {
     // that invalidate this (see its callers), so the gate lifts on its own.
     if (!this.calibration.covers(this.measureKey())) return false;
     if (this.context.state === "suspended") await this.context.resume();
-    if (time !== this.currentTimeRef.current) this.moveTo(time);
+    if (time !== this.currentTimeRef.current) await this.moveTo(time);
+    await this.client.prime();
+    await this.resetOutputClock();
     this.playing = true;
     this.client.setTransport({ playing: true, loop: this.loop });
     this.callbacks.onPlaying(true);
     return true;
+  }
+
+  private async resetOutputClock() {
+    if (!this.context || this.context.state === "closed") return;
+    await this.context.suspend();
+    await this.context.resume();
   }
 
   pause() {
@@ -226,19 +236,25 @@ export class PreviewAudioEngine {
 
   stop() {
     this.pause();
-    this.moveTo(0);
+    void this.moveTo(0);
   }
 
-  moveTo(time: number): number {
+  async moveTo(time: number): Promise<number> {
     const clamped = Math.max(0, Math.min(time, this.duration));
     this.currentTimeRef.current = clamped;
     this.callbacks.onCurrentTime(clamped);
-    this.client?.seek(clamped * CONTEXT_SAMPLE_RATE);
+    await this.client?.seek(clamped * CONTEXT_SAMPLE_RATE);
     return clamped;
   }
 
   async seek(time: number) {
-    this.moveTo(time);
+    const token = ++this.seekToken;
+    const wasPlaying = this.playing;
+    if (wasPlaying) this.client?.setTransport({ playing: false });
+    await this.moveTo(time);
+    if (token !== this.seekToken || !wasPlaying || !this.client) return;
+    await this.resetOutputClock();
+    this.client.setTransport({ playing: true, loop: this.loop });
   }
 
   beginScrub() {
@@ -253,7 +269,7 @@ export class PreviewAudioEngine {
 
   async commitScrub(time: number) {
     this.scrubbing = false;
-    this.moveTo(time);
+    await this.seek(time);
   }
 
   async setOutputSink(deviceId: string) {
@@ -561,6 +577,7 @@ export class PreviewAudioEngine {
       });
       if (token !== this.loadToken) {
         client.dispose();
+        void context.close();
         return;
       }
       this.client = client;
@@ -587,7 +604,11 @@ export class PreviewAudioEngine {
         this.loadStemEqFirs().then(() => this.apply()),
         this.loadStems(token, context, client),
       ]);
-      if (token !== this.loadToken) return;
+      if (token !== this.loadToken) {
+        client.dispose();
+        void context.close();
+        return;
+      }
 
       // A profile switch during the loads above was dropped by the gate in
       // `measureIfNeeded`, so re-resolve both against the current fields: the
@@ -596,7 +617,11 @@ export class PreviewAudioEngine {
         this.loadDecodeFilterSet(this.spatialProfile),
         this.loadXtcFilterSet(this.transauralProfile),
       ]);
-      if (token !== this.loadToken) return;
+      if (token !== this.loadToken) {
+        client.dispose();
+        void context.close();
+        return;
+      }
 
       this.loaded = true;
       this.callbacks.onReady(true);
@@ -657,7 +682,7 @@ export class PreviewAudioEngine {
   private onEnded() {
     this.playing = false;
     this.callbacks.onPlaying(false);
-    this.moveTo(0);
+    void this.moveTo(0);
     this.silenceLevels();
   }
 

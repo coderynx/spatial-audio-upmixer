@@ -15,6 +15,8 @@ export type CalibrationHooks = {
   /** Push the parameter block, so the pass measures — and the result lands
    * on — the current mix. */
   apply(): void;
+  /** Prepare the first audible quantum before reopening the transport. */
+  prime(): Promise<void>;
   /** True while the pass is in flight, for the "calibrating" affordance. */
   onMeasuring(measuring: boolean): void;
   onProgress(progress: number): void;
@@ -89,8 +91,9 @@ export class LoudnessCalibration {
 
     if (result) this.adopt(key, result);
     this.raw = false;
-    this.hooks.onMeasuring(false);
     this.hooks.apply();
+    await this.hooks.prime();
+    this.hooks.onMeasuring(false);
     if (wasPlaying) this.hooks.resume();
   }
 

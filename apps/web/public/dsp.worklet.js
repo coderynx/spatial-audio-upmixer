@@ -78,6 +78,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.ended = false;
     this.playing = false;
     this.loop = false;
+    this.primedFrames = 0;
     this.reportCountdown = 0;
     this.measurePass = 0;
     this.measureOut = 0;
@@ -142,6 +143,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     if (!this.wasm) return;
     switch (message.type) {
       case "params":
+        this.primedFrames = 0;
         this.setParams(message.bytes);
         break;
       case "stem":
@@ -168,13 +170,14 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
         if (this.engine) {
           this.wasm.dsp_engine_seek(this.engine, message.frame >>> 0);
           this.ended = false;
-          // The seek warms filter state with a real, audible preroll render
-          // so playback resumes cleanly (see `PreviewEngine::seek`), which
-          // leaves the engine's meters non-zero even while paused. Report
-          // only while playing — otherwise the meters/haze would flash with
-          // levels from audio that isn't actually being heard.
-          if (this.playing) this.report();
+          this.primedFrames = 0;
+          this.prime();
         }
+        this.port.postMessage({ type: "seeked", id: message.id });
+        break;
+      case "prime":
+        this.prime();
+        this.port.postMessage({ type: "primed" });
         break;
       case "measure":
         this.measure(message.weights || []);
@@ -476,6 +479,19 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.outBytes = needed;
   }
 
+  prime() {
+    if (!this.engine || this.primedFrames) return;
+    // A cold render misses the audio deadline. Pay it in the control-message
+    // path, then let `process` deliver it before advancing again.
+    this.ensureOutput(RENDER_QUANTUM);
+    this.primedFrames = this.wasm.dsp_engine_render(
+      this.engine,
+      this.outPtr,
+      this.channelCount,
+      RENDER_QUANTUM,
+    );
+  }
+
   process(_inputs, outputs) {
     const output = outputs[0];
     if (!this.wasm || !this.engine || !output || output.length === 0) {
@@ -489,12 +505,13 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     }
     this.ensureOutput(frames);
 
-    const written = this.wasm.dsp_engine_render(
+    const written = this.primedFrames || this.wasm.dsp_engine_render(
       this.engine,
       this.outPtr,
       this.channelCount,
       frames,
     );
+    this.primedFrames = 0;
     const rendered = this.heapF32(this.outPtr, this.channelCount * frames);
     for (let channel = 0; channel < output.length; channel += 1) {
       const target = output[channel];

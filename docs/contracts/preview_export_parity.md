@@ -453,8 +453,14 @@ default costs:
 | p99 | ≤ 1.0 × deadline |
 | Worst steady-state | ≤ 1.5 × deadline |
 
-The first render of a play or seek fills both look-ahead queues from cold
-(~30 ms); it is reported but not budgeted.
+The first render of a play or seek fills both look-ahead queues from cold and
+cannot meet a live quantum deadline. The worklet renders and holds that first
+quantum before starting or resuming the transport, then playback consumes it
+before rendering ahead again. The benchmark reports this priming cost but
+does not include it in the steady-state budget. Before transport resumes, the
+host suspends and resumes the context once so any deadline debt accumulated by
+paused measurement or seek warm-up cannot become a burst of dropped audible
+callbacks with a fast-running playhead.
 
 A mix edit (mute, solo, a fader, a mastering toggle) reaches the engine
 through `update_params`/`dsp_engine_set_params`, not through P2's seek —

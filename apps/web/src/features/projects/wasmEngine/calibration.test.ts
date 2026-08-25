@@ -5,14 +5,21 @@ import type { Measured } from "../audioAnalysis";
 
 function harness(results: Record<string, Measured>) {
   const measured: string[] = [];
-  const state = { key: "", playing: false, resumed: 0, measuring: [] as boolean[] };
+  const state = { key: "", playing: false, primed: 0, resumed: 0, measuring: [] as boolean[], events: [] as string[] };
   const calibration = new LoudnessCalibration({
     measure: async () => {
       measured.push(state.key);
       return results[state.key] ?? null;
     },
     apply: vi.fn(),
-    onMeasuring: (value) => state.measuring.push(value),
+    prime: async () => {
+      state.primed += 1;
+      state.events.push("prime");
+    },
+    onMeasuring: (value) => {
+      state.measuring.push(value);
+      state.events.push(`measuring:${value}`);
+    },
     onProgress: vi.fn(),
     pause: () => {
       const wasPlaying = state.playing;
@@ -22,6 +29,7 @@ function harness(results: Record<string, Measured>) {
     resume: () => {
       state.resumed += 1;
       state.playing = true;
+      state.events.push("resume");
     },
   });
   const ensure = async (key: string) => {
@@ -82,7 +90,9 @@ describe("LoudnessCalibration", () => {
     state.playing = true;
     await ensure("native:mastered");
     expect(state.resumed).toBe(1);
+    expect(state.primed).toBe(1);
     expect(state.playing).toBe(true);
+    expect(state.events).toEqual(["measuring:true", "prime", "measuring:false", "resume"]);
 
     // The cached side needs no pass, so it costs no pause either.
     await ensure("native:bypassed");

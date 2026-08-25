@@ -18,6 +18,7 @@ const seekCalls: number[] = [];
 const addedStems: number[] = [];
 const measureCalls: number[] = [];
 const measureWeights: number[][] = [];
+const contextCalls: string[] = [];
 // Order matters, not just counts: a measurement forks the engine as it stands,
 // so the profile's filter set has to be in it first.
 const callOrder: string[] = [];
@@ -38,6 +39,7 @@ vi.mock("./wasmEngine/engineClient", () => ({
         updateParams: (params: Record<string, unknown>) => sentParams.push(params),
         setTransport: (state: { playing?: boolean; loop?: boolean }) => transportCalls.push(state),
         seek: (frame: number) => seekCalls.push(frame),
+        prime: async () => {},
         measure: async (weights: number[]) => {
           measureCalls.push(measureCalls.length);
           measureWeights.push(weights);
@@ -80,7 +82,12 @@ class FakeAudioContext {
     return new FakeGain();
   }
   async resume() {
+    contextCalls.push("resume");
     this.state = "running";
+  }
+  async suspend() {
+    contextCalls.push("suspend");
+    this.state = "suspended";
   }
   async close() {}
   async decodeAudioData() {
@@ -130,6 +137,7 @@ beforeEach(() => {
   addedStems.length = 0;
   measureCalls.length = 0;
   measureWeights.length = 0;
+  contextCalls.length = 0;
   callOrder.length = 0;
   measureGate = null;
   measureResult = { lkfs: -18, dbtp: -2 };
@@ -219,6 +227,25 @@ describe("useStemPreview transport", () => {
       await preview.playPause();
     });
     expect(transportCalls.at(-1)).toMatchObject({ playing: true });
+    expect(contextCalls.slice(-2)).toEqual(["suspend", "resume"]);
+  });
+
+  it("resets the output clock before resuming a playing seek", async () => {
+    await renderPreview();
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      playPause: () => Promise<void>;
+      seek: (t: number) => Promise<void>;
+    };
+    await act(async () => {
+      await preview.playPause();
+    });
+    contextCalls.length = 0;
+    await act(async () => {
+      await preview.seek(1);
+    });
+
+    expect(transportCalls.slice(-2)).toEqual([{ playing: false }, { playing: true, loop: false }]);
+    expect(contextCalls).toEqual(["suspend", "resume"]);
   });
 
   it("seeks in frames at the pinned 48 kHz context rate", async () => {

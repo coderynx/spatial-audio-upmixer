@@ -64,6 +64,10 @@ export class DspEngineClient {
   readonly ready: Promise<string>;
 
   private pendingMeasure: ((result: { lkfs: number; dbtp: number } | null) => void) | null = null;
+  private primePromise: Promise<void> | null = null;
+  private resolvePrime: (() => void) | null = null;
+  private nextSeekId = 0;
+  private readonly pendingSeeks = new Map<number, () => void>();
   /** Latest params awaiting the next coalesced `updateParams` post. */
   private pendingUpdate: DspEngineParams | null = null;
   private updateScheduled = false;
@@ -136,6 +140,12 @@ export class DspEngineClient {
           }
           break;
         }
+        case "primed":
+          client?.finishPrime();
+          break;
+        case "seeked":
+          client?.resolveSeek(Number(message.id));
+          break;
         case "ended":
           callbacks.onEnded?.();
           break;
@@ -224,8 +234,22 @@ export class DspEngineClient {
     });
   }
 
-  seek(frame: number): void {
-    this.post({ type: "seek", frame: Math.max(0, Math.round(frame)) });
+  seek(frame: number): Promise<void> {
+    const id = ++this.nextSeekId;
+    return new Promise((resolve) => {
+      this.pendingSeeks.set(id, resolve);
+      this.post({ type: "seek", id, frame: Math.max(0, Math.round(frame)) });
+    });
+  }
+
+  /** Render and hold the next quantum before playback starts or resumes. */
+  prime(): Promise<void> {
+    if (this.primePromise) return this.primePromise;
+    this.primePromise = new Promise((resolve) => {
+      this.resolvePrime = resolve;
+    });
+    this.post({ type: "prime" });
+    return this.primePromise;
   }
 
   /**
@@ -271,11 +295,25 @@ export class DspEngineClient {
     this.pendingMeasure = null;
   }
 
+  private finishPrime(): void {
+    this.resolvePrime?.();
+    this.resolvePrime = null;
+    this.primePromise = null;
+  }
+
+  private resolveSeek(id: number): void {
+    this.pendingSeeks.get(id)?.();
+    this.pendingSeeks.delete(id);
+  }
+
   dispose(): void {
     this.disposed = true;
     this.pendingUpdate = null;
     this.pendingMeasure?.(null);
     this.pendingMeasure = null;
+    this.finishPrime();
+    for (const resolve of this.pendingSeeks.values()) resolve();
+    this.pendingSeeks.clear();
     this.node.port.postMessage({ type: "dispose" });
     this.node.port.onmessage = null;
     this.node.disconnect();
