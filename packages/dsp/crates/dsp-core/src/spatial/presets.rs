@@ -163,30 +163,29 @@ pub fn preset_stems(preset: &str) -> &'static [(&'static str, StemPlacement)] {
     preset_table(preset).unwrap_or(&[])
 }
 
-/// How readily a stem's ambient half leaves the front wall, at `balanced`'s
-/// scale. The pulse — lead vocal, kick, snare, bass — never does: smearing it
-/// around the listener is what costs a music mix its centre.
-const AMBIENT_SUSCEPTIBILITY: [(&str, f64, f64); 17] = [
-    ("Lead Vocals", 0.0, 0.0),
-    ("Vocals", 0.06, 0.04),
-    ("Backing Vocals", 0.20, 0.16),
-    ("Bass", 0.0, 0.0),
-    ("Kick", 0.0, 0.0),
-    ("Snare", 0.0, 0.0),
-    ("Toms", 0.08, 0.05),
-    ("Drums", 0.10, 0.06),
-    ("Hi-Hat", 0.10, 0.10),
-    ("Ride", 0.12, 0.12),
-    ("Crash", 0.16, 0.16),
-    ("Guitar", 0.14, 0.08),
-    ("Piano", 0.14, 0.10),
-    ("Other", 0.22, 0.18),
-    ("Instrumental", 0.16, 0.12),
-    ("Crowd", 0.55, 0.35),
-    ("Vocals Reverb", 0.65, 0.45),
+/// How readily a stem's ambient half leaves the front wall at `balanced`'s
+/// scale, followed by its height crossover in Hz.
+const AMBIENT_DEFAULTS: [(&str, f64, f64, f64); 17] = [
+    ("Lead Vocals", 0.0, 0.0, 4000.0),
+    ("Vocals", 0.06, 0.04, 4000.0),
+    ("Backing Vocals", 0.20, 0.16, 4000.0),
+    ("Bass", 0.0, 0.0, 4000.0),
+    ("Kick", 0.0, 0.0, 4000.0),
+    ("Snare", 0.0, 0.0, 4000.0),
+    ("Toms", 0.08, 0.05, 4000.0),
+    ("Drums", 0.10, 0.06, 4000.0),
+    ("Hi-Hat", 0.10, 0.10, 2000.0),
+    ("Ride", 0.12, 0.12, 2000.0),
+    ("Crash", 0.16, 0.16, 2000.0),
+    ("Guitar", 0.14, 0.08, 2000.0),
+    ("Piano", 0.14, 0.10, 2000.0),
+    ("Other", 0.22, 0.18, 2000.0),
+    ("Instrumental", 0.16, 0.12, 2000.0),
+    ("Crowd", 0.55, 0.35, 2000.0),
+    ("Vocals Reverb", 0.65, 0.45, 500.0),
 ];
 
-/// How much each preset leans on the room, against the susceptibility table.
+/// How much each preset leans on the room, against the ambient defaults.
 const AMBIENT_SCALE: [(&str, f64, f64); 6] = [
     ("balanced", 1.0, 1.0),
     ("intimate", 0.45, 0.35),
@@ -205,7 +204,17 @@ const AMBIENT_MAX: f64 = 0.9;
 pub fn preset_ambient(preset: &str, stem: &str) -> Option<(f64, f64)> {
     let (_, rear_scale, height_scale) =
         *AMBIENT_SCALE.iter().find(|(name, _, _)| *name == preset)?;
-    let (_, rear, height) =
-        *AMBIENT_SUSCEPTIBILITY.iter().find(|(name, _, _)| *name == stem)?;
+    let (_, rear, height, _) =
+        *AMBIENT_DEFAULTS.iter().find(|(name, _, _, _)| *name == stem)?;
     Some(((rear * rear_scale).min(AMBIENT_MAX), (height * height_scale).min(AMBIENT_MAX)))
+}
+
+/// A preset's default height crossover for one stem, in Hz.
+/// `None` when the preset or the stem is unknown.
+pub fn preset_ambient_height_crossover(preset: &str, stem: &str) -> Option<f64> {
+    preset_table(preset)?;
+    AMBIENT_DEFAULTS
+        .iter()
+        .find(|(name, _, _, _)| *name == stem)
+        .map(|(_, _, _, crossover)| *crossover)
 }

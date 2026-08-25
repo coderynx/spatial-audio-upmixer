@@ -75,7 +75,11 @@ describe("wasm panner", () => {
     const balanced = instance.presetSends("balanced");
 
     expect(balanced.Kick.lfe).toBeCloseTo(0.85, 9);
-    expect(balanced["Lead Vocals"]).toEqual({ lfe: 0, rear: 0, height: 0 });
+    expect(balanced["Lead Vocals"]).toEqual({
+      lfe: 0, rear: 0, height: 0, heightCrossoverHz: 4000,
+    });
+    expect(balanced["Vocals Reverb"].heightCrossoverHz).toBe(500);
+    expect(balanced.Guitar.heightCrossoverHz).toBe(2000);
     expect(balanced.Crowd.rear).toBeGreaterThan(balanced.Guitar.rear);
     expect(instance.presetSends("intimate").Crowd.rear)
       .toBeLessThan(instance.presetSends("live").Crowd.rear);

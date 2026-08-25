@@ -334,17 +334,19 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     const nextRouting: StemRouting = {};
     const nextRear = { ...trackManifest.mixing.stem_ambient_rear };
     const nextHeight = { ...trackManifest.mixing.stem_ambient_height };
+    const nextHeightCrossover = { ...trackManifest.mixing.stem_ambient_height_crossover_hz };
     for (const stem of stemNames) {
       const name = stem.split("@", 1)[0];
       const placement = table[name];
       if (!placement) continue;
-      const send = sends[name] ?? { lfe: 0, rear: 0, height: 0 };
+      const send = sends[name] ?? { lfe: 0, rear: 0, height: 0, heightCrossoverHz: 2000 };
       nextPlacements[stem] = placement;
       nextRouting[stem] = panner.placementRoute(placement, channels, send.lfe);
       nextRear[stem] = send.rear;
       nextHeight[stem] = send.height;
+      nextHeightCrossover[stem] = send.heightCrossoverHz;
     }
-    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_placement: nextPlacements, stem_routing: nextRouting, stem_ambient_rear: nextRear, stem_ambient_height: nextHeight } });
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_placement: nextPlacements, stem_routing: nextRouting, stem_ambient_rear: nextRear, stem_ambient_height: nextHeight, stem_ambient_height_crossover_hz: nextHeightCrossover } });
   };
   const toggleEnabled = React.useCallback((stem: string) => {
     if (!trackManifest) return;

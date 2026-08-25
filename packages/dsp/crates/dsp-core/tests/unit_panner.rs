@@ -178,13 +178,17 @@ fn panning_is_deterministic() {
 
 #[test]
 fn preset_ambient_keeps_the_pulse_dry_and_scales_the_room_per_preset() {
-    use upmixer_dsp_core::spatial::presets::{preset_ambient, preset_stems, PRESET_NAMES};
+    use upmixer_dsp_core::spatial::presets::{
+        preset_ambient, preset_ambient_height_crossover, preset_stems, PRESET_NAMES,
+    };
 
     for preset in PRESET_NAMES {
         for (stem, _) in preset_stems(preset) {
             let (rear, height) = preset_ambient(preset, stem).unwrap();
             assert!((0.0..=0.9).contains(&rear), "{preset}/{stem} rear {rear}");
             assert!((0.0..=0.9).contains(&height), "{preset}/{stem} height {height}");
+            let crossover = preset_ambient_height_crossover(preset, stem).unwrap();
+            assert!([500.0, 2000.0, 4000.0].contains(&crossover), "{preset}/{stem}");
             if matches!(*stem, "Lead Vocals" | "Kick" | "Snare" | "Bass") {
                 assert_eq!((rear, height), (0.0, 0.0), "{preset}/{stem}");
             }
@@ -196,4 +200,8 @@ fn preset_ambient_keeps_the_pulse_dry_and_scales_the_room_per_preset() {
     assert!(preset_ambient("immersive", "Crowd").unwrap().1 > live.1);
     assert!(preset_ambient("balanced", "nope").is_none());
     assert!(preset_ambient("nope", "Crowd").is_none());
+    assert_eq!(preset_ambient_height_crossover("balanced", "Vocals Reverb"), Some(500.0));
+    assert_eq!(preset_ambient_height_crossover("balanced", "Vocals"), Some(4000.0));
+    assert_eq!(preset_ambient_height_crossover("balanced", "Guitar"), Some(2000.0));
+    assert_eq!(preset_ambient_height_crossover("nope", "Crowd"), None);
 }

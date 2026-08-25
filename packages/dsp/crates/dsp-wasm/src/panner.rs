@@ -101,20 +101,21 @@ pub unsafe extern "C" fn dsp_preset_placement(
     0
 }
 
-/// Write one preset's default ambient sends as `[rear, height]`.
+/// Write one preset's default ambient sends as `[rear, height, height_crossover_hz]`.
 /// Returns 0 on success, -1 when the preset or stem is unknown.
 ///
 /// # Safety
-/// `out` must point to at least two writable `f64`.
+/// `out` must point to at least three writable `f64`.
 #[no_mangle]
 pub unsafe extern "C" fn dsp_preset_ambient(preset: usize, stem: usize, out: *mut f64) -> i32 {
     let Some(name) = presets::PRESET_NAMES.get(preset) else { return -1 };
     let Some((stem_name, _)) = preset_stem(preset, stem) else { return -1 };
     let Some((rear, height)) = presets::preset_ambient(name, stem_name) else { return -1 };
+    let Some(crossover) = presets::preset_ambient_height_crossover(name, stem_name) else { return -1 };
     if out.is_null() {
         return -1;
     }
-    std::slice::from_raw_parts_mut(out, 2).copy_from_slice(&[rear, height]);
+    std::slice::from_raw_parts_mut(out, 3).copy_from_slice(&[rear, height, crossover]);
     0
 }
 

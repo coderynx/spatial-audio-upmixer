@@ -16,7 +16,12 @@ export const NEUTRAL_PLACEMENT: StemPlacement = {
 };
 
 /** What a preset sends a stem outside its panned image. */
-export type PresetSends = { lfe: number; rear: number; height: number };
+export type PresetSends = {
+  lfe: number;
+  rear: number;
+  height: number;
+  heightCrossoverHz: number;
+};
 
 type PannerExports = {
   memory: WebAssembly.Memory;
@@ -133,8 +138,8 @@ export class Panner {
     return out;
   }
 
-  /** A preset's per-stem sends: the LFE weight the placement carries, and how
-   * much of the stem's ambient half the preset moves behind and above. */
+  /** A preset's per-stem sends: the LFE weight the placement carries, the
+   * ambient sends, and the height crossover. */
   presetSends(preset: string): Record<string, PresetSends> {
     const index = this.presetNames.indexOf(preset);
     if (index < 0) return {};
@@ -150,8 +155,8 @@ export class Panner {
         if (this.exports.dsp_preset_placement(index, stem, ptr) !== 0) continue;
         const lfe = this.read(ptr, 5)[4];
         if (this.exports.dsp_preset_ambient(index, stem, ptr) !== 0) continue;
-        const [rear, height] = this.read(ptr, 2);
-        out[name] = { lfe, rear, height };
+        const [rear, height, heightCrossoverHz] = this.read(ptr, 3);
+        out[name] = { lfe, rear, height, heightCrossoverHz };
       }
     } finally {
       this.exports.dsp_free(ptr, bytes);
