@@ -100,6 +100,8 @@ class FakeAudioContext {
   async decodeAudioData() {
     return {
       duration: 2,
+      length: 96000,
+      sampleRate: 48000,
       numberOfChannels: 2,
       getChannelData: () => new Float32Array(96000),
     };

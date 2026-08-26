@@ -90,6 +90,11 @@ function PreviewStatus({ preview, project, previewStemCount }: Pick<PreviewPanel
         <span className="w-9 shrink-0 text-right tabular-nums">{Math.round(preview.measureProgress * 100)}%</span>
       </div>
     )}
+    {preview.previewLimitedTo !== null && (
+      <div className={row}>
+        <span>Preview limited to first {Math.floor(preview.previewLimitedTo)} s — export renders full length.</span>
+      </div>
+    )}
     {project.reference_match_pending && (
       <div className={row}>
         <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
