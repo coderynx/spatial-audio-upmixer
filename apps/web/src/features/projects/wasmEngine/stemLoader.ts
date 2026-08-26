@@ -10,21 +10,11 @@ import type { DspEngineClient } from "./engineClient";
  * ~115 MB decoded, so unbounded parallelism risks holding every stem at once.
  */
 const STEM_DECODE_CONCURRENCY = 3;
-// ponytail: leading-window preview; add seekable chunks for full-length playback.
-const PREVIEW_PCM_BUDGET_BYTES = 512 * 1024 * 1024;
-
-export function previewWindowFrames(
-  stemCount: number,
-  pcmBudgetBytes = PREVIEW_PCM_BUDGET_BYTES,
-): number {
-  return Math.max(1, Math.floor(pcmBudgetBytes / Math.max(1, stemCount) / 2 / Float32Array.BYTES_PER_ELEMENT));
-}
 
 export type StemLoadHooks = {
   isCurrent: () => boolean;
   onProgress: (fraction: number) => void;
   onDuration: (seconds: number) => void;
-  onPreviewLimited: (seconds: number | null) => void;
 };
 
 /** Decode every previewable stem and push it into the engine, in order. */
@@ -33,14 +23,11 @@ export async function loadStemsInto(
   client: DspEngineClient,
   sources: ProjectStem[],
   hooks: StemLoadHooks,
-  pcmBudgetBytes = PREVIEW_PCM_BUDGET_BYTES,
 ): Promise<number> {
   if (!sources.length) {
     hooks.onProgress(1);
     return 0;
   }
-
-  const frameLimit = previewWindowFrames(sources.length, pcmBudgetBytes);
 
   // Stems finish decoding in tight clusters, not evenly spaced — flushing
   // progress straight from each completion would fire a full page re-render
@@ -59,34 +46,25 @@ export async function loadStemsInto(
   };
 
   let duration = 0;
-  let decodedIndex = 0;
-  const pending = new Map<number, Promise<AudioBuffer>>();
-  const schedule = () => {
-    while (pending.size < STEM_DECODE_CONCURRENCY && decodedIndex < sources.length) {
-      const stem = sources[decodedIndex];
-      const buffer = loadBuffer(context, (stem.preview_url || stem.audio_url)!);
-      void buffer.catch(() => {});
-      pending.set(decodedIndex, buffer);
-      decodedIndex += 1;
-    }
-  };
-  schedule();
-
-  for (let index = 0; index < sources.length; index += 1) {
-    const buffer = await pending.get(index)!;
-    pending.delete(index);
+  for (let start = 0; start < sources.length; start += STEM_DECODE_CONCURRENCY) {
+    const chunk = sources.slice(start, start + STEM_DECODE_CONCURRENCY);
+    const buffers = await Promise.all(
+      chunk.map((stem) => loadBuffer(context, (stem.preview_url || stem.audio_url)!)),
+    );
     if (!hooks.isCurrent()) return duration;
 
-    const frames = Math.min(frameLimit, buffer.length);
-    const left = buffer.getChannelData(0).subarray(0, frames).slice();
-    const right = buffer.getChannelData(Math.min(1, buffer.numberOfChannels - 1)).subarray(0, frames).slice();
-    client.addStem(left, right);
-    duration = Math.max(duration, frames / buffer.sampleRate);
-    hooks.onDuration(duration);
-    if (buffer.length > frameLimit) hooks.onPreviewLimited(frameLimit / buffer.sampleRate);
-    schedule();
+    for (const buffer of buffers) {
+      // `.slice()` is a memcpy of the channel view; `Float32Array.from` takes
+      // V8's generic per-element iterator path over the same bytes. The copies
+      // are transferred, so they leave the main thread with the call below.
+      const left = buffer.getChannelData(0).slice();
+      const right = buffer.getChannelData(Math.min(1, buffer.numberOfChannels - 1)).slice();
+      client.addStem(left, right);
+      duration = Math.max(duration, buffer.duration);
+      hooks.onDuration(duration);
+    }
 
-    decoded += 1;
+    decoded += chunk.length;
     scheduleProgressFlush();
   }
   hooks.onProgress(1);

@@ -73,7 +73,6 @@ export function useStemPreview(
   const [playing, setPlaying] = React.useState(false);
   const [currentTime, setCurrentTime] = React.useState(0);
   const [duration, setDuration] = React.useState(0);
-  const [previewLimitedTo, setPreviewLimitedTo] = React.useState<number | null>(null);
   // Default to unity (fader position 1.0): with the PROGRAM/MONITOR split
   // the engine maintains, unity means "hear the render exactly as it would
   // export" — see `faderPositionToGain` in lib/fader.ts. There is no
@@ -118,7 +117,6 @@ export function useStemPreview(
       onPlaying: setPlaying,
       onCurrentTime: setCurrentTime,
       onDuration: setDuration,
-      onPreviewLimited: setPreviewLimitedTo,
       onMeasuring: setMeasuring,
       onMeasureProgress: setMeasureProgress,
       onLoudness: setLoudness,
@@ -301,7 +299,6 @@ export function useStemPreview(
     playing,
     currentTime,
     duration,
-    previewLimitedTo,
     volume,
     muted,
     loop,

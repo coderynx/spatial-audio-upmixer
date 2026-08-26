@@ -57,7 +57,6 @@ export type EngineCallbacks = {
   onPlaying(playing: boolean): void;
   onCurrentTime(time: number): void;
   onDuration(duration: number): void;
-  onPreviewLimited(seconds: number | null): void;
   onMeasuring(measuring: boolean): void;
   /** Measured loudness, the target it is normalized to, and the A/B match
    * gain — pushed whenever any of them moves, not per frame. */

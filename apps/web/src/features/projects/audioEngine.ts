@@ -636,7 +636,6 @@ export class PreviewAudioEngine {
         this.duration = seconds;
         this.callbacks.onDuration(seconds);
       },
-      onPreviewLimited: (seconds) => this.callbacks.onPreviewLimited(seconds),
     });
   }
 
@@ -686,7 +685,6 @@ export class PreviewAudioEngine {
     this.loaded = false;
     this.playing = false;
     this.duration = 0;
-    this.callbacks.onPreviewLimited(null);
     this.currentTimeRef.current = 0;
     this.calibration.reset();
     this.taps.resetPerProject();
