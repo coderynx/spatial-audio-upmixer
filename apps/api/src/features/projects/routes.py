@@ -319,7 +319,11 @@ def register_project_routes(
             path = app.state.project_stems.resolve(relative_path)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="Project stem file not found") from exc
-        return FileResponse(path, media_type=media_type)
+        headers = (
+            {"Cache-Control": "private, max-age=31536000, immutable"}
+            if quality == "preview" else None
+        )
+        return FileResponse(path, media_type=media_type, headers=headers)
 
     @app.get("/api/v1/projects/{project_id}/tracks/{track_id}/stems/archive", tags=["projects"])
     def read_project_track_stems_archive(

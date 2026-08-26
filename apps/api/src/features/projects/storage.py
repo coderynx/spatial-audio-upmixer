@@ -161,11 +161,8 @@ class ProjectStemStorage:
             info = sf.info(str(path))
             duration_seconds = max(duration_seconds, info.duration)
             preview_path = path.with_suffix(".preview.ogg")
-            if not preview_path.is_file():
-                sample_rate_hz, compression_level = PREVIEW_QUALITY_LEVELS[quality]
-                audio = _write_preview(path, preview_path, sample_rate=sample_rate_hz, compression_level=compression_level)
-            else:
-                audio, _ = sf.read(str(preview_path), always_2d=True)
+            sample_rate_hz, compression_level = PREVIEW_QUALITY_LEVELS[quality]
+            audio = _write_preview(path, preview_path, sample_rate=sample_rate_hz, compression_level=compression_level)
             peaks.append(_compute_peaks(audio))
             rows.append(ProjectStem(
                 project_id=project.id,

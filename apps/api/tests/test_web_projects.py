@@ -460,22 +460,46 @@ def test_project_view_builds_stem_urls_from_catalogued_stems(tmp_path, monkeypat
         )
         project = Project(import_batch=batch, name="Preview project", manifest={})
         track = ProjectTrack(project=project, asset=asset, position=0)
+        stem_root = tmp_path / "project-stems" / "a"
+        stem_root.mkdir(parents=True)
+        (stem_root / "Vocals.wav").write_bytes(b"full")
+        (stem_root / "Vocals.preview.ogg").write_bytes(b"preview")
         stem = ProjectStem(
             project=project, track=track, stem_key="Vocals", relative_path="a/Vocals.wav",
             sample_rate=48_000, channels=2, size_bytes=10, generation=1,
+            preview_relative_path="a/Vocals.preview.ogg",
         )
         session.add_all([batch, asset, project, track, stem])
         session.commit()
         project_id = project.id
-    engine.dispose()
 
     with TestClient(create_app(settings)) as client:
         response = client.get(f"/api/v1/projects/{project_id}")
 
-    assert response.status_code == 200
-    body = response.json()
-    track_view = body["tracks"][0]
-    stem_view = track_view["stems"][0]
-    assert stem_view["audio_url"] == (
-        f"/api/v1/projects/{project_id}/tracks/{track_view['id']}/stems/{stem_view['id']}/audio"
-    )
+        assert response.status_code == 200
+        body = response.json()
+        track_view = body["tracks"][0]
+        stem_view = track_view["stems"][0]
+        assert stem_view["audio_url"] == (
+            f"/api/v1/projects/{project_id}/tracks/{track_view['id']}/stems/{stem_view['id']}/audio"
+        )
+        assert stem_view["preview_url"] == f"{stem_view['audio_url']}?quality=preview&v=1-high"
+
+        preview = client.get(stem_view["preview_url"])
+        assert preview.content == b"preview"
+        assert preview.headers["cache-control"] == "private, max-age=31536000, immutable"
+
+        full = client.get(stem_view["audio_url"])
+        assert full.content == b"full"
+        assert "cache-control" not in full.headers
+
+        with factory() as session:
+            project = session.get(Project, project_id)
+            project.preview_quality = "low"
+            project.stems[0].generation = 2
+            session.commit()
+
+    low_quality = client.get(f"/api/v1/projects/{project_id}").json()
+    assert low_quality["tracks"][0]["stems"][0]["preview_url"].endswith("?quality=preview&v=2-low")
+
+    engine.dispose()

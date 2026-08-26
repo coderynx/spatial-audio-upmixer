@@ -165,6 +165,34 @@ def test_catalogue_track_writes_track_peaks_for_every_stem(tmp_path):
     engine.dispose()
 
 
+def test_catalogue_track_rewrites_preview_after_stem_reprepare(tmp_path):
+    engine_url = f"sqlite:///{tmp_path / 'reprepare.db'}"
+    upgrade_database(engine_url)
+    engine = create_database_engine(engine_url)
+    factory = create_session_factory(engine)
+    storage = ProjectStemStorage(tmp_path / "project-stems")
+
+    with factory() as session:
+        project, track = _seed_project_track(session)
+        entry = _seed_stem_store(storage, project, track, ["Vocals"])
+        storage.catalogue_track(session, project, track, generation=1)
+
+        sf.write(
+            str(entry / "Vocals.wav"),
+            np.zeros((48_000, 2)),
+            48_000,
+            subtype="PCM_16",
+        )
+        rows = storage.catalogue_track(session, project, track, generation=2)
+        session.commit()
+
+    preview_audio, _ = sf.read(str(storage.resolve(rows[0].preview_relative_path)))
+    assert np.abs(preview_audio).max() < 1e-3
+    assert storage.read_track_peaks_meta(project.id, track.id)["generation"] == 2
+
+    engine.dispose()
+
+
 def test_rebuild_track_peaks_backfills_from_existing_previews(tmp_path):
     engine_url = f"sqlite:///{tmp_path / 'backfill.db'}"
     upgrade_database(engine_url)

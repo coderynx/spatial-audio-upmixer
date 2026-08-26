@@ -68,7 +68,9 @@ def project_view(
             )
             stem.audio_url = base_url
             if stem_by_id[stem.id].preview_relative_path:
-                stem.preview_url = f"{base_url}?quality=preview"
+                stem.preview_url = (
+                    f"{base_url}?quality=preview&v={stem_by_id[stem.id].generation}-{project.preview_quality}"
+                )
     for layout in project_stems.reference_match_layouts(project.id) if project_stems else []:
         meta = project_stems.read_reference_match_meta(project.id, layout)
         if not meta:

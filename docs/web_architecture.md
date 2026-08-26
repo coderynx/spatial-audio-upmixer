@@ -86,6 +86,10 @@ monitor path; the pieces it delegates to live under
 (ordered concurrent stem decode), `meters.ts` (meter-frame unpacking), and
 `engineTypes.ts` (the shared callback/param types).
 
+Stem preview proxies are versioned by stem generation and preview quality and
+served with a long-lived private browser-cache policy. Re-preparing stems
+rewrites those proxies before publishing the next generation.
+
 **Sample rate.** The context is pinned to 48 kHz. Every shipped FIR (HRIR,
 XTC, EQ) is designed at that rate, and the previous graph reinterpreted those
 taps at whatever rate the device happened to run.
