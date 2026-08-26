@@ -360,10 +360,10 @@ should be.
 |---|---|---|
 | P1 | **Live-parameter latency.** The worklet renders ahead of the playhead, so a control change lands after the render horizon rather than instantly. The horizon is whichever zero-phase stage is active and reaches furthest: the LF unifier's 100 ms, or mid-bass decorrelation's 300 ms (its 4th-order 100-300 Hz band-pass needs the longer context — see `spatial_layouts_bs775_bs2051.md`). | ~100 ms; ~300 ms with `mastering_bass_decorrelate` above 0 |
 | P2 | **Seek warm-up.** A seek renders a discarded run-up so the filter states settle; without it the Haas-delayed sends would drop out and the compressor would re-attack. Inside the run-up the states are still converging. | 500 ms run-up; lands within 1e-6 of a straight play-through |
-| P3 | **Correction latency, in two stages.** The loudness/true-peak correction is a real BS.1770 measurement. A fast pass over a handful of excerpts lands first and is what the "calibrating loudness" UI waits for; an exact pass over the whole programme then keeps running in the background and refines the gain once it lands. Both are advanced in slices from the render callback (`stream::measure`), and the transport stays gated until the fast pass lands, so the preview never plays uncorrected; between the two, it plays on the fast pass's gain. Whatever the pass is meant to measure — parameter block and filter set both — has to reach the worklet before the `measure` message does, since the pass forks the engine as it stands (D29). | Fast pass: a few seconds, advances while paused or playing. Exact pass: ~2-3 min for an eight-minute track, only advances while paused (§4) |
+| P3 | **Correction latency, in two stages.** The loudness/true-peak correction is a real BS.1770 measurement. A fast pass over a handful of excerpts lands first and is what the "calibrating loudness" UI waits for; an exact pass over the whole programme then keeps running in the background and refines the gain once it lands. Both are advanced in slices from the render callback (`stream::measure`) only while transport is stopped. A parameter edit during playback keeps the previous scalar correction and never raises it; stopping starts the replacement measurement. Whatever the pass is meant to measure — parameter block and filter set both — has to reach the worklet before the `measure` message does, since the pass forks the engine as it stands (D29). | Fast pass: a fraction of a second while stopped. Exact pass: ~2-3 min for an eight-minute track, also stopped-only (§4) |
 | P4 | **Monitor-only A/B compensation.** Bypassing the master chain — or, since mastering phase 7, the reference matcher alone (`monitorMastering`'s `matchBypassed`, which strips both the spectral curve and the level gain) — measures that programme on its own key and applies a compensating scalar so both sides monitor at the same delivered loudness. It lives in the preview's `master.output_gain` ramp (`audioEngine.ts`), never in a manifest or an export, and is zero whenever nothing is bypassed. The bypassed side is gated by the same calibration rule as a mode switch, so it never plays unmatched. A whole-chain bypass already strips the matcher, so the stage flag does not enter the measurement key there. | 0 dB unbypassed; the two sides' delivered-loudness difference otherwise, itself capped by the true-peak ceiling |
 | P5 | **The export's dithered tail.** Bit-depth reduction (`io.writer.dither_channels`, `dsp-core/src/dither.rs`) runs only on the export, after every stage in §1, because only the writer knows the delivery subtype. The preview plays float32 and has no such stage. The divergence is inaudible by construction: ±1 LSB of TPDF at 24-bit is ≈ −138 dBFS, below the float32 mantissa's own quantization of the same programme, and it is the last operation in the export — nothing in §1 sees it. See `docs/standards/loudness_dsp_bs1770.md` §"Export tail". | ≤ 1.5 LSB of the delivery subtype; ≈ −138 dBFS at PCM_24, ≈ −90 dBFS at PCM_16 |
-| P6 | **Route-scale latency.** Each stem's routed normalization is a real measurement of that stem's routed signals (`stream::scale`, below), and until it lands the engine renders on the served `estimateRouteScale`. The pass has the same two stages the loudness one does, and restarts whenever a routing parameter moves, so a user dragging a routing control plays on the estimate for as long as they keep dragging. It does not gate the transport — a stem at a slightly wrong level is better than a silent one — but a landed stage re-runs the loudness pass, so the delivered loudness is never left measured against the estimate. | The estimate's own error, which the routing table cannot bound in principle; excerpt stage lands in a second or two paused |
+| P6 | **Route-scale latency.** Each stem's routed normalization is a real measurement of that stem's routed signals (`stream::scale`, below), and until it lands the engine renders on the served `estimateRouteScale`. The pass has the same two stages the loudness one does, and restarts whenever a routing parameter moves, so a user dragging a routing control plays on the estimate until transport stops. It does not gate the transport — a stem at a slightly wrong level is better than a silent one — but a landed stage re-runs the loudness pass, so the delivered loudness is never left measured against the estimate. | The estimate's own error, which the routing table cannot bound in principle; excerpt stage lands in a second or two stopped |
 
 Switching speaker layout is deliberately **not** a sixth entry. Selecting a
 different layout in the tracks panel rebuilds the preview from scratch — new
@@ -421,10 +421,8 @@ outlives its mix, and a fader or a mastering edit — neither of which changes a
 routed signal — keeps it.
 
 It does not gate the loudness pass. The cost of a route-scale stage is per
-stem, so a thirteen-stem bed's excerpt stage is a couple of seconds while
-paused but most of a minute while playing, and restarts on every routing
-edit — holding the correction behind it left the loudness readouts empty for
-as long as the user kept touching the mix. The two run side by side instead,
+stem and it restarts on every routing edit. The two run side by side while
+transport is stopped instead,
 and a landed scale stage re-runs the loudness pass against the levels the
 engine now renders at (`remeasure` in `dsp.worklet.js`). The first fast
 result still resolves what the "calibrating loudness" UI waits for; a re-run
@@ -473,30 +471,13 @@ old parameters has to drain first; this budget is what it costs the
 *audio thread* to make the switch, which is what actually risks silence if
 missed.
 
-A loudness measurement (P3) is the one other thing competing for the quantum,
-and its two stages are budgeted differently. The **exact** whole-programme
-pass advances only while paused, where it may use most of the budget because
-the render is not: playing already spends ~0.25x on average, and both the
-render and the measurement have periodic look-ahead strides that overrun the
-quantum when they land in the same callback. The **fast** excerpt pass also
-advances while paused, in a much larger slice — deliberately past the
-deadline, since the node's output is already silent while paused and an
-overrun there costs a dropped silent callback, not a glitch — and, in a small
-slice, while playing, so pressing play immediately after load doesn't stall
-it; that shared-quantum case is not silence-safe, so its budget only tolerates
-an occasional single-quantum click on the heaviest configuration, bounded to
-the fast pass's few-second window (`bench-preview-engine.mjs`'s
-`measuringFast` / `measuringPlaying` cases). A pass is kept across playback,
-so it resumes rather than restarts.
-
-The route-scale pass (P6) is the third, and it is held to the **render** budget
-above rather than the measurement one, for a reason the loudness pass does not
-have: it restarts on every routing edit, so its playing slice is not bounded to
-a window the way the fast measurement's is, and a user working a routing
-control would spend the whole session inside it
-(`bench-preview-engine.mjs`'s `scalePlaying` case). That is what sets its
-384-frame playing slice — 1024 is already over p99. Paused it takes a much
-larger one, on the same reasoning the fast measurement does.
+A loudness measurement (P3) never competes with a live render. Both its exact
+whole-programme pass and its fast excerpt pass advance only while transport is
+stopped. The fast pass deliberately takes a slice larger than the callback
+deadline: the node's output is already silent, so an overrun costs a dropped
+silent callback rather than an audible glitch (`bench-preview-engine.mjs`'s
+`measuringFast` case). A pass is kept across playback and resumes on the next
+stop. The route-scale pass (P6) follows the same stopped-only rule.
 
 **Run this after any change to `packages/dsp`'s streaming path.** A change that
 is numerically perfect and 3× too slow is a change that ships silence.

@@ -50,37 +50,17 @@ const IDLE_BUDGET = { ...BUDGET, mean: 0.9, p99: 1.0, worst: 1.5 };
 // slice size implies should trip it.
 const FAST_IDLE_BUDGET = { ...BUDGET, mean: 5, p99: 6, worst: 8 };
 
-// Unlike the idle cases, this shares the quantum with a real render, so an
-// overrun here is not silence-safe — it can drop a live render quantum.
-// Bounded to the heaviest configuration and the few seconds the fast pass
-// runs for, an occasional single-quantum click during that window is an
-// accepted trade against the alternative (no progress at all while playing,
-// which is what MEASURE_FRAMES_FAST_PLAYING replaces). p99/worst stay looser
-// than BUDGET for that reason; mean must stay close to a plain render's.
-const PLAYING_FAST_BUDGET = { ...BUDGET, mean: 0.6, p99: 1.6, worst: 2.5 };
-
-// Must match MEASURE_FRAMES_IDLE / _FAST_IDLE / _FAST_PLAYING and the
-// FAST_EXCERPT_* constants in public/dsp.worklet.js.
+// Must match MEASURE_FRAMES_IDLE / _FAST_IDLE and the FAST_EXCERPT_*
+// constants in public/dsp.worklet.js.
 const MEASURE_FRAMES_IDLE = 384;
 const MEASURE_FRAMES_FAST_IDLE = 2048;
-const MEASURE_FRAMES_FAST_PLAYING = 32;
-const FAST_EXCERPT_COUNT = 5;
-const FAST_EXCERPT_SECONDS = 3;
-const FAST_EXCERPT_PREROLL_SECONDS = 0.5;
-
-// Must match SCALE_FRAMES_PLAYING in public/dsp.worklet.js.
-const SCALE_FRAMES_PLAYING = 384;
+const FAST_EXCERPT_COUNT = 3;
+const FAST_EXCERPT_SECONDS = 1;
+const FAST_EXCERPT_PREROLL_SECONDS = 0.25;
 
 const CASES = {
   binaural: { mode: "binaural", decode: true, label: "binaural (order-3 decode)" },
   transaural: { mode: "transaural", decode: true, label: "transaural" },
-  transauralMeasuring: {
-    mode: "transaural",
-    decode: true,
-    kind: "playing-fast",
-    budget: PLAYING_FAST_BUDGET,
-    label: "transaural + measurement",
-  },
   native: { mode: "native", decode: false, label: "native 7.1.4 + limiter" },
   stereo: { mode: "stereo", decode: false, label: "stereo downmix" },
   // The exact whole-programme pass advances only while paused, so its slice
@@ -100,26 +80,6 @@ const CASES = {
     kind: "idle-fast",
     budget: FAST_IDLE_BUDGET,
     label: "measuring (fast excerpt, paused)",
-  },
-  // The fast excerpt pass also advances during playback, sharing the quantum
-  // with a real render, so a user who presses play immediately still gets a
-  // correction. Held to the normal render budget since it must not starve it.
-  measuringPlaying: {
-    mode: "binaural",
-    decode: true,
-    kind: "playing-fast",
-    budget: PLAYING_FAST_BUDGET,
-    label: "measuring (fast excerpt, playing)",
-  },
-  // The route-scale pass shares the quantum with a real render the same way
-  // the fast measurement does, and for longer: it re-runs whenever a routing
-  // parameter moves. Held to the render budget, since starving the callback
-  // to learn a normalization would trade a level error for silence.
-  scalePlaying: {
-    mode: "binaural",
-    decode: true,
-    kind: "playing-scale",
-    label: "route scale (playing)",
   },
   // A mix edit (mute/solo, a fader, a mastering toggle) lands via
   // `dsp_engine_set_params` while playback continues. Regression guard for
@@ -294,7 +254,7 @@ function run({ label, mode, decode, kind, ambient, objectMode, downmixLock, prod
   let pass = 0;
   let weightPtr = 0;
   let resultPtr = 0;
-  if (kind === "idle-exact" || kind === "idle-fast" || kind === "playing-fast") {
+  if (kind === "idle-exact" || kind === "idle-fast") {
     weightPtr = wasm.dsp_alloc(16);
     new Float64Array(wasm.memory.buffer, weightPtr, 2).set([1, 1]);
     resultPtr = wasm.dsp_alloc(16);
@@ -347,43 +307,6 @@ function run({ label, mode, decode, kind, ambient, objectMode, downmixLock, prod
       const started = performance.now();
       wasm.dsp_engine_seek(engine, frame);
       times.push(performance.now() - started);
-    }
-  } else if (kind === "playing-scale") {
-    // Playing: a real render shares the quantum with the route-scale pass,
-    // which measures one stem's routing at a time until every stem is done.
-    let scale = wasm.dsp_scale_begin_excerpts(
-      engine,
-      FAST_EXCERPT_COUNT,
-      Math.round(FAST_EXCERPT_SECONDS * SR),
-      Math.round(FAST_EXCERPT_PREROLL_SECONDS * SR),
-    );
-    for (;;) {
-      const started = performance.now();
-      const written = wasm.dsp_engine_render(engine, out, CHANNELS.length, QUANTUM);
-      if (scale && wasm.dsp_scale_advance(scale, engine, SCALE_FRAMES_PLAYING)) {
-        wasm.dsp_scale_free(scale);
-        scale = 0;
-      }
-      const elapsed = performance.now() - started;
-      if (written === 0) break;
-      times.push(elapsed);
-    }
-    if (scale) wasm.dsp_scale_free(scale);
-  } else if (kind === "playing-fast") {
-    // Playing: a real render shares the quantum with a small measurement
-    // slice, until the fast pass lands — then the render continues alone.
-    let measureDone = false;
-    for (;;) {
-      const started = performance.now();
-      const written = wasm.dsp_engine_render(engine, out, CHANNELS.length, QUANTUM);
-      if (!measureDone) {
-        measureDone = Boolean(
-          wasm.dsp_measure_advance(pass, MEASURE_FRAMES_FAST_PLAYING, resultPtr),
-        );
-      }
-      const elapsed = performance.now() - started;
-      if (written === 0) break;
-      times.push(elapsed);
     }
   } else {
     for (;;) {

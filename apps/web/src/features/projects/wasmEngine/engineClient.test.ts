@@ -54,6 +54,14 @@ describe("DspEngineClient message ordering", () => {
     expect(port.messages.map((message) => message.type)).toEqual(["update", "measure"]);
   });
 
+  it("tags a measurement with the caller's generation", async () => {
+    const { client, port } = await makeClient();
+
+    void client.measure([1, 1], 42);
+
+    expect(port.messages.at(-1)).toMatchObject({ type: "measure", requestId: 42 });
+  });
+
   it("flushes it before the transport starts, so playback never runs a frame of stale gain", async () => {
     const { client, port } = await makeClient();
 

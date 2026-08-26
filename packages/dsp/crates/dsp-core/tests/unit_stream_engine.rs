@@ -322,6 +322,22 @@ mod measure {
     }
 
     #[test]
+    fn measurement_ignores_the_live_output_gain() {
+        let live = engine(48_000);
+        let mut corrected = engine(48_000);
+        let mut params = corrected.params().clone();
+        params.master.output_gain = 0.25;
+        corrected.update_params(params);
+
+        let (plain_lkfs, plain_dbtp) = run(&mut MeasurementPass::new(&live, &[1.0, 1.0]), 4096);
+        let (corrected_lkfs, corrected_dbtp) =
+            run(&mut MeasurementPass::new(&corrected, &[1.0, 1.0]), 4096);
+
+        assert!((plain_lkfs - corrected_lkfs).abs() < 1e-9);
+        assert!((plain_dbtp - corrected_dbtp).abs() < 1e-9);
+    }
+
+    #[test]
     fn progress_climbs_to_one() {
         let live = engine(48_000);
         let mut pass = MeasurementPass::new(&live, &[1.0, 1.0]);

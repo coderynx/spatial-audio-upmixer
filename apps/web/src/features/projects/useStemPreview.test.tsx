@@ -17,6 +17,7 @@ const transportCalls: { playing?: boolean; loop?: boolean }[] = [];
 const seekCalls: number[] = [];
 const addedStems: number[] = [];
 const measureCalls: number[] = [];
+const measureRequestIds: number[] = [];
 const measureWeights: number[][] = [];
 const contextCalls: string[] = [];
 const clientChannels: number[] = [];
@@ -45,8 +46,9 @@ vi.mock("./wasmEngine/engineClient", () => ({
           seekCalls.push(frame);
           transportCalls.push({ playing: true });
         },
-        measure: async (weights: number[]) => {
+        measure: async (weights: number[], requestId: number) => {
           measureCalls.push(measureCalls.length);
+          measureRequestIds.push(requestId);
           measureWeights.push(weights);
           callOrder.push("measure");
           if (measureGate) await measureGate;
@@ -143,6 +145,7 @@ beforeEach(() => {
   seekCalls.length = 0;
   addedStems.length = 0;
   measureCalls.length = 0;
+  measureRequestIds.length = 0;
   measureWeights.length = 0;
   contextCalls.length = 0;
   clientChannels.length = 0;
@@ -506,7 +509,33 @@ describe("useStemPreview loudness calibration", () => {
     expect(20 * Math.log10(nativeGain)).toBeCloseTo(22, 6);
   });
 
-  it("recalibrates when the profile switches back while a measurement is in flight", async () => {
+  it("holds a calibration-driven gain increase until playback stops", async () => {
+    const result = await renderPreview();
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      playPause: () => Promise<void>;
+    };
+    await act(async () => {
+      await preview.playPause();
+    });
+
+    await act(async () => {
+      (capturedCallbacks.onMeasured as ((result: { lkfs: number; dbtp: number }, requestId: number) => void))?.(
+        { lkfs: -40, dbtp: -30 },
+        measureRequestIds.at(-1)!,
+      );
+    });
+    const whilePlaying = sentParams.at(-1) as { master: { output_gain: number } };
+    expect(whilePlaying.master.output_gain).toBeCloseTo(1, 6);
+
+    await act(async () => {
+      await preview.playPause();
+    });
+    const whileStopped = sentParams.at(-1) as { master: { output_gain: number } };
+    expect(whileStopped.master.output_gain).toBeGreaterThan(1);
+    result.unmount();
+  });
+
+  it("restores the cached calibration when a profile switches back in flight", async () => {
     const result = await renderPreview({ spatialProfile: "studio" });
     expect(measureCalls).toHaveLength(1);
 
@@ -527,11 +556,10 @@ describe("useStemPreview loudness calibration", () => {
     await rerender("listening");
     expect(measureCalls).toHaveLength(2);
 
-    // "studio" is what `measuredForMode` still names, but the pass in flight
-    // is about to replace that measurement with "listening"'s — so going back
-    // has to measure again rather than claim it is already calibrated.
+    // A cached studio measurement remains valid; the listening request is
+    // superseded and its late result must be ignored.
     await rerender("studio");
-    expect(measureCalls).toHaveLength(3);
+    expect(measureCalls).toHaveLength(2);
 
     await act(async () => {
       resolveGate();
@@ -593,7 +621,7 @@ describe("useStemPreview loudness calibration", () => {
     expect(transportCalls.at(-1)).toMatchObject({ playing: true });
   });
 
-  it("pauses playback when a profile switch invalidates the current calibration, then resumes once it completes", async () => {
+  it("defers recalibration until playback stops", async () => {
     const result = await renderPreview({ spatialProfile: "studio" });
     const getPreview = () =>
       (globalThis as unknown as Record<string, unknown>).preview as {
@@ -606,18 +634,25 @@ describe("useStemPreview loudness calibration", () => {
     });
     expect(transportCalls.at(-1)).toMatchObject({ playing: true });
 
-    let resolveGate: () => void = () => {};
-    measureGate = new Promise((resolve) => {
-      resolveGate = resolve;
-    });
-
     await act(async () => {
       result.rerender(<Harness spatialProfile="listening" />);
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(transportCalls.at(-1)).toMatchObject({ playing: false });
+    expect(measureCalls).toHaveLength(1);
+    expect(transportCalls.at(-1)).toMatchObject({ playing: true });
+    expect(getPreview().playing).toBe(true);
+
+    let resolveGate: () => void = () => {};
+    measureGate = new Promise((resolve) => {
+      resolveGate = resolve;
+    });
+    await act(async () => {
+      await getPreview().playPause();
+      await Promise.resolve();
+    });
+    expect(measureCalls).toHaveLength(2);
     expect(getPreview().playing).toBe(false);
 
     await act(async () => {
@@ -625,9 +660,6 @@ describe("useStemPreview loudness calibration", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-
-    expect(transportCalls.at(-1)).toMatchObject({ playing: true });
-    expect(getPreview().playing).toBe(true);
   });
 });
 

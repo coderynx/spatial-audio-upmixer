@@ -12,7 +12,7 @@ use crate::mastering::clip::ClipCurve;
 use crate::spatial::downmix::{apply_stereo_downmix_lock, DownmixRole};
 use crate::spatial::panner::{PannerLayout, StemPlacement};
 use crate::stream::meters::Level;
-use crate::stream::params::{ObjectMode, SendShape};
+use crate::stream::params::{ObjectMode, OutputMode, SendShape};
 use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND, SIGNALS, STEM_INPUT};
 
 pub(crate) struct StemMixRoute {
@@ -329,15 +329,33 @@ impl PreviewEngine {
         // Clipped on the way into `post`, not at the emit point: the limiter
         // detects a whole look-ahead past what it emits, and that window has
         // to be clipped too (parity contract §1).
+        let native_gain = if self.params.output_mode == OutputMode::Native {
+            Some(
+                (0..end - start)
+                    .map(|_| self.master_gain.tick(self.params.master.output_gain))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
         let clip = self.params.master.clip.map(|c| ClipCurve::new(&c));
         for (channel, mut block) in window.into_iter().enumerate() {
             if !self.params.bypass_mastering {
                 self.causal[channel].lfe_trim(&mut block, lfe_gain_db);
+                if let Some(gains) = &native_gain {
+                    for (sample, gain) in block.iter_mut().zip(gains) {
+                        *sample *= gain;
+                    }
+                }
                 if let Some(curve) = clip
                     .as_ref()
                     .filter(|_| self.params.lfe_index != Some(channel))
                 {
                     curve.apply(&mut block);
+                }
+            } else if let Some(gains) = &native_gain {
+                for (sample, gain) in block.iter_mut().zip(gains) {
+                    *sample *= gain;
                 }
             }
             self.post.channels[channel].extend(block);
@@ -399,9 +417,11 @@ impl PreviewEngine {
         // from the measurement pass, not a live user gesture), so ramping it
         // once per render call is enough to hide the step without threading
         // a per-sample gain array through the collapse stage.
-        let gain = self
-            .master_gain
-            .advance(self.params.master.output_gain, emit);
+        let gain = if self.params.output_mode == OutputMode::Native {
+            1.0
+        } else {
+            self.master_gain.advance(self.params.master.output_gain, emit)
+        };
         self.output
             .process(&window, emit, gain, &mut self.collapsed);
         for (channel, rendered) in self.collapsed.iter().enumerate().take(out_channels) {

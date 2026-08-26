@@ -374,11 +374,14 @@ impl PreviewEngine {
         self.measured_scales.clear();
     }
 
-    /// A second engine over the same stems and parameters, at the top of the
-    /// programme. Used to measure without disturbing the live transport; the
-    /// stems are shared, not copied, so this costs filter state only.
+    /// An analysis engine over the same programme, without monitor controls.
+    /// The stems are shared, not copied, so this costs filter state only.
     pub fn fork(&self) -> Self {
         let mut params = self.params.clone();
+        params.master.output_gain = 1.0;
+        for speaker in &mut params.speakers {
+            speaker.muted = false;
+        }
         if let Some(taps) = &self.decode_taps_override {
             params.decode_taps = taps.clone();
         }
@@ -388,6 +391,7 @@ impl PreviewEngine {
         let mut engine = Self::new(self.sample_rate, params, self.stems.clone());
         engine.decode_taps_override = self.decode_taps_override.clone();
         engine.xtc_taps_override = self.xtc_taps_override.clone();
+        engine.measured_scales = self.measured_scales.clone();
         engine
     }
 

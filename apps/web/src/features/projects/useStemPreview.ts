@@ -166,21 +166,19 @@ export function useStemPreview(
   // page rebuilds its manifest on every edit, including unrelated mixing
   // edits), but the mastering audio graph only needs rebuilding when the
   // resolved values actually change.
-  const masteringKey = JSON.stringify(mastering ?? null);
-  // Same value-stable-key trick as `masteringKey`, for `mix.stem_eq`.
-  const stemEqKey = JSON.stringify(mix?.stem_eq ?? null);
-
-  React.useEffect(() => {
-    if (!constants) return;
-    engine.buildMasteringTopology();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on masteringKey + constants readiness, not `mastering` (see masteringKey comment above)
-  }, [masteringKey, constants]);
-
-  React.useEffect(() => {
-    if (!constants) return;
-    engine.buildStemEqChains();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on stemEqKey + constants readiness, not `mix` (see stemEqKey comment above)
-  }, [stemEqKey, constants]);
+  const programKey = JSON.stringify({
+    layoutChannels,
+    scene: scene.stems ?? null,
+    mix: mix ?? null,
+    mastering: mastering ?? null,
+    routing: routing ?? null,
+    outputMode,
+    spatialProfile,
+    transauralProfile,
+    masteringBypassed,
+    matchBypassed,
+  });
+  engine.programKey = programKey;
 
   React.useEffect(() => {
     engine.applySpeakerMute();
@@ -190,26 +188,6 @@ export function useStemPreview(
   const toggleSpeaker = React.useCallback((channel: string) => {
     setSpeakerEnabled((current) => ({ ...current, [channel]: current[channel] === false }));
   }, []);
-
-  // The A/B's two sides are separate programmes with separate loudness, so
-  // this recalibrates like an output-mode switch does.
-  React.useEffect(() => {
-    if (!constants) return;
-    engine.applyMasteringBypass(masteringBypassed);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [masteringBypassed, ready, constants]);
-
-  React.useEffect(() => {
-    if (!constants) return;
-    engine.applyMatchBypass(matchBypassed);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [matchBypassed, ready, constants]);
-
-  React.useEffect(() => {
-    if (!constants) return;
-    engine.applyOutputMode(outputMode);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [outputMode, layoutChannelsKey, ready, constants]);
 
   React.useEffect(() => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -239,27 +217,9 @@ export function useStemPreview(
 
   React.useEffect(() => {
     if (!constants) return;
-    engine.applyMix();
+    void engine.syncProgram();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-    // Depend on the send values themselves, not the `routing` object: the
-    // project page rebuilds its manifest every render, so the object identity
-    // changes constantly while these numbers do not.
-  }, [mix, scene.stems, mastering, routing?.height_directional_band_gain, constants]);
-
-  // Profile switch: retune the already-built voicing chain (cheap, no graph
-  // rebuild), swap in the new profile's decode filter set, then recalibrate.
-  React.useEffect(() => {
-    if (!constants) return;
-    void engine.retuneVoicing(spatialProfile);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [spatialProfile, ready, constants]);
-
-  // Transaural profile switch: same pattern as the binaural effect above.
-  React.useEffect(() => {
-    if (!constants) return;
-    void engine.retuneCrosstalkVoicing(transauralProfile);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [transauralProfile, ready, constants]);
+  }, [programKey, ready, constants]);
 
   React.useEffect(() => {
     if (!constants || !hasManifest) return;

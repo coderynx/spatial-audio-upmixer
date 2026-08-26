@@ -33,7 +33,7 @@ export type DspEngineCallbacks = {
    * The exact whole-programme measurement landed, refining the fast excerpt
    * result `measure()` already resolved with. See `DspEngineClient.measure`.
    */
-  onMeasured?: (result: { lkfs: number; dbtp: number }) => void;
+  onMeasured?: (result: { lkfs: number; dbtp: number }, requestId: number) => void;
   onError?: (message: string) => void;
 };
 
@@ -143,7 +143,7 @@ export class DspEngineClient {
         case "measured": {
           const result = { lkfs: Number(message.lkfs), dbtp: Number(message.dbtp) };
           if (message.stage === "exact") {
-            callbacks.onMeasured?.(result);
+            callbacks.onMeasured?.(result, Number(message.requestId));
           } else {
             client?.resolveMeasure(result);
           }
@@ -281,11 +281,11 @@ export class DspEngineClient {
    * `onMeasured` once it lands, minutes later on a long track. Resolves with
    * `null` if another measurement supersedes it before the fast pass lands.
    */
-  measure(weights: number[] = []): Promise<{ lkfs: number; dbtp: number } | null> {
+  measure(weights: number[] = [], requestId = 0): Promise<{ lkfs: number; dbtp: number } | null> {
     this.pendingMeasure?.(null);
     return new Promise((resolve) => {
       this.pendingMeasure = resolve;
-      this.post({ type: "measure", weights });
+      this.post({ type: "measure", weights, requestId });
     });
   }
 

@@ -92,6 +92,21 @@ function quantum(processor: any, elapsed = QUANTUM / SAMPLE_RATE): void {
 }
 
 describe("preview worklet background passes", () => {
+  it("does no calibration work while audio is playing", () => {
+    workletTime = 0;
+    const { processor, posted } = loadProcessor();
+    processor.port.onmessage({ data: { type: "measure", weights: [1, 1, 0] } });
+    const pass = processor.measurePass;
+    const before = processor.wasm.dsp_measure_progress(pass);
+    processor.port.onmessage({ data: { type: "transport", playing: true } });
+
+    for (let i = 0; i < 20; i += 1) quantum(processor);
+
+    expect(processor.wasm.dsp_measure_progress(pass)).toBe(before);
+    expect(processor.scalePass).toBe(0);
+    expect(posted.some((message) => message.type === "measured")).toBe(false);
+  });
+
   it("drops a primed block when an update changes output channels", () => {
     const { processor } = loadProcessor();
     processor.port.onmessage({ data: { type: "start", frame: 0, loop: false } });

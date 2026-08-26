@@ -5,28 +5,17 @@ import type { Measured } from "../audioAnalysis";
 
 function harness(results: Record<string, Measured>) {
   const measured: string[] = [];
-  const state = { key: "", playing: false, resumed: 0, measuring: [] as boolean[], events: [] as string[] };
+  const state = { key: "", measuring: [] as boolean[], events: [] as string[] };
   const calibration = new LoudnessCalibration({
     measure: async () => {
       measured.push(state.key);
       return results[state.key] ?? null;
     },
-    apply: vi.fn(),
     onMeasuring: (value) => {
       state.measuring.push(value);
       state.events.push(`measuring:${value}`);
     },
     onProgress: vi.fn(),
-    pause: () => {
-      const wasPlaying = state.playing;
-      state.playing = false;
-      return wasPlaying;
-    },
-    resume: () => {
-      state.resumed += 1;
-      state.playing = true;
-      state.events.push("resume");
-    },
   });
   const ensure = async (key: string) => {
     state.key = key;
@@ -68,38 +57,28 @@ describe("LoudnessCalibration", () => {
     expect(calibration.measured).toEqual(BYPASSED);
   });
 
-  it("renders uncorrected only while a pass is in flight", async () => {
+  it("keeps the programme running while a pass is in flight", async () => {
     const { calibration, ensure, state } = harness({ "native:mastered": MASTERED });
-    expect(calibration.raw).toBe(false);
-    const pass = ensure("native:mastered");
-    expect(calibration.raw).toBe(true);
-    await pass;
-    expect(calibration.raw).toBe(false);
+    await ensure("native:mastered");
     expect(state.measuring).toEqual([true, false]);
   });
 
-  it("pauses a playing transport for a real pass and resumes it after", async () => {
-    const { ensure, state } = harness({
+  it("does not remeasure a cached programme", async () => {
+    const { ensure, measured } = harness({
       "native:mastered": MASTERED,
       "native:bypassed": BYPASSED,
     });
-    state.playing = true;
     await ensure("native:mastered");
-    expect(state.resumed).toBe(1);
-    expect(state.playing).toBe(true);
-    expect(state.events).toEqual(["measuring:true", "measuring:false", "resume"]);
-
-    // The cached side needs no pass, so it costs no pause either.
     await ensure("native:bypassed");
     await ensure("native:mastered");
-    expect(state.resumed).toBe(2);
+    expect(measured).toEqual(["native:mastered", "native:bypassed"]);
   });
 
   it("keeps the refinement that belongs to the pass it resolved", async () => {
     const { calibration, ensure } = harness({ "native:mastered": MASTERED });
     await ensure("native:mastered");
     const exact = { lkfs: -19.4, dbtp: -2.8 };
-    expect(calibration.refine(exact)).toBe(true);
+    expect(calibration.refine(exact, 1)).toBe(true);
     expect(calibration.measured).toEqual(exact);
     expect(calibration.get("native:mastered")).toEqual(exact);
   });
@@ -108,7 +87,7 @@ describe("LoudnessCalibration", () => {
     const { calibration, ensure } = harness({ "native:mastered": MASTERED });
     await ensure("native:mastered");
     const pending = ensure("native:bypassed");
-    expect(calibration.refine({ lkfs: -19.4, dbtp: -2.8 })).toBe(false);
+    expect(calibration.refine({ lkfs: -19.4, dbtp: -2.8 }, 1)).toBe(false);
     expect(calibration.measured).toEqual(MASTERED);
     await pending;
   });

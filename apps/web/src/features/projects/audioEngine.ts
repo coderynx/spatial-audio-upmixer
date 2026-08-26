@@ -101,6 +101,7 @@ export class PreviewAudioEngine {
    * measure-then-match machinery. Ignored while the whole chain is bypassed,
    * which already strips the matcher. */
   matchBypassed = false;
+  programKey = "";
 
   volume = 1;
   muted = false;
@@ -114,20 +115,13 @@ export class PreviewAudioEngine {
   private duration = 0;
   private scrubbing = false;
   private loadToken = 0;
-  private appliedDownmixLock = false;
+  private appliedOutputGain = 1;
 
   private readonly taps = new FilterTapCache();
   private readonly calibration = new LoudnessCalibration({
-    measure: (weights) => this.client?.measure(weights) ?? Promise.resolve(null),
-    apply: () => this.apply(),
+    measure: (weights, requestId) => this.client?.measure(weights, requestId) ?? Promise.resolve(null),
     onMeasuring: (measuring) => this.callbacks.onMeasuring(measuring),
     onProgress: (progress) => this.callbacks.onMeasureProgress(progress),
-    pause: () => {
-      const wasPlaying = this.playing;
-      if (wasPlaying) this.pause();
-      return wasPlaying;
-    },
-    resume: () => void this.playFrom(this.currentTimeRef.current),
   });
   private loudness: LoudnessSummary = SILENT_LOUDNESS;
   /** Stems and filter sets are all in the engine. A measurement before this
@@ -135,6 +129,7 @@ export class PreviewAudioEngine {
       measured, so the real one never runs. */
   private loaded = false;
   private resumeOnGesture: (() => void) | null = null;
+  private contextStateListener: (() => void) | null = null;
   private stemOrder: string[] = [];
   /** Parallel to `stemOrder` — how many bars each stem's meter shows. */
   private stemChannelCounts: number[] = [];
@@ -185,13 +180,14 @@ export class PreviewAudioEngine {
 
   async playFrom(time: number): Promise<boolean> {
     if (!this.client || !this.context) return false;
+    if (this.context.state === "suspended") await this.context.resume();
     // Loudness calibration is mandatory: a mode/profile combination that
     // hasn't been measured yet has no valid `outputGain`, so refuse to start
     // rather than play at whatever gain happened to be left over from a
     // previous mode. `measureIfNeeded()` always re-fires on the state changes
     // that invalidate this (see its callers), so the gate lifts on its own.
     if (!this.calibration.covers(this.measureKey())) return false;
-    if (this.context.state === "suspended") await this.context.resume();
+    this.apply();
     const frame = Math.max(0, Math.min(time, this.duration)) * CONTEXT_SAMPLE_RATE;
     this.currentTimeRef.current = frame / CONTEXT_SAMPLE_RATE;
     this.callbacks.onCurrentTime(this.currentTimeRef.current);
@@ -203,9 +199,11 @@ export class PreviewAudioEngine {
 
   pause() {
     this.playing = false;
+    this.apply();
     this.client?.setTransport({ playing: false });
     this.callbacks.onPlaying(false);
     this.callbacks.onCurrentTime(this.currentTimeRef.current);
+    void this.measureIfNeeded();
     this.silenceLevels();
   }
 
@@ -276,60 +274,22 @@ export class PreviewAudioEngine {
     }
   }
 
-  buildMasteringTopology() {
-    void Promise.all([this.loadMasteringFirs(), this.loadReferenceMatchFir()]).then(() => this.apply());
-  }
-
-  buildStemEqChains() {
-    void this.loadStemEqFirs().then(() => this.apply());
+  async syncProgram() {
+    const key = this.programKey;
+    await Promise.all([
+      this.loadMasteringFirs(),
+      this.loadReferenceMatchFir(),
+      this.loadStemEqFirs(),
+      this.loadDecodeFilterSet(this.spatialProfile),
+      this.loadXtcFilterSet(this.transauralProfile),
+    ]);
+    if (key !== this.programKey) return;
+    this.apply();
+    if (!this.playing) await this.measureIfNeeded();
   }
 
   applySpeakerMute() {
     this.apply();
-  }
-
-  applyOutputMode(mode: OutputMode) {
-    this.outputMode = mode;
-    this.apply();
-    void this.measureIfNeeded();
-  }
-
-  /** A/B the master chain. The two sides are different programmes, so this
-   * measures the new one before it plays — the same calibration gate a mode
-   * switch goes through — and matches their loudness once it has both. */
-  applyMasteringBypass(bypassed: boolean) {
-    this.masteringBypassed = bypassed;
-    this.apply();
-    void this.measureIfNeeded();
-  }
-
-  /** A/B the reference matcher on its own, at matched loudness. */
-  applyMatchBypass(bypassed: boolean) {
-    this.matchBypassed = bypassed;
-    this.apply();
-    void this.measureIfNeeded();
-  }
-
-  /**
-   * The filter set has to reach the engine *before* the measurement starts:
-   * a pass forks the engine as it is when the message lands, so measuring
-   * across a still-pending tap fetch calibrates the new profile's gain
-   * against the previous profile's decode bank — and how much it is off by
-   * depends on which profile was loaded before, and on whether the fetch won
-   * the race.
-   */
-  async retuneVoicing(profile: SpatialProfile) {
-    this.spatialProfile = profile;
-    this.apply();
-    await this.loadDecodeFilterSet(profile);
-    await this.measureIfNeeded();
-  }
-
-  async retuneCrosstalkVoicing(profile: TransauralProfile) {
-    this.transauralProfile = profile;
-    this.apply();
-    await this.loadXtcFilterSet(profile);
-    await this.measureIfNeeded();
   }
 
   async loadDecodeFilterSet(profile: SpatialProfile): Promise<boolean> {
@@ -376,14 +336,6 @@ export class PreviewAudioEngine {
     this.client.updateParams(this.buildParams());
   }
 
-  applyMix() {
-    const downmixLock = this.mix?.spatial_downmix_lock ?? false;
-    const changed = downmixLock !== this.appliedDownmixLock;
-    this.appliedDownmixLock = downmixLock;
-    this.apply();
-    if (changed) void this.measureIfNeeded();
-  }
-
   private buildParams() {
     // Resolve the profile against the project's per-field overrides here, so
     // a moved pot reaches the worklet instead of being replaced by the bare
@@ -416,11 +368,10 @@ export class PreviewAudioEngine {
     const matched = correction * 10 ** (matchDb / 20);
     // A match that boosts is still bound by the ceiling: the bypassed side
     // has no limiter of its own, so the compensation must not clip the DAC.
-    const outputGain = this.calibration.raw
-      ? 1
-      : matchDb > 0
-        ? applyTruePeakCeiling(measured.dbtp, matched, delivery.max_tp_dbtp)
-        : matched;
+    const requestedGain = matchDb > 0
+      ? applyTruePeakCeiling(measured.dbtp, matched, delivery.max_tp_dbtp)
+      : matched;
+    const outputGain = this.safeOutputGain(requestedGain);
     this.publishLoudness({
       integratedLkfs: measured.lkfs + 20 * Math.log10(correction),
       truePeakDbtp: measured.dbtp + 20 * Math.log10(correction),
@@ -491,6 +442,15 @@ export class PreviewAudioEngine {
     );
   }
 
+  private safeOutputGain(requested: number): number {
+    if (!this.calibration.covers(this.measureKey()) && this.playing) return this.appliedOutputGain;
+    if (this.playing && requested > this.appliedOutputGain) {
+      return this.appliedOutputGain;
+    }
+    this.appliedOutputGain = requested;
+    return requested;
+  }
+
   private publishLoudness(summary: LoudnessSummary) {
     const changed = (Object.keys(summary) as (keyof LoudnessSummary)[]).some(
       (field) => Math.abs(summary[field] - this.loudness[field]) > 1e-6,
@@ -505,18 +465,13 @@ export class PreviewAudioEngine {
    * a mode switch — or either A/B toggle, whose sides are different
    * programmes — re-measures rather than reusing a stale correction. The pass
    * walks the whole programme, so it resolves minutes later on a long track
-   * and pauses transport meanwhile (playback is mandatory-calibrated, see
-   * `playFrom`).
+   * without interrupting a running preview.
    */
   private measureKey(
     bypassed = this.masteringBypassed,
     matchBypassed = this.matchBypassed,
   ): string {
-    // A whole-chain bypass already strips the matcher, so the stage flag adds
-    // no programme of its own there — and must not cost a second pass.
-    const chain = bypassed ? "bypassed" : matchBypassed ? "match-bypassed" : "mastered";
-    const downmixLock = this.mix?.spatial_downmix_lock ? "locked" : "unlocked";
-    return `${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}:${chain}:${downmixLock}`;
+    return `${this.programKey}:${bypassed ? "bypassed" : matchBypassed ? "match-bypassed" : "mastered"}`;
   }
 
   /** BS.1770 weights for the channels the measurement sees. Every collapse
@@ -558,6 +513,7 @@ export class PreviewAudioEngine {
       // Autoplay policy can refuse this outside a user gesture, so also arm a
       // one-shot fallback that resumes on the next pointer interaction.
       await context.resume().catch(() => {});
+      this.watchContextState(context);
       if (context.state === "suspended") this.armResumeOnGesture(context);
 
       const channelCount = POSITIONAL_CHANNELS.length + 1;
@@ -565,8 +521,8 @@ export class PreviewAudioEngine {
         onFrame: (frame) => this.onFrame(frame),
         onEnded: () => this.onEnded(),
         onMeasureProgress: (progress) => this.callbacks.onMeasureProgress(progress),
-        onMeasured: (result) => {
-          if (this.calibration.refine(result)) this.apply();
+        onMeasured: (result, requestId) => {
+          if (this.calibration.refine(result, requestId)) this.apply();
         },
         onError: (message) => this.callbacks.onError(message),
       });
@@ -659,24 +615,41 @@ export class PreviewAudioEngine {
   private armResumeOnGesture(context: AudioContext) {
     this.disarmResumeOnGesture();
     const resume = () => {
-      this.disarmResumeOnGesture();
-      if (context.state === "suspended") void context.resume();
+      if (document.visibilityState === "hidden") return;
+      if (context.state !== "suspended") {
+        this.disarmResumeOnGesture();
+        return;
+      }
+      void context.resume().then(() => {
+        if (context.state === "running") this.disarmResumeOnGesture();
+      });
     };
     this.resumeOnGesture = resume;
     window.addEventListener("pointerdown", resume, { once: true });
+    document.addEventListener("visibilitychange", resume);
   }
 
   private disarmResumeOnGesture() {
     if (this.resumeOnGesture) {
       window.removeEventListener("pointerdown", this.resumeOnGesture);
+      document.removeEventListener("visibilitychange", this.resumeOnGesture);
       this.resumeOnGesture = null;
     }
+  }
+
+  private watchContextState(context: AudioContext) {
+    this.contextStateListener = () => {
+      if (context.state === "running") this.disarmResumeOnGesture();
+      if (context.state === "suspended") this.armResumeOnGesture(context);
+    };
+    context.addEventListener?.("statechange", this.contextStateListener);
   }
 
   private onEnded() {
     this.playing = false;
     this.callbacks.onPlaying(false);
     void this.moveTo(0);
+    void this.measureIfNeeded();
     this.silenceLevels();
   }
 
@@ -687,12 +660,18 @@ export class PreviewAudioEngine {
     this.duration = 0;
     this.currentTimeRef.current = 0;
     this.calibration.reset();
+    this.appliedOutputGain = 1;
     this.taps.resetPerProject();
     this.client?.dispose();
     this.client = null;
     this.monitorGain?.disconnect();
     this.monitorGain = null;
-    void this.context?.close();
+    const context = this.context;
+    if (this.contextStateListener) {
+      context?.removeEventListener?.("statechange", this.contextStateListener);
+      this.contextStateListener = null;
+    }
+    void context?.close();
     this.context = null;
     this.disarmResumeOnGesture();
     this.stemLevels.current = new Map();

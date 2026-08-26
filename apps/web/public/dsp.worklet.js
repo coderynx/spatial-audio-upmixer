@@ -11,31 +11,22 @@
 // over through processorOptions, where instantiation is synchronous.
 
 const RENDER_QUANTUM = 128;
-const RENDER_BUDGET_MS = (RENDER_QUANTUM / sampleRate) * 1000;
-const BACKGROUND_RENDER_LIMIT_MS = RENDER_BUDGET_MS * 0.6;
 const SEEK_FRAMES = RENDER_QUANTUM;
 const SCALE_RESTART_DELAY_SECONDS = 0.15;
 
 // Measurement runs in two stages: a fast excerpt pass clears the "calibrating
 // loudness" UI in a few seconds, then an exact whole-programme pass refines
 // the gain in the background. See docs/contracts/preview_export_parity.md P3.
-const FAST_EXCERPT_COUNT = 5;
-const FAST_EXCERPT_SECONDS = 3;
-const FAST_EXCERPT_PREROLL_SECONDS = 0.5;
+const FAST_EXCERPT_COUNT = 3;
+const FAST_EXCERPT_SECONDS = 1;
+const FAST_EXCERPT_PREROLL_SECONDS = 0.25;
 
-// Frames of the fast excerpt pass to advance per quantum while paused. Sized
+// Frames of the fast excerpt pass to advance per paused quantum. Sized
 // well past one quantum's budget on purpose: the node is the *source* and its
 // output is already zero-filled while paused, so an overrun here costs a
 // dropped silent callback, not a glitch, and finishing the (short) excerpt
 // plan in a handful of calls is what makes the banner clear in seconds.
 const MEASURE_FRAMES_FAST_IDLE = 2048;
-
-// Frames of the fast excerpt pass to advance per quantum while playing — kept
-// far smaller than the idle slice, because unlike the idle case this shares
-// the quantum with a real render: an overrun here drops real audio, not
-// silence. Bench-measured worst-case headroom on the heaviest configuration
-// (order-3 binaural decode, 9 stems) is what sets this value.
-const MEASURE_FRAMES_FAST_PLAYING = 16;
 
 // Frames of the exact whole-programme pass to advance per quantum while the
 // transport is idle. Measuring the whole programme costs ~0.12x realtime, so
@@ -48,21 +39,16 @@ const MEASURE_FRAMES_FAST_PLAYING = 16;
 // playback starts, so it resumes where it left off on the next pause.
 const MEASURE_FRAMES_IDLE = 384;
 
-// Frames of the route-scale pass to advance per quantum, idle and playing.
-// It runs the routing chain of one stem at a time — no mastering, no decode —
-// so it is cheaper per frame than a measurement pass, but it shares the same
-// discipline: a generous slice while the output is silent anyway, a small one
-// while a real render needs the quantum.
+// Frames of the route-scale pass to advance per paused quantum. It runs the
+// routing chain of one stem at a time — no mastering, no decode.
 const SCALE_FRAMES_IDLE = 4096;
-const SCALE_FRAMES_PLAYING = 64;
 
 // The route-scale pass runs the two stages the loudness pass does: a handful
 // of excerpts for an answer within a second or two, then the whole programme,
 // which is the number the export normalizes by and the one that finally
 // stands. The cost is per stem, not per programme: measured at ~90x realtime
 // for one stem's routing, the excerpt plan below is a couple of seconds for a
-// thirteen-stem bed while paused, and most of a minute while playing, when
-// the slice has to share the quantum with a render.
+// thirteen-stem bed while paused.
 const SCALE_EXCERPT_COUNT = 5;
 const SCALE_EXCERPT_SECONDS = 3;
 const SCALE_EXCERPT_PREROLL_SECONDS = 0.5;
@@ -91,6 +77,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     this.measureReport = 0;
     this.measureStage = null;
     this.measureWeights = [1];
+    this.measureRequestId = 0;
     this.measureReported = false;
     this.scalePass = 0;
     this.scaleStage = null;
@@ -186,7 +173,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
         }
         break;
       case "measure":
-        this.measure(message.weights || []);
+        this.measure(message.weights || [], message.requestId || 0);
         break;
       case "dispose":
         this.dispose();
@@ -332,9 +319,10 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
   // it lands. Both passes run on their own engine over the same stems,
   // advanced from `process` so the transport keeps its playhead and the
   // callback keeps its deadline.
-  measure(weights) {
+  measure(weights, requestId) {
     if (!this.engine) return;
     this.measureWeights = weights.length ? weights : [1];
+    this.measureRequestId = requestId;
     this.measureReported = false;
     this.beginFastMeasure();
   }
@@ -386,9 +374,8 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.beginScale("fast");
       if (!this.scalePass) return false;
     }
-    const step = this.playing ? SCALE_FRAMES_PLAYING : SCALE_FRAMES_IDLE;
     const stage = this.scaleStage;
-    if (!this.wasm.dsp_scale_advance(this.scalePass, this.engine, step)) return true;
+    if (!this.wasm.dsp_scale_advance(this.scalePass, this.engine, SCALE_FRAMES_IDLE)) return true;
     this.endScale();
     // The engine renders on the excerpt answer from here; refine it against
     // the whole programme, which is what the export normalizes by.
@@ -433,15 +420,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
 
   advanceMeasure() {
     if (!this.measurePass) return false;
-    // The exact pass only advances while paused; the fast pass also advances
-    // during playback, in a small slice, so pressing play right away doesn't
-    // stall the banner.
-    if (this.playing && this.measureStage !== "fast") return false;
-    const step = this.playing
-      ? MEASURE_FRAMES_FAST_PLAYING
-      : this.measureStage === "fast"
-        ? MEASURE_FRAMES_FAST_IDLE
-        : MEASURE_FRAMES_IDLE;
+    const step = this.measureStage === "fast" ? MEASURE_FRAMES_FAST_IDLE : MEASURE_FRAMES_IDLE;
     const done = this.wasm.dsp_measure_advance(this.measurePass, step, this.measureOut);
     if (!done) {
       this.measureReport -= 1;
@@ -465,7 +444,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     // channel the exact pass uses instead.
     const reported = stage === "fast" && this.measureReported ? "exact" : stage;
     this.measureReported = true;
-    this.port.postMessage({ type: "measured", stage: reported, lkfs, dbtp });
+    this.port.postMessage({ type: "measured", stage: reported, lkfs, dbtp, requestId: this.measureRequestId });
     if (stage === "fast") {
       this.beginMeasurePass("exact", (weightPtr, weightCount) =>
         this.wasm.dsp_measure_begin(this.engine, weightPtr, weightCount),
@@ -474,8 +453,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     return true;
   }
 
-  advanceBackground(renderMs = 0) {
-    if (this.playing && renderMs > BACKGROUND_RENDER_LIMIT_MS) return;
+  advanceBackground() {
     const first = this.backgroundTurn;
     this.backgroundTurn = first === "scale" ? "measure" : "scale";
     if (first === "scale" ? this.advanceScale() : this.advanceMeasure()) return;
@@ -597,14 +575,12 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     }
     this.ensureOutput(frames);
 
-    const renderStart = globalThis.performance?.now?.();
     const written = this.primedFrames || this.wasm.dsp_engine_render(
       this.engine,
       this.outPtr,
       this.channelCount,
       frames,
     );
-    const renderMs = renderStart === undefined ? 0 : globalThis.performance.now() - renderStart;
     this.primedFrames = 0;
     const rendered = this.heapF32(this.outPtr, this.channelCount * frames);
     for (let channel = 0; channel < output.length; channel += 1) {
@@ -633,7 +609,6 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.reportCountdown = sampleRate / 30;
       this.report();
     }
-    this.advanceBackground(renderMs);
     return true;
   }
 }

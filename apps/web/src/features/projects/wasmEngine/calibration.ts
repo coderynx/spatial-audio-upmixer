@@ -11,17 +11,10 @@ import type { Measured } from "../audioAnalysis";
 
 export type CalibrationHooks = {
   /** Run the measurement pass over whatever the engine currently renders. */
-  measure(weights: number[]): Promise<Measured | null>;
-  /** Push the parameter block, so the pass measures — and the result lands
-   * on — the current mix. */
-  apply(): void;
+  measure(weights: number[], requestId: number): Promise<Measured | null>;
   /** True while the pass is in flight, for the "calibrating" affordance. */
   onMeasuring(measuring: boolean): void;
   onProgress(progress: number): void;
-  /** Pause a running transport; returns whether it was actually playing, so
-   * the caller knows to resume once the pass lands. */
-  pause(): boolean;
-  resume(): void;
 };
 
 export class LoudnessCalibration {
@@ -31,13 +24,9 @@ export class LoudnessCalibration {
    * one, so a mode the user just switched to never plays on the previous
    * mode's correction. */
   measuredKey: string | null = null;
-  /** While set, the engine renders uncorrected so the pass sees the raw
-   * programme. */
-  raw = false;
-
   /** Every programme measured this session. The A/B toggle comes straight
-   * back to a key it already measured, so the second press must not pay for
-   * a pass (and its pause) all over again — and matching the two sides needs
+   * back to a key it already measured, so the second press skips another
+   * pass — and matching the two sides needs
    * both measurements at once regardless. */
   private readonly cache = new Map<string, Measured>();
   /** Key the in-flight pass — and the exact whole-programme refinement that
@@ -60,38 +49,30 @@ export class LoudnessCalibration {
    * Bring `key` up to date, measuring it if this session never has.
    *
    * A pass already in flight owns `key`'s measurement too when it is for the
-   * same key: while `raw` is set, `measuredKey` still names the programme
-   * being replaced, so a switch back to it is not "already calibrated".
+   * same key.
    */
   async ensure(key: string, weights: number[]): Promise<void> {
-    const covered = this.raw ? this.inFlightKey : this.measuredKey;
-    if (covered === key) return;
+    if (this.inFlightKey === key || (!this.inFlightKey && this.measuredKey === key)) return;
 
     const cached = this.cache.get(key);
-    if (cached && !this.raw) {
+    const token = ++this.token;
+    this.inFlightKey = key;
+    if (cached) {
       this.adopt(key, cached);
-      this.hooks.apply();
+      this.hooks.onMeasuring(false);
       return;
     }
 
-    const wasPlaying = this.hooks.pause();
-    const token = ++this.token;
-    this.inFlightKey = key;
     this.hooks.onMeasuring(true);
     this.hooks.onProgress(0);
-    this.raw = true;
-    this.hooks.apply();
 
-    const result = await this.hooks.measure(weights);
+    const result = await this.hooks.measure(weights, token);
     // A switch mid-measurement supersedes this pass; the newer one owns the
     // measuring state from here.
     if (token !== this.token) return;
 
     if (result) this.adopt(key, result);
-    this.raw = false;
-    this.hooks.apply();
     this.hooks.onMeasuring(false);
-    if (wasPlaying) this.hooks.resume();
   }
 
   /**
@@ -101,8 +82,8 @@ export class LoudnessCalibration {
    * replaces, and its result was already on the wire when the worklet
    * dropped it.
    */
-  refine(result: Measured): boolean {
-    if (!this.inFlightKey || this.raw) return false;
+  refine(result: Measured, requestId: number): boolean {
+    if (!this.inFlightKey || requestId !== this.token) return false;
     this.adopt(this.inFlightKey, result);
     return true;
   }
@@ -118,7 +99,6 @@ export class LoudnessCalibration {
     this.measuredKey = null;
     this.inFlightKey = null;
     this.token += 1;
-    this.raw = false;
     this.cache.clear();
   }
 }
