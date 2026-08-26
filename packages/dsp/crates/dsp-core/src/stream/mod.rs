@@ -9,6 +9,7 @@
 pub mod band;
 pub mod conv;
 pub mod engine;
+pub mod limiter;
 pub mod master;
 pub mod measure;
 pub mod meters;

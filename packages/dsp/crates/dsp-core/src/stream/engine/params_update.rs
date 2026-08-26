@@ -3,7 +3,7 @@
 use super::{build_decorrelator, build_stem_mix_routes, build_unifier, PreviewEngine, GAIN_RAMP_MS};
 use crate::mastering::dyneq::DynamicEq;
 use crate::spatial::panner::PannerLayout;
-use crate::stream::master::StreamingLimiter;
+use crate::stream::limiter::StreamingLimiter;
 use crate::stream::params::{EngineParams, SendParams, StemParams};
 use crate::stream::routing::StemRouteState;
 use crate::stream::state::{OnePole, StreamingCompressor};

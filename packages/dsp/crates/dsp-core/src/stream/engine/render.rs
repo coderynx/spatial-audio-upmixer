@@ -368,8 +368,13 @@ impl PreviewEngine {
 
         let start = self.emitted - self.post.base;
         let end = start + emit;
+        let post_base = self.post.base;
+        let final_input = self.post.end() == self.total_frames
+            && post_base + end + lookahead >= self.total_frames;
         let limiter_info = match &mut self.limiter {
-            Some(limiter) => limiter.process(&mut self.post.channels, start, end),
+            Some(limiter) => {
+                limiter.process(&mut self.post.channels, post_base, start, end, final_input)
+            }
             None => Default::default(),
         };
 

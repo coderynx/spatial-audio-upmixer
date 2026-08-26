@@ -22,34 +22,108 @@ const DIRECT_MAX_TAPS: usize = 32;
 /// kernel length over the hop, and the per-block transform stops paying off.
 const MIN_HOP: usize = 32;
 
+struct History {
+    samples: Vec<f64>,
+    start: usize,
+    len: usize,
+}
+
+impl History {
+    fn new() -> Self {
+        Self {
+            samples: Vec::new(),
+            start: 0,
+            len: 0,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.start = 0;
+        self.len = 0;
+    }
+
+    fn reserve(&mut self, capacity: usize) {
+        if self.samples.len() >= capacity {
+            return;
+        }
+        let mut samples = vec![0.0; capacity];
+        for (i, slot) in samples.iter_mut().take(self.len).enumerate() {
+            *slot = self.get(i);
+        }
+        self.samples = samples;
+        self.start = 0;
+    }
+
+    fn push(&mut self, block: &[f64]) {
+        let capacity = self.samples.len();
+        for &sample in block {
+            if self.len < capacity {
+                self.samples[(self.start + self.len) % capacity] = sample;
+                self.len += 1;
+            } else if capacity > 0 {
+                self.samples[self.start] = sample;
+                self.start = (self.start + 1) % capacity;
+            }
+        }
+    }
+
+    fn get(&self, index: usize) -> f64 {
+        self.samples[(self.start + index) % self.samples.len()]
+    }
+
+    /// Read history as if it extended backward with zeros.
+    fn fill_window(&self, end: isize, out: &mut [f64]) {
+        out.fill(0.0);
+        let start = end - out.len() as isize;
+        for (i, slot) in out.iter_mut().enumerate() {
+            let index = start + i as isize;
+            if index >= 0 && (index as usize) < self.len {
+                *slot = self.get(index as usize);
+            }
+        }
+    }
+}
+
 struct Partitioned {
     hop: usize,
     fft: RealFft,
     /// One spectrum per `hop`-sized slice of the kernel.
     kernel: Vec<Vec<Complex64>>,
-    /// Input spectra; `fdl[(cursor + i) % len]` is the one from `i` hops ago.
+    /// `fdl[(cursor + i) % len]` is the input from `i` hops ago.
     fdl: Vec<Vec<Complex64>>,
     cursor: usize,
+    input: Vec<f64>,
+    spectrum: Vec<Complex64>,
+    acc: Vec<Complex64>,
+    time: Vec<f64>,
 }
 
 pub struct StreamingConvolver {
     kernel: Vec<f64>,
-    /// Input tail, oldest first — enough to rebuild the delay line or to run
-    /// a direct pass.
-    history: Vec<f64>,
+    /// Retained in a ring so hop and kernel changes can rebuild the FDL.
+    history: History,
     max_hop: usize,
     part: Option<Partitioned>,
 }
 
 impl StreamingConvolver {
     pub fn new(kernel: Vec<f64>) -> Self {
-        Self { kernel, history: Vec::new(), max_hop: 0, part: None }
+        Self {
+            kernel,
+            history: History::new(),
+            max_hop: 0,
+            part: None,
+        }
     }
 
     pub fn reset(&mut self) {
         self.history.clear();
-        self.max_hop = 0;
-        self.part = None;
+        if let Some(part) = &mut self.part {
+            for spectrum in &mut part.fdl {
+                spectrum.fill(Complex64::new(0.0, 0.0));
+            }
+            part.cursor = 0;
+        }
     }
 
     /// Swap the kernel, keeping `history` — the next `process` call rebuilds
@@ -68,14 +142,47 @@ impl StreamingConvolver {
 
     /// Convolve one block, carrying the overhang into the next call.
     pub fn process(&mut self, block: &[f64]) -> Vec<f64> {
+        let mut out = Vec::with_capacity(block.len());
+        self.process_into(block, &mut out);
+        out
+    }
+
+    /// Convolve into caller-owned storage, reusing its capacity.
+    pub fn process_into(&mut self, block: &[f64], out: &mut Vec<f64>) {
+        self.process_with_spectrum(block, None, out);
+    }
+
+    /// Filter one signal through a matched pair while sharing its forward FFT.
+    pub fn process_pair_into(
+        pair: &mut [Self; 2],
+        block: &[f64],
+        left_out: &mut Vec<f64>,
+        right_out: &mut Vec<f64>,
+    ) {
+        let (left, right) = pair.split_at_mut(1);
+        left[0].process_into(block, left_out);
+        let spectrum = left[0].part.as_ref().map(|part| part.spectrum.as_slice());
+        right[0].process_with_spectrum(block, spectrum, right_out);
+    }
+
+    fn process_with_spectrum(
+        &mut self,
+        block: &[f64],
+        spectrum: Option<&[Complex64]>,
+        out: &mut Vec<f64>,
+    ) {
+        out.clear();
         if block.is_empty() {
-            return Vec::new();
+            return;
         }
         if self.kernel.is_empty() {
-            return vec![0.0; block.len()];
+            out.resize(block.len(), 0.0);
+            return;
         }
 
         let hop = block.len();
+        self.max_hop = self.max_hop.max(hop);
+        self.history.reserve(self.kernel.len() + 2 * self.max_hop);
         let direct = self.kernel.len() <= DIRECT_MAX_TAPS || hop < MIN_HOP;
         if direct {
             // A direct pass leaves no delay line, so the next partitioned
@@ -85,89 +192,92 @@ impl StreamingConvolver {
             self.prepare(hop);
         }
 
-        self.history.extend_from_slice(block);
-        let out = if direct { self.direct(hop) } else { self.partitioned(hop) };
-
-        self.max_hop = self.max_hop.max(hop);
-        let keep = self.kernel.len() + 2 * self.max_hop;
-        if self.history.len() > keep {
-            self.history.drain(..self.history.len() - keep);
+        self.history.push(block);
+        if direct {
+            self.direct_into(hop, out);
+        } else {
+            self.partitioned_into(spectrum, out);
         }
-        out
     }
 
-    /// Read `history` as if it extended back to the start of the stream with
-    /// zeros; trimming only ever discards samples no partition can reach.
-    fn window(&self, end: isize, len: usize) -> Vec<f64> {
-        let mut window = vec![0.0; len];
-        let start = end - len as isize;
-        for (j, slot) in window.iter_mut().enumerate() {
-            let index = start + j as isize;
-            if index >= 0 && (index as usize) < self.history.len() {
-                *slot = self.history[index as usize];
-            }
-        }
-        window
-    }
-
-    /// Build the partitioning for `hop`, seeding the delay line from history
-    /// so a hop change mid-stream stays sample-exact.
+    /// Build the partitioning for `hop`, seeding its FDL from history.
     fn prepare(&mut self, hop: usize) {
-        if self.part.as_ref().map(|p| p.hop) == Some(hop) {
+        if self.part.as_ref().map(|part| part.hop) == Some(hop) {
             return;
         }
         let n = 2 * hop;
         let fft = RealFft::new(n);
         let count = self.kernel.len().div_ceil(hop);
-        let kernel = (0..count)
-            .map(|i| {
-                let stop = ((i + 1) * hop).min(self.kernel.len());
-                fft.rfft(&self.kernel[i * hop..stop])
-            })
-            .collect();
+        let bins = hop + 1;
+        let mut input = vec![0.0; n];
+        let spectrum = vec![Complex64::new(0.0, 0.0); bins];
+        let mut kernel = vec![vec![Complex64::new(0.0, 0.0); bins]; count];
+        for (i, transformed) in kernel.iter_mut().enumerate() {
+            input.fill(0.0);
+            let start = i * hop;
+            let end = ((i + 1) * hop).min(self.kernel.len());
+            input[..end - start].copy_from_slice(&self.kernel[start..end]);
+            fft.rfft_into(&mut input, transformed);
+        }
 
-        let end = self.history.len() as isize;
-        let fdl = (0..count)
-            .map(|i| fft.rfft(&self.window(end - (i as isize) * hop as isize, n)))
-            .collect();
-
-        self.part = Some(Partitioned { hop, fft, kernel, fdl, cursor: 0 });
+        let mut fdl = vec![vec![Complex64::new(0.0, 0.0); bins]; count];
+        let history_end = self.history.len as isize;
+        for (i, transformed) in fdl.iter_mut().enumerate() {
+            self.history
+                .fill_window(history_end - i as isize * hop as isize, &mut input);
+            fft.rfft_into(&mut input, transformed);
+        }
+        self.part = Some(Partitioned {
+            hop,
+            fft,
+            kernel,
+            fdl,
+            cursor: 0,
+            input,
+            spectrum,
+            acc: vec![Complex64::new(0.0, 0.0); bins],
+            time: vec![0.0; n],
+        });
     }
 
-    fn partitioned(&mut self, hop: usize) -> Vec<f64> {
-        let window = self.window(self.history.len() as isize, 2 * hop);
+    fn partitioned_into(&mut self, shared: Option<&[Complex64]>, out: &mut Vec<f64>) {
+        let history = &self.history;
         let part = self.part.as_mut().expect("partitioning prepared");
-        let count = part.fdl.len();
-        let spectrum = part.fft.rfft(&window);
-        part.cursor = (part.cursor + count - 1) % count;
-        part.fdl[part.cursor] = spectrum;
+        history.fill_window(history.len as isize, &mut part.input);
+        if let Some(shared) = shared.filter(|shared| shared.len() == part.spectrum.len()) {
+            part.spectrum.copy_from_slice(shared);
+        } else {
+            part.fft.rfft_into(&mut part.input, &mut part.spectrum);
+        }
 
-        let mut acc = vec![Complex64::new(0.0, 0.0); hop + 1];
+        let count = part.fdl.len();
+        part.cursor = (part.cursor + count - 1) % count;
+        part.fdl[part.cursor].copy_from_slice(&part.spectrum);
+        part.acc.fill(Complex64::new(0.0, 0.0));
         for i in 0..count {
             let x = &part.fdl[(part.cursor + i) % count];
             let h = &part.kernel[i];
-            for (slot, (x, h)) in acc.iter_mut().zip(x.iter().zip(h.iter())) {
+            for (slot, (x, h)) in part.acc.iter_mut().zip(x.iter().zip(h)) {
                 *slot += x * h;
             }
         }
-        part.fft.irfft(&acc)[hop..].to_vec()
+        part.fft.irfft_into(&mut part.acc, &mut part.time);
+        out.extend_from_slice(&part.time[part.hop..]);
     }
 
-    fn direct(&self, n: usize) -> Vec<f64> {
-        let end = self.history.len() as isize;
-        (0..n)
-            .map(|i| {
-                let t = end - n as isize + i as isize;
-                let mut acc = 0.0;
-                for (k, &h) in self.kernel.iter().enumerate() {
-                    let index = t - k as isize;
-                    if index < 0 {
-                        break;
-                    }
-                    acc += h * self.history[index as usize];
+    fn direct_into(&self, n: usize, out: &mut Vec<f64>) {
+        let end = self.history.len as isize;
+        out.extend((0..n).map(|i| {
+            let t = end - n as isize + i as isize;
+            let mut acc = 0.0;
+            for (k, &h) in self.kernel.iter().enumerate() {
+                let index = t - k as isize;
+                if index < 0 {
+                    break;
                 }
-                acc
-            })
-            .collect()
+                acc += h * self.history.get(index as usize);
+            }
+            acc
+        }));
     }
 }

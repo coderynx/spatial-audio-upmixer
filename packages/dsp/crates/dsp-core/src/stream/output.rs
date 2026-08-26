@@ -101,6 +101,9 @@ pub struct OutputStage {
     voicing: Option<StreamingVoicing>,
     downmix: Vec<Option<(f64, f64)>>,
     soft_limit_threshold: f64,
+    hoa: Vec<Vec<f64>>,
+    stereo: [Vec<f64>; 2],
+    work: [Vec<f64>; 4],
 }
 
 fn build_downmix(speakers: &[SpeakerParams], surround_coeff: f64, height_coeff: f64) -> Vec<Option<(f64, f64)>> {
@@ -172,6 +175,9 @@ impl OutputStage {
             voicing: params.voicing.map(|v| StreamingVoicing::new(sample_rate, v)),
             downmix: build_downmix(&params.speakers, params.surround_downmix_coeff, params.height_downmix_coeff),
             soft_limit_threshold: params.soft_limit_threshold,
+            hoa: vec![Vec::new(); N_ACN_CHANNELS],
+            stereo: [Vec::new(), Vec::new()],
+            work: std::array::from_fn(|_| Vec::new()),
         }
     }
 
@@ -219,72 +225,70 @@ impl OutputStage {
                 }
             }
             OutputMode::Stereo => {
-                let (left, right) = self.downmix_stereo(bed, frames);
-                self.emit_stereo(left, right, gain, out);
+                self.downmix_stereo(bed, frames);
+                emit_stereo(
+                    &self.stereo[0],
+                    &self.stereo[1],
+                    gain,
+                    self.soft_limit_threshold,
+                    out,
+                );
             }
             OutputMode::Binaural => {
-                let (left, right) = self.render_binaural(bed, frames);
-                self.emit_stereo(left, right, gain, out);
+                self.render_binaural(bed, frames);
+                emit_stereo(
+                    &self.stereo[0],
+                    &self.stereo[1],
+                    gain,
+                    self.soft_limit_threshold,
+                    out,
+                );
             }
             OutputMode::Transaural => {
-                let (ear_l, ear_r) = self.render_binaural(bed, frames);
-                let (left, right) = match &mut self.xtc {
-                    None => (ear_l, ear_r),
-                    Some(matrix) => {
-                        let a = matrix[0][0].process(&ear_l);
-                        let b = matrix[0][1].process(&ear_r);
-                        let c = matrix[1][0].process(&ear_l);
-                        let d = matrix[1][1].process(&ear_r);
-                        (
-                            a.iter().zip(b.iter()).map(|(x, y)| x + y).collect(),
-                            c.iter().zip(d.iter()).map(|(x, y)| x + y).collect(),
-                        )
+                self.render_binaural(bed, frames);
+                if let Some(matrix) = &mut self.xtc {
+                    let [a, b, c, d] = &mut self.work;
+                    matrix[0][0].process_into(&self.stereo[0], a);
+                    matrix[0][1].process_into(&self.stereo[1], b);
+                    matrix[1][0].process_into(&self.stereo[0], c);
+                    matrix[1][1].process_into(&self.stereo[1], d);
+                    for i in 0..frames {
+                        self.stereo[0][i] = a[i] + b[i];
+                        self.stereo[1][i] = c[i] + d[i];
                     }
-                };
-                self.emit_stereo(left, right, gain, out);
+                }
+                emit_stereo(
+                    &self.stereo[0],
+                    &self.stereo[1],
+                    gain,
+                    self.soft_limit_threshold,
+                    out,
+                );
             }
         }
     }
 
-    /// The collapse correction is applied before the soft limiter, matching
-    /// `render_binaural_delivery`: normalize first, then let the limiter act
-    /// only as a true-peak safety net.
-    fn emit_stereo(&self, mut left: Vec<f64>, mut right: Vec<f64>, gain: f64, out: &mut [Vec<f64>]) {
-        if gain != 1.0 {
-            for v in left.iter_mut().chain(right.iter_mut()) {
-                *v *= gain;
-            }
-        }
-        if self.soft_limit_threshold > 0.0 {
-            soft_limit(&mut left, self.soft_limit_threshold);
-            soft_limit(&mut right, self.soft_limit_threshold);
-        }
-        out[0].clear();
-        out[0].extend(left);
-        out[1].clear();
-        out[1].extend(right);
-        for extra in out.iter_mut().skip(2) {
-            extra.clear();
-        }
-    }
-
-    fn downmix_stereo(&self, bed: &[Vec<f64>], frames: usize) -> (Vec<f64>, Vec<f64>) {
-        let mut left = vec![0.0; frames];
-        let mut right = vec![0.0; frames];
+    fn downmix_stereo(&mut self, bed: &[Vec<f64>], frames: usize) {
+        self.stereo[0].resize(frames, 0.0);
+        self.stereo[1].resize(frames, 0.0);
+        self.stereo[0].fill(0.0);
+        self.stereo[1].fill(0.0);
         for (channel, gains) in self.downmix.iter().enumerate() {
             let Some((gl, gr)) = gains else { continue };
             for i in 0..frames {
-                left[i] += bed[channel][i] * gl;
-                right[i] += bed[channel][i] * gr;
+                self.stereo[0][i] += bed[channel][i] * gl;
+                self.stereo[1][i] += bed[channel][i] * gr;
             }
         }
-        (left, right)
     }
 
     /// Encode every positional speaker to ambisonics, decode to the ears, add
     /// LFE *before* voicing (ledger D11), then voice.
-    fn render_binaural(&mut self, bed: &[Vec<f64>], frames: usize) -> (Vec<f64>, Vec<f64>) {
-        let mut hoa = vec![vec![0.0; frames]; N_ACN_CHANNELS];
+    fn render_binaural(&mut self, bed: &[Vec<f64>], frames: usize) {
+        for channel in &mut self.hoa {
+            channel.resize(frames, 0.0);
+            channel.fill(0.0);
+        }
         for (channel, gains) in self.encoders.iter().enumerate() {
             let Some(gains) = gains else { continue };
             let source = &bed[channel];
@@ -292,38 +296,67 @@ impl OutputStage {
                 if *gain == 0.0 {
                     continue;
                 }
-                let target = &mut hoa[acn];
+                let target = &mut self.hoa[acn];
                 for i in 0..frames {
                     target[i] += source[i] * gain;
                 }
             }
         }
 
-        let mut left = vec![0.0; frames];
-        let mut right = vec![0.0; frames];
+        self.stereo[0].resize(frames, 0.0);
+        self.stereo[1].resize(frames, 0.0);
+        self.stereo[0].fill(0.0);
+        self.stereo[1].fill(0.0);
         for (acn, filters) in self.decode.iter_mut().enumerate() {
-            let l = filters[0].process(&hoa[acn]);
-            let r = filters[1].process(&hoa[acn]);
+            let (left, right) = self.work.split_at_mut(1);
+            StreamingConvolver::process_pair_into(
+                filters,
+                &self.hoa[acn],
+                &mut left[0],
+                &mut right[0],
+            );
             for i in 0..frames {
-                left[i] += l[i];
-                right[i] += r[i];
+                self.stereo[0][i] += left[0][i];
+                self.stereo[1][i] += right[0][i];
             }
         }
 
         if let Some(lfe) = self.lfe_index {
             for i in 0..frames {
-                left[i] += bed[lfe][i];
-                right[i] += bed[lfe][i];
+                self.stereo[0][i] += bed[lfe][i];
+                self.stereo[1][i] += bed[lfe][i];
             }
         }
 
         if let Some(voicing) = &mut self.voicing {
             for i in 0..frames {
-                let (l, r) = voicing.tick(left[i], right[i]);
-                left[i] = l;
-                right[i] = r;
+                let (l, r) = voicing.tick(self.stereo[0][i], self.stereo[1][i]);
+                self.stereo[0][i] = l;
+                self.stereo[1][i] = r;
             }
         }
-        (left, right)
+    }
+}
+
+/// The collapse correction is applied before the soft limiter, matching
+/// `render_binaural_delivery`: normalize first, then let the limiter act only
+/// as a true-peak safety net.
+fn emit_stereo(
+    left: &[f64],
+    right: &[f64],
+    gain: f64,
+    soft_limit_threshold: f64,
+    out: &mut [Vec<f64>],
+) {
+    out[0].clear();
+    out[0].extend(left.iter().map(|sample| sample * gain));
+    out[1].clear();
+    out[1].extend(right.iter().map(|sample| sample * gain));
+    if soft_limit_threshold > 0.0 {
+        soft_limit(&mut out[0], soft_limit_threshold);
+        soft_limit(&mut out[1], soft_limit_threshold);
+    }
+    for extra in out.iter_mut().skip(2) {
+        extra.clear();
     }
 }

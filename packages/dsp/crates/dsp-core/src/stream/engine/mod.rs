@@ -18,8 +18,9 @@ use crate::mastering::dyneq::DynamicEq;
 use crate::spatial::downmix::FoldTo51;
 use crate::spatial::panner::PannerLayout;
 
+use crate::stream::limiter::StreamingLimiter;
 use crate::stream::master::{
-    CausalChain, LfUnifier, StreamingDecorrelator, StreamingLimiter, DECORR_HORIZON_MS,
+    CausalChain, LfUnifier, StreamingDecorrelator, DECORR_HORIZON_MS,
     UNIFY_HORIZON_MS,
 };
 use crate::stream::meters::Meters;

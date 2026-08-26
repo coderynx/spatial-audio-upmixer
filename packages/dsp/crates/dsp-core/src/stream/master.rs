@@ -8,13 +8,9 @@
 
 use crate::kernels::biquad::SosFilter;
 use crate::kernels::butter::{butter_sos, BandType};
-use crate::kernels::minfilter::{minimum_filter1d, BorderMode};
-use crate::kernels::upfirdn::upfirdn_up;
-use crate::loudness::{TRUE_PEAK_FIR_4X, TRUE_PEAK_OVERSAMPLE};
 use crate::mastering::bass::{excite_harmonics, BassParams, PunchState};
 use crate::mastering::decorrelate::Decorrelator;
 use crate::mastering::head::head_sos;
-use crate::mastering::limiter::{LimiterParams, FIR_DELAY, FIR_MARGIN_SAMPLES};
 use crate::mastering::non_lfe;
 
 use super::band::RollingBand;
@@ -235,7 +231,7 @@ impl CausalChain {
 /// summed to a mono bus, transient-shaped, excited, then handed back over the
 /// caller-resolved target weights. The punch envelopes are causal, so they
 /// advance only over what is emitted — the same discipline
-/// [`StreamingLimiter`]'s release smoother follows.
+/// [`super::limiter::StreamingLimiter`]'s release smoother follows.
 pub struct LfUnifier {
     filter: RollingBand,
     lf_targets: Vec<(usize, f64)>,
@@ -390,168 +386,6 @@ impl StreamingDecorrelator {
             let channel = self.band.channels()[slot];
             let Some(out) = window.get_mut(channel) else { continue };
             decorrelator.run(out, self.band.band(slot, start, end));
-        }
-    }
-}
-
-/// Streaming look-ahead limiter.
-///
-/// The forward-window minimum only ever reads `lookahead` samples ahead, so
-/// given that much queue the emitted gain curve is the offline one exactly;
-/// only the release smoother needs carried state — one per curve, since the
-/// mains and the LFE are detected separately (see
-/// [`crate::mastering::limiter::lookahead_limit`]).
-pub struct StreamingLimiter {
-    lookahead_samples: usize,
-    ceiling_linear: f64,
-    alpha_release: f64,
-    mains: Vec<usize>,
-    lfe: Option<usize>,
-    release_state: f64,
-    lfe_release_state: f64,
-    history: Vec<Vec<f64>>,
-}
-
-impl StreamingLimiter {
-    pub fn new(
-        params: LimiterParams,
-        sample_rate: u32,
-        n_channels: usize,
-        lfe: Option<usize>,
-    ) -> Self {
-        let over_sr = sample_rate as f64 * TRUE_PEAK_OVERSAMPLE as f64;
-        Self {
-            lookahead_samples: ((params.lookahead_ms / 1000.0 * over_sr).round() as usize).max(1),
-            ceiling_linear: 10.0_f64.powf((params.ceiling_dbtp - params.safety_margin_db) / 20.0),
-            alpha_release: 1.0 - (-1.0 / (params.release_ms.max(0.01) / 1000.0 * over_sr)).exp(),
-            mains: non_lfe(n_channels, lfe),
-            lfe,
-            release_state: 0.0,
-            lfe_release_state: 0.0,
-            history: vec![vec![0.0; TRUE_PEAK_FIR_4X.len() - 1]; n_channels],
-        }
-    }
-
-    /// Base-rate samples of queue this needs past the emit point.
-    pub fn required_lookahead(&self) -> usize {
-        self.lookahead_samples.div_ceil(TRUE_PEAK_OVERSAMPLE) + FIR_MARGIN_SAMPLES + 2
-    }
-
-    /// Dilated gain over the emit region for one detection group, the deepest
-    /// reduction in it, and the release state to carry into the next block.
-    fn curve(
-        &self,
-        queue: &[Vec<f64>],
-        channels: &[usize],
-        start: usize,
-        window_end: usize,
-        emit: usize,
-        mut state: f64,
-    ) -> (Vec<f64>, f64, f64) {
-        let margin = FIR_MARGIN_SAMPLES;
-        let span = window_end - start;
-
-        // 4x true-peak envelope across the window, carrying each channel's
-        // FIR history so the interpolation is continuous.
-        let mut envelope = vec![0.0_f64; span * TRUE_PEAK_OVERSAMPLE];
-        for &ch in channels {
-            let history = &self.history[ch];
-            let mut padded = history.clone();
-            padded.extend_from_slice(&queue[ch][start..window_end]);
-            let upsampled = upfirdn_up(&TRUE_PEAK_FIR_4X, &padded, TRUE_PEAK_OVERSAMPLE);
-            let begin = history.len() * TRUE_PEAK_OVERSAMPLE + FIR_DELAY;
-            for (i, slot) in envelope.iter_mut().enumerate() {
-                if let Some(v) = upsampled.get(begin + i) {
-                    *slot = slot.max(v.abs());
-                }
-            }
-        }
-
-        let gain_inst: Vec<f64> = envelope
-            .iter()
-            .map(|e| (self.ceiling_linear / e.max(1e-12)).min(1.0))
-            .collect();
-        let gain_lookahead =
-            crate::mastering::limiter::forward_window_min(&gain_inst, self.lookahead_samples);
-        let need_db: Vec<f64> = gain_lookahead
-            .iter()
-            .map(|g| -20.0 * g.max(1e-12).log10())
-            .collect();
-
-        // The release smoother advances only over what is emitted; the extra
-        // margin the dilation needs is computed from a copy of its state.
-        let emit_over = emit * TRUE_PEAK_OVERSAMPLE;
-        let margin_over = (margin + 1) * TRUE_PEAK_OVERSAMPLE;
-        let mut smoothed = Vec::with_capacity(emit_over + margin_over);
-        let mut carried = state;
-        for (i, need) in need_db.iter().take(emit_over + margin_over).enumerate() {
-            state += self.alpha_release * (need - state);
-            smoothed.push(need.max(state));
-            if i + 1 == emit_over {
-                carried = state;
-            }
-        }
-
-        let gain_base: Vec<f64> = smoothed
-            .chunks_exact(TRUE_PEAK_OVERSAMPLE)
-            .map(|c| {
-                let worst = c.iter().fold(f64::NEG_INFINITY, |m, v| m.max(*v));
-                10.0_f64.powf(-worst / 20.0)
-            })
-            .collect();
-        let dilated = minimum_filter1d(&gain_base, 2 * margin + 1, BorderMode::Nearest);
-        let max_gr = smoothed.iter().take(emit_over).fold(0.0_f64, |m, v| m.max(*v));
-        (dilated, max_gr, carried)
-    }
-
-    /// Limit `queue[..][start..end]` in place, reading ahead within the queue.
-    pub fn process(
-        &mut self,
-        queue: &mut [Vec<f64>],
-        start: usize,
-        end: usize,
-    ) -> crate::mastering::limiter::LimiterInfo {
-        use crate::mastering::limiter::{LimiterInfo, GR_DUTY_FLOOR_DB};
-
-        let emit = end - start;
-        if emit == 0 {
-            return LimiterInfo::default();
-        }
-        let window_end = (end + self.required_lookahead()).min(queue[0].len());
-
-        let (curve, max_gr_db, state) =
-            self.curve(queue, &self.mains, start, window_end, emit, self.release_state);
-        self.release_state = state;
-        let lfe_curve = match self.lfe {
-            Some(i) => {
-                let (curve, max_gr, state) =
-                    self.curve(queue, &[i], start, window_end, emit, self.lfe_release_state);
-                self.lfe_release_state = state;
-                Some((curve, max_gr))
-            }
-            None => None,
-        };
-
-        for (ch, channel) in queue.iter_mut().enumerate() {
-            self.history[ch] = channel[end.saturating_sub(TRUE_PEAK_FIR_4X.len() - 1)..end].to_vec();
-        }
-        for &i in &self.mains {
-            for (k, g) in curve.iter().take(emit).enumerate() {
-                queue[i][start + k] *= g;
-            }
-        }
-        if let (Some(i), Some((lfe_curve, _))) = (self.lfe, lfe_curve.as_ref()) {
-            for (k, g) in lfe_curve.iter().take(emit).enumerate() {
-                queue[i][start + k] *= g;
-            }
-        }
-
-        let floor_gain = 10.0_f64.powf(-GR_DUTY_FLOOR_DB / 20.0);
-        let engaged = curve.iter().take(emit).filter(|g| **g < floor_gain).count();
-        LimiterInfo {
-            max_gr_db,
-            duty: engaged as f64 / emit as f64,
-            lfe_max_gr_db: lfe_curve.map_or(0.0, |(_, gr)| gr),
         }
     }
 }
