@@ -597,14 +597,14 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     }
     this.ensureOutput(frames);
 
-    const renderStart = performance.now();
+    const renderStart = globalThis.performance?.now?.();
     const written = this.primedFrames || this.wasm.dsp_engine_render(
       this.engine,
       this.outPtr,
       this.channelCount,
       frames,
     );
-    const renderMs = performance.now() - renderStart;
+    const renderMs = renderStart === undefined ? 0 : globalThis.performance.now() - renderStart;
     this.primedFrames = 0;
     const rendered = this.heapF32(this.outPtr, this.channelCount * frames);
     for (let channel = 0; channel < output.length; channel += 1) {
