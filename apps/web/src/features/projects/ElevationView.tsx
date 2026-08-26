@@ -58,6 +58,7 @@ function ElevationViewImpl({
   const containerRef = React.useRef<HTMLDivElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const blobCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const blurCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const smoothed = React.useRef<Map<string, SmoothedVoice>>(new Map());
   const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
@@ -79,6 +80,11 @@ function ElevationViewImpl({
     const blobCanvas = blobCanvasRef.current;
     const blobCtx = blobCanvas.getContext("2d");
     if (!blobCtx) return;
+    if (!blurCanvasRef.current) blurCanvasRef.current = document.createElement("canvas");
+    const blurCanvas = blurCanvasRef.current;
+    const blurCtx = blurCanvas.getContext("2d");
+    if (!blurCtx) return;
+    let lastBlurTime = -Infinity;
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -88,8 +94,12 @@ function ElevationViewImpl({
       canvas.height = Math.max(1, Math.round(height * dpr));
       blobCanvas.width = canvas.width;
       blobCanvas.height = canvas.height;
+      blurCanvas.width = canvas.width;
+      blurCanvas.height = canvas.height;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       blobCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      blurCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      lastBlurTime = -Infinity;
       initializedSize.current = false;
     };
     resize();
@@ -297,10 +307,17 @@ function ElevationViewImpl({
       // than Haze's own factor for the same wide-spread reason above. Fixed
       // regardless of intensity — only opacity responds to the slider.
       const blurPx = Math.max(12, Math.min(42, Math.min(plotWidth, plotHeight) * 0.16));
+      if (time - lastBlurTime >= 1000 / 30) {
+        blurCtx.clearRect(0, 0, width, height);
+        blurCtx.save();
+        blurCtx.filter = `blur(${blurPx}px)`;
+        blurCtx.drawImage(blobCanvas, 0, 0, width, height);
+        blurCtx.restore();
+        lastBlurTime = time;
+      }
       ctx.save();
-      ctx.filter = `blur(${blurPx}px)`;
       ctx.globalCompositeOperation = "screen";
-      ctx.drawImage(blobCanvas, 0, 0, width, height);
+      ctx.drawImage(blurCanvas, 0, 0, width, height);
       ctx.restore();
 
       idleFrames.current = !activeRef.current && resolved.length === 0 ? idleFrames.current + 1 : 0;

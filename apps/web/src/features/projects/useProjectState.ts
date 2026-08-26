@@ -25,11 +25,15 @@ export function useProjectState(projectId: string | undefined, onFirstLoad: (pro
   const [project, setProject] = React.useState<Project | null>(null);
   const [manifest, setManifest] = React.useState<Manifest | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [sseHealthy, setSseHealthy] = React.useState(false);
   const initialized = React.useRef(false);
   const onFirstLoadRef = React.useRef(onFirstLoad);
   onFirstLoadRef.current = onFirstLoad;
 
-  React.useEffect(() => { initialized.current = false; }, [projectId]);
+  React.useEffect(() => {
+    initialized.current = false;
+    setSseHealthy(false);
+  }, [projectId]);
 
   // The poll, the SSE stream, and every save each return a full snapshot
   // independently, so a poll issued before a save can resolve after it and
@@ -66,15 +70,16 @@ export function useProjectState(projectId: string | undefined, onFirstLoad: (pro
 
   React.useEffect(() => {
     void load();
-    if (isSettled(project)) return;
+    if (isSettled(project) || sseHealthy) return;
     const timer = window.setInterval(() => void load(), 2000);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status/reference_match_pending/peaks_pending only: a mid-poll `project` update shouldn't restart the interval
-  }, [load, project?.status, project?.reference_match_pending, project?.peaks_pending]);
+  }, [load, project?.status, project?.reference_match_pending, project?.peaks_pending, sseHealthy]);
 
   React.useEffect(() => {
     if (!projectId || !project || isSettled(project)) return;
     const source = new EventSource(api.projectEventsUrl(projectId));
+    source.onopen = () => setSseHealthy(true);
     source.onmessage = (event) => {
       const seq = nextSeq();
       try {
@@ -82,7 +87,10 @@ export function useProjectState(projectId: string | undefined, onFirstLoad: (pro
         if (shouldApplyProject(seq)) setProject(next);
       } catch { /* ignore malformed frame */ }
     };
-    source.onerror = () => source.close();
+    source.onerror = () => {
+      setSseHealthy(false);
+      source.close();
+    };
     return () => source.close();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on status and the pending flags only, so a mid-stream progress update doesn't reopen the connection
   }, [projectId, project?.status, project?.reference_match_pending, project?.peaks_pending]);

@@ -205,6 +205,7 @@ export class PreviewAudioEngine {
     this.playing = false;
     this.client?.setTransport({ playing: false });
     this.callbacks.onPlaying(false);
+    this.callbacks.onCurrentTime(this.currentTimeRef.current);
     this.silenceLevels();
   }
 
@@ -258,7 +259,6 @@ export class PreviewAudioEngine {
   scrubTo(time: number) {
     const clamped = Math.max(0, Math.min(time, this.duration));
     this.currentTimeRef.current = clamped;
-    this.callbacks.onCurrentTime(clamped);
   }
 
   async commitScrub(time: number) {
@@ -560,7 +560,7 @@ export class PreviewAudioEngine {
       await context.resume().catch(() => {});
       if (context.state === "suspended") this.armResumeOnGesture(context);
 
-      const channelCount = Math.max(this.layoutChannels.length, 2);
+      const channelCount = POSITIONAL_CHANNELS.length + 1;
       const client = await DspEngineClient.create(context, channelCount, {
         onFrame: (frame) => this.onFrame(frame),
         onEnded: () => this.onEnded(),
@@ -642,7 +642,6 @@ export class PreviewAudioEngine {
   private onFrame(frame: MeterFrame) {
     if (!this.scrubbing) {
       this.currentTimeRef.current = frame.position / CONTEXT_SAMPLE_RATE;
-      this.callbacks.onCurrentTime(this.currentTimeRef.current);
     }
     const decoded = decodeMeterFrame(frame, this.stemOrder, this.stemChannelCounts, this.layoutChannels);
     this.stemLevels.current = decoded.stemLevels;

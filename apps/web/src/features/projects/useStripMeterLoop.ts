@@ -1,4 +1,5 @@
 import * as React from "react";
+import { cancelFrame, requestFrame } from "@/lib/animationFrame";
 import { createMeterState, levelToDb } from "@/lib/meterScale";
 import { drawStripMeterBars } from "./StripMeter";
 import type { MeterLevel } from "./useStemPreview";
@@ -7,23 +8,16 @@ import type { MeterLevel } from "./useStemPreview";
 // enough for the peak holds to visibly decay rather than freeze.
 const SETTLE_FRAMES = 40;
 
-/** Drives one channel strip's meter bars: its own rAF loop, its own peak-hold
- * state, and the canvas it paints into. Every strip (mixer stem, mixer
- * master, or the inspector's copy of the selected stem) uses this same hook,
- * so "the fader in the inspector" and "the fader in the mixer" are provably
- * the same behaviour, not a parallel re-implementation that can drift.
- *
- * Each strip owns an independent loop rather than sharing one across a rack
- * — simpler to reuse outside the rack, and the per-loop overhead is the same
- * canvas work either way; only the JS scheduling duplicates, which is cheap
- * next to 15 canvases' worth of pixel fills.
- */
+/** Drives one channel strip's meter bars and peak-hold readout. */
 export function useStripMeterLoop(
   source: () => MeterLevel[],
   muted: boolean,
   active: boolean,
 ): { register: (canvas: HTMLCanvasElement | null) => void; peakDb: number } {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const contextRef = React.useRef<CanvasRenderingContext2D | null>(null);
+  const sizeRef = React.useRef({ width: 0, height: 0, ratio: 1 });
+  const resizeObserver = React.useRef<ResizeObserver | null>(null);
   const meterState = React.useRef(createMeterState());
   const lastTime = React.useRef<number | null>(null);
   const lastFlush = React.useRef(0);
@@ -62,15 +56,9 @@ export function useStripMeterLoop(
       });
 
       if (canvas) {
-        const ratio = window.devicePixelRatio || 1;
-        const width = canvas.clientWidth;
-        const height = canvas.clientHeight;
+        const { width, height, ratio } = sizeRef.current;
         if (width > 0 && height > 0) {
-          if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
-            canvas.width = Math.round(width * ratio);
-            canvas.height = Math.round(height * ratio);
-          }
-          const ctx = canvas.getContext("2d");
+          const ctx = contextRef.current;
           if (ctx) {
             ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
             ctx.clearRect(0, 0, width, height);
@@ -93,14 +81,33 @@ export function useStripMeterLoop(
         frame = 0;
         return;
       }
-      frame = window.requestAnimationFrame(draw);
+      frame = requestFrame(draw);
     };
-    frame = window.requestAnimationFrame(draw);
-    return () => window.cancelAnimationFrame(frame);
+    frame = requestFrame(draw);
+    return () => cancelFrame(frame);
   }, [active]);
 
   const register = React.useCallback((canvas: HTMLCanvasElement | null) => {
+    resizeObserver.current?.disconnect();
     canvasRef.current = canvas;
+    contextRef.current = canvas?.getContext("2d") ?? null;
+    if (!canvas) return;
+    const resize = () => {
+      const ratio = window.devicePixelRatio || 1;
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      sizeRef.current = { width, height, ratio };
+      if (width > 0 && height > 0
+        && (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio))) {
+        canvas.width = Math.round(width * ratio);
+        canvas.height = Math.round(height * ratio);
+      }
+    };
+    resize();
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver.current = new ResizeObserver(resize);
+      resizeObserver.current.observe(canvas);
+    }
   }, []);
 
   return { register, peakDb };

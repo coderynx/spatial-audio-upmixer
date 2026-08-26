@@ -111,6 +111,12 @@ export function Pot({
     },
     [max, min, onChange, step, value],
   );
+  const valueRef = React.useRef(value);
+  const stepRef = React.useRef(step);
+  const commitRef = React.useRef(commit);
+  valueRef.current = value;
+  stepRef.current = step;
+  commitRef.current = commit;
 
   // Wheel is bound natively so it can be non-passive, and only acts once the
   // pot has focus — the panels these sit in scroll, and a knob that swallowed
@@ -123,11 +129,11 @@ export function Pot({
     const onWheel = (event: WheelEvent) => {
       if (document.activeElement !== node) return;
       event.preventDefault();
-      commit(value + (event.deltaY < 0 ? step : -step));
+      commitRef.current(valueRef.current + (event.deltaY < 0 ? stepRef.current : -stepRef.current));
     };
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
-  }, [commit, disabled, step, value]);
+  }, [disabled]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (disabled || event.button !== 0) return;

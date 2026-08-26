@@ -30,7 +30,6 @@ function renderTimeline(overrides: Partial<React.ComponentProps<typeof TimelineV
       draggedStem={null}
       selectedStem={null}
       duration={30}
-      currentTime={0}
       currentTimeRef={{ current: 0 }}
       playing={false}
       disabled={false}

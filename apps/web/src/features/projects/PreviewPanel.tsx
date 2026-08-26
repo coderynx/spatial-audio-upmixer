@@ -117,6 +117,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
     groupMaxWidth, groupWidth, loudnessFloor, loudnessCeil, loudnessWidth,
   } = columns;
   const showLoudness = preview.supported && previewStemCount > 0;
+  const paneStyle = React.useMemo(() => ({ height: paneHeight }), [paneHeight]);
 
   return <section ref={containerRef} className="flex min-h-0 flex-col">
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
@@ -220,7 +221,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
     {paneView === "timeline" && (
       <TimelineView
         className="shrink-0 border-t"
-        style={{ height: paneHeight }}
+        style={paneStyle}
         stems={orderedStems}
         peaks={peaks}
         loading={peaksLoading}
@@ -241,7 +242,6 @@ export function PreviewPanel(props: PreviewPanelProps) {
         selectedStem={selectedStem}
         onSelectStem={onSelectStem}
         duration={preview.duration || peaksDuration}
-        currentTime={preview.currentTime}
         currentTimeRef={preview.currentTimeRef}
         playing={preview.playing}
         disabled={!preview.supported || !previewStemCount}
@@ -253,7 +253,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
     {paneView === "mixer" && trackManifest && (
       <MixerView
         className="shrink-0 border-t"
-        style={{ height: paneHeight }}
+        style={paneStyle}
         stems={orderedStems}
         stemChannels={stemChannelCounts}
         selectedStem={selectedStem}

@@ -19,6 +19,7 @@ const addedStems: number[] = [];
 const measureCalls: number[] = [];
 const measureWeights: number[][] = [];
 const contextCalls: string[] = [];
+const clientChannels: number[] = [];
 // Order matters, not just counts: a measurement forks the engine as it stands,
 // so the profile's filter set has to be in it first.
 const callOrder: string[] = [];
@@ -30,7 +31,8 @@ let measureResult = { lkfs: -18, dbtp: -2 };
 
 vi.mock("./wasmEngine/engineClient", () => ({
   DspEngineClient: {
-    create: vi.fn(async (_ctx: unknown, _channels: number, callbacks: Record<string, never>) => {
+    create: vi.fn(async (_ctx: unknown, channels: number, callbacks: Record<string, never>) => {
+      clientChannels.push(channels);
       capturedCallbacks = callbacks;
       return {
         node: { connect: (target: unknown) => target, disconnect: () => {} },
@@ -116,7 +118,7 @@ function Harness(props: Record<string, unknown>) {
     (props.noManifest ? undefined : props.mix ?? {}) as never,
     null,
     props.mastering as never,
-    ["FL", "FR", "C", "LFE", "SL", "SR"],
+    (props.layoutChannels as string[]) ?? ["FL", "FR", "C", "LFE", "SL", "SR"],
     (props.outputMode as never) ?? "binaural",
     (props.spatialProfile as never) ?? "studio",
     (props.transauralProfile as never) ?? "stereo",
@@ -143,6 +145,7 @@ beforeEach(() => {
   measureCalls.length = 0;
   measureWeights.length = 0;
   contextCalls.length = 0;
+  clientChannels.length = 0;
   callOrder.length = 0;
   measureGate = null;
   measureResult = { lkfs: -18, dbtp: -2 };
@@ -282,6 +285,24 @@ describe("useStemPreview initialization", () => {
       await Promise.resolve();
     });
     expect(contextCalls).toContain("close");
+  });
+
+  it("re-routes a layout change without reloading its stems", async () => {
+    const { DspEngineClient } = await import("./wasmEngine/engineClient");
+    const result = await renderPreview({ layoutChannels: ["FL", "FR"] });
+    const creates = (DspEngineClient.create as ReturnType<typeof vi.fn>).mock.calls.length;
+    const loadedStems = addedStems.length;
+
+    await act(async () => {
+      result.rerender(<Harness layoutChannels={["FL", "FR", "C", "LFE", "SL", "SR"]} />);
+      await Promise.resolve();
+    });
+
+    expect((DspEngineClient.create as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(creates);
+    expect(addedStems).toHaveLength(loadedStems);
+    expect(clientChannels.at(-1)).toBe(12);
+    expect((sentParams.at(-1) as { speakers: { name: string }[] }).speakers.map((speaker) => speaker.name))
+      .toEqual(["FL", "FR", "C", "LFE", "SL", "SR"]);
   });
 });
 

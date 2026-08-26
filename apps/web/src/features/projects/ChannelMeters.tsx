@@ -1,4 +1,5 @@
 import * as React from "react";
+import { cancelFrame, requestFrame } from "@/lib/animationFrame";
 import { canvasTheme } from "@/lib/canvasTheme";
 import {
   DB_TICKS,
@@ -264,14 +265,14 @@ function ChannelMetersImpl({
 
       idleFrames.current = !activeRef.current && settled ? idleFrames.current + 1 : 0;
       if (activeRef.current || idleFrames.current < SETTLE_FRAMES) {
-        frame.current = window.requestAnimationFrame(draw);
+        frame.current = requestFrame(draw);
       } else {
         frame.current = null;
       }
     };
-    frame.current = window.requestAnimationFrame(draw);
+    frame.current = requestFrame(draw);
     wakeRef.current = () => {
-      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
+      if (frame.current !== null) cancelFrame(frame.current);
       frame.current = null;
       idleFrames.current = 0;
       draw(performance.now());
@@ -279,7 +280,7 @@ function ChannelMetersImpl({
 
     return () => {
       observer.disconnect();
-      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
+      if (frame.current !== null) cancelFrame(frame.current);
     };
   }, [channelLevels, headphoneLevels]);
 

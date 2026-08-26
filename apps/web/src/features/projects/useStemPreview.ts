@@ -161,7 +161,7 @@ export function useStemPreview(
   }, [layoutChannelsKey, positionalChannels]);
 
   const hasManifest = Boolean(mix);
-  const key = `${stems.map((stem) => `${stem.id}:${stem.preview_url || stem.audio_url}`).join("|")}|${sourcePreviewUrl || ""}|${layoutChannelsKey}`;
+  const key = `${stems.map((stem) => `${stem.id}:${stem.preview_url || stem.audio_url}`).join("|")}|${sourcePreviewUrl || ""}`;
   // Value-stable key: `mastering` is a fresh object every render (the project
   // page rebuilds its manifest on every edit, including unrelated mixing
   // edits), but the mastering audio graph only needs rebuilding when the
@@ -209,7 +209,7 @@ export function useStemPreview(
     if (!constants) return;
     engine.applyOutputMode(outputMode);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [outputMode, ready, constants]);
+  }, [outputMode, layoutChannelsKey, ready, constants]);
 
   React.useEffect(() => {
     if (!navigator.mediaDevices?.enumerateDevices) return;

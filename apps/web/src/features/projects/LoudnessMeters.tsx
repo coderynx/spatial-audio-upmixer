@@ -1,4 +1,5 @@
 import * as React from "react";
+import { cancelFrame, requestFrame } from "@/lib/animationFrame";
 import { canvasTheme } from "@/lib/canvasTheme";
 import {
   DB_TICKS,
@@ -119,10 +120,10 @@ export function useMasterReadout(
       // meters, so one flush settles the readout — holding a 60 Hz loop open
       // on a silent transport buys nothing.
       if (!active && flushed) return;
-      frame = window.requestAnimationFrame(tick);
+      frame = requestFrame(tick);
     };
-    frame = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(frame);
+    frame = requestFrame(tick);
+    return () => cancelFrame(frame);
     // Restarting on `active` keeps the loop tied to transport state the way
     // the strip meters' own loop is; the values it reads are refs, not props.
   }, [meters, output, active]);
@@ -295,14 +296,14 @@ function LoudnessLevelBars({
 
       idleFrames.current = !activeRef.current && settled ? idleFrames.current + 1 : 0;
       if (activeRef.current || idleFrames.current < SETTLE_FRAMES) {
-        frame.current = window.requestAnimationFrame(draw);
+        frame.current = requestFrame(draw);
       } else {
         frame.current = null;
       }
     };
-    frame.current = window.requestAnimationFrame(draw);
+    frame.current = requestFrame(draw);
     wakeRef.current = () => {
-      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
+      if (frame.current !== null) cancelFrame(frame.current);
       frame.current = null;
       idleFrames.current = 0;
       draw(performance.now());
@@ -310,7 +311,7 @@ function LoudnessLevelBars({
 
     return () => {
       observer.disconnect();
-      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
+      if (frame.current !== null) cancelFrame(frame.current);
     };
   }, [masterMeters]);
 

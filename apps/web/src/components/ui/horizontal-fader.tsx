@@ -1,4 +1,5 @@
 import * as React from "react";
+import { cancelFrame, requestFrame } from "@/lib/animationFrame";
 import { DB_TICKS, MULTI_CHANNEL_YELLOW_ZONE_DB, STRIP_METER_PALETTE, YELLOW_ZONE_DB, createMeterState, dbToY, levelToDb, zoneColor } from "@/lib/meterScale";
 import { cn } from "@/lib/utils";
 
@@ -104,6 +105,12 @@ export function HorizontalFader({
     },
     [max, min, onChange, step, value],
   );
+  const valueRef = React.useRef(value);
+  const stepRef = React.useRef(step);
+  const commitRef = React.useRef(commit);
+  valueRef.current = value;
+  stepRef.current = step;
+  commitRef.current = commit;
 
   // Gated on focus read from the document, not component state, so a
   // scrolling ancestor (a timeline row list) never has an incidental
@@ -114,15 +121,12 @@ export function HorizontalFader({
     const onWheel = (event: WheelEvent) => {
       if (document.activeElement !== node) return;
       event.preventDefault();
-      commit(value + (event.deltaY < 0 ? step : -step));
+      commitRef.current(valueRef.current + (event.deltaY < 0 ? stepRef.current : -stepRef.current));
     };
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
-  }, [commit, disabled, step, value]);
+  }, [disabled]);
 
-  // Own rAF loop, own smoothing state, own canvas — "every strip owns its
-  // meter loop" (design spec §6.4) applies just as much to a control this
-  // small: a rack of these needs no shared registration to paint correctly.
   const sourceRef = React.useRef(meterSource);
   sourceRef.current = meterSource;
   const activeRef = React.useRef(meterActive);
@@ -141,18 +145,27 @@ export function HorizontalFader({
     let lastTime: number | null = null;
     let idle = 0;
     let frame: number;
+    let width = 0;
+    let height = 0;
+    let ratio = 1;
+    const resize = () => {
+      ratio = window.devicePixelRatio || 1;
+      width = canvas.clientWidth;
+      height = canvas.clientHeight;
+      if (width > 0 && height > 0
+        && (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio))) {
+        canvas.width = Math.round(width * ratio);
+        canvas.height = Math.round(height * ratio);
+      }
+    };
+    resize();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(resize);
+    observer?.observe(canvas);
 
     const draw = (time: number) => {
       const deltaSec = lastTime === null ? 0 : Math.min(0.25, (time - lastTime) / 1000);
       lastTime = time;
-      const ratio = window.devicePixelRatio || 1;
-      const width = canvas.clientWidth;
-      const height = canvas.clientHeight;
-      if (width <= 0 || height <= 0) { frame = window.requestAnimationFrame(draw); return; }
-      if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
-        canvas.width = Math.round(width * ratio);
-        canvas.height = Math.round(height * ratio);
-      }
+      if (width <= 0 || height <= 0) { frame = requestFrame(draw); return; }
       ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       ctx.clearRect(0, 0, width, height);
 
@@ -196,10 +209,13 @@ export function HorizontalFader({
 
       idle = activeRef.current || !settled ? 0 : idle + 1;
       if (idle > METER_SETTLE_FRAMES) return;
-      frame = window.requestAnimationFrame(draw);
+      frame = requestFrame(draw);
     };
-    frame = window.requestAnimationFrame(draw);
-    return () => window.cancelAnimationFrame(frame);
+    frame = requestFrame(draw);
+    return () => {
+      observer?.disconnect();
+      cancelFrame(frame);
+    };
   }, [meterActive, meterChannels, meterSource]);
 
   // The knob centre travels between the track's two ends, so usable travel is

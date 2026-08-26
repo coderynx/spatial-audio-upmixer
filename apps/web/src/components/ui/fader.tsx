@@ -81,6 +81,12 @@ export function Fader({
     },
     [max, min, onChange, step, value],
   );
+  const valueRef = React.useRef(value);
+  const stepRef = React.useRef(step);
+  const commitRef = React.useRef(commit);
+  valueRef.current = value;
+  stepRef.current = step;
+  commitRef.current = commit;
 
   // Non-passive so it can preventDefault, and gated on focus read from the
   // document rather than component state — the strip rack scrolls, and a
@@ -92,11 +98,11 @@ export function Fader({
     const onWheel = (event: WheelEvent) => {
       if (document.activeElement !== node) return;
       event.preventDefault();
-      commit(value + (event.deltaY < 0 ? step : -step));
+      commitRef.current(valueRef.current + (event.deltaY < 0 ? stepRef.current : -stepRef.current));
     };
     node.addEventListener("wheel", onWheel, { passive: false });
     return () => node.removeEventListener("wheel", onWheel);
-  }, [commit, disabled, step, value]);
+  }, [disabled]);
 
   // The cap centre travels between the two ends of the track, so the usable
   // travel is the track height minus the cap — mapping against the raw height

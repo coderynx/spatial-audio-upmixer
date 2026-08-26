@@ -80,7 +80,6 @@ export type TimelineViewProps = {
   selectedStem: string | null;
   onSelectStem: (stem: string) => void;
   duration: number;
-  currentTime: number;
   currentTimeRef: React.MutableRefObject<number>;
   playing: boolean;
   disabled: boolean;
@@ -112,7 +111,6 @@ function TimelineViewImpl({
   selectedStem,
   onSelectStem,
   duration,
-  currentTime,
   currentTimeRef,
   playing,
   disabled,
@@ -126,6 +124,7 @@ function TimelineViewImpl({
   const waveCanvas = React.useRef<HTMLCanvasElement>(null);
   const playheadCanvas = React.useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = React.useState(0);
+  const [scrubTime, setScrubTime] = React.useState<number | null>(null);
   const scrubbing = React.useRef(false);
   // Native HTML5 drag fires `dragstart` with `event.target` set to the
   // draggable row, never the descendant under the pointer, so "did this
@@ -290,7 +289,7 @@ function TimelineViewImpl({
 
   React.useEffect(() => {
     if (!playing) {
-      drawPlayhead(currentTime);
+      drawPlayhead(scrubTime ?? currentTimeRef.current);
       return;
     }
     let frame: number;
@@ -300,7 +299,7 @@ function TimelineViewImpl({
     };
     frame = window.requestAnimationFrame(loop);
     return () => window.cancelAnimationFrame(frame);
-  }, [currentTime, currentTimeRef, drawPlayhead, playing]);
+  }, [currentTimeRef, drawPlayhead, playing, scrubTime]);
 
   const timeForClientX = (clientX: number) => {
     const node = laneAreaRef.current;
@@ -314,24 +313,30 @@ function TimelineViewImpl({
     if (disabled || event.button !== 0) return;
     event.currentTarget.setPointerCapture?.(event.pointerId);
     scrubbing.current = true;
+    setScrubTime(timeForClientX(event.clientX));
     onBeginScrub();
     onScrubTo(timeForClientX(event.clientX));
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!scrubbing.current) return;
-    onScrubTo(timeForClientX(event.clientX));
+    const time = timeForClientX(event.clientX);
+    setScrubTime(time);
+    onScrubTo(time);
   };
 
   const endScrub = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!scrubbing.current) return;
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     scrubbing.current = false;
-    onCommitScrub(timeForClientX(event.clientX));
+    const time = timeForClientX(event.clientX);
+    setScrubTime(time);
+    onCommitScrub(time);
   };
 
   const seekTo = (target: number) => {
     const clamped = Math.min(duration, Math.max(0, target));
+    setScrubTime(clamped);
     onBeginScrub();
     onScrubTo(clamped);
     onCommitScrub(clamped);
@@ -344,7 +349,7 @@ function TimelineViewImpl({
     };
     if (event.key in moves) {
       event.preventDefault();
-      seekTo(currentTime + moves[event.key]);
+      seekTo(currentTimeRef.current + moves[event.key]);
       return;
     }
     if (event.key === "Home") {
@@ -480,8 +485,8 @@ function TimelineViewImpl({
           aria-label="Timeline position"
           aria-valuemin={0}
           aria-valuemax={Math.max(duration, 0)}
-          aria-valuenow={Math.min(currentTime, duration || 0)}
-          aria-valuetext={`${formatTick(currentTime)} of ${formatTick(duration)}`}
+          aria-valuenow={Math.min(scrubTime ?? currentTimeRef.current, duration || 0)}
+          aria-valuetext={`${formatTick(scrubTime ?? currentTimeRef.current)} of ${formatTick(duration)}`}
           aria-orientation="horizontal"
           aria-disabled={disabled || undefined}
           tabIndex={disabled ? -1 : 0}
