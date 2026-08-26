@@ -45,7 +45,7 @@ const METER_WINDOW_FRAMES: usize = 2048;
 /// Time constant for smoothing a stem's mute/solo/rebalance gain and the
 /// master output gain across a live [`PreviewEngine::update_params`] edit,
 /// so the step lands as a fast ramp rather than a click.
-const GAIN_RAMP_MS: f64 = 8.0;
+pub(super) const GAIN_RAMP_MS: f64 = 8.0;
 
 /// Decoded stereo PCM for one stem, as the host transfers it.
 pub struct StemSource {

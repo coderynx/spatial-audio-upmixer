@@ -15,7 +15,9 @@ use crate::mastering::non_lfe;
 
 use super::band::RollingBand;
 use super::conv::StreamingConvolver;
+use super::engine::GAIN_RAMP_MS;
 use super::params::MasterParams;
+use super::state::OnePole;
 
 /// Look-behind and look-ahead the LF unifier's zero-phase pass runs with.
 /// At 100 ms the 80-120 Hz filter has decayed by `e^-40`, so truncating there
@@ -46,8 +48,8 @@ pub struct CausalChain {
     eq: Option<StreamingConvolver>,
     reference_gain: f64,
     eq_strength: f64,
-    sub: Option<(SosFilter, f64)>,
-    mid: Option<(SosFilter, SosFilter, f64)>,
+    sub: Option<(SosFilter, OnePole, f64)>,
+    mid: Option<(SosFilter, SosFilter, OnePole, f64)>,
     is_lfe: bool,
 }
 
@@ -65,30 +67,31 @@ impl CausalChain {
                 .then(|| StreamingConvolver::new(p.eq_fir.clone())),
             reference_gain: p.reference_gain,
             eq_strength: p.eq_strength,
-            sub: bass.filter(|b| b.sub_gain_db != 0.0 && !is_lfe).map(|b| {
+            sub: bass.filter(|_| !is_lfe).map(|b| {
+                let gain = 10.0_f64.powf(b.sub_gain_db / 20.0);
                 (
                     SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::Low)),
-                    10.0_f64.powf(b.sub_gain_db / 20.0),
+                    OnePole::new_at(GAIN_RAMP_MS, sample_rate as f64, gain),
+                    gain,
                 )
             }),
-            mid: bass.filter(|b| b.mid_gain_db != 0.0 && !is_lfe).map(|b| {
+            mid: bass.filter(|_| !is_lfe).map(|b| {
+                let gain = 10.0_f64.powf(b.mid_gain_db / 20.0);
                 (
                     SosFilter::from_flat(&butter_sos(2, b.mid_cutoff_hz / nyq, BandType::Low)),
                     SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::High)),
-                    10.0_f64.powf(b.mid_gain_db / 20.0),
+                    OnePole::new_at(GAIN_RAMP_MS, sample_rate as f64, gain),
+                    gain,
                 )
             }),
             is_lfe,
         }
     }
 
-    /// Adopt new master params in place. Reference/EQ gain and blend are
-    /// scalars, assigned directly; the reference/EQ convolvers keep their
-    /// history via [`StreamingConvolver::retune_kernel`] when their FIR
-    /// content changed, or are added/dropped when it went to/from empty. The
-    /// bass sub/mid filters are cheap to rebuild outright (a few biquad
-    /// sections), so they're only touched — and only reset — when `new.bass`
-    /// actually differs from what this chain was built with.
+    /// Adopt new master params in place. The reference/EQ convolvers keep
+    /// their history via [`StreamingConvolver::retune_kernel`] when their FIR
+    /// content changed, and the bass filters keep their delay registers while
+    /// their gains ramp to a live edit.
     pub fn retune(
         &mut self,
         sample_rate: u32,
@@ -125,22 +128,41 @@ impl CausalChain {
             }
         }
 
-        if old.bass != new.bass {
+        if old.bass != new.bass && !self.is_lfe {
             let nyq = sample_rate as f64 / 2.0;
             let bass = new.bass.as_ref();
-            self.sub = bass.filter(|b| b.sub_gain_db != 0.0 && !self.is_lfe).map(|b| {
-                (
-                    SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::Low)),
-                    10.0_f64.powf(b.sub_gain_db / 20.0),
-                )
-            });
-            self.mid = bass.filter(|b| b.mid_gain_db != 0.0 && !self.is_lfe).map(|b| {
-                (
-                    SosFilter::from_flat(&butter_sos(2, b.mid_cutoff_hz / nyq, BandType::Low)),
-                    SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::High)),
-                    10.0_f64.powf(b.mid_gain_db / 20.0),
-                )
-            });
+            match (&mut self.sub, bass) {
+                (Some((filter, _, target)), Some(b)) => {
+                    filter.retune_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::Low));
+                    *target = 10.0_f64.powf(b.sub_gain_db / 20.0);
+                }
+                (slot @ None, Some(b)) => {
+                    let gain = 10.0_f64.powf(b.sub_gain_db / 20.0);
+                    *slot = Some((
+                        SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::Low)),
+                        OnePole::new_at(GAIN_RAMP_MS, sample_rate as f64, gain),
+                        gain,
+                    ));
+                }
+                (slot, None) => *slot = None,
+            }
+            match (&mut self.mid, bass) {
+                (Some((low, high, _, target)), Some(b)) => {
+                    low.retune_flat(&butter_sos(2, b.mid_cutoff_hz / nyq, BandType::Low));
+                    high.retune_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::High));
+                    *target = 10.0_f64.powf(b.mid_gain_db / 20.0);
+                }
+                (slot @ None, Some(b)) => {
+                    let gain = 10.0_f64.powf(b.mid_gain_db / 20.0);
+                    *slot = Some((
+                        SosFilter::from_flat(&butter_sos(2, b.mid_cutoff_hz / nyq, BandType::Low)),
+                        SosFilter::from_flat(&butter_sos(2, b.sub_cutoff_hz / nyq, BandType::High)),
+                        OnePole::new_at(GAIN_RAMP_MS, sample_rate as f64, gain),
+                        gain,
+                    ));
+                }
+                (slot, None) => *slot = None,
+            }
         }
     }
 
@@ -199,16 +221,16 @@ impl CausalChain {
 
     /// The band gains, which run before the LF unifier.
     pub fn band_gains(&mut self, block: &mut [f64]) {
-        if let Some((filter, gain)) = &mut self.sub {
+        if let Some((filter, smoother, target)) = &mut self.sub {
             for v in block.iter_mut() {
                 let band = filter.tick(*v);
-                *v = (*v - band) + band * *gain;
+                *v = (*v - band) + band * smoother.tick(*target);
             }
         }
-        if let Some((lp, hp, gain)) = &mut self.mid {
+        if let Some((lp, hp, smoother, target)) = &mut self.mid {
             for v in block.iter_mut() {
                 let band = hp.tick(lp.tick(*v));
-                *v = (*v - band) + band * *gain;
+                *v = (*v - band) + band * smoother.tick(*target);
             }
         }
     }
@@ -274,6 +296,11 @@ impl LfUnifier {
     /// [`RollingBand::look_ahead`].
     pub fn look_ahead(&self) -> usize {
         self.filter.look_ahead()
+    }
+
+    pub fn retune(&mut self, params: BassParams, lf_targets: Vec<(usize, f64)>) {
+        self.params = params;
+        self.lf_targets = lf_targets;
     }
 
     /// Unify the low band across `window`, which holds `source[..][start..end]`
@@ -365,6 +392,18 @@ impl StreamingDecorrelator {
     /// [`RollingBand::look_ahead`].
     pub fn look_ahead(&self) -> usize {
         self.band.look_ahead()
+    }
+
+    pub fn retune_amount(&mut self, amount: f64) {
+        for channel in &mut self.channels {
+            channel.retune_amount(amount);
+        }
+    }
+
+    pub fn fade_in(&mut self) {
+        for channel in &mut self.channels {
+            channel.fade_in();
+        }
     }
 
     /// Decorrelate `window[..][..]`, taking the band from `pre[..][start..end]`

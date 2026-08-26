@@ -75,6 +75,25 @@ fn master_changed_without_firs(
         || old.output_gain != new.output_gain
 }
 
+fn decorrelator_topology_changed(
+    old: Option<crate::mastering::bass::BassParams>,
+    new: Option<crate::mastering::bass::BassParams>,
+) -> bool {
+    match (old, new) {
+        (Some(a), Some(b)) => {
+            a.unify_hz != b.unify_hz
+                || a.decorr_low_hz != b.decorr_low_hz
+                || a.decorr_high_hz != b.decorr_high_hz
+                || a.decorr_sections != b.decorr_sections
+                || a.decorr_max_delay_ms != b.decorr_max_delay_ms
+                || a.decorr_fast_ms != b.decorr_fast_ms
+                || a.decorr_slow_ms != b.decorr_slow_ms
+        }
+        (None, None) => false,
+        _ => true,
+    }
+}
+
 impl PreviewEngine {
     /// Replace one stem's FIR without putting every tap through JSON.
     pub fn set_stem_eq_taps(&mut self, index: usize, taps: Vec<f64>) {
@@ -228,15 +247,36 @@ impl PreviewEngine {
             },
         }
 
-        // The unifier carries the punch envelopes, so it is rebuilt only when
-        // its own configuration moved — a rebuild restarts them cold.
-        if old.master.bass != self.params.master.bass
-            || old.master.lf_targets != self.params.master.lf_targets
-        {
+        let old_unify_hz = old.master.bass.and_then(|bass| bass.unify_hz);
+        let new_unify_hz = self.params.master.bass.and_then(|bass| bass.unify_hz);
+        let old_unifier_active = old_unify_hz.is_some() && !old.master.lf_targets.is_empty();
+        let new_unifier_active = new_unify_hz.is_some() && !self.params.master.lf_targets.is_empty();
+        if !new_unifier_active {
+            self.unifier = None;
+        } else if old_unifier_active && old_unify_hz == new_unify_hz {
+            if let (Some(unifier), Some(bass)) = (&mut self.unifier, self.params.master.bass) {
+                unifier.retune(bass, self.params.master.lf_targets.clone());
+            } else {
+                self.unifier =
+                    build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
+            }
+        } else {
             self.unifier =
                 build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
+        }
+        if decorrelator_topology_changed(old.master.bass, self.params.master.bass) {
             self.decorrelator =
                 build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);
+        } else if let (Some(decorrelator), Some(bass)) =
+            (&mut self.decorrelator, self.params.master.bass)
+        {
+            decorrelator.retune_amount(bass.decorrelate);
+        } else if self.params.master.bass.is_some_and(|bass| bass.decorrelate > 0.0) {
+            self.decorrelator =
+                build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);
+            if let Some(decorrelator) = &mut self.decorrelator {
+                decorrelator.fade_in();
+            }
         }
 
         if (firs_changed && old.master != self.params.master)

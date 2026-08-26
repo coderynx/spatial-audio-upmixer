@@ -37,6 +37,7 @@ const DELAY_STAGGER: [f64; 6] = [0.35, 0.48, 0.61, 0.74, 0.87, 1.0];
 /// Band-pass order. 2nd order never reaches unity across 1.6 octaves, which
 /// spreads the reconstruction ripple over the whole band instead of its edges.
 const BAND_ORDER: usize = 4;
+const AMOUNT_RAMP_MS: f64 = 8.0;
 
 /// Glasberg & Moore's ERB-rate scale, the warping that puts the poles at
 /// roughly constant density per critical band rather than per hertz.
@@ -134,6 +135,8 @@ pub fn band_sos(sample_rate: u32, p: &BassParams) -> Option<Vec<[f64; 6]>> {
 pub struct Decorrelator {
     allpass: SosFilter,
     amount: f64,
+    target_amount: f64,
+    amount_alpha: f64,
     alpha_fast: f64,
     alpha_slow: f64,
     fast: f64,
@@ -143,15 +146,27 @@ pub struct Decorrelator {
 
 impl Decorrelator {
     pub fn new(channel: usize, sample_rate: u32, p: &BassParams) -> Self {
+        let amount = p.decorrelate.clamp(0.0, 1.0);
         Self {
             allpass: SosFilter::from_flat(&cascade_rows(channel, sample_rate, p)),
-            amount: p.decorrelate.clamp(0.0, 1.0),
+            amount,
+            target_amount: amount,
+            amount_alpha: 1.0
+                - (-1.0 / (sample_rate as f64 * AMOUNT_RAMP_MS / 1000.0)).exp(),
             alpha_fast: alpha(p.decorr_fast_ms, sample_rate),
             alpha_slow: alpha(p.decorr_slow_ms, sample_rate),
             fast: 0.0,
             slow: 0.0,
             primed: false,
         }
+    }
+
+    pub fn retune_amount(&mut self, amount: f64) {
+        self.target_amount = amount.clamp(0.0, 1.0);
+    }
+
+    pub fn fade_in(&mut self) {
+        self.amount = 0.0;
     }
 
     /// Sustain weight in [0, 1]. A fast envelope running ahead of the slow one
@@ -182,6 +197,7 @@ impl Decorrelator {
     /// inside the range the control is meant to be used in.
     pub fn run(&mut self, x: &mut [f64], band: &[f64]) {
         for (v, b) in x.iter_mut().zip(band.iter()) {
+            self.amount += self.amount_alpha * (self.target_amount - self.amount);
             let gate = self.sustain(*b);
             let wet = self.allpass.tick(*b);
             let w = (self.amount * gate).clamp(0.0, 1.0);

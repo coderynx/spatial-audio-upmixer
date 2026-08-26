@@ -293,6 +293,51 @@ describe("shared DSP core (wasm)", () => {
     expect(view.reduce((m, v) => Math.max(m, Math.abs(v)), 0)).toBeLessThan(1e-4);
   });
 
+  it("keeps live bass edits continuous", () => {
+    const wasm = instantiate();
+    const bass = {
+      sub_gain_db: 1, mid_gain_db: 0.5, unify_hz: 90, punch: 0.3, excite: true,
+      lfe_gain_db: 0, sub_cutoff_hz: 80, mid_cutoff_hz: 200, excite_blend: 0.3,
+      excite_drive: 2, punch_fast_ms: 10, punch_slow_ms: 120, punch_max_db: 6,
+      decorrelate: 0.4, decorr_low_hz: 100, decorr_high_hz: 300, decorr_sections: 8,
+      decorr_max_delay_ms: 30, decorr_fast_ms: 30, decorr_slow_ms: 300,
+    };
+    const withBass = { ...PARAMS, master: { bass, lf_targets: [[0, 0.5], [1, 0.5]] } };
+    const engine = createEngine(wasm, withBass);
+    const values = tone(FRAMES);
+    const left = writeStem(wasm, values);
+    const right = writeStem(wasm, values);
+    wasm.dsp_engine_add_stem(engine, left.ptr, right.ptr, FRAMES);
+    const outPtr = wasm.dsp_alloc(CHANNELS * 128 * 4);
+    const output: number[] = [];
+
+    for (let block = 0; block < 24; block += 1) {
+      wasm.dsp_engine_render(engine, outPtr, CHANNELS, 128);
+      const view = new Float32Array(wasm.memory.buffer, outPtr, CHANNELS * 128);
+      output.push(...view.subarray(0, 128));
+      const edited = {
+        ...withBass,
+        master: {
+          ...withBass.master,
+          bass: {
+            ...bass,
+            sub_gain_db: block % 2 ? 1 : 2,
+            decorrelate: block % 2 ? 0.2 : 0.4,
+          },
+        },
+      };
+      const encoded = new TextEncoder().encode(JSON.stringify(edited));
+      const ptr = wasm.dsp_alloc(encoded.length);
+      new Uint8Array(wasm.memory.buffer, ptr, encoded.length).set(encoded);
+      wasm.dsp_engine_set_params(engine, ptr, encoded.length);
+      wasm.dsp_free(ptr, encoded.length);
+    }
+
+    const maxJump = Array.from({ length: 19 }, (_, i) => (i + 5) * 128)
+      .reduce((max, index) => Math.max(max, Math.abs(output[index] - output[index - 1])), 0);
+    expect(maxJump).toBeLessThan(0.05);
+  });
+
   it("sets the decode bank on its own channel, surviving a later set_params", () => {
     const wasm = instantiate();
     // No LFE here (unlike PARAMS): the binaural collapse sums LFE straight
