@@ -7,11 +7,10 @@
 //! exists, which is what lets both stages be the offline algorithm rather
 //! than a causal approximation of one.
 
-use super::{PreviewEngine, METER_WINDOW_FRAMES, UNIFY_STRIDE};
+use super::{PreviewEngine, METER_WINDOW_FRAMES};
 use crate::mastering::clip::ClipCurve;
 use crate::spatial::downmix::{apply_stereo_downmix_lock, DownmixRole};
 use crate::spatial::panner::{PannerLayout, StemPlacement};
-use crate::stream::meters::Level;
 use crate::stream::params::{ObjectMode, OutputMode, SendShape};
 use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND, SIGNALS, STEM_INPUT};
 
@@ -19,6 +18,11 @@ pub(crate) struct StemMixRoute {
     pub regular: Vec<(usize, usize, f64)>,
     pub lfe_weight: f64,
     pub objects: Option<Vec<(usize, usize, f64)>>,
+    pub ambient: Vec<(usize, usize, f64)>,
+    pub needs_surround: bool,
+    pub needs_height: bool,
+    pub has_surround: bool,
+    pub has_height: bool,
 }
 
 pub(crate) fn build_stem_mix_routes(
@@ -32,6 +36,8 @@ pub(crate) fn build_stem_mix_routes(
             let objects = direct_object_routes(params, stem, layout);
             let mut lfe_weight = 0.0;
             let mut regular = Vec::new();
+            let mut needs_surround = false;
+            let mut needs_height = false;
             for (name, weight) in &stem.routing {
                 if *weight == 0.0 {
                     continue;
@@ -40,11 +46,28 @@ pub(crate) fn build_stem_mix_routes(
                     lfe_weight += weight;
                 } else if objects.is_none() {
                     if let Some(channel) = params.speaker_index(name) {
+                        needs_surround |= matches!(
+                            params.shapes[channel],
+                            SendShape::SurroundLeft | SendShape::SurroundRight
+                        );
+                        needs_height |= matches!(
+                            params.shapes[channel],
+                            SendShape::HeightLeft | SendShape::HeightRight
+                        );
                         regular.push((channel, shape_index(params.shapes[channel]), *weight));
                     }
                 }
             }
-            StemMixRoute { regular, lfe_weight, objects }
+            StemMixRoute {
+                regular,
+                lfe_weight,
+                objects,
+                ambient: ambient_feeds(params, stem),
+                needs_surround,
+                needs_height,
+                has_surround: params.ambient_share(SendShape::SurroundLeft) > 0.0,
+                has_height: params.ambient_share(SendShape::HeightLeft) > 0.0,
+            }
         })
         .collect()
 }
@@ -64,29 +87,12 @@ impl PreviewEngine {
             return;
         };
         let stem = &self.stems[stem_index];
-        let mut needs_surround = false;
-        let mut needs_height = false;
-        for (name, weight) in &sp.routing {
-            let Some(channel) = self.params.speaker_index(name).filter(|_| *weight != 0.0) else {
-                continue;
-            };
-            match self.params.shapes[channel] {
-                SendShape::SurroundLeft | SendShape::SurroundRight => needs_surround = true,
-                SendShape::HeightLeft | SendShape::HeightRight => needs_height = true,
-                _ => {}
-            }
-        }
-        if sp.object_mode.is_some() {
-            needs_surround = false;
-            needs_height = false;
-        }
+        let mix = &self.stem_mix_routes[stem_index];
         // A send the layout has no speaker for gets no ambient: the amount
         // is taken out of the dry pair, so sending it nowhere would be a hole
         // rather than a move.
-        let rear =
-            sp.ambient_rear * f64::from(self.params.ambient_share(SendShape::SurroundLeft) > 0.0);
-        let height =
-            sp.ambient_height * f64::from(self.params.ambient_share(SendShape::HeightLeft) > 0.0);
+        let rear = sp.ambient_rear * f64::from(mix.has_surround);
+        let height = sp.ambient_height * f64::from(mix.has_height);
 
         let route = &mut self.routes[stem_index];
         route.process_block(
@@ -96,8 +102,8 @@ impl PreviewEngine {
             count,
             rear,
             height,
-            needs_surround,
-            needs_height,
+            mix.needs_surround,
+            mix.needs_height,
         );
     }
 
@@ -130,12 +136,11 @@ impl PreviewEngine {
             }
             self.route_stem_block(stem_index, start, count);
 
-            let sp = &self.params.stems[stem_index];
             let smoother = &mut self.stem_gain[stem_index];
             let route = &self.routes[stem_index];
             let shaped: [&[f64]; SIGNALS] = std::array::from_fn(|i| route.signal(i));
-            let ambient = route.has_ambient().then(|| ambient_feeds(&self.params, sp));
             let mix = &self.stem_mix_routes[stem_index];
+            let ambient = route.has_ambient().then_some(&mix.ambient);
 
             if !self.params.spatial_downmix_lock {
                 for i in 0..count {
@@ -157,7 +162,7 @@ impl PreviewEngine {
                             * self.params.speakers[*channel].group_gain
                             * gain;
                     }
-                    if let Some(feeds) = &ambient {
+                    if let Some(feeds) = ambient {
                         for (channel, slot, weight) in feeds {
                             bed[*channel][i] += shaped[*slot][i] * weight * gain;
                         }
@@ -188,7 +193,7 @@ impl PreviewEngine {
                             * self.params.speakers[*channel].group_gain
                             * gain;
                     }
-                    if let Some(feeds) = &ambient {
+                    if let Some(feeds) = ambient {
                         for (channel, slot, weight) in feeds {
                             routed[*channel][i] += shaped[*slot][i] * weight * gain;
                         }
@@ -273,7 +278,7 @@ impl PreviewEngine {
         // side of what it emits, so emitting a render quantum at a time would
         // redo that context ~75 times over. Advance in strides instead.
         let target = target
-            .max(self.unify_done + UNIFY_STRIDE)
+            .max(self.unify_done + self.unify_stride)
             .min(self.total_frames);
         let horizon = self.look_ahead();
         self.fill_pre(target + horizon);
@@ -363,6 +368,40 @@ impl PreviewEngine {
         self.unify_done = end;
     }
 
+    pub(crate) fn prepare_render(&mut self, frames: usize, step: usize) -> bool {
+        let limiter = self
+            .limiter
+            .as_ref()
+            .map(|limiter| limiter.required_lookahead())
+            .unwrap_or(0);
+        let target = (self.emitted + frames + limiter + self.look_ahead()).min(self.total_frames);
+        if self.pre.end() >= target {
+            let end = (self.emitted + frames + limiter).min(self.total_frames);
+            let base = self.pre.base;
+            let unifier = self
+                .unifier
+                .as_mut()
+                .map_or(true, |unifier| {
+                    unifier.prewarm(&self.pre.channels, base, self.total_frames, end, step)
+                });
+            let decorrelator = self
+                .decorrelator
+                .as_mut()
+                .map_or(true, |decorrelator| {
+                    decorrelator.prewarm(&self.pre.channels, base, self.total_frames, end, step)
+                });
+            return unifier && decorrelator;
+        }
+        self.fill_pre((self.pre.end() + step.max(1)).min(target));
+        false
+    }
+
+    pub(crate) fn prime_output(&mut self, frames: usize) {
+        let bed = vec![vec![0.0; frames]; self.params.speakers.len()];
+        self.output.process(&bed, frames, 1.0, &mut self.collapsed);
+        self.output.reset();
+    }
+
     /// Render `n_frames` of the mastered bed into `out`, channel-major.
     ///
     /// Returns the number of frames actually written; a short count means the
@@ -433,44 +472,6 @@ impl PreviewEngine {
             out[base..base + count].copy_from_slice(&rendered[..count]);
         }
 
-        self.meters.stems = self
-            .stems
-            .iter()
-            .enumerate()
-            .map(|(i, stem)| {
-                let sp = self.params.stems.get(i);
-                let enabled = sp.map(|p| p.enabled).unwrap_or(true);
-                if !enabled {
-                    return [Level::default(), Level::default()];
-                }
-                let gain = sp
-                    .map(|p| 10.0_f64.powf(p.rebalance_db / 20.0))
-                    .unwrap_or(1.0);
-                let to = (self.emitted + emit).min(stem.len());
-                if self.emitted >= to {
-                    return [Level::default(), Level::default()];
-                }
-                let win_start = to.saturating_sub(METER_WINDOW_FRAMES);
-                [
-                    Level::measure_f32(&stem.left[win_start..to], gain),
-                    Level::measure_f32(&stem.right[win_start..to], gain),
-                ]
-            })
-            .collect();
-        let meter_start = end.saturating_sub(METER_WINDOW_FRAMES);
-        self.meters.channels = self
-            .post
-            .channels
-            .iter()
-            .enumerate()
-            .map(|(channel, c)| {
-                if self.params.speakers.get(channel).is_some_and(|s| s.muted) {
-                    Level::default()
-                } else {
-                    Level::measure(&c[meter_start..end])
-                }
-            })
-            .collect();
         for (channel, tail) in self.output_meter_tail.iter_mut().enumerate() {
             if let Some(rendered) = self.collapsed.get(channel) {
                 tail.extend_from_slice(&rendered[..emit.min(rendered.len())]);
@@ -478,10 +479,6 @@ impl PreviewEngine {
             let drop = tail.len().saturating_sub(METER_WINDOW_FRAMES);
             tail.drain(..drop);
         }
-        self.meters.output = [
-            Level::measure(&self.output_meter_tail[0]),
-            Level::measure(&self.output_meter_tail[1]),
-        ];
         self.master_meters(emit, limiter_info);
 
         self.emitted += emit;

@@ -133,6 +133,25 @@ impl RollingBand {
         self.work(owed);
     }
 
+    pub fn prewarm(
+        &mut self,
+        source: &[Vec<f64>],
+        source_base: usize,
+        total: usize,
+        end: usize,
+        budget: usize,
+    ) -> bool {
+        self.pull_forward(source, source_base, total);
+        if self.ready_end() >= end {
+            return true;
+        }
+        if self.cursor.is_none() && !self.start_chunk(total) {
+            return false;
+        }
+        self.work(budget);
+        self.ready_end() >= end
+    }
+
     /// Backward-pass samples one frame of output owes. Paid a slice faster
     /// than the chunk is consumed: at exactly the chunk's own rate the last
     /// slice lands in the call that needs it, and any rounding there turns

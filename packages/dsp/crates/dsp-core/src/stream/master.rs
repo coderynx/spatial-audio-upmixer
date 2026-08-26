@@ -166,6 +166,27 @@ impl CausalChain {
         }
     }
 
+    pub fn reset(&mut self) {
+        if let Some(head) = &mut self.head {
+            head.reset();
+        }
+        if let Some(reference) = &mut self.reference {
+            reference.reset();
+        }
+        if let Some(eq) = &mut self.eq {
+            eq.reset();
+        }
+        if let Some((filter, smoother, target)) = &mut self.sub {
+            filter.reset();
+            smoother.set(*target);
+        }
+        if let Some((low, high, smoother, target)) = &mut self.mid {
+            low.reset();
+            high.reset();
+            smoother.set(*target);
+        }
+    }
+
     pub fn set_reference_fir(&mut self, taps: &[f64]) {
         if self.is_lfe {
             return;
@@ -303,6 +324,17 @@ impl LfUnifier {
         self.lf_targets = lf_targets;
     }
 
+    pub fn prewarm(
+        &mut self,
+        source: &[Vec<f64>],
+        base: usize,
+        total: usize,
+        end: usize,
+        budget: usize,
+    ) -> bool {
+        self.filter.prewarm(source, base, total, end, budget)
+    }
+
     /// Unify the low band across `window`, which holds `source[..][start..end]`
     /// and is the only thing written — the zero-phase pass reads its context
     /// outward from `start`/`end` in `source`, which stays untouched so the
@@ -386,6 +418,17 @@ impl StreamingDecorrelator {
                 base,
             ),
         })
+    }
+
+    pub fn prewarm(
+        &mut self,
+        source: &[Vec<f64>],
+        base: usize,
+        total: usize,
+        end: usize,
+        budget: usize,
+    ) -> bool {
+        self.band.prewarm(source, base, total, end, budget)
     }
 
     /// Source frames ahead of `end` its band split needs — see

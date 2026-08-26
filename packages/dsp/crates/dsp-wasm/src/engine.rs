@@ -261,11 +261,11 @@ pub unsafe extern "C" fn dsp_engine_output_channels(engine: *const PreviewEngine
 /// `out` must address `capacity` writable f32 values.
 #[no_mangle]
 pub unsafe extern "C" fn dsp_engine_meters(
-    engine: *const PreviewEngine,
+    engine: *mut PreviewEngine,
     out: *mut f32,
     capacity: usize,
 ) -> usize {
-    let Some(engine) = engine.as_ref() else { return 0 };
+    let Some(engine) = engine.as_mut() else { return 0 };
     let dst = std::slice::from_raw_parts_mut(out, capacity);
     engine.meters().write(dst).min(capacity)
 }
@@ -277,11 +277,11 @@ pub unsafe extern "C" fn dsp_engine_meters(
 /// `out` must address `capacity` writable f32 values.
 #[no_mangle]
 pub unsafe extern "C" fn dsp_engine_stem_spectrum(
-    engine: *const PreviewEngine,
+    engine: *mut PreviewEngine,
     out: *mut f32,
     capacity: usize,
 ) -> usize {
-    let Some(engine) = engine.as_ref() else { return 0 };
+    let Some(engine) = engine.as_mut() else { return 0 };
     let dst = std::slice::from_raw_parts_mut(out, capacity);
     let mut i = 0;
     for (level, centroid) in engine.stem_spectrum() {

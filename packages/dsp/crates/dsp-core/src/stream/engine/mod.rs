@@ -84,7 +84,7 @@ impl Queue {
         let keep_from = absolute
             .saturating_sub(self.base)
             .min(self.channels[0].len());
-        if keep_from == 0 {
+        if keep_from < 128 {
             return;
         }
         for channel in &mut self.channels {
@@ -131,6 +131,7 @@ pub struct PreviewEngine {
     /// dB. Queued and read at the emit position, or it would flash before the
     /// block that caused it.
     comp_gr: Queue,
+    unify_stride: usize,
     unify_done: usize,
     emitted: usize,
     seek_target: Option<usize>,
@@ -294,6 +295,7 @@ impl PreviewEngine {
             pre: Queue::new(n_channels),
             post: Queue::new(n_channels),
             comp_gr: Queue::new(1),
+            unify_stride: UNIFY_STRIDE,
             unify_done: 0,
             emitted: 0,
             seek_target: None,
@@ -310,6 +312,7 @@ impl PreviewEngine {
             render_scratch: Vec::new(),
         };
         engine.rebuild_loudness_meter();
+        engine.prime_output(128);
         engine
     }
 
@@ -420,6 +423,7 @@ impl PreviewEngine {
             &self.decode_taps_override,
             &self.xtc_taps_override,
         );
+        self.prime_output(128);
     }
 
     /// Replace the crosstalk-cancellation matrix. See `set_decode_taps`.
@@ -431,6 +435,7 @@ impl PreviewEngine {
             &self.decode_taps_override,
             &self.xtc_taps_override,
         );
+        self.prime_output(128);
     }
 
     pub fn total_frames(&self) -> usize {
@@ -444,6 +449,10 @@ impl PreviewEngine {
 
     pub fn position(&self) -> usize {
         self.emitted
+    }
+
+    pub(crate) fn set_unify_stride(&mut self, stride: usize) {
+        self.unify_stride = stride.max(1);
     }
 
     fn non_lfe(&self) -> Vec<usize> {
@@ -468,25 +477,14 @@ impl PreviewEngine {
         let n_channels = self.params.speakers.len();
         self.unifier = build_unifier(self.sample_rate, n_channels, &self.params, 0);
         self.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params, 0);
-        self.causal = (0..n_channels)
-            .map(|i| {
-                CausalChain::new(
-                    self.sample_rate,
-                    &self.params.master,
-                    self.params.lfe_index == Some(i),
-                )
-            })
-            .collect();
+        for chain in &mut self.causal {
+            chain.reset();
+        }
         self.limiter =
             self.params.master.limiter.map(|l| {
                 StreamingLimiter::new(l, self.sample_rate, n_channels, self.params.lfe_index)
             });
-        self.output = build_output(
-            self.sample_rate,
-            &self.params,
-            &self.decode_taps_override,
-            &self.xtc_taps_override,
-        );
+        self.output.reset();
         self.pre = Queue::new(n_channels);
         self.post = Queue::new(n_channels);
         self.comp_gr = Queue::new(1);

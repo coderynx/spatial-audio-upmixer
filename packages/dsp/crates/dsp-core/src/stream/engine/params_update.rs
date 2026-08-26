@@ -1,6 +1,9 @@
 //! Live parameter edits and the rebuilds a topology change forces.
 
-use super::{build_decorrelator, build_stem_mix_routes, build_unifier, PreviewEngine, GAIN_RAMP_MS};
+use super::{
+    build_decorrelator, build_output, build_stem_mix_routes, build_unifier, PreviewEngine,
+    GAIN_RAMP_MS,
+};
 use crate::mastering::dyneq::DynamicEq;
 use crate::spatial::panner::PannerLayout;
 use crate::stream::limiter::StreamingLimiter;
@@ -348,6 +351,13 @@ impl PreviewEngine {
         self.unifier = build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
         self.decorrelator =
             build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);
+        self.output = build_output(
+            self.sample_rate,
+            &self.params,
+            &self.decode_taps_override,
+            &self.xtc_taps_override,
+        );
+        self.prime_output(128);
     }
 
     /// Rebuild the per-stem routing state and gain smoothers to match

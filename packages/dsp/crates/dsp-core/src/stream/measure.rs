@@ -43,6 +43,7 @@ pub struct MeasurementPass {
     folded: Vec<Vec<f64>>,
     scratch: Vec<f64>,
     measured: usize,
+    prepared: usize,
     total: usize,
     result: Option<(f64, f64)>,
     schedule: Vec<Excerpt>,
@@ -93,7 +94,10 @@ impl MeasurementPass {
     }
 
     fn build(live: &PreviewEngine, weights: &[f64], schedule: Vec<Excerpt>, total: usize) -> Self {
-        let engine = live.fork();
+        let mut engine = live.fork();
+        if schedule.is_empty() {
+            engine.set_unify_stride(128);
+        }
         let channels = engine.output_channels();
         let sample_rate = engine.sample_rate();
         let fold = engine.measurement_fold();
@@ -110,6 +114,7 @@ impl MeasurementPass {
             folded: Vec::new(),
             scratch: Vec::new(),
             measured: 0,
+            prepared: 0,
             total,
             result: None,
             schedule,
@@ -139,6 +144,13 @@ impl MeasurementPass {
         if let Some(excerpt) = self.schedule.get(self.excerpt_index) {
             let remaining = excerpt.end.saturating_sub(self.engine.position());
             frames = frames.min(remaining.max(1));
+        } else {
+            frames = frames.min(128);
+        }
+        let warm_step = if self.schedule.is_empty() { 96 } else { frames };
+        if !self.engine.prepare_render(frames, warm_step) {
+            self.prepared = (self.prepared + frames).min(self.total.saturating_sub(1));
+            return None;
         }
         self.scratch.resize(self.channels.max(1) * frames, 0.0);
         let written = self.engine.render(&mut self.scratch, frames);
@@ -192,6 +204,6 @@ impl MeasurementPass {
         if self.result.is_some() || self.total == 0 {
             return 1.0;
         }
-        (self.measured as f64 / self.total as f64).clamp(0.0, 1.0)
+        ((self.measured + self.prepared) as f64 / self.total as f64).clamp(0.0, 1.0)
     }
 }

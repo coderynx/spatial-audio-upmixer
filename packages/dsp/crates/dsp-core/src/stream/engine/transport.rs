@@ -2,6 +2,7 @@
 
 use super::{
     build_decorrelator, build_unifier, PreviewEngine, DECORR_HORIZON_MS, UNIFY_HORIZON_MS,
+    UNIFY_STRIDE,
 };
 use crate::stream::meters::Level;
 
@@ -69,6 +70,7 @@ impl PreviewEngine {
         let preroll_ms = release.max(DECORR_HORIZON_MS) + UNIFY_HORIZON_MS;
         let preroll = (self.sample_rate as f64 * preroll_ms / 1000.0) as usize;
         self.jump_to(target.saturating_sub(preroll));
+        self.unify_stride = 128;
         self.seek_target = Some(target);
     }
 
@@ -80,6 +82,9 @@ impl PreviewEngine {
         };
         let step = frames.min(target.saturating_sub(self.emitted));
         if step > 0 {
+            if !self.prepare_render(step, step) {
+                return false;
+            }
             let width = self.params.speakers.len().max(2);
             let mut scratch = std::mem::take(&mut self.seek_scratch);
             scratch.resize(width * step, 0.0);
@@ -88,6 +93,7 @@ impl PreviewEngine {
         }
         if self.emitted >= target {
             self.seek_target = None;
+            self.unify_stride = UNIFY_STRIDE;
         }
         self.seek_target.is_none()
     }

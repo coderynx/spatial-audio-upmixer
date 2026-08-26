@@ -11,7 +11,9 @@
 // over through processorOptions, where instantiation is synchronous.
 
 const RENDER_QUANTUM = 128;
-const SEEK_FRAMES = RENDER_QUANTUM;
+// Seek warm-up is discarded audio. Process enough of it per callback that a
+// timeline jump does not spend its whole preroll playing silence.
+const SEEK_FRAMES = 1024;
 const SCALE_RESTART_DELAY_SECONDS = 0.15;
 
 // Measurement runs in two stages: a fast excerpt pass clears the "calibrating

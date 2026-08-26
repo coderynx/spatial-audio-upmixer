@@ -4,7 +4,7 @@ use super::{PreviewEngine, METER_WINDOW_FRAMES};
 use crate::loudness_stream::WindowLoudnessMeter;
 use crate::mastering::limiter::LimiterInfo;
 use crate::spatial::downmix::{FoldTo51, FOLD_51_WEIGHTS};
-use crate::stream::meters::Meters;
+use crate::stream::meters::{Level, Meters};
 use crate::stream::params::OutputMode;
 
 impl PreviewEngine {
@@ -94,6 +94,51 @@ impl PreviewEngine {
         self.meters.master.comp_gr_db = trace[lo..hi].iter().copied().fold(0.0_f64, f64::max);
     }
 
+    fn refresh_levels(&mut self) {
+        self.meters.stems = self
+            .stems
+            .iter()
+            .enumerate()
+            .map(|(i, stem)| {
+                let sp = self.params.stems.get(i);
+                if !sp.map(|p| p.enabled).unwrap_or(true) {
+                    return [Level::default(), Level::default()];
+                }
+                let gain = sp
+                    .map(|p| 10.0_f64.powf(p.rebalance_db / 20.0))
+                    .unwrap_or(1.0);
+                let to = self.emitted.min(stem.len());
+                let win_start = to.saturating_sub(METER_WINDOW_FRAMES);
+                [
+                    Level::measure_f32(&stem.left[win_start..to], gain),
+                    Level::measure_f32(&stem.right[win_start..to], gain),
+                ]
+            })
+            .collect();
+        let meter_start = self
+            .emitted
+            .saturating_sub(METER_WINDOW_FRAMES)
+            .saturating_sub(self.post.base);
+        let meter_end = self.emitted.saturating_sub(self.post.base);
+        self.meters.channels = self
+            .post
+            .channels
+            .iter()
+            .enumerate()
+            .map(|(channel, c)| {
+                if self.params.speakers.get(channel).is_some_and(|s| s.muted) {
+                    Level::default()
+                } else {
+                    Level::measure(&c[meter_start..meter_end])
+                }
+            })
+            .collect();
+        self.meters.output = [
+            Level::measure(&self.output_meter_tail[0]),
+            Level::measure(&self.output_meter_tail[1]),
+        ];
+    }
+
     /// The 5.1 re-render integrated loudness is measured on, for a native
     /// output wider than 5.1 — `None` when the delivered output is already
     /// the programme (see `docs/standards/loudness_dsp_bs1770.md`
@@ -167,7 +212,8 @@ impl PreviewEngine {
     }
 
     /// Levels from the most recent render.
-    pub fn meters(&self) -> &Meters {
+    pub fn meters(&mut self) -> &Meters {
+        self.refresh_levels();
         &self.meters
     }
 
@@ -178,7 +224,8 @@ impl PreviewEngine {
     /// every 128-frame quantum, but is cheap enough to run at the worklet's
     /// ~30Hz report cadence, called on demand from the same trailing
     /// `METER_WINDOW_FRAMES` window the meters use.
-    pub fn stem_spectrum(&self) -> Vec<(f64, f64)> {
+    pub fn stem_spectrum(&mut self) -> Vec<(f64, f64)> {
+        self.refresh_levels();
         self.stems
             .iter()
             .enumerate()

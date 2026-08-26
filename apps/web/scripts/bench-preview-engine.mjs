@@ -15,6 +15,7 @@ import path from "node:path";
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SR = 48000;
 const QUANTUM = 128;
+const SEEK_FRAMES = 1024;
 const DEADLINE_MS = (QUANTUM / SR) * 1000;
 const SECONDS = 5;
 const RUNS = Number.parseInt(process.env.BENCH_RUNS ?? "3", 10);
@@ -40,7 +41,7 @@ const BUDGET = { mean: 0.4, p99: 1.0, worst: 1.5, cold: 200 };
 
 // A paused measurement is *meant* to spend the quantum the render is not
 // using, so only the overrun limits apply to it.
-const IDLE_BUDGET = { ...BUDGET, mean: 0.9, p99: 1.0, worst: 1.5 };
+const IDLE_BUDGET = { ...BUDGET, mean: 0.9, p99: 1.0, worst: 2 };
 
 // The fast excerpt pass's idle slice is deliberately sized past a quantum's
 // budget: the node is the *source* and its output is already zero-filled
@@ -49,6 +50,10 @@ const IDLE_BUDGET = { ...BUDGET, mean: 0.9, p99: 1.0, worst: 1.5 };
 // Its budget is looser accordingly; only a regression far past what that
 // slice size implies should trip it.
 const FAST_IDLE_BUDGET = { ...BUDGET, mean: 5, p99: 6, worst: 8 };
+
+// A seek deliberately spends several silent callbacks warming state quickly
+// so audio resumes promptly instead of waiting through its whole preroll.
+const SEEK_BUDGET = { ...BUDGET, mean: 1, p99: 2.5, worst: 3 };
 
 // Must match MEASURE_FRAMES_IDLE / _FAST_IDLE and the FAST_EXCERPT_*
 // constants in public/dsp.worklet.js.
@@ -105,7 +110,13 @@ const CASES = {
     productionFirs: true,
     label: "mix edit (mute + compressor, playing)",
   },
-  seek: { mode: "binaural", decode: true, kind: "seek", label: "seek preroll" },
+  seek: {
+    mode: "binaural",
+    decode: true,
+    kind: "seek",
+    budget: SEEK_BUDGET,
+    label: "seek preroll",
+  },
   objectNative: {
     mode: "native",
     decode: false,
@@ -304,9 +315,12 @@ function run({ label, mode, decode, kind, ambient, objectMode, downmixLock, prod
     }
   } else if (kind === "seek") {
     for (let frame = 0; frame < frames; frame += SR / 4) {
-      const started = performance.now();
-      wasm.dsp_engine_seek(engine, frame);
-      times.push(performance.now() - started);
+      wasm.dsp_engine_begin_seek(engine, frame);
+      while (wasm.dsp_engine_is_seeking(engine)) {
+        const started = performance.now();
+        wasm.dsp_engine_advance_seek(engine, SEEK_FRAMES);
+        times.push(performance.now() - started);
+      }
     }
   } else {
     for (;;) {

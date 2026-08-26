@@ -55,6 +55,18 @@ impl StreamingVoicing {
         }
     }
 
+    fn reset(&mut self) {
+        for filter in self
+            .crossfeed
+            .iter_mut()
+            .chain(self.bass.iter_mut())
+            .chain(self.air.iter_mut())
+            .chain(self.presence.iter_mut())
+        {
+            filter.reset();
+        }
+    }
+
     #[inline]
     pub fn tick(&mut self, left: f64, right: f64) -> (f64, f64) {
         let (mut l, mut r) = (left, right);
@@ -203,6 +215,24 @@ impl OutputStage {
         self.downmix = build_downmix(&params.speakers, params.surround_downmix_coeff, params.height_downmix_coeff);
         self.soft_limit_threshold = params.soft_limit_threshold;
         self.voicing = params.voicing.map(|v| StreamingVoicing::new(sample_rate, v));
+    }
+
+    pub fn reset(&mut self) {
+        for filters in &mut self.decode {
+            for filter in filters {
+                filter.reset();
+            }
+        }
+        if let Some(matrix) = &mut self.xtc {
+            for row in matrix {
+                for filter in row {
+                    filter.reset();
+                }
+            }
+        }
+        if let Some(voicing) = &mut self.voicing {
+            voicing.reset();
+        }
     }
 
     /// How many channels this stage writes.
