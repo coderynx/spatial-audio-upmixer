@@ -16,9 +16,12 @@ describe("scene projection", () => {
 
 describe("scene stem kinds", () => {
   it("keeps routed-only stems as beds, including zone-keyed stems", () => {
-    const objects = new Set(["Vocals"]);
+    const objects = new Set(["Vocals", "Crash", "Bass", "Backing Vocals"]);
 
     expect(isObjectStem("Vocals@front", objects)).toBe(true);
+    expect(isObjectStem("Crash", objects)).toBe(true);
+    expect(isObjectStem("Bass", objects)).toBe(false);
+    expect(isObjectStem("Backing Vocals", objects)).toBe(false);
     expect(isObjectStem("Crowd", objects)).toBe(false);
     expect(isObjectStem("Other", new Set(["Other"]))).toBe(false);
   });

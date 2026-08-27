@@ -30,7 +30,9 @@ export const stemColors: Record<string, string> = {
   "Vocals Reverb": "#fb7185",
 };
 
-const bedStemNames = new Set(["Crowd", "Other", "Vocals Reverb"]);
+const bedStemNames = new Set([
+  "Bass", "Kick", "Snare", "Other", "Crowd", "Backing Vocals", "Vocals Reverb",
+]);
 
 const stemIcons: Record<string, LucideIcon> = {
   vocals: MicVocal,

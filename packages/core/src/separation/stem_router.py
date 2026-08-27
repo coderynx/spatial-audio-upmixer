@@ -85,7 +85,7 @@ _VOCAL_STEM_NAMES: frozenset[str] = frozenset({
 })
 
 _BED_STEM_NAMES: frozenset[str] = frozenset({
-    "Crowd", "Other", "Vocals Reverb",
+    "Bass", "Kick", "Snare", "Other", "Crowd", "Backing Vocals", "Vocals Reverb",
 })
 
 ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {

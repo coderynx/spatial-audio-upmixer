@@ -505,6 +505,15 @@ def test_object_bed_routes_linked_feeds_to_placement_endpoints():
     assert np.max(np.abs(rendered["FL"] - rendered["FR"])) > 1e-5
 
 
+def test_stem_object_and_bed_classes_follow_the_delivery_table():
+    router = _router()
+
+    for stem in ("Crash", "Ride", "Hi-Hat", "Toms", "Guitar", "Piano", "Lead Vocals"):
+        assert router._object_placement_for(stem) is not None
+    for stem in ("Bass", "Kick", "Snare", "Other", "Crowd", "Backing Vocals", "Vocals Reverb"):
+        assert router._object_placement_for(stem) is None
+
+
 def test_object_bed_mono_mode_collapses_the_direct_feed():
     audio = np.column_stack([_audio()[:, 0], -_audio()[:, 0]])
     config = UpmixConfig(
