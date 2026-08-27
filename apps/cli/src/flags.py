@@ -161,8 +161,6 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
             config.stem_routing[stem] = apply_stem_pan(config.stem_routing.get(stem, {}), pan)
     if args.spatial_downmix_lock is not None:
         config.spatial_downmix_lock = args.spatial_downmix_lock
-    if args.spatial_render_model is not None:
-        config.spatial_render_model = args.spatial_render_model
     if args.stem_object_mode is not None:
         modes = _parse_key_value_pairs(args.stem_object_mode, str)
         invalid = {stem: mode for stem, mode in modes.items() if mode not in {"linked-stereo", "mono"}}

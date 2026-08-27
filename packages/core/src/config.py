@@ -145,7 +145,7 @@ class UpmixConfig:
     stem_ambient_height: dict | None = None
     stem_ambient_height_crossover_hz: dict | None = None
     spatial_downmix_lock: bool = False
-    spatial_render_model: str = "bed"
+    spatial_render_model: str = "object-bed"
     stem_object_mode: dict | None = None
 
     # Explicit per-stem speaker-bed routing.  Each value maps a canonical stem

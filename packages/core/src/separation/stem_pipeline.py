@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from dataclasses import replace
 from typing import Callable
 
 import numpy as np
@@ -52,7 +53,7 @@ from upmixer.formats import (
     validate_delivery,
 )
 from upmixer.loudness import measure_integrated_loudness
-from upmixer.io.adm_writer import AdmBwfWriter
+from upmixer.io.adm_writer import AdmBwfWriter, AdmObject, render_adm_programme
 from upmixer.io.writer import AudioWriter, write_audio
 from upmixer.mastering import MasteringChain, MasteringResult
 from upmixer.result import UpmixResult
@@ -242,6 +243,7 @@ class StemUpmixPipeline:
         output_fmt: OutputFormat,
         out_sr: int,
         mastering_result: MasteringResult,
+        objects: list[AdmObject] | None = None,
     ) -> tuple[dict[str, np.ndarray], OutputFormat, MasteringResult]:
         """Render the requested delivery type and write the output file."""
         cfg = self.config
@@ -262,6 +264,7 @@ class StemUpmixPipeline:
                 channels,
                 measured_lkfs=mastering_result.measured_lkfs,
                 measured_tp_dbtp=mastering_result.measured_tp_dbtp,
+                objects=objects,
             )
         else:
             AudioWriter(output_path, out_sr, cfg).write(channels)
@@ -356,12 +359,14 @@ class StemUpmixPipeline:
         all_stems, n_samples = self._post_process_stems(sep, _progress)
 
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
+        objects: list[AdmObject] | None = [] if cfg.output_type == "adm-bwf" else None
 
         _progress("  Routing stems to channels...", 0.80)
         channels = router.route(
             all_stems,
             n_samples,
             passthrough_channels=set(passthrough_resampled.keys()),
+            object_tracks=objects,
         )
 
         for ch_name, ch_audio in passthrough_resampled.items():
@@ -370,16 +375,38 @@ class StemUpmixPipeline:
                 channels[ch_name][:n] += ch_audio[:n]
         ch_audio = None
 
-        if cfg.stem_source_anchor_strength > 0.0:
+        linked_channels = (
+            {str(index): obj.audio for index, obj in enumerate(objects)}
+            if objects
+            else None
+        )
+
+        def _render_programme(bed: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+            rendered_objects = [
+                replace(obj, audio=linked_channels[str(index)])
+                for index, obj in enumerate(objects or [])
+            ]
+            return render_adm_programme(bed, output_fmt, rendered_objects)
+
+        if cfg.stem_source_anchor_strength > 0.0 and not objects:
             _progress("  Applying source anchor...", 0.83)
         channels = apply_source_anchor(
-            channels, source_zones, output_fmt, cfg.stem_source_anchor_strength,
+            channels,
+            source_zones,
+            output_fmt,
+            0.0 if objects else cfg.stem_source_anchor_strength,
         )
 
         if cfg.normalize_output:
             _progress("  Normalizing output...", 0.86)
             channels = _normalize_to_source(
-                channels, audio_full, sr, sep_sr, output_fmt
+                channels,
+                audio_full,
+                sr,
+                sep_sr,
+                output_fmt,
+                linked_channels,
+                _render_programme if linked_channels else None,
             )
 
         del all_stems, audio_full, source_zones, passthrough_resampled
@@ -389,11 +416,21 @@ class StemUpmixPipeline:
 
         _progress("  Mastering...", 0.90)
         channels, mastering_result = MasteringChain(cfg).process(
-            channels, out_sr, output_fmt
+            channels,
+            out_sr,
+            output_fmt,
+            linked_channels=linked_channels,
+            programme_renderer=_render_programme if linked_channels else None,
         )
 
+        if objects and linked_channels:
+            objects = [
+                replace(obj, audio=linked_channels[str(index)])
+                for index, obj in enumerate(objects)
+            ]
+
         channels, output_fmt, mastering_result = self._write_delivery(
-            channels, output_path, output_fmt, out_sr, mastering_result
+            channels, output_path, output_fmt, out_sr, mastering_result, objects,
         )
 
         _progress(f"Output: {output_path}", 1.0)
@@ -407,7 +444,7 @@ class StemUpmixPipeline:
             output_sample_rate=out_sr,
             duration_seconds=n_samples / sep_sr,
             n_channels_in=sep.input_fmt.n_channels,
-            n_channels_out=output_fmt.n_channels,
+            n_channels_out=output_fmt.n_channels + len(objects or []),
             mode="stem",
             **mastering_result.delivery_fields(),
             stems=sep.stem_summary,
@@ -465,6 +502,10 @@ def _normalize_to_source(
     sr: int,
     sep_sr: int,
     output_fmt: OutputFormat,
+    linked_channels: dict[str, np.ndarray] | None = None,
+    programme_renderer: Callable[
+        [dict[str, np.ndarray]], dict[str, np.ndarray]
+    ] | None = None,
 ) -> dict[str, np.ndarray]:
     """Rescale output channels to match the source's BS.1770 loudness.
 
@@ -485,20 +526,30 @@ def _normalize_to_source(
         source_fmt = detect_input_format(source_audio.shape[1])
     except ValueError:
         source_fmt = None
+    renderer_aware = linked_channels is not None and programme_renderer is not None
+    output = programme_renderer(channels) if renderer_aware else channels
+
+    def scaled(scale: float) -> dict[str, np.ndarray]:
+        if renderer_aware:
+            linked_channels.update({
+                name: audio * scale for name, audio in linked_channels.items()
+            })
+        return {name: audio * scale for name, audio in channels.items()}
+
     if source_fmt is not None:
         source_lkfs = measure_integrated_loudness(
             {label.value: source_audio[:, i] for i, label in enumerate(source_fmt.channels)},
             sep_sr,
             source_fmt,
         )
-        output_lkfs = measure_integrated_loudness(channels, sep_sr, output_fmt)
+        output_lkfs = measure_integrated_loudness(output, sep_sr, output_fmt)
         if min(source_lkfs, output_lkfs) > -70.0:
             scale = 10.0 ** ((source_lkfs - output_lkfs) / 20.0)
-            return {name: ch * scale for name, ch in channels.items()}
+            return scaled(scale)
 
     source_energy = float(np.vdot(source_audio, source_audio).real)
-    output_energy = sum(float(np.vdot(ch, ch).real) for ch in channels.values())
+    output_energy = sum(float(np.vdot(ch, ch).real) for ch in output.values())
     if source_energy > 1e-20 and output_energy > 1e-20:
         scale = np.sqrt(source_energy / output_energy)
-        return {name: ch * scale for name, ch in channels.items()}
+        return scaled(scale)
     return channels

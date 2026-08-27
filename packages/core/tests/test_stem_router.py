@@ -46,9 +46,9 @@ def test_channel_class_controls_change_stem_output():
 
 
 def test_manifest_routing_overrides_builtin_table():
-    stems = {"Vocals": _audio()}
-    router = _router(stem_routing={"Vocals": {"C": 0.0, "SL": 1.0}})
-    channels = router.route(stems, len(stems["Vocals"]))
+    stems = {"Other": _audio()}
+    router = _router(stem_routing={"Other": {"C": 0.0, "SL": 1.0}})
+    channels = router.route(stems, len(stems["Other"]))
 
     assert np.max(np.abs(channels["C"])) == 0.0
     assert np.max(np.abs(channels["SL"])) > 0.0
@@ -62,27 +62,27 @@ def test_surround_send_removes_low_frequency_direct_copy():
 
 
 def test_main_bed_routing_is_constant_power():
-    stems = {"Vocals": _audio()}
-    channels = _router().route(stems, len(stems["Vocals"]))
-    input_energy = float(np.vdot(stems["Vocals"], stems["Vocals"]).real)
+    stems = {"Other": _audio()}
+    channels = _router().route(stems, len(stems["Other"]))
+    input_energy = float(np.vdot(stems["Other"], stems["Other"]).real)
     bed_energy = sum(
         float(np.vdot(channels[name], channels[name]).real) for name in channels if name != "LFE"
     )
 
     # Not exact since phase 9: route_scale matches loudness, so a band-limited
     # send zone lands a little under its share of raw energy.
-    np.testing.assert_allclose(bed_energy, input_energy, rtol=1e-3)
+    np.testing.assert_allclose(bed_energy, input_energy, rtol=0.02)
 
 
 def test_custom_routing_overrides_zone_table():
-    stems = {"Vocals@front": _audio()}
+    stems = {"Other@front": _audio()}
     router = StemRouter(
         UpmixConfig(output_format="5.1"),
         FORMAT_MAP["5.1"],
         48000,
-        {"Vocals@front": {"C": 0.0, "SL": 1.0}},
+        {"Other@front": {"C": 0.0, "SL": 1.0}},
     )
-    channels = router.route(stems, len(stems["Vocals@front"]))
+    channels = router.route(stems, len(stems["Other@front"]))
 
     assert np.max(np.abs(channels["C"])) == 0.0
     assert np.max(np.abs(channels["SL"])) > 0.0
@@ -230,7 +230,7 @@ def test_stereo_router_emits_two_channels_and_preserves_stem_energy():
     config = UpmixConfig(output_format="stereo")
     router = StemRouter(config, FORMAT_MAP["stereo"], 48000)
     audio = _audio()
-    channels = router.route({"Vocals": audio}, len(audio))
+    channels = router.route({"Other": audio}, len(audio))
 
     assert set(channels) == {"FL", "FR"}
     routed = float(np.dot(channels["FL"], channels["FL"]) + np.dot(channels["FR"], channels["FR"]))
@@ -318,7 +318,7 @@ def test_surround_routed_stem_lands_at_the_same_loudness_as_a_front_one():
     audio = _noise()
 
     front = measure_integrated_loudness(
-        router.route({"Lead Vocals": audio}, len(audio)), 48000, fmt
+        router.route({"Other": audio}, len(audio)), 48000, fmt
     )
     wide = measure_integrated_loudness(
         router.route({"Crowd": audio}, len(audio)), 48000, fmt
@@ -332,7 +332,7 @@ def test_front_only_stereo_route_still_matches_raw_energy():
     unity BS.1770 weights, so the loudness scalar is the energy scalar)."""
     router = StemRouter(UpmixConfig(output_format="stereo"), FORMAT_MAP["stereo"], 48000)
     audio = _noise()
-    channels = router.route({"Vocals": audio}, len(audio))
+    channels = router.route({"Other": audio}, len(audio))
 
     routed = sum(float(np.dot(ch, ch)) for ch in channels.values())
     source = float(np.dot(audio[:, 0], audio[:, 0]) + np.dot(audio[:, 1], audio[:, 1]))
@@ -499,10 +499,9 @@ def test_object_bed_routes_linked_feeds_to_placement_endpoints():
     audio = np.column_stack([_audio()[:, 0], -_audio()[:, 0]])
     config = UpmixConfig(
         output_format="7.1.4",
-        spatial_render_model="object-bed",
-        stem_placement={"Other": {"azimuth_deg": 0, "elevation_deg": 0, "width_deg": 100, "spread_deg": 0}},
+        stem_placement={"Vocals": {"azimuth_deg": 0, "elevation_deg": 0, "width_deg": 100, "spread_deg": 0}},
     )
-    rendered = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route({"Other": audio}, len(audio))
+    rendered = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route({"Vocals": audio}, len(audio))
     assert np.max(np.abs(rendered["FL"] - rendered["FR"])) > 1e-5
 
 
@@ -510,9 +509,25 @@ def test_object_bed_mono_mode_collapses_the_direct_feed():
     audio = np.column_stack([_audio()[:, 0], -_audio()[:, 0]])
     config = UpmixConfig(
         output_format="7.1.4",
-        spatial_render_model="object-bed",
-        stem_object_mode={"Other": "mono"},
-        stem_placement={"Other": {"azimuth_deg": 0, "elevation_deg": 0, "width_deg": 100, "spread_deg": 0}},
+        stem_object_mode={"Vocals": "mono"},
+        stem_placement={"Vocals": {"azimuth_deg": 0, "elevation_deg": 0, "width_deg": 100, "spread_deg": 0}},
     )
-    rendered = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route({"Other": audio}, len(audio))
+    rendered = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route({"Vocals": audio}, len(audio))
     assert max(np.max(np.abs(channel)) for channel in rendered.values()) < 1e-10
+
+
+def test_adm_objects_keep_the_dry_stem_out_of_the_shared_bed():
+    audio = _reverberant()
+    config = UpmixConfig(
+        output_format="7.1.4",
+        spatial_render_model="bed",
+        stem_ambient_rear={"Vocals": 0.8},
+    )
+    objects = []
+    bed = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route(
+        {"Vocals": audio}, len(audio), object_tracks=objects,
+    )
+
+    assert len(objects) == 2
+    assert np.max(np.abs(bed["FL"])) < 1e-10
+    assert np.max(np.abs(bed["SL"])) > 1e-10

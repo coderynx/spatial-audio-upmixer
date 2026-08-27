@@ -95,6 +95,7 @@ Standards compliance (``atmos-music`` profile)
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -249,6 +250,10 @@ class MasteringChain:
         channels: dict[str, np.ndarray],
         sample_rate: int,
         output_fmt: OutputFormat,
+        linked_channels: dict[str, np.ndarray] | None = None,
+        programme_renderer: Callable[
+            [dict[str, np.ndarray]], dict[str, np.ndarray]
+        ] | None = None,
     ) -> tuple[dict[str, np.ndarray], MasteringResult]:
         """Apply the full mastering chain to a mixed multichannel bed.
 
@@ -256,6 +261,10 @@ class MasteringChain:
             channels:    Dict channel_name → 1D float64 array.
             sample_rate: Audio sample rate in Hz.
             output_fmt:  Output format — used to select BS.1770-4 channel weights.
+            linked_channels: Additional tracks that receive the same loudness
+                gain and limiter envelope as the bed.
+            programme_renderer: Render the current bed and linked tracks to the
+                programme used for loudness and True-Peak measurement.
 
         Returns:
             ``(processed_channels, MasteringResult)`` where
@@ -269,6 +278,7 @@ class MasteringChain:
         fold = len(output_fmt.channels) > 6
         result = MasteringResult()
         comp_gr: tuple[float, float] | None = None
+        renderer_aware = linked_channels is not None and programme_renderer is not None
 
         if cfg.mastering_highpass_enabled:
             from .head import apply_chain_head
@@ -397,8 +407,11 @@ class MasteringChain:
             _log.info("  Normalizing loudness (BS.1770-4)...")
             from upmixer.loudness import normalize_loudness
 
-            channels, ln_info = normalize_loudness(
-                channels,
+            normalization_input = (
+                programme_renderer(channels) if renderer_aware else channels
+            )
+            _, ln_info = normalize_loudness(
+                normalization_input,
                 sample_rate,
                 output_fmt,
                 target_lkfs=delivery.target_lkfs,
@@ -407,6 +420,12 @@ class MasteringChain:
                 apply_tp_gain=False,
                 fold_measurement=fold,
             )
+            gain = 10.0 ** (ln_info["applied_gain_db"] / 20.0)
+            channels = {name: audio * gain for name, audio in channels.items()}
+            if renderer_aware:
+                linked_channels.update({
+                    name: audio * gain for name, audio in linked_channels.items()
+                })
             _log.info(
                 "  Loudness: %.1f LKFS → %.1f LKFS  gain %+.1f dB  TP %.1f dBTP%s",
                 ln_info["pre_lkfs"],
@@ -437,7 +456,28 @@ class MasteringChain:
             release_ms=cfg.limiter_release_ms,
             sample_rate=sample_rate,
         )
-        channels = limiter.process(channels)
+        if renderer_aware:
+            bed_names = {name: f"bed:{name}" for name in channels}
+            linked_names = {name: f"object:{name}" for name in linked_channels}
+            limiter_input = {
+                **{bed_names[name]: audio for name, audio in channels.items()},
+                **{linked_names[name]: audio for name, audio in linked_channels.items()},
+                **{
+                    f"render:{name}": audio
+                    for name, audio in programme_renderer(channels).items()
+                    if name != "LFE"
+                },
+            }
+            limited = limiter.process(
+                limiter_input,
+                lfe_key=bed_names.get("LFE", "LFE"),
+            )
+            channels = {name: limited[key] for name, key in bed_names.items()}
+            linked_channels.update({
+                name: limited[key] for name, key in linked_names.items()
+            })
+        else:
+            channels = limiter.process(channels)
 
         if cfg.loudness_normalize:
             from upmixer.loudness import (
@@ -449,19 +489,22 @@ class MasteringChain:
                 measurement_programme,
             )
 
+            delivered_programme = (
+                programme_renderer(channels) if renderer_aware else channels
+            )
             programme, programme_fmt = (
-                measurement_programme(channels, output_fmt)
+                measurement_programme(delivered_programme, output_fmt)
                 if fold
-                else (channels, output_fmt)
+                else (delivered_programme, output_fmt)
             )
             stats = measure_loudness_stats(programme, sample_rate, programme_fmt)
-            # True peak is measured on the delivered bed either way: the
-            # ceiling is what the limiter guarantees, and it acts there.
-            measured_tp = measure_true_peak(channels)
+            measured_tp = measure_true_peak(delivered_programme)
             short_term = stats["max_short_term_lkfs"]
             deviation = abs(stats["integrated_lkfs"] - delivery.target_lkfs)
             native_lkfs = (
-                measure_integrated_loudness(channels, sample_rate, output_fmt)
+                measure_integrated_loudness(
+                    delivered_programme, sample_rate, output_fmt
+                )
                 if fold
                 else stats["integrated_lkfs"]
             )
@@ -484,7 +527,9 @@ class MasteringChain:
                 limiter_gr_lfe_peak_db=limiter.gr_lfe_peak_db,
                 comp_gr_peak_db=comp_gr[0] if comp_gr else None,
                 comp_gr_avg_db=comp_gr[1] if comp_gr else None,
-                per_channel_tp_dbtp=measure_true_peak_per_channel(channels),
+                per_channel_tp_dbtp=measure_true_peak_per_channel(
+                    delivered_programme
+                ),
                 target_preset=delivery.preset,
                 target_lkfs=delivery.target_lkfs,
                 target_tolerance_lu=delivery.tolerance_lu,
@@ -498,7 +543,7 @@ class MasteringChain:
                 fold_referenced=fold,
                 full_bed_lkfs=native_lkfs if fold else None,
                 folds=measure_folds(
-                    channels,
+                    delivered_programme,
                     sample_rate,
                     output_fmt,
                     cfg,

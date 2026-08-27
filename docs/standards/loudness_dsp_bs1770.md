@@ -87,9 +87,15 @@ Normalization drives off the same folded number. That needs no iteration:
 the correction is one scalar gain across every channel, and a scalar gain
 commutes with the fold.
 
-**True peak is not fold-referenced.** The ceiling is what the limiter
-guarantees on the channels actually written, so `measured_tp_dbtp` and the
-per-channel peaks stay on the delivered bed.
+For one-bed-plus-objects ADM delivery, the bed and static objects are first
+rendered to the native speaker layout. Loudness normalization and QC read that
+combined programme, folding the render to 5.1 when the layout is wider than
+5.1. The scalar gain remains shared by the bed and every object track.
+
+**True peak is not fold-referenced.** It is measured on the native delivered
+bed, or on the native bed-plus-objects render for ADM. The ADM limiter links
+the bed and object tracks against that render so the combined programme stays
+under the ceiling without copying object audio into the bed.
 
 Measured fold delta on synthetic 7.1.4 programmes: −0.32 dB on realistic
 material, −2.35 dB on height-only content

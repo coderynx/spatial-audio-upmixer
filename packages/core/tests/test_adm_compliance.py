@@ -9,7 +9,7 @@ import pytest
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
-from upmixer.io.adm_writer import AdmBwfWriter, _DOLBY_ENGINE_ALLOWED_FORMATS
+from upmixer.io.adm_writer import AdmBwfWriter, AdmObject, _DOLBY_ENGINE_ALLOWED_FORMATS
 
 
 def _chunks(data: bytes) -> dict[bytes, bytes]:
@@ -97,3 +97,23 @@ def test_bext_uses_final_measurements(adm_712):
     _, chunks = adm_712
     assert struct.unpack_from("<h", chunks[b"bext"], 412)[0] == -1800
     assert struct.unpack_from("<h", chunks[b"bext"], 416)[0] == -100
+
+
+def test_writes_one_bed_and_a_direct_object(tmp_path):
+    config = UpmixConfig(output_format="5.1")
+    channels = {label.value: np.zeros(32) for label in FORMAT_MAP["5.1"].channels}
+    output = tmp_path / "out.wav"
+    AdmBwfWriter(str(output), 48_000, config).write(
+        channels,
+        objects=[AdmObject("Vocals", np.ones(32) * 0.1, (0.0, 1.0, 0.0))],
+    )
+
+    chunks = _chunks(output.read_bytes())
+    root = ET.fromstring(chunks[b"axml"])
+    assert struct.unpack_from("<H", chunks[b"fmt "], 2)[0] == 7
+    assert len(root.findall("audioObject")) == 2
+    assert len(root.findall("audioObject/audioTrackUIDRef")) == 7
+    obj_channel = root.findall("audioChannelFormat")[-1]
+    assert obj_channel.attrib["typeDefinition"] == "Objects"
+    assert obj_channel.findtext("audioBlockFormat/cartesian") == "1"
+    assert obj_channel.findtext("audioBlockFormat/jumpPosition") == "1"

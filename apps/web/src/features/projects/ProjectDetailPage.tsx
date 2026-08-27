@@ -312,10 +312,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     if (!trackManifest) return;
     updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, spatial_downmix_lock } }, true);
   };
-  const setSpatialRenderModel = (spatial_render_model: "bed" | "object-bed") => {
-    if (!trackManifest) return;
-    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, spatial_render_model } }, true);
-  };
   const setStemObjectMode = (stem: string, mode: "linked-stereo" | "mono") => {
     if (!trackManifest) return;
     updateTrackManifest({ ...trackManifest, mixing: {
@@ -592,12 +588,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           </InspectorGroup>
           <InspectorGroup title="Stem">
             <div className="mb-3">
-              <label className="mb-3 block text-[11px] text-muted-foreground">
-                <span>Render model</span>
-                <select className="mt-1.5 flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px] text-foreground" value={trackManifest.mixing.spatial_render_model} onChange={(event) => setSpatialRenderModel(event.target.value as "bed" | "object-bed")}>
-                  <option value="bed">Bed</option><option value="object-bed">Object + bed</option>
-                </select>
-              </label>
               <SwitchRow
                 label="Downmix lock"
                 checked={trackManifest.mixing.spatial_downmix_lock}
@@ -613,12 +603,12 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                   <span className="min-w-0 flex-1 truncate">{selectedStem}</span>
                   <span className="text-[11px] font-normal text-muted-foreground">{stemMuted ? "muted" : "enabled"}</span>
                 </p>
-                {trackManifest.mixing.spatial_render_model === "object-bed" && <label className="mb-3 block text-[11px] text-muted-foreground">
+                <label className="mb-3 block text-[11px] text-muted-foreground">
                   <span>Direct image</span>
                   <select className="mt-1.5 flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px] text-foreground" value={trackManifest.mixing.stem_object_mode[selectedStem] ?? "linked-stereo"} onChange={(event) => setStemObjectMode(selectedStem, event.target.value as "linked-stereo" | "mono")}>
                     <option value="linked-stereo">Linked stereo</option><option value="mono">Mono</option>
                   </select>
-                </label>}
+                </label>
                 <StemControls key={selectedStem} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} ambientRear={trackManifest.mixing.stem_ambient_rear[selectedStem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[selectedStem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[selectedStem] ?? 2000} onAmbient={(patch) => updateAmbient(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
                   stemEqProfiles={configuration?.choices.stem_eq_profiles}
                 />

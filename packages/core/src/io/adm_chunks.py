@@ -104,13 +104,15 @@ def _pos_str(v: float) -> str:
     return str(int(v)) if v == int(v) else f"{v:.6g}"
 
 
-def _fmt_chunk(fmt: OutputFormat, sample_rate: int, bit_depth: int) -> bytes:
+def _fmt_chunk(
+    fmt: OutputFormat, sample_rate: int, bit_depth: int, n_channels: int | None = None,
+) -> bytes:
     """Build a 16-byte WAVE_FORMAT_PCM fmt chunk.
 
     Logic Pro's own ADM BWF export uses WAVE_FORMAT_PCM (0x0001) with no
     channel mask — 16 bytes, no cbSize extension.
     """
-    n_ch = fmt.n_channels
+    n_ch = n_channels or fmt.n_channels
     block_align = n_ch * (bit_depth // 8)
     return struct.pack(
         "<HHIIHH",
@@ -172,11 +174,11 @@ def _bext_chunk(
     return bytes(buf) + b"\r\n"
 
 
-def _chna_chunk(fmt: OutputFormat) -> bytes:
+def _chna_chunk(fmt: OutputFormat, object_count: int = 0) -> bytes:
     """Build CHNA chunk using custom Dolby-profile IDs starting from 0x1001 (§3.2)."""
     n = fmt.n_channels
     pack_id = "AP_00011001"
-    data = struct.pack("<HH", n, n)
+    data = struct.pack("<HH", n + object_count, n + object_count)
 
     for i, label in enumerate(fmt.channels):
         track_fmt_id = f"AT_0001{0x1001 + i:04X}_01"
@@ -185,6 +187,15 @@ def _chna_chunk(fmt: OutputFormat) -> bytes:
         data += _pad_field(uid_str, 12)
         data += _pad_field(track_fmt_id, 14)
         data += _pad_field(pack_id, 11)
+        data += b"\x00"
+
+    for i in range(object_count):
+        number = 0x1001 + i
+        uid = f"ATU_{n + i + 1:08d}"
+        data += struct.pack("<H", n + i + 1)
+        data += _pad_field(uid, 12)
+        data += _pad_field(f"AT_0003{number:04X}_01", 14)
+        data += _pad_field(f"AP_0003{number:04X}", 11)
         data += b"\x00"
 
     return data
@@ -196,6 +207,7 @@ def _axml_chunk(
     sample_rate: int,
     bit_depth: int,
     strict_profile: bool,
+    objects: tuple[tuple[str, tuple[float, float, float]], ...] = (),
 ) -> bytes:
     """Generate Dolby Atmos Master ADM Profile v1.1 compliant XML."""
     dur = _fmt_time(duration_s)
@@ -215,6 +227,9 @@ def _axml_chunk(
     def blk_id(i: int) -> str:
         return f"AB_0001{0x1001 + i:04X}_00000001"
 
+    def object_number(i: int) -> int:
+        return 0x1001 + i
+
     lines: list[str] = []
     a = lines.append
 
@@ -231,8 +246,10 @@ def _axml_chunk(
     a('        </audioProgramme>')
 
     a('        <audioContent audioContentID="ACO_1001"')
-    a(f'                      audioContentName="{fmt.name} Bed">')
+    a('                      audioContentName="Main Mix">')
     a('          <audioObjectIDRef>AO_1001</audioObjectIDRef>')
+    for i in range(len(objects)):
+        a(f'          <audioObjectIDRef>AO_{object_number(i) + 1:04X}</audioObjectIDRef>')
     a('          <dialogue mixedContentKind="0">2</dialogue>')
     a('        </audioContent>')
 
@@ -243,6 +260,15 @@ def _axml_chunk(
     for i in range(n):
         a(f'          <audioTrackUIDRef>ATU_{i + 1:08d}</audioTrackUIDRef>')
     a('        </audioObject>')
+
+    for i, (name, _) in enumerate(objects):
+        number = object_number(i)
+        a(f'        <audioObject audioObjectID="AO_{number + 1:04X}"')
+        a(f'                     audioObjectName="{name}"')
+        a(f'                     start="{zero}" duration="{dur}">')
+        a(f'          <audioPackFormatIDRef>AP_0003{number:04X}</audioPackFormatIDRef>')
+        a(f'          <audioTrackUIDRef>ATU_{n + i + 1:08d}</audioTrackUIDRef>')
+        a('        </audioObject>')
 
     a(f'        <audioPackFormat audioPackFormatID="{pack_id}"')
     a(f'                         audioPackFormatName="{fmt.name} Bed"')
@@ -270,6 +296,26 @@ def _axml_chunk(
         a('          </audioBlockFormat>')
         a('        </audioChannelFormat>')
 
+    for i, (name, position) in enumerate(objects):
+        number = object_number(i)
+        x, y, z = position
+        a(f'        <audioPackFormat audioPackFormatID="AP_0003{number:04X}"')
+        a(f'                         audioPackFormatName="{name}"')
+        a('                         typeLabel="0003" typeDefinition="Objects">')
+        a(f'          <audioChannelFormatIDRef>AC_0003{number:04X}</audioChannelFormatIDRef>')
+        a('        </audioPackFormat>')
+        a(f'        <audioChannelFormat audioChannelFormatID="AC_0003{number:04X}"')
+        a(f'                            audioChannelFormatName="{name}"')
+        a('                            typeLabel="0003" typeDefinition="Objects">')
+        a(f'          <audioBlockFormat audioBlockFormatID="AB_0003{number:04X}_00000001">')
+        a('            <cartesian>1</cartesian>')
+        a(f'            <position coordinate="X">{_pos_str(x)}</position>')
+        a(f'            <position coordinate="Y">{_pos_str(y)}</position>')
+        a(f'            <position coordinate="Z">{_pos_str(z)}</position>')
+        a('            <jumpPosition interpolationLength="0.000000">1</jumpPosition>')
+        a('          </audioBlockFormat>')
+        a('        </audioChannelFormat>')
+
     for i, label in enumerate(fmt.channels):
         sid = stream_id(i)
         cid = ch_id(i)
@@ -282,6 +328,16 @@ def _axml_chunk(
         a(f'          <audioTrackFormatIDRef>{tid}</audioTrackFormatIDRef>')
         a('        </audioStreamFormat>')
 
+    for i, (name, _) in enumerate(objects):
+        number = object_number(i)
+        a(f'        <audioStreamFormat audioStreamFormatID="AS_0003{number:04X}"')
+        a(f'                           audioStreamFormatName="PCM_{name}"')
+        a('                           formatLabel="0001" formatDefinition="PCM">')
+        a(f'          <audioChannelFormatIDRef>AC_0003{number:04X}</audioChannelFormatIDRef>')
+        a(f'          <audioPackFormatIDRef>AP_0003{number:04X}</audioPackFormatIDRef>')
+        a(f'          <audioTrackFormatIDRef>AT_0003{number:04X}_01</audioTrackFormatIDRef>')
+        a('        </audioStreamFormat>')
+
     for i, label in enumerate(fmt.channels):
         tid = track_id(i)
         sid = stream_id(i)
@@ -289,6 +345,14 @@ def _axml_chunk(
         a(f'                          audioTrackFormatName="PCM_{_DOLBY_CH_NAME[label]}"')
         a('                          formatLabel="0001" formatDefinition="PCM">')
         a(f'          <audioStreamFormatIDRef>{sid}</audioStreamFormatIDRef>')
+        a('        </audioTrackFormat>')
+
+    for i, (name, _) in enumerate(objects):
+        number = object_number(i)
+        a(f'        <audioTrackFormat audioTrackFormatID="AT_0003{number:04X}_01"')
+        a(f'                          audioTrackFormatName="PCM_{name}"')
+        a('                          formatLabel="0001" formatDefinition="PCM">')
+        a(f'          <audioStreamFormatIDRef>AS_0003{number:04X}</audioStreamFormatIDRef>')
         a('        </audioTrackFormat>')
 
     for i, label in enumerate(fmt.channels):
@@ -299,6 +363,15 @@ def _axml_chunk(
         a(f'                       bitDepth="{bit_depth}">')
         a(f'          <audioTrackFormatIDRef>{tid}</audioTrackFormatIDRef>')
         a(f'          <audioPackFormatIDRef>{pack_id}</audioPackFormatIDRef>')
+        a('        </audioTrackUID>')
+
+    for i in range(len(objects)):
+        number = object_number(i)
+        a(f'        <audioTrackUID UID="ATU_{n + i + 1:08d}"')
+        a(f'                       sampleRate="{sample_rate}"')
+        a(f'                       bitDepth="{bit_depth}">')
+        a(f'          <audioTrackFormatIDRef>AT_0003{number:04X}_01</audioTrackFormatIDRef>')
+        a(f'          <audioPackFormatIDRef>AP_0003{number:04X}</audioPackFormatIDRef>')
         a('        </audioTrackUID>')
 
     a('</audioFormatExtended>')

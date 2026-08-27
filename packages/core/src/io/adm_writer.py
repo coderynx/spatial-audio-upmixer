@@ -7,13 +7,16 @@ key ADM/Dolby profile design choices they implement.
 
 from __future__ import annotations
 
+import math
 import struct
+from dataclasses import dataclass
 
 import numpy as np
 import soundfile as sf
+import upmixer_dsp
 
 from upmixer.config import UpmixConfig
-from upmixer.formats import FORMAT_MAP
+from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
 from upmixer.io.adm_chunks import (
     _audio_to_pcm,
     _axml_chunk,
@@ -28,6 +31,36 @@ from upmixer.io.atomic import atomic_output_path
 from upmixer.io.writer import dither_channels
 
 _DOLBY_ENGINE_ALLOWED_FORMATS = frozenset({"5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"})
+
+
+@dataclass(frozen=True)
+class AdmObject:
+    """One mono object track and its static ADM position."""
+
+    name: str
+    audio: np.ndarray
+    position: tuple[float, float, float]
+
+
+def render_adm_programme(
+    channels: dict[str, np.ndarray],
+    fmt: OutputFormat,
+    objects: list[AdmObject],
+) -> dict[str, np.ndarray]:
+    """Render one ADM bed and its static objects to the bed layout."""
+    rendered = {label.value: channels[label.value].copy() for label in fmt.channels}
+    speakers = [label.value for label in fmt.channels if label != ChannelLabel.LFE]
+    for obj in objects:
+        x, y, z = obj.position
+        radius = math.sqrt(x * x + y * y + z * z)
+        elevation = math.degrees(math.asin(z / radius)) if radius else 0.0
+        azimuth = math.degrees(math.atan2(-x, y)) if radius else 0.0
+        gains = upmixer_dsp.placement_route(
+            azimuth, elevation, 0.0, 0.0, 0.0, speakers,
+        )
+        for speaker, gain in zip(speakers, gains):
+            rendered[speaker] += gain * obj.audio
+    return rendered
 
 
 class AdmBwfWriter:
@@ -48,6 +81,7 @@ class AdmBwfWriter:
         channels: dict[str, np.ndarray],
         measured_lkfs: float | None = None,
         measured_tp_dbtp: float | None = None,
+        objects: list[AdmObject] | None = None,
     ) -> None:
         """Write multichannel audio to ADM BWF file.
 
@@ -57,6 +91,7 @@ class AdmBwfWriter:
                              bext LOUDNESS_VALUE field.  None = "not indicated".
             measured_tp_dbtp: Maximum True Peak (dBTP), written to bext
                              MAX_TRUE_PEAK_LEVEL field.  None = "not indicated".
+            objects: Mono object tracks written after the one DirectSpeakers bed.
         """
         fmt = self._format
         if fmt.name not in _DOLBY_ENGINE_ALLOWED_FORMATS:
@@ -75,12 +110,22 @@ class AdmBwfWriter:
             self._config.output_subtype, 24
         )
 
+        objects = objects or []
+        if len(objects) > 117:
+            raise ValueError("Dolby ADM-BWF allows at most 117 objects with one bed")
+
         ordered = []
         for label in fmt.channels:
             key = label.value
             if key not in channels:
                 raise ValueError(f"Missing channel '{key}' for {fmt.name} output")
             ordered.append(channels[key])
+        for obj in objects:
+            if not obj.name or len(obj.name) > 64:
+                raise ValueError("ADM object names must be 1 to 64 characters")
+            if any(not -1.0 <= value <= 1.0 for value in obj.position):
+                raise ValueError(f"ADM object '{obj.name}' has an invalid position")
+            ordered.append(obj.audio)
 
         n_samples = len(ordered[0])
         if any(len(channel) != n_samples for channel in ordered):
@@ -93,14 +138,15 @@ class AdmBwfWriter:
         )
         duration_s = n_samples / sr
 
-        fmt_bytes  = _fmt_chunk(fmt, sr, bit_depth)
+        metadata_objects = tuple((obj.name, obj.position) for obj in objects)
+        fmt_bytes  = _fmt_chunk(fmt, sr, bit_depth, len(ordered))
         bext_bytes = _bext_chunk(loudness_lkfs=measured_lkfs, tp_dbtp=measured_tp_dbtp)
-        chna_bytes = _chna_chunk(fmt)
+        chna_bytes = _chna_chunk(fmt, len(objects))
         axml_bytes = _axml_chunk(
-            fmt, duration_s, sr, bit_depth, strict_profile=False
+            fmt, duration_s, sr, bit_depth, strict_profile=False, objects=metadata_objects,
         )
         dbmd_bytes = _dbmd_chunk()
-        data_size = n_samples * fmt.n_channels * (bit_depth // 8)
+        data_size = n_samples * len(ordered) * (bit_depth // 8)
         riff_size = 4 + sum((
             _chunk_size(len(fmt_bytes)), _chunk_size(len(bext_bytes)),
             _chunk_size(data_size), _chunk_size(len(axml_bytes)),
@@ -125,5 +171,5 @@ class AdmBwfWriter:
                 _write_chunk(handle, b"chna", chna_bytes)
                 _write_chunk(handle, b"dbmd", dbmd_bytes)
             info = sf.info(str(temporary))
-            if info.samplerate != sr or info.channels != fmt.n_channels or info.frames != n_samples:
+            if info.samplerate != sr or info.channels != len(ordered) or info.frames != n_samples:
                 raise RuntimeError("Written ADM-BWF metadata does not match requested output")

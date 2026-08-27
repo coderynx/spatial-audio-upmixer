@@ -42,6 +42,7 @@ import upmixer_dsp
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
+from upmixer.io.adm_writer import AdmObject
 from upmixer.manifest import register_block as _rb
 from upmixer.loudness import CHANNEL_WEIGHT, k_weighted_power
 from upmixer.separation.stem_placement import (
@@ -81,6 +82,10 @@ _HEIGHT_CHANNELS   = {ChannelLabel.TFL, ChannelLabel.TFR, ChannelLabel.TBL, Chan
 
 _VOCAL_STEM_NAMES: frozenset[str] = frozenset({
     "Vocals", "Lead Vocals", "Backing Vocals",
+})
+
+_BED_STEM_NAMES: frozenset[str] = frozenset({
+    "Crowd", "Other", "Vocals Reverb",
 })
 
 ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
@@ -311,10 +316,10 @@ class StemRouter:
         self._sr = sample_rate
         self._lfe_gain = config.lfe_gain
 
-    def _object_routes_for(self, stem_key: str) -> list[dict[str, float]] | None:
-        if self._config.spatial_render_model != "object-bed":
-            return None
+    def _object_placement_for(self, stem_key: str) -> StemPlacement | None:
         stem_name = stem_key.rsplit("@", 1)[0]
+        if stem_name in _BED_STEM_NAMES:
+            return None
         overrides = self._config.stem_placement or {}
         raw = overrides.get(stem_key, overrides.get(stem_name, {}))
         default = STEM_ROUTING_PRESETS[DEFAULT_ROUTING_PRESET].get(stem_name)
@@ -326,6 +331,13 @@ class StemRouter:
             float(raw.get("width_deg", default.width_deg if default else 0.0)),
             float(raw.get("spread_deg", default.spread_deg if default else 60.0)),
         )
+        return placement
+
+    def _object_routes_for(self, stem_key: str) -> list[dict[str, float]] | None:
+        placement = self._object_placement_for(stem_key)
+        if placement is None:
+            return None
+        stem_name = stem_key.rsplit("@", 1)[0]
         mode = (self._config.stem_object_mode or {}).get(
             stem_key, (self._config.stem_object_mode or {}).get(stem_name, "linked-stereo")
         )
@@ -341,6 +353,33 @@ class StemRouter:
         return [
             {label: gain for label, gain in zip(labels, left) if gain > 0.0},
             {label: gain for label, gain in zip(labels, right) if gain > 0.0},
+        ]
+
+    def _adm_objects_for(
+        self,
+        stem_key: str,
+        left: np.ndarray,
+        right: np.ndarray,
+        gain: float,
+    ) -> list[AdmObject]:
+        placement = self._object_placement_for(stem_key)
+        if placement is None:
+            return []
+        stem_name = stem_key.rsplit("@", 1)[0]
+        mode = (self._config.stem_object_mode or {}).get(
+            stem_key, (self._config.stem_object_mode or {}).get(stem_name, "linked-stereo")
+        )
+
+        def position(azimuth_deg: float) -> tuple[float, float, float]:
+            x, y, z = upmixer_dsp.direction(azimuth_deg, placement.elevation_deg)
+            return (x, -z, y)
+
+        if mode == "mono":
+            return [AdmObject(stem_key, gain * (left + right) * 0.5, position(placement.azimuth_deg))]
+        half_width = placement.width_deg * 0.5
+        return [
+            AdmObject(f"{stem_key} Left", gain * left, position(placement.azimuth_deg + half_width)),
+            AdmObject(f"{stem_key} Right", gain * right, position(placement.azimuth_deg - half_width)),
         ]
 
     def _routing_for(self, stem_key: str) -> dict[str, float] | None:
@@ -481,6 +520,7 @@ class StemRouter:
         stems: dict[str, np.ndarray],
         n_samples: int,
         passthrough_channels: set[str] | None = None,
+        object_tracks: list[AdmObject] | None = None,
     ) -> dict[str, np.ndarray]:
         """Mix stems into output channels.
 
@@ -575,7 +615,7 @@ class StemRouter:
             if "C" in skip and "C" in stem_routing and stem_name in _VOCAL_STEM_NAMES:
                 c_redirect = stem_routing["C"] * 0.5
 
-            route_items: list[tuple[ChannelLabel, float, np.ndarray]] = []
+            direct_items: list[tuple[ChannelLabel, float, np.ndarray]] = []
             for label in self._fmt.channels:
                 if label.value not in skip and label == ChannelLabel.LFE:
                     lfe_bus[:n] += stem_routing.get("LFE", 0.0) * stem_mono
@@ -598,7 +638,7 @@ class StemRouter:
                         )
                     else:
                         signal = stem_mono
-                    route_items.append((label, gain, signal))
+                    direct_items.append((label, gain, signal))
             else:
                 direct = [stem_mono] if len(object_routes) == 1 else [stem_L, stem_R]
                 for route, signal in zip(object_routes, direct):
@@ -607,7 +647,9 @@ class StemRouter:
                             continue
                         gain = route.get(label.value, 0.0) * self._channel_gain(label)
                         if gain > 0.0:
-                            route_items.append((label, gain, signal))
+                            direct_items.append((label, gain, signal))
+
+            route_items = list(direct_items)
 
             for label in self._fmt.channels:
                 if label.value in skip:
@@ -627,7 +669,10 @@ class StemRouter:
                 route_items.append((label, gain, signal))
 
             route_scale = self._route_scale(route_items, input_L, input_R)
-            if self._config.spatial_downmix_lock:
+            if object_tracks is not None and object_routes is not None:
+                object_tracks.extend(self._adm_objects_for(stem_key, stem_L, stem_R, route_scale))
+                route_items = route_items[len(direct_items):]
+            if self._config.spatial_downmix_lock and object_tracks is None:
                 routed = {
                     label.value: np.zeros(n, dtype=np.float64) for label in self._fmt.channels
                 }
