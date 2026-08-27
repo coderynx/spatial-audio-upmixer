@@ -1,7 +1,6 @@
 import * as React from "react";
 import {
-  ELEVATION_MIN_WIDTH,
-  HAZE_MIN_WIDTH,
+  SPATIAL_VIEW_MIN_WIDTH,
   LOUDNESS_DEFAULT_WIDTH,
   LOUDNESS_MAX_WIDTH,
   LOUDNESS_MIN_WIDTH,
@@ -15,9 +14,7 @@ import {
   readStoredColumnExtra,
 } from "./projectDetailLayout";
 
-/** Haze/Elevation/Meters/Loudness row sizing for `ProjectDetailPage`: live
- * row measurement plus each column's user-dragged extra, persisted per
- * project. */
+/** Spatial-view/Meters/Loudness row sizing for `ProjectDetailPage`. */
 export function useColumnLayout(projectId: string | undefined) {
   // Callback ref, not useRef + useEffect([]): the row only enters the DOM once
   // `ready` flips true, so a mount-only effect would find rowRef.current still
@@ -38,11 +35,9 @@ export function useColumnLayout(projectId: string | undefined) {
     rowObserver.current = observer;
   }, []);
   React.useEffect(() => () => rowObserver.current?.disconnect(), []);
-  const [hazeExtra, setHazeExtra] = React.useState(() => readStoredColumnExtra(projectId, "haze"));
   const [elevationExtra, setElevationExtra] = React.useState(() => readStoredColumnExtra(projectId, "elevation"));
   const [loudnessExtra, setLoudnessExtra] = React.useState(() => readStoredColumnExtra(projectId, "loudness"));
   React.useEffect(() => {
-    setHazeExtra(readStoredColumnExtra(projectId, "haze"));
     setElevationExtra(readStoredColumnExtra(projectId, "elevation"));
     setLoudnessExtra(readStoredColumnExtra(projectId, "loudness"));
   }, [projectId]);
@@ -53,21 +48,9 @@ export function useColumnLayout(projectId: string | undefined) {
       // See usePaneLayout's changePane.
     }
   };
-  // Clamped every render against the row's live measured size (not just on drag),
-  // so a window resize between drags can't leave a stale width that no longer fits.
-  // Two gaps separate the row's three slots (Haze/Elevation/Meters-group); a third,
-  // nested gap splits the Meters-group slot into Meters and Loudness below.
-  const hazeMaxWidth = Math.max(
-    HAZE_MIN_WIDTH,
-    rowSize.width - ROW_GAP * 2 - ELEVATION_MIN_WIDTH - METERS_GROUP_MIN_WIDTH,
-  );
-  const hazeWidth = Math.min(hazeMaxWidth, Math.max(HAZE_MIN_WIDTH, rowSize.height + hazeExtra));
-  // Elevation is flex-1 with no stored width; elevationExtra shrinks the Meters-group's
-  // combined width instead — Meters and Loudness split that combined width below,
-  // independently of Elevation, so dragging either one only ever squashes the other.
   const groupMaxWidth = Math.min(
     METERS_GROUP_MAX_WIDTH,
-    Math.max(METERS_GROUP_MIN_WIDTH, rowSize.width - hazeWidth - ROW_GAP * 2 - ELEVATION_MIN_WIDTH),
+    Math.max(METERS_GROUP_MIN_WIDTH, rowSize.width - ROW_GAP - SPATIAL_VIEW_MIN_WIDTH),
   );
   const groupWidth = Math.min(groupMaxWidth, Math.max(METERS_GROUP_MIN_WIDTH, METERS_GROUP_DEFAULT_SHARE - elevationExtra));
   // Loudness trades width directly against Meters within the group's now-settled total —
@@ -81,15 +64,11 @@ export function useColumnLayout(projectId: string | undefined) {
   return {
     rowRef,
     rowSize,
-    hazeExtra,
-    setHazeExtra,
     elevationExtra,
     setElevationExtra,
     loudnessExtra,
     setLoudnessExtra,
     commitColumnExtra,
-    hazeMaxWidth,
-    hazeWidth,
     groupMaxWidth,
     groupWidth,
     loudnessFloor,

@@ -4,6 +4,7 @@ import { MIN_ALPHA_SCALE, SETTLE_FRAMES, canvasTheme, hexToRgb, lerp } from "@/l
 import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
 import { heightFraction, speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo, vecAngle } from "@/lib/spatial";
+import { cn } from "@/lib/utils";
 import type { StemSpectrum } from "./audioEngine";
 
 // NUGEN Halo Upmix-style "Haze View": a 2D radar where radius encodes
@@ -414,7 +415,7 @@ function HazeViewImpl({
   // painted surface are seamless — these displays read as one instrument
   // face, the way Logic's do, rather than a card with artwork inside it.
   return <div
-    className={`relative flex flex-col overflow-hidden rounded-lg border ${className || ""}`}
+    className={cn("relative flex flex-col overflow-hidden rounded-lg border", className)}
     style={{ backgroundColor: canvasTheme.plotField }}
   >
     <div ref={containerRef} className="min-h-0 flex-1">

@@ -34,7 +34,7 @@ import { monitorMastering } from "./masterPreview";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { PreviewPanel } from "./PreviewPanel";
 import { ProjectSettingsSection } from "./ProjectSettingsSection";
-import { useProjectViewState } from "./projectViewState";
+import { useProjectViewState, type SpatialView } from "./projectViewState";
 import { Transport } from "./Transport";
 import { TrackRail } from "./TrackRail";
 import {
@@ -260,6 +260,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   }, [reorderStems]);
   const setHazeIntensity = React.useCallback((next: number) => patchViewState({ hazeIntensity: next }), [patchViewState]);
   const setElevationIntensity = React.useCallback((next: number) => patchViewState({ elevationIntensity: next }), [patchViewState]);
+  const setSpatialView = React.useCallback((spatialView: SpatialView) => patchViewState({ spatialView }), [patchViewState]);
   const routing: StemRouting = React.useMemo(() => trackManifest?.mixing.stem_routing || {}, [trackManifest]);
   const placements = React.useMemo(
     () => (trackManifest?.mixing.stem_placement || {}) as Record<string, StemPlacement>,
@@ -561,6 +562,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         onSelectStem={setSelectedStem}
         onHazeIntensity={setHazeIntensity}
         onElevationIntensity={setElevationIntensity}
+        onSpatialViewChange={setSpatialView}
         orderedStems={orderedStems}
         silentStems={silentStems}
         previewStemCount={previewStems.length}

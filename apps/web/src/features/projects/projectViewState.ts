@@ -11,9 +11,12 @@ export type ProjectViewState = {
   masterVolume: number;
   masteringBypassed: boolean;
   matchBypassed: boolean;
+  spatialView: SpatialView;
   hazeIntensity: number;
   elevationIntensity: number;
 };
+
+export type SpatialView = "haze" | "elevation" | "scene";
 
 const DEFAULT_VIEW_STATE: ProjectViewState = {
   stemOrder: [],
@@ -23,6 +26,7 @@ const DEFAULT_VIEW_STATE: ProjectViewState = {
   masterVolume: 1,
   masteringBypassed: false,
   matchBypassed: false,
+  spatialView: "haze",
   hazeIntensity: 0.5,
   elevationIntensity: 0.5,
 };
@@ -30,6 +34,7 @@ const DEFAULT_VIEW_STATE: ProjectViewState = {
 const OUTPUT_MODES: OutputMode[] = ["binaural", "transaural", "stereo", "native"];
 const SPATIAL_PROFILES: SpatialProfile[] = ["studio", "listening", "flat"];
 const TRANSAURAL_PROFILES: TransauralProfile[] = ["stereo", "smart_speaker", "car", "laptop", "phone"];
+const SPATIAL_VIEWS: SpatialView[] = ["haze", "elevation"];
 
 function clamp01(value: unknown, fallback: number): number {
   const parsed = Number(value);
@@ -56,6 +61,7 @@ function normalizeViewState(raw: Record<string, unknown> | undefined): ProjectVi
     masterVolume: clamp01(raw?.master_volume, DEFAULT_VIEW_STATE.masterVolume),
     masteringBypassed: raw?.mastering_bypassed === true,
     matchBypassed: raw?.match_bypassed === true,
+    spatialView: pick(raw?.spatial_view, SPATIAL_VIEWS, DEFAULT_VIEW_STATE.spatialView),
     hazeIntensity: clamp01(raw?.haze_intensity, DEFAULT_VIEW_STATE.hazeIntensity),
     elevationIntensity: clamp01(raw?.elevation_intensity, DEFAULT_VIEW_STATE.elevationIntensity),
   };
@@ -70,6 +76,7 @@ function toPayload(state: ProjectViewState): Record<string, unknown> {
     master_volume: state.masterVolume,
     mastering_bypassed: state.masteringBypassed,
     match_bypassed: state.matchBypassed,
+    spatial_view: state.spatialView,
     haze_intensity: state.hazeIntensity,
     elevation_intensity: state.elevationIntensity,
   };

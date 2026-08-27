@@ -176,53 +176,21 @@ implementation.
   It does not add height. On the project page the spatial row drops from
   `flex-[3]` to `flex-1 min-h-[180px]` when the pane opens — the row's own
   total height responds to the pane, nothing else does.
-- **The spatial row's composition never changes.** It is always
-  `HazeView | ElevationView | ChannelMeters`, left to right, whether the pane
-  is open or collapsed — there is no pane-collapsed variant that drops
-  `ElevationView` below the row or stretches `HazeView` wide. What changes
-  with the pane is only the row's total height (above) and, within it, each
-  display's width (below).
+- **The spatial row's composition never changes.** It is always one switchable
+  spatial card beside `ChannelMeters`, whether the pane is open or collapsed.
+  Its segmented control selects Haze or Elevation; a future object-scene view
+  joins that control. What changes with the pane is only the row's total
+  height.
 
   The one exception is the **`stereo` layout**, which has no depth or height
   axis for either spatial display to plot: `StereoPanoramaView` replaces the
-  pair, taking Elevation's magnetic `flex-1` slot while the Haze column and its
-  handle are not rendered at all. Composition, not sizing — the row is still
-  `<spatial> | ChannelMeters`, `useColumnLayout` is untouched (`hazeExtra`
-  simply goes unused), and Elevation's handle keeps driving Meters' width. The
-  panorama plots pan on X and spectral centroid on Y, in the same field, grid,
-  melted-blob and speaker-mute language as the two views it stands in for, and
+  spatial card. The row remains `<spatial> | ChannelMeters`; the panorama
   reuses `hazeIntensity` rather than adding a view-state field.
-- **Haze and Meters are user-resizable; Elevation is magnetic.** Haze and
-  Meters each sit in their own `relative shrink-0` wrapper with an explicit
-  pixel `style={{ width }}`, computed as a live natural size plus a
-  persisted delta (`hazeExtra`/`elevationExtra`, 0 by default) — Haze's
-  natural width is the row's own live height (reproducing the square by
-  default), Meters' is `METERS_DEFAULT_SHARE` (a reasonable point in its own
-  `[180, 480]` range) minus `elevationExtra`. Elevation itself carries no
-  stored width at all: its wrapper is a genuine `min-h-0 min-w-0 flex-1`, so
-  it always renders as exactly whatever Haze and Meters leave — not an
-  estimate kept in sync by hand, but a flexbox guarantee, which is what
-  makes the row "magnetic": no combination of the other two displays' widths
-  can ever leave a gap, because Elevation has no ceiling and always claims
-  every remaining pixel. `ChannelMeters` does not manage its own width —
-  a baked-in internal cap could disagree with the caller's explicit width
-  and leave unabsorbed space between it and Elevation, so the caller always
-  supplies the value instead.
-
-  A `StripResizeHandle` (§6.4) sits in the Haze and Elevation wrappers (the
-  one between Elevation and Meters lives on Elevation's side but drives
-  `elevationExtra`, which moves *Meters'* width — dragging Elevation's own
-  border still reads as "resize Elevation" to the user even though, having
-  no width of its own, it's Meters' width the drag actually changes and
-  Elevation's rendered size that changes as a result). Reused verbatim from
-  the mixer rack's own column resize rather than a second implementation —
-  its `min`/`max` props (added alongside this feature) are what let a caller
-  outside `ChannelStrip.tsx` supply a different natural range than a
-  fader-width strip's. Both deltas are clamped against the row's *live*
-  measured size every render, the same "don't trust a stale computed value"
-  rule the pane's own resize already follows, and persist per project the
-  same way the pane's height does
-  (`upmixer.project.{id}.columns.hazeExtra`/`.elevationExtra`).
+- **The spatial card is magnetic; Meters are user-resizable.** The spatial
+  card is a genuine `min-h-0 min-w-0 flex-1`, taking every pixel left by the
+  Meters/Loudness group. Its trailing `StripResizeHandle` adjusts that group
+  and persists the existing `elevationExtra` preference per project, so prior
+  layouts keep their meter width.
 
 ## 5. Layout primitives
 

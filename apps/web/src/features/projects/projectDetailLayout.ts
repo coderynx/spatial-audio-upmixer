@@ -40,21 +40,20 @@ export function readStoredPaneHeight(projectId: string | undefined): number {
 }
 
 /** Floors (and, for Meters/Loudness, a ceiling) for the spatial row's
- * displays — Haze's own drag-resize can't shrink it past `HAZE_MIN_WIDTH`;
- * Elevation is a true `flex-1` with `min-w-[ELEVATION_MIN_WIDTH]`, so it can
- * never be squeezed past that either, no matter what the rest do; Meters'
+ * displays — the switchable spatial view is a true `flex-1` with
+ * `min-w-[SPATIAL_VIEW_MIN_WIDTH]`, so it can never be squeezed past that;
+ * Meters'
  * own drag-resize is bounded by both `METERS_MIN_WIDTH` and
  * `METERS_MAX_WIDTH` (this used to be `ChannelMeters`' own baked-in
  * `min-w-[180px] max-w-[480px]`, moved out to the caller alongside the rest
  * of this resize system); Loudness mirrors that with its own
- * `LOUDNESS_MIN_WIDTH`/`LOUDNESS_MAX_WIDTH`. Meters and Loudness share a
- * third row slot (the "meters group") rather than each taking their own —
- * Elevation's handle trades against that combined slot, and a second handle
- * freely trades width between Meters and Loudness within it, so dragging
+ * `LOUDNESS_MIN_WIDTH`/`LOUDNESS_MAX_WIDTH`. Meters and Loudness share one
+ * row slot (the "meters group") rather than each taking their own — the
+ * spatial card's handle trades against that combined slot, and a second
+ * handle freely trades width between Meters and Loudness within it, so dragging
  * either one directly squashes its immediate neighbour instead of reaching
  * across the row. */
-export const HAZE_MIN_WIDTH = 140;
-export const ELEVATION_MIN_WIDTH = 160;
+export const SPATIAL_VIEW_MIN_WIDTH = 160;
 export const METERS_MIN_WIDTH = 180;
 export const METERS_MAX_WIDTH = 480;
 export const LOUDNESS_MIN_WIDTH = 130;
@@ -62,14 +61,12 @@ export const LOUDNESS_MAX_WIDTH = 260;
 /** Gap between the row's displays (matches the row's own `gap-2`, and the
  * Meters/Loudness pair's own nested `gap-2`). */
 export const ROW_GAP = 8;
-/** Meters' default width when neither column has been dragged — Haze takes
- * its own square, Meters takes this (a reasonable point in its own range),
- * and Elevation (`flex-1`) takes whatever's left. */
+/** Meters' default width when the spatial view has not been resized. */
 export const METERS_DEFAULT_SHARE = 320;
 /** Loudness' default width when its own split hasn't been dragged. */
 export const LOUDNESS_DEFAULT_WIDTH = 150;
-/** The meters group's own floor/ceiling/default share, for Elevation's
- * handle to trade against — Meters and Loudness together, not each alone. */
+/** The meters group's own floor/ceiling/default share, traded against the
+ * switchable spatial view as one unit. */
 export const METERS_GROUP_MIN_WIDTH = METERS_MIN_WIDTH + ROW_GAP + LOUDNESS_MIN_WIDTH;
 export const METERS_GROUP_MAX_WIDTH = METERS_MAX_WIDTH + ROW_GAP + LOUDNESS_MAX_WIDTH;
 export const METERS_GROUP_DEFAULT_SHARE = METERS_DEFAULT_SHARE + ROW_GAP + LOUDNESS_DEFAULT_WIDTH;

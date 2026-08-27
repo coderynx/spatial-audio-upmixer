@@ -124,6 +124,20 @@ describe("ProjectDetailPage tabs", () => {
     expect(screen.getByRole("slider", { name: "Timeline position" })).toBeInTheDocument();
   });
 
+  it("switches the merged spatial card between haze and elevation", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    expect(screen.getByRole("button", { name: "Haze" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("slider", { name: "Resize Haze view" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Elevation" }));
+
+    expect(screen.getByRole("button", { name: "Elevation" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("slider", { name: "Resize spatial view" })).toBeInTheDocument();
+    await waitFor(() => expect(api.saveProjectViewState).toHaveBeenLastCalledWith("project-1", expect.objectContaining({ spatial_view: "elevation" })));
+  });
+
   it("switches the bottom pane to the mixer and back, and collapses it", async () => {
     const user = userEvent.setup();
     renderPage();

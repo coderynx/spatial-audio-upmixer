@@ -4,6 +4,7 @@ import { MIN_ALPHA_SCALE, SETTLE_FRAMES, canvasTheme, hexToRgb, lerp } from "@/l
 import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
 import { speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo } from "@/lib/spatial";
+import { cn } from "@/lib/utils";
 import type { StemSpectrum } from "./audioEngine";
 
 // Secondary "elevation" view: a front-on cross-section showing the vertical
@@ -360,7 +361,7 @@ function ElevationViewImpl({
   };
 
   return <div
-    className={`relative flex flex-col overflow-hidden rounded-lg border ${className || ""}`}
+    className={cn("relative flex flex-col overflow-hidden rounded-lg border", className)}
     style={{ backgroundColor: canvasTheme.plotField }}
   >
     <div ref={containerRef} className="min-h-0 flex-1">

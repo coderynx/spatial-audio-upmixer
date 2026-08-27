@@ -16,7 +16,6 @@ import { MixerView } from "./MixerView";
 import StereoPanoramaView from "./StereoPanoramaView";
 import { TimelineView } from "./TimelineView";
 import {
-  HAZE_MIN_WIDTH,
   LOUDNESS_DEFAULT_WIDTH,
   METERS_GROUP_DEFAULT_SHARE,
   METERS_GROUP_MIN_WIDTH,
@@ -27,11 +26,16 @@ import type { useColumnLayout } from "./useColumnLayout";
 import type { usePaneLayout } from "./usePaneLayout";
 import type { useStemPreview, OutputMode } from "./useStemPreview";
 import type { useTrackPeaks } from "./useTrackPeaks";
-import type { ProjectViewState } from "./projectViewState";
+import type { ProjectViewState, SpatialView } from "./projectViewState";
 
 const PANE_SEGMENTS = [
   { value: "timeline" as const, label: "Timeline", icon: AudioWaveform },
   { value: "mixer" as const, label: "Mixer", icon: SlidersHorizontal },
+];
+
+const SPATIAL_VIEW_SEGMENTS = [
+  { value: "haze" as const, label: "Haze" },
+  { value: "elevation" as const, label: "Elevation" },
 ];
 
 type Preview = ReturnType<typeof useStemPreview>;
@@ -53,6 +57,7 @@ export type PreviewPanelProps = {
   onSelectStem: (stem: string | null) => void;
   onHazeIntensity: (value: number) => void;
   onElevationIntensity: (value: number) => void;
+  onSpatialViewChange: (view: SpatialView) => void;
   orderedStems: string[];
   silentStems: string[];
   previewStemCount: number;
@@ -103,7 +108,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
   const {
     containerRef, preview, pane, columns, project, trackManifest, viewState,
     channels, routing, outputMode, stereoLayout, stemChannelCounts, selectedStem, onSelectStem,
-    onHazeIntensity, onElevationIntensity, orderedStems, silentStems, previewStemCount,
+    onHazeIntensity, onElevationIntensity, onSpatialViewChange, orderedStems, silentStems, previewStemCount,
     peaks, peaksLoading, peaksDuration, draggedStem, onDragStart, onDragEnd, onDropOn,
     onToggleMute, onToggleSolo, onGain, onAnchorStrength, onCommitScrub,
   } = props;
@@ -112,8 +117,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
     beginPaneResize, movePaneResize, endPaneResize, paneResizeKeys,
   } = pane;
   const {
-    rowRef, rowSize, hazeExtra, setHazeExtra, elevationExtra, setElevationExtra,
-    loudnessExtra, setLoudnessExtra, commitColumnExtra, hazeMaxWidth, hazeWidth,
+    rowRef, elevationExtra, setElevationExtra, loudnessExtra, setLoudnessExtra, commitColumnExtra,
     groupMaxWidth, groupWidth, loudnessFloor, loudnessCeil, loudnessWidth,
   } = columns;
   const showLoudness = preview.supported && previewStemCount > 0;
@@ -123,23 +127,17 @@ export function PreviewPanel(props: PreviewPanelProps) {
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
       <PreviewStatus preview={preview} project={project} previewStemCount={previewStemCount} />
       <div ref={rowRef} className={cn("flex min-h-0 gap-2", paneView ? "min-h-[180px] flex-1" : "flex-[3]")}>
-        {!stereoLayout && <div className="relative min-h-0 shrink-0" style={{ width: hazeWidth }}>
-          <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={onSelectStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={onHazeIntensity} className="h-full w-full" />
-          <StripResizeHandle
-            label="Resize Haze view"
-            value={hazeExtra}
-            onChange={setHazeExtra}
-            onCommit={(px) => { setHazeExtra(px); commitColumnExtra("haze", px); }}
-            min={HAZE_MIN_WIDTH - rowSize.height}
-            max={hazeMaxWidth - rowSize.height}
-          />
-        </div>}
         <div className="relative min-h-0 min-w-0 flex-1">
           {stereoLayout
             ? <StereoPanoramaView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={onSelectStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={onHazeIntensity} className="h-full w-full" />
-            : <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.elevationIntensity} onIntensity={onElevationIntensity} className="h-full w-full" />}
+            : <div className="relative h-full">
+              {viewState.spatialView === "elevation"
+                ? <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.elevationIntensity} onIntensity={onElevationIntensity} className="h-full w-full" />
+                : <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={onSelectStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={onHazeIntensity} className="h-full w-full" />}
+              <SegmentedControl aria-label="Spatial view" size="sm" segments={SPATIAL_VIEW_SEGMENTS} value={viewState.spatialView === "scene" ? "haze" : viewState.spatialView} onChange={onSpatialViewChange} className="absolute left-1/2 top-2 z-10 -translate-x-1/2 border border-white/10 bg-white/5 backdrop-blur-sm [&_button]:text-white/70 [&_button:hover]:text-white" activeClassName="bg-white/10 shadow-sm" activeTextClassName="text-white" slideIndicator />
+            </div>}
           <StripResizeHandle
-            label="Resize Elevation view"
+            label="Resize spatial view"
             value={elevationExtra}
             onChange={setElevationExtra}
             onCommit={(px) => { setElevationExtra(px); commitColumnExtra("elevation", px); }}
