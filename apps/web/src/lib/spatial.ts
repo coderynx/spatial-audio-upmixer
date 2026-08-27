@@ -5,9 +5,9 @@ export type Vec3 = { x: number; y: number; z: number };
 // by the WebAudio PannerNode positions (useStemPreview.ts) and the Haze view
 // (HazeView.tsx) so both agree on where a stem "is".
 export const speakerCoordinates: Record<string, Vec3> = {
-  FL: { x: -0.5, y: 0, z: -0.87 }, FR: { x: 0.5, y: 0, z: -0.87 }, C: { x: 0, y: 0, z: -1 },
-  SL: { x: -0.94, y: 0, z: 0.34 }, SR: { x: 0.94, y: 0, z: 0.34 }, BL: { x: -0.7, y: 0, z: 0.7 }, BR: { x: 0.7, y: 0, z: 0.7 },
-  TFL: { x: -0.5, y: 0.6, z: -0.7 }, TFR: { x: 0.5, y: 0.6, z: -0.7 }, TBL: { x: -0.6, y: 0.6, z: 0.6 }, TBR: { x: 0.6, y: 0.6, z: 0.6 },
+  FL: { x: -0.5, y: 0, z: -0.8660254037844386 }, FR: { x: 0.5, y: 0, z: -0.8660254037844386 }, C: { x: 0, y: 0, z: -1 },
+  SL: { x: -0.9396926207859084, y: 0, z: 0.3420201433256687 }, SR: { x: 0.9396926207859084, y: 0, z: 0.3420201433256687 }, BL: { x: -0.7071067811865475, y: 0, z: 0.7071067811865476 }, BR: { x: 0.7071067811865475, y: 0, z: 0.7071067811865476 },
+  TFL: { x: -0.6123724356957945, y: 0.5, z: -0.6123724356957946 }, TFR: { x: 0.6123724356957945, y: 0.5, z: -0.6123724356957946 }, TBL: { x: -0.6123724356957945, y: 0.5, z: 0.6123724356957946 }, TBR: { x: 0.6123724356957945, y: 0.5, z: 0.6123724356957946 },
 };
 
 export const speakerLabels: Record<string, string> = {

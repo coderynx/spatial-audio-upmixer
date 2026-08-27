@@ -104,6 +104,10 @@ export function isObjectStem(stem: string, objectStems: ReadonlySet<string>) {
   return !isBedStem(stem) && (objectStems.has(stem) || objectStems.has(stem.split("@", 1)[0]));
 }
 
+export function sceneSpeakerPosition(channel: string): Vec3 | undefined {
+  return channel === "LFE" ? { x: 0, y: 0, z: 0 } : speakerCoordinates[channel];
+}
+
 export type SceneViewProps = {
   channels: string[];
   routing: StemRouting;
@@ -249,21 +253,6 @@ function SceneViewImpl({
       ];
       for (const [from, to] of edges) drawLine(corners[from], corners[to], width, height);
 
-      const listener = projectScenePoint({ x: 0, y: 0.08, z: 0 }, width, height, camera.current);
-      const listenerSize = Math.max(7, Math.min(14, listener.scale * 0.12));
-      ctx.save();
-      ctx.translate(listener.x, listener.y);
-      ctx.fillStyle = canvasTheme.speaker;
-      ctx.beginPath();
-      ctx.arc(0, -listenerSize * 0.7, listenerSize * 0.42, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(0, listenerSize * 0.32, listenerSize * 0.75, listenerSize * 0.46, 0, Math.PI, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = canvasTheme.ring;
-      ctx.stroke();
-      ctx.restore();
-
       const voices: Voice[] = [];
       for (const stem of Object.keys(currentRouting)) {
         const route = currentRouting[stem] || {};
@@ -337,7 +326,7 @@ function SceneViewImpl({
       ctx.font = "500 10px system-ui, sans-serif";
       ctx.textAlign = "center";
       for (const channel of currentChannels) {
-        const position = speakerCoordinates[channel];
+        const position = sceneSpeakerPosition(channel);
         if (!position) continue;
         const speakerPoint = projectScenePoint(scenePosition(position), width, height, camera.current);
         const muted = currentSpeakerEnabled[channel] === false;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bedLobeIntensity, isObjectStem, projectScenePoint, smoothSceneLevel, zoomSceneCamera } from "./SceneView";
+import { bedLobeIntensity, isObjectStem, projectScenePoint, sceneSpeakerPosition, smoothSceneLevel, zoomSceneCamera } from "./SceneView";
 
 describe("scene projection", () => {
   it("keeps the room centre centred and enlarges nearer objects", () => {
@@ -24,6 +24,12 @@ describe("scene stem kinds", () => {
     expect(isObjectStem("Backing Vocals", objects)).toBe(false);
     expect(isObjectStem("Crowd", objects)).toBe(false);
     expect(isObjectStem("Other", new Set(["Other"]))).toBe(false);
+  });
+});
+
+describe("scene speakers", () => {
+  it("shows the non-positional LFE channel at the listener", () => {
+    expect(sceneSpeakerPosition("LFE")).toEqual({ x: 0, y: 0, z: 0 });
   });
 });
 
