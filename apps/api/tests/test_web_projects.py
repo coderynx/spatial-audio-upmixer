@@ -212,6 +212,7 @@ def test_project_view_state_persists_independently_of_settings(tmp_path, monkeyp
             "transaural_profile": "car",
             "master_volume": 0.75,
             "mastering_bypassed": True,
+            "spatial_view": "scene",
             "haze_intensity": 0.9,
             "elevation_intensity": 0.1,
         }

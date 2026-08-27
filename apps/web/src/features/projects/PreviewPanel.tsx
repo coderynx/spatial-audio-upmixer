@@ -11,6 +11,7 @@ import ChannelMeters from "./ChannelMeters";
 import { StripResizeHandle } from "./ChannelStrip";
 import ElevationView from "./ElevationView";
 import HazeView from "./HazeView";
+import SceneView from "./SceneView";
 import { LoudnessMeterPanel } from "./LoudnessMeters";
 import { MixerView } from "./MixerView";
 import StereoPanoramaView from "./StereoPanoramaView";
@@ -36,6 +37,7 @@ const PANE_SEGMENTS = [
 const SPATIAL_VIEW_SEGMENTS = [
   { value: "haze" as const, label: "Haze" },
   { value: "elevation" as const, label: "Elevation" },
+  { value: "scene" as const, label: "Scene" },
 ];
 
 type Preview = ReturnType<typeof useStemPreview>;
@@ -50,6 +52,7 @@ export type PreviewPanelProps = {
   viewState: ProjectViewState;
   channels: string[];
   routing: StemRouting;
+  objectStems: ReadonlySet<string>;
   outputMode: OutputMode;
   stereoLayout: boolean;
   stemChannelCounts: Record<string, number>;
@@ -107,7 +110,7 @@ function PreviewStatus({ preview, project, previewStemCount }: Pick<PreviewPanel
 export function PreviewPanel(props: PreviewPanelProps) {
   const {
     containerRef, preview, pane, columns, project, trackManifest, viewState,
-    channels, routing, outputMode, stereoLayout, stemChannelCounts, selectedStem, onSelectStem,
+    channels, routing, objectStems, outputMode, stereoLayout, stemChannelCounts, selectedStem, onSelectStem,
     onHazeIntensity, onElevationIntensity, onSpatialViewChange, orderedStems, silentStems, previewStemCount,
     peaks, peaksLoading, peaksDuration, draggedStem, onDragStart, onDragEnd, onDropOn,
     onToggleMute, onToggleSolo, onGain, onAnchorStrength, onCommitScrub,
@@ -131,10 +134,12 @@ export function PreviewPanel(props: PreviewPanelProps) {
           {stereoLayout
             ? <StereoPanoramaView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={onSelectStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={onHazeIntensity} className="h-full w-full" />
             : <div className="relative h-full">
-              {viewState.spatialView === "elevation"
-                ? <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.elevationIntensity} onIntensity={onElevationIntensity} className="h-full w-full" />
-                : <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={onSelectStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={onHazeIntensity} className="h-full w-full" />}
-              <SegmentedControl aria-label="Spatial view" size="sm" segments={SPATIAL_VIEW_SEGMENTS} value={viewState.spatialView === "scene" ? "haze" : viewState.spatialView} onChange={onSpatialViewChange} className="absolute left-1/2 top-2 z-10 -translate-x-1/2 border border-white/10 bg-white/5 backdrop-blur-sm [&_button]:text-white/70 [&_button:hover]:text-white" activeClassName="bg-white/10 shadow-sm" activeTextClassName="text-white" slideIndicator />
+              {viewState.spatialView === "scene"
+                ? <SceneView routing={routing} objectStems={objectStems} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={onSelectStem} stemSpectrum={preview.stemSpectrum} active={preview.playing} className="h-full w-full" />
+                : viewState.spatialView === "elevation"
+                  ? <ElevationView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.elevationIntensity} onIntensity={onElevationIntensity} className="h-full w-full" />
+                  : <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} onSelectStem={onSelectStem} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} onToggleSpeaker={preview.toggleSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={onHazeIntensity} className="h-full w-full" />}
+              <SegmentedControl aria-label="Spatial view" size="sm" segments={SPATIAL_VIEW_SEGMENTS} value={viewState.spatialView} onChange={onSpatialViewChange} className="absolute left-1/2 top-2 z-10 -translate-x-1/2 border border-white/10 bg-white/5 backdrop-blur-sm [&_button]:text-white/70 [&_button:hover]:text-white" activeClassName="bg-white/10 shadow-sm" activeTextClassName="text-white" slideIndicator />
             </div>}
           <StripResizeHandle
             label="Resize spatial view"

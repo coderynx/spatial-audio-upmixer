@@ -30,6 +30,8 @@ export const stemColors: Record<string, string> = {
   "Vocals Reverb": "#fb7185",
 };
 
+const bedStemNames = new Set(["Crowd", "Other", "Vocals Reverb"]);
+
 const stemIcons: Record<string, LucideIcon> = {
   vocals: MicVocal,
   bass: Waves,
@@ -59,4 +61,8 @@ export function getStemColor(stem: string) {
 
 export function getStemIcon(stem: string): LucideIcon {
   return stemIcons[stemKey(stem)] || Music2;
+}
+
+export function isBedStem(stem: string) {
+  return bedStemNames.has(stem.split("@", 1)[0]);
 }

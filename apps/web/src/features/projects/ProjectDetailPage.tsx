@@ -266,6 +266,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     () => (trackManifest?.mixing.stem_placement || {}) as Record<string, StemPlacement>,
     [trackManifest],
   );
+  const objectStems = React.useMemo(() => new Set(Object.keys(placements)), [placements]);
   const [panner, setPanner] = React.useState<Panner | null>(null);
   React.useEffect(() => {
     let live = true;
@@ -555,6 +556,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         viewState={viewState}
         channels={channels}
         routing={routing}
+        objectStems={objectStems}
         outputMode={outputMode}
         stereoLayout={stereoLayout}
         stemChannelCounts={stemChannelCounts}

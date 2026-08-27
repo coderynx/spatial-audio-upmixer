@@ -78,6 +78,7 @@ class ProjectViewState(BaseModel):
     transaural_profile: str = Field(default="stereo", max_length=32)
     master_volume: float = Field(default=1.0, ge=0.0, le=1.0)
     mastering_bypassed: bool = False
+    spatial_view: str = Field(default="haze", max_length=32)
     haze_intensity: float = Field(default=0.5, ge=0.0, le=1.0)
     elevation_intensity: float = Field(default=0.5, ge=0.0, le=1.0)
 

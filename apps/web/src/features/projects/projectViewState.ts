@@ -34,7 +34,7 @@ const DEFAULT_VIEW_STATE: ProjectViewState = {
 const OUTPUT_MODES: OutputMode[] = ["binaural", "transaural", "stereo", "native"];
 const SPATIAL_PROFILES: SpatialProfile[] = ["studio", "listening", "flat"];
 const TRANSAURAL_PROFILES: TransauralProfile[] = ["stereo", "smart_speaker", "car", "laptop", "phone"];
-const SPATIAL_VIEWS: SpatialView[] = ["haze", "elevation"];
+const SPATIAL_VIEWS: SpatialView[] = ["haze", "elevation", "scene"];
 
 function clamp01(value: unknown, fallback: number): number {
   const parsed = Number(value);
