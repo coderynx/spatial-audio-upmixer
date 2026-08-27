@@ -1,9 +1,9 @@
-"""Post-mixing mastering chain: EQ shaping → bus compression → loudness → limiter.
+"""Linked bed/object mastering: EQ → compression → loudness → limiter.
 
 Encapsulates all mastering-stage processing so both the realtime and stem
 pipelines share identical mastering behaviour.  The mixing pipelines handle
-only spatial routing and energy normalisation; this module handles everything
-that shapes the final tone, dynamics, loudness, and peak ceiling.
+spatial routing and energy normalisation; this module masters authored bed and
+object sources against their rendered speaker programme.
 
 Processing order
 ----------------
@@ -233,7 +233,7 @@ class MasteringResult:
 
 
 class MasteringChain:
-    """Stateless mastering chain for post-mixing multichannel audio.
+    """Stateless mastering chain for authored multichannel sources.
 
     Instantiate with a :class:`~upmixer.config.UpmixConfig` once per pipeline
     run.  Call :meth:`process` with the fully mixed channel dict.
@@ -255,16 +255,16 @@ class MasteringChain:
             [dict[str, np.ndarray]], dict[str, np.ndarray]
         ] | None = None,
     ) -> tuple[dict[str, np.ndarray], MasteringResult]:
-        """Apply the full mastering chain to a mixed multichannel bed.
+        """Apply the full mastering chain to a bed and optional objects.
 
         Args:
             channels:    Dict channel_name → 1D float64 array.
             sample_rate: Audio sample rate in Hz.
             output_fmt:  Output format — used to select BS.1770-4 channel weights.
-            linked_channels: Additional tracks that receive the same loudness
-                gain and limiter envelope as the bed.
+            linked_channels: Object tracks processed with the bed while kept
+                as independently authored signals.
             programme_renderer: Render the current bed and linked tracks to the
-                programme used for loudness and True-Peak measurement.
+                speaker programme used by linked detectors and measurement.
 
         Returns:
             ``(processed_channels, MasteringResult)`` where
@@ -279,11 +279,36 @@ class MasteringChain:
         result = MasteringResult()
         comp_gr: tuple[float, float] | None = None
         renderer_aware = linked_channels is not None and programme_renderer is not None
+        bed_names = {name: name for name in channels}
+        linked_names = (
+            {name: f"object:{name}" for name in linked_channels}
+            if linked_channels is not None
+            else {}
+        )
+        lfe_key = bed_names.get("LFE", "LFE")
+
+        def sources() -> dict[str, np.ndarray]:
+            return {
+                **{key: channels[name] for name, key in bed_names.items()},
+                **{
+                    key: linked_channels[name]
+                    for name, key in linked_names.items()
+                },
+            }
+
+        def accept(processed: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+            if linked_channels is not None:
+                linked_channels.update({
+                    name: processed[key] for name, key in linked_names.items()
+                })
+            return {name: processed[key] for name, key in bed_names.items()}
 
         if cfg.mastering_highpass_enabled:
             from .head import apply_chain_head
-            channels = apply_chain_head(
-                channels, sample_rate, cfg.mastering_highpass_hz
+            channels = accept(apply_chain_head(
+                sources(), sample_rate, cfg.mastering_highpass_hz, lfe_key
+            )) if renderer_aware else apply_chain_head(
+                channels, sample_rate, cfg.mastering_highpass_hz,
             )
 
         if cfg.mastering_match_ref_path is not None:
@@ -303,7 +328,9 @@ class MasteringChain:
                 high_hz=cfg.mastering_match_ref_high_hz,
                 sample_rate=sample_rate,
             )
-            channels = proc.process(channels)
+            channels = accept(proc.process(
+                sources(), lfe_key, programme_renderer(channels)
+            )) if renderer_aware else proc.process(channels)
 
         if cfg.mastering_eq_profile is not None:
             from .eq import SpectralShaper
@@ -312,17 +339,24 @@ class MasteringChain:
                 strength=cfg.mastering_eq_strength,
                 sample_rate=sample_rate,
             )
-            channels = shaper.process(channels)
+            channels = accept(shaper.process(
+                sources(), lfe_key
+            )) if renderer_aware else shaper.process(channels)
 
         if cfg.mastering_dyneq_profile or cfg.mastering_dyneq_bands:
             from .dyneq import apply_dynamic_eq, resolve_dyneq_bands
-            channels = apply_dynamic_eq(
-                channels,
+            processed = apply_dynamic_eq(
+                sources() if renderer_aware else channels,
                 sample_rate,
                 resolve_dyneq_bands(
                     cfg.mastering_dyneq_profile, cfg.mastering_dyneq_bands
                 ),
+                lfe_key=lfe_key if renderer_aware else "LFE",
+                detector_channels=(
+                    programme_renderer(channels) if renderer_aware else None
+                ),
             )
+            channels = accept(processed) if renderer_aware else processed
 
         if cfg.mastering_comp_profile is not None:
             from .compressor import BusCompressor, COMP_PROFILES
@@ -362,7 +396,14 @@ class MasteringChain:
                     ),
                     sample_rate=sample_rate,
                 )
-                channels = comp.process(channels)
+                processed = comp.process(
+                    sources() if renderer_aware else channels,
+                    lfe_key=lfe_key if renderer_aware else "LFE",
+                    detector_channels=(
+                        programme_renderer(channels) if renderer_aware else None
+                    ),
+                )
+                channels = accept(processed) if renderer_aware else processed
                 comp_gr = (comp.gr_peak_db, comp.gr_avg_db)
 
         _bass_active = (
@@ -401,7 +442,12 @@ class MasteringChain:
                 lfe_authoring_gain=cfg.lfe_gain,
                 sample_rate=sample_rate,
             )
-            channels = bass.process(channels)
+            processed = bass.process(
+                sources() if renderer_aware else channels,
+                lfe_key=lfe_key if renderer_aware else "LFE",
+                spatial_channels=len(channels) if renderer_aware else None,
+            )
+            channels = accept(processed) if renderer_aware else processed
 
         if cfg.loudness_normalize:
             _log.info("  Normalizing loudness (BS.1770-4)...")
@@ -437,12 +483,14 @@ class MasteringChain:
 
         if cfg.mastering_clip_enabled:
             from .clip import apply_soft_clip
-            channels = apply_soft_clip(
-                channels,
+            processed = apply_soft_clip(
+                sources() if renderer_aware else channels,
                 delivery.max_tp_dbtp,
                 cfg.mastering_clip_db,
                 cfg.mastering_clip_knee,
+                lfe_key=lfe_key if renderer_aware else "LFE",
             )
+            channels = accept(processed) if renderer_aware else processed
 
         # The look-ahead limiter runs last, after loudness/true-peak
         # correction, so it only ever engages as a safety net on the
@@ -457,8 +505,6 @@ class MasteringChain:
             sample_rate=sample_rate,
         )
         if renderer_aware:
-            bed_names = {name: f"bed:{name}" for name in channels}
-            linked_names = {name: f"object:{name}" for name in linked_channels}
             limiter_input = {
                 **{bed_names[name]: audio for name, audio in channels.items()},
                 **{linked_names[name]: audio for name, audio in linked_channels.items()},

@@ -435,7 +435,7 @@ describe("shared DSP core (wasm)", () => {
     wasm.dsp_engine_rewind(engine);
     const pass = wasm.dsp_measure_begin(engine, weightPtr, 2);
     expect(pass).not.toBe(0);
-    const resultPtr = wasm.dsp_alloc(16);
+    const resultPtr = wasm.dsp_alloc(32);
     let slices = 0;
     while (wasm.dsp_measure_advance(pass, 128, resultPtr) === 0) {
       slices += 1;
@@ -467,13 +467,13 @@ describe("shared DSP core (wasm)", () => {
 
     const weightPtr = wasm.dsp_alloc(16);
     new Float64Array(wasm.memory.buffer, weightPtr, 2).set([1, 1]);
-    const resultPtr = wasm.dsp_alloc(16);
+    const resultPtr = wasm.dsp_alloc(32);
 
     const direct = wasm.dsp_measure_begin(engine, weightPtr, 2);
     while (wasm.dsp_measure_advance(direct, 512, resultPtr) === 0) {
       /* advance to completion */
     }
-    const want = new Float64Array(wasm.memory.buffer.slice(resultPtr, resultPtr + 16));
+    const want = new Float64Array(wasm.memory.buffer.slice(resultPtr, resultPtr + 32));
     wasm.dsp_measure_free(direct);
 
     const excerpts = wasm.dsp_measure_begin_excerpts(engine, weightPtr, 2, 1, FRAMES, 0);
@@ -484,9 +484,8 @@ describe("shared DSP core (wasm)", () => {
       expect(slices).toBeLessThan(10_000);
     }
     expect(wasm.dsp_measure_progress(excerpts)).toBe(1);
-    const got = new Float64Array(wasm.memory.buffer, resultPtr, 2);
-    expect(got[0]).toBeCloseTo(want[0], 9);
-    expect(got[1]).toBeCloseTo(want[1], 9);
+    const got = new Float64Array(wasm.memory.buffer, resultPtr, 4);
+    expect([...got]).toEqual([...want]);
 
     wasm.dsp_measure_free(excerpts);
     wasm.dsp_engine_free(engine);
@@ -505,7 +504,7 @@ describe("shared DSP core (wasm)", () => {
 
     const weightPtr = wasm.dsp_alloc(16);
     new Float64Array(wasm.memory.buffer, weightPtr, 2).set([1, 1]);
-    const resultPtr = wasm.dsp_alloc(16);
+    const resultPtr = wasm.dsp_alloc(32);
     const pass = wasm.dsp_measure_begin(engine, weightPtr, 2);
     while (wasm.dsp_measure_advance(pass, 4096, resultPtr) === 0) {
       /* advance to completion */

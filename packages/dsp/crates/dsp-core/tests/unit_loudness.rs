@@ -163,6 +163,16 @@ mod loudness_stream {
     }
 
     #[test]
+    fn unaligned_gating_windows_match_the_offline_meter() {
+        let sr = 23;
+        let audio = programme(10 * sr as usize, 0.0);
+        let want = measure_integrated_loudness(&[(1.0, &audio)], sr);
+        let mut meter = IntegratedLoudnessMeter::new(&[1.0], sr);
+        meter.push(&[&audio]);
+        assert_eq!(meter.finish(), want);
+    }
+
+    #[test]
     fn silence_reports_the_absolute_gate() {
         let silence = vec![0.0; 48_000];
         let mut meter = IntegratedLoudnessMeter::new(&[1.0], 48_000);

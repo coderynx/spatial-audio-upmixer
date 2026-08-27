@@ -65,14 +65,14 @@ struct Band {
 }
 
 impl Band {
-    fn new(params: BandParams, sample_rate: u32, n_bed: usize) -> Self {
+    fn new(params: BandParams, sample_rate: u32, n_detector: usize, n_targets: usize) -> Self {
         let nyq = sample_rate as f64 / 2.0;
         let wn = (params.freq_hz / nyq).clamp(1e-4, 0.999);
         let q = params.q.max(0.1);
         let w0 = std::f64::consts::PI * wn;
         Self {
-            detect: vec![Sos::new(bandpass_sos(wn, q)); n_bed],
-            bell: vec![Sos::new(peaking_sos(wn, q, 1.0)); n_bed],
+            detect: vec![Sos::new(bandpass_sos(wn, q)); n_detector],
+            bell: vec![Sos::new(peaking_sos(wn, q, 1.0)); n_targets],
             attack: alpha(params.attack_ms, sample_rate),
             release: alpha(params.release_ms, sample_rate),
             fast: 0.0,
@@ -144,7 +144,8 @@ impl Band {
 /// The stage: every band, sharing one bed-channel list.
 pub struct DynamicEq {
     bands: Vec<Band>,
-    channels: Vec<usize>,
+    targets: Vec<usize>,
+    detector_channels: Vec<usize>,
 }
 
 impl DynamicEq {
@@ -156,13 +157,31 @@ impl DynamicEq {
         lfe: Option<usize>,
         bands: &[BandParams],
     ) -> Option<Self> {
-        let channels = non_lfe(n_channels, lfe);
+        Self::new_linked(sample_rate, n_channels, lfe, n_channels, lfe, bands)
+    }
+
+    pub fn new_linked(
+        sample_rate: u32,
+        n_targets: usize,
+        target_lfe: Option<usize>,
+        n_detector: usize,
+        detector_lfe: Option<usize>,
+        bands: &[BandParams],
+    ) -> Option<Self> {
+        let targets = non_lfe(n_targets, target_lfe);
+        let detector_channels = non_lfe(n_detector, detector_lfe);
         let bands: Vec<Band> = bands
             .iter()
             .filter(|b| b.ratio > 1.0)
-            .map(|b| Band::new(*b, sample_rate, channels.len()))
+            .map(|b| Band::new(*b, sample_rate, detector_channels.len(), targets.len()))
             .collect();
-        (!bands.is_empty() && !channels.is_empty()).then_some(Self { bands, channels })
+        (!bands.is_empty() && !targets.is_empty() && !detector_channels.is_empty()).then_some(
+            Self {
+                bands,
+                targets,
+                detector_channels,
+            },
+        )
     }
 
     pub fn reset(&mut self) {
@@ -176,17 +195,42 @@ impl DynamicEq {
     pub fn matches(&self, bands: &[BandParams]) -> bool {
         let active: Vec<&BandParams> = bands.iter().filter(|b| b.ratio > 1.0).collect();
         self.bands.len() == active.len()
-            && self.bands.iter().zip(active).all(|(band, p)| band.params == *p)
+            && self
+                .bands
+                .iter()
+                .zip(active)
+                .all(|(band, p)| band.params == *p)
     }
 
     /// Run every band over the whole bed, in place.
     pub fn process(&mut self, bed: &mut super::Bed) {
-        let frames = self.channels.iter().map(|&i| bed[i].len()).min().unwrap_or(0);
+        let frames = self
+            .targets
+            .iter()
+            .map(|&i| bed[i].len())
+            .min()
+            .unwrap_or(0);
         for frame in 0..frames {
             for band in &mut self.bands {
-                let rms = band.linked_rms(bed, &self.channels, frame);
+                let rms = band.linked_rms(bed, &self.detector_channels, frame);
                 let gain = band.gain_for(rms);
-                band.apply(bed, &self.channels, frame, gain);
+                band.apply(bed, &self.targets, frame, gain);
+            }
+        }
+    }
+
+    pub fn process_linked(&mut self, targets: &mut super::Bed, detector: &super::Bed) {
+        let frames = self
+            .targets
+            .iter()
+            .map(|&i| targets[i].len())
+            .min()
+            .unwrap_or(0);
+        for frame in 0..frames {
+            for band in &mut self.bands {
+                let rms = band.linked_rms(detector, &self.detector_channels, frame);
+                let gain = band.gain_for(rms);
+                band.apply(targets, &self.targets, frame, gain);
             }
         }
     }
@@ -194,6 +238,30 @@ impl DynamicEq {
     /// Deepest cut each band reached, in dB, in the order they were given.
     pub fn peak_cut_db(&self) -> Vec<f64> {
         self.bands.iter().map(|b| b.peak_cut_db).collect()
+    }
+}
+
+pub fn dynamic_eq_linked(
+    targets: &mut super::Bed,
+    target_lfe: Option<usize>,
+    detector: &super::Bed,
+    detector_lfe: Option<usize>,
+    sample_rate: u32,
+    bands: &[BandParams],
+) -> Vec<f64> {
+    match DynamicEq::new_linked(
+        sample_rate,
+        targets.len(),
+        target_lfe,
+        detector.len(),
+        detector_lfe,
+        bands,
+    ) {
+        Some(mut stage) => {
+            stage.process_linked(targets, detector);
+            stage.peak_cut_db()
+        }
+        None => Vec::new(),
     }
 }
 

@@ -358,7 +358,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       return;
     }
     this.measureStage = stage;
-    this.measureOut = this.wasm.dsp_alloc(16);
+    this.measureOut = this.wasm.dsp_alloc(32);
     this.measureReport = 0;
     this.port.postMessage({ type: "measuring", stage, progress: 0 });
   }
@@ -436,8 +436,8 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       }
       return true;
     }
-    const result = new Float64Array(this.wasm.memory.buffer, this.measureOut, 2);
-    const [lkfs, dbtp] = [result[0], result[1]];
+    const result = new Float64Array(this.wasm.memory.buffer, this.measureOut, 4);
+    const [lkfs, dbtp, monitorLkfs, monitorDbtp] = result;
     const stage = this.measureStage;
     this.endMeasure();
     // The host awaits exactly one fast result, the one that clears its
@@ -446,7 +446,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     // channel the exact pass uses instead.
     const reported = stage === "fast" && this.measureReported ? "exact" : stage;
     this.measureReported = true;
-    this.port.postMessage({ type: "measured", stage: reported, lkfs, dbtp, requestId: this.measureRequestId });
+    this.port.postMessage({ type: "measured", stage: reported, lkfs, dbtp, monitorLkfs, monitorDbtp, requestId: this.measureRequestId });
     if (stage === "fast") {
       this.beginMeasurePass("exact", (weightPtr, weightCount) =>
         this.wasm.dsp_measure_begin(this.engine, weightPtr, weightCount),
@@ -470,7 +470,7 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
       this.measurePass = 0;
     }
     if (this.measureOut) {
-      this.wasm.dsp_free(this.measureOut, 16);
+      this.wasm.dsp_free(this.measureOut, 32);
       this.measureOut = 0;
     }
     this.measureStage = null;

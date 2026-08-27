@@ -127,12 +127,26 @@ fn channel_weighted_blocks(
     let squared: Vec<f64> = filtered.iter().map(|v| v * v).collect();
     let n_blocks = (audio.len() - block_len) / hop_len + 1;
     let scale = weight / block_len as f64;
+    if block_len % hop_len != 0 {
+        return Some(
+            (0..n_blocks)
+                .map(|b| {
+                    let start = b * hop_len;
+                    pairwise_sum(&squared[start..start + block_len]) * scale
+                })
+                .collect(),
+        );
+    }
+    let hops_per_block = block_len / hop_len;
+    let hop_sums: Vec<f64> = (0..n_blocks + hops_per_block - 1)
+        .map(|hop| {
+            let start = hop * hop_len;
+            pairwise_sum(&squared[start..start + hop_len])
+        })
+        .collect();
     Some(
         (0..n_blocks)
-            .map(|b| {
-                let start = b * hop_len;
-                pairwise_sum(&squared[start..start + block_len]) * scale
-            })
+            .map(|b| pairwise_sum(&hop_sums[b..b + hops_per_block]) * scale)
             .collect(),
     )
 }

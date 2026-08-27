@@ -74,15 +74,52 @@ pub fn bus_compress(
     sample_rate: u32,
     p: &CompParams,
 ) -> CompInfo {
-    let bed_idx = non_lfe(bed.len(), lfe);
-    if bed_idx.is_empty() || p.ratio <= 1.0 {
+    let targets = non_lfe(bed.len(), lfe);
+    let Some((gain, reductions)) = compression_curve(bed, lfe, sample_rate, p) else {
+        return CompInfo::default();
+    };
+    apply_curve(bed, &targets, &gain);
+    compression_info(&reductions)
+}
+
+pub fn bus_compress_linked(
+    targets: &mut super::Bed,
+    target_lfe: Option<usize>,
+    detector: &super::Bed,
+    detector_lfe: Option<usize>,
+    sample_rate: u32,
+    p: &CompParams,
+) -> CompInfo {
+    let target_idx = non_lfe(targets.len(), target_lfe);
+    if target_idx.is_empty() {
         return CompInfo::default();
     }
-    let n = bed_idx.iter().map(|&i| bed[i].len()).max().unwrap_or(0);
+    let Some((gain, reductions)) = compression_curve(detector, detector_lfe, sample_rate, p) else {
+        return CompInfo::default();
+    };
+    apply_curve(targets, &target_idx, &gain);
+    compression_info(&reductions)
+}
+
+fn compression_curve(
+    detector: &super::Bed,
+    detector_lfe: Option<usize>,
+    sample_rate: u32,
+    p: &CompParams,
+) -> Option<(Vec<f64>, Vec<f64>)> {
+    let detector_idx = non_lfe(detector.len(), detector_lfe);
+    if detector_idx.is_empty() || p.ratio <= 1.0 {
+        return None;
+    }
+    let n = detector_idx
+        .iter()
+        .map(|&i| detector[i].len())
+        .max()
+        .unwrap_or(0);
     if n == 0 {
-        return CompInfo::default();
+        return None;
     }
-    let n_ch = bed_idx.len() as f64;
+    let n_ch = detector_idx.len() as f64;
 
     let nyq = sample_rate as f64 / 2.0;
     let sidechain_sos = p
@@ -90,12 +127,10 @@ pub fn bus_compress(
         .map(|hz| butter_sos(2, (hz / nyq).clamp(1e-4, 0.999), BandType::High));
 
     let mut x_sq = vec![0.0; n];
-    for &i in &bed_idx {
-        let detector = sidechain_sos
-            .as_ref()
-            .map(|sos| sosfilt(sos, &bed[i]));
-        let detector = detector.as_deref().unwrap_or(&bed[i]);
-        for (acc, v) in x_sq.iter_mut().zip(detector.iter()) {
+    for &i in &detector_idx {
+        let filtered = sidechain_sos.as_ref().map(|sos| sosfilt(sos, &detector[i]));
+        let signal = filtered.as_deref().unwrap_or(&detector[i]);
+        for (acc, v) in x_sq.iter_mut().zip(signal.iter()) {
             *acc += v * v;
         }
     }
@@ -115,12 +150,18 @@ pub fn bus_compress(
         gain_linear.push(10.0_f64.powf((gr_db + p.makeup_db) / 20.0));
     }
 
-    for &i in &bed_idx {
-        for (v, g) in bed[i].iter_mut().zip(gain_linear.iter()) {
+    Some((gain_linear, reductions))
+}
+
+fn apply_curve(targets: &mut super::Bed, channels: &[usize], gain: &[f64]) {
+    for &i in channels {
+        for (v, g) in targets[i].iter_mut().zip(gain) {
             *v *= g;
         }
     }
+}
 
+fn compression_info(reductions: &[f64]) -> CompInfo {
     CompInfo {
         max_gr_db: reductions.iter().fold(0.0_f64, |m, v| m.max(*v)),
         avg_gr_db: pairwise_sum(&reductions) / reductions.len() as f64,

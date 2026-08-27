@@ -5,6 +5,7 @@
 //! and the look-ahead queues that feed it live in [`render`].
 
 mod analysis;
+mod mix;
 mod params_update;
 pub(crate) mod render;
 mod transport;
@@ -20,15 +21,14 @@ use crate::spatial::panner::PannerLayout;
 
 use crate::stream::limiter::StreamingLimiter;
 use crate::stream::master::{
-    CausalChain, LfUnifier, StreamingDecorrelator, DECORR_HORIZON_MS,
-    UNIFY_HORIZON_MS,
+    CausalChain, LfUnifier, StreamingDecorrelator, DECORR_HORIZON_MS, UNIFY_HORIZON_MS,
 };
 use crate::stream::meters::Meters;
 use crate::stream::output::OutputStage;
 use crate::stream::params::EngineParams;
 use crate::stream::routing::{LfeBus, StemRouteState};
 use crate::stream::state::{OnePole, StreamingCompressor};
-use render::{build_stem_mix_routes, StemMixRoute};
+use mix::{build_stem_mix_routes, StemMixRoute};
 
 /// Frames the LF unifier advances per call. Larger amortizes its zero-phase
 /// context further but raises the worst-case cost of a single render.
@@ -101,6 +101,9 @@ pub struct PreviewEngine {
     routes: Vec<StemRouteState>,
     panner_layout: PannerLayout,
     stem_mix_routes: Vec<StemMixRoute>,
+    authored_channels: usize,
+    rendered_channels: Vec<usize>,
+    speaker_render_scratch: Vec<Vec<f64>>,
     /// Per-stem route normalization once `RouteScalePass` has measured it.
     /// Empty until then, and cleared whenever a parameter the routing reads
     /// moves, so the host's estimate stands in rather than a stale
@@ -125,6 +128,7 @@ pub struct PreviewEngine {
     /// One smoother per stem, tracking its mute/solo/rebalance gain.
     stem_gain: Vec<OnePole>,
     master_gain: OnePole,
+    monitor_gain: OnePole,
     pre: Queue,
     post: Queue,
     /// One channel, carrying the bus compressor's per-frame gain reduction in
@@ -212,6 +216,37 @@ fn build_output(
     )
 }
 
+fn mastering_topology(
+    n_speakers: usize,
+    lfe: Option<usize>,
+    routes: &[StemMixRoute],
+) -> (usize, Vec<usize>, usize) {
+    let authored = routes
+        .iter()
+        .flat_map(|route| {
+            route
+                .objects
+                .iter()
+                .flatten()
+                .map(|object| object.authored_channel + 1)
+        })
+        .max()
+        .unwrap_or(n_speakers);
+    let mut next_rendered = authored;
+    let rendered = (0..n_speakers)
+        .map(|channel| {
+            if authored == n_speakers || lfe == Some(channel) {
+                channel
+            } else {
+                let index = next_rendered;
+                next_rendered += 1;
+                index
+            }
+        })
+        .collect();
+    (authored, rendered, next_rendered)
+}
+
 impl PreviewEngine {
     pub fn new(sample_rate: u32, params: EngineParams, stems: Vec<Arc<StemSource>>) -> Self {
         let n_channels = params.speakers.len();
@@ -222,30 +257,50 @@ impl PreviewEngine {
             .collect();
         let panner_layout = PannerLayout::new(&speaker_names);
         let stem_mix_routes = build_stem_mix_routes(&params, &panner_layout);
+        let (authored_channels, rendered_channels, post_channels) =
+            mastering_topology(n_channels, params.lfe_index, &stem_mix_routes);
         let routes = params
             .stems
             .iter()
             .map(|s| params_update::build_route(sample_rate, &params.sends, s))
             .collect();
-        let causal = (0..n_channels)
+        let causal = (0..authored_channels)
             .map(|i| CausalChain::new(sample_rate, &params.master, params.lfe_index == Some(i)))
             .collect();
-        let dyn_eq = DynamicEq::new(
-            sample_rate,
-            n_channels,
-            params.lfe_index,
-            &params.master.dynamic_eq,
-        );
-        let compressor = params
-            .master
-            .compressor
-            .map(|c| StreamingCompressor::new(c, sample_rate, n_channels));
+        let dyn_eq = if authored_channels > n_channels {
+            DynamicEq::new_linked(
+                sample_rate,
+                authored_channels,
+                params.lfe_index,
+                n_channels,
+                params.lfe_index,
+                &params.master.dynamic_eq,
+            )
+        } else {
+            DynamicEq::new(
+                sample_rate,
+                n_channels,
+                params.lfe_index,
+                &params.master.dynamic_eq,
+            )
+        };
+        let compressor = params.master.compressor.map(|c| {
+            StreamingCompressor::new(
+                c,
+                sample_rate,
+                if authored_channels > n_channels {
+                    n_channels
+                } else {
+                    authored_channels
+                },
+            )
+        });
         let unifier = build_unifier(sample_rate, n_channels, &params, 0);
         let decorrelator = build_decorrelator(sample_rate, n_channels, &params, 0);
         let limiter = params
             .master
             .limiter
-            .map(|l| StreamingLimiter::new(l, sample_rate, n_channels, params.lfe_index));
+            .map(|l| StreamingLimiter::new(l, sample_rate, post_channels, params.lfe_index));
         let total_frames = stems.iter().map(|s| s.len()).max().unwrap_or(0);
 
         let stem_gain = params
@@ -262,6 +317,11 @@ impl PreviewEngine {
             .collect();
         let master_gain =
             OnePole::new_at(GAIN_RAMP_MS, sample_rate as f64, params.master.output_gain);
+        let monitor_gain = OnePole::new_at(
+            GAIN_RAMP_MS,
+            sample_rate as f64,
+            params.master.monitor_output_gain,
+        );
 
         let decode_taps_override = None;
         let xtc_taps_override = None;
@@ -277,6 +337,7 @@ impl PreviewEngine {
             collapsed: vec![Vec::new(); n_channels.max(2)],
             stem_gain,
             master_gain,
+            monitor_gain,
             output,
             decode_taps_override,
             xtc_taps_override,
@@ -285,6 +346,9 @@ impl PreviewEngine {
             routes,
             panner_layout,
             stem_mix_routes,
+            authored_channels,
+            rendered_channels,
+            speaker_render_scratch: vec![Vec::new(); n_channels],
             measured_scales: Vec::new(),
             causal,
             dyn_eq,
@@ -292,10 +356,14 @@ impl PreviewEngine {
             unifier,
             decorrelator,
             limiter,
-            pre: Queue::new(n_channels),
-            post: Queue::new(n_channels),
+            pre: Queue::new(authored_channels),
+            post: Queue::new(post_channels),
             comp_gr: Queue::new(1),
-            unify_stride: UNIFY_STRIDE,
+            unify_stride: if authored_channels > n_channels {
+                UNIFY_STRIDE / 2
+            } else {
+                UNIFY_STRIDE
+            },
             unify_done: 0,
             emitted: 0,
             seek_target: None,
@@ -382,6 +450,9 @@ impl PreviewEngine {
     pub fn fork(&self) -> Self {
         let mut params = self.params.clone();
         params.master.output_gain = 1.0;
+        if self.authored_channels > params.speakers.len() {
+            params.output_mode = crate::stream::params::OutputMode::Native;
+        }
         for speaker in &mut params.speakers {
             speaker.muted = false;
         }
@@ -396,6 +467,22 @@ impl PreviewEngine {
         engine.xtc_taps_override = self.xtc_taps_override.clone();
         engine.measured_scales = self.measured_scales.clone();
         engine
+    }
+
+    pub(crate) fn measurement_monitor_stage(&self) -> Option<OutputStage> {
+        if self.authored_channels <= self.params.speakers.len()
+            || self.params.output_mode == crate::stream::params::OutputMode::Native
+        {
+            return None;
+        }
+        let mut params = self.params.clone();
+        params.soft_limit_threshold = 0.0;
+        Some(build_output(
+            self.sample_rate,
+            &params,
+            &self.decode_taps_override,
+            &self.xtc_taps_override,
+        ))
     }
 
     /// Render directly into the Web Audio sample format without allocating a
@@ -456,7 +543,7 @@ impl PreviewEngine {
     }
 
     fn non_lfe(&self) -> Vec<usize> {
-        (0..self.params.speakers.len())
+        (0..self.authored_channels)
             .filter(|i| self.params.lfe_index != Some(*i))
             .collect()
     }
@@ -480,13 +567,13 @@ impl PreviewEngine {
         for chain in &mut self.causal {
             chain.reset();
         }
-        self.limiter =
-            self.params.master.limiter.map(|l| {
-                StreamingLimiter::new(l, self.sample_rate, n_channels, self.params.lfe_index)
-            });
+        let post_channels = self.rendered_channels.iter().max().map_or(0, |i| i + 1);
+        self.limiter = self.params.master.limiter.map(|l| {
+            StreamingLimiter::new(l, self.sample_rate, post_channels, self.params.lfe_index)
+        });
         self.output.reset();
-        self.pre = Queue::new(n_channels);
-        self.post = Queue::new(n_channels);
+        self.pre = Queue::new(self.authored_channels);
+        self.post = Queue::new(post_channels);
         self.comp_gr = Queue::new(1);
         self.limiter_gr.clear();
         self.rebuild_loudness_meter();

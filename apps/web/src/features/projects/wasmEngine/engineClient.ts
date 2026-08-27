@@ -33,15 +33,13 @@ export type DspEngineCallbacks = {
    * The exact whole-programme measurement landed, refining the fast excerpt
    * result `measure()` already resolved with. See `DspEngineClient.measure`.
    */
-  onMeasured?: (result: { lkfs: number; dbtp: number }, requestId: number) => void;
+  onMeasured?: (result: { lkfs: number; dbtp: number; monitorLkfs?: number; monitorDbtp?: number }, requestId: number) => void;
   onError?: (message: string) => void;
 };
 
 const WASM_URL = "/wasm/upmixer_dsp.wasm";
 const WORKLET_URL = "/dsp.worklet.js";
 const PROCESSOR_NAME = "upmixer-dsp-processor";
-
-let modulePromise: Promise<WebAssembly.Module> | null = null;
 
 // An AudioWorkletGlobalScope has no TextEncoder, so the parameter block is
 // encoded here and the bytes are transferred.
@@ -51,17 +49,14 @@ function encodeParams(params: DspEngineParams): Uint8Array {
   return PARAM_ENCODER.encode(JSON.stringify(params));
 }
 
-/** Compile once per page; the Module is structured-cloneable and reusable. */
+/** Fetch a matching DSP binary whenever a new audio runtime is created. */
 export function loadDspModule(): Promise<WebAssembly.Module> {
-  if (!modulePromise) {
-    modulePromise = fetch(WASM_URL).then((response) => {
-      if (!response.ok) {
-        throw new Error(`Failed to fetch ${WASM_URL}: ${response.status}`);
-      }
-      return WebAssembly.compileStreaming(response);
-    });
-  }
-  return modulePromise;
+  return fetch(WASM_URL, { cache: "no-store" }).then((response) => {
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${WASM_URL}: ${response.status}`);
+    }
+    return WebAssembly.compileStreaming(response);
+  });
 }
 
 export class DspEngineClient {
@@ -70,7 +65,7 @@ export class DspEngineClient {
   /** Resolves once the processor has instantiated the wasm. */
   readonly ready: Promise<string>;
 
-  private pendingMeasure: ((result: { lkfs: number; dbtp: number } | null) => void) | null = null;
+  private pendingMeasure: ((result: { lkfs: number; dbtp: number; monitorLkfs?: number; monitorDbtp?: number } | null) => void) | null = null;
   private nextSeekId = 0;
   private readonly pendingSeeks = new Map<number, () => void>();
   /** Latest params awaiting the next coalesced `updateParams` post. */
@@ -96,9 +91,10 @@ export class DspEngineClient {
     channelCount: number,
     callbacks: DspEngineCallbacks = {},
   ): Promise<DspEngineClient> {
+    const workletUrl = `${WORKLET_URL}?v=${Date.now()}`;
     const [module] = await Promise.all([
       loadDspModule(),
-      ctx.audioWorklet.addModule(WORKLET_URL),
+      ctx.audioWorklet.addModule(workletUrl),
     ]);
 
     const node = new AudioWorkletNode(ctx, PROCESSOR_NAME, {
@@ -141,7 +137,16 @@ export class DspEngineClient {
           callbacks.onMeasureProgress?.(Number(message.progress));
           break;
         case "measured": {
-          const result = { lkfs: Number(message.lkfs), dbtp: Number(message.dbtp) };
+          const lkfs = Number(message.lkfs);
+          const dbtp = Number(message.dbtp);
+          const monitorLkfs = Number(message.monitorLkfs);
+          const monitorDbtp = Number(message.monitorDbtp);
+          const result = {
+            lkfs,
+            dbtp,
+            monitorLkfs: Number.isFinite(monitorLkfs) ? monitorLkfs : lkfs,
+            monitorDbtp: Number.isFinite(monitorDbtp) ? monitorDbtp : dbtp,
+          };
           if (message.stage === "exact") {
             callbacks.onMeasured?.(result, Number(message.requestId));
           } else {
@@ -281,7 +286,7 @@ export class DspEngineClient {
    * `onMeasured` once it lands, minutes later on a long track. Resolves with
    * `null` if another measurement supersedes it before the fast pass lands.
    */
-  measure(weights: number[] = [], requestId = 0): Promise<{ lkfs: number; dbtp: number } | null> {
+  measure(weights: number[] = [], requestId = 0): Promise<{ lkfs: number; dbtp: number; monitorLkfs?: number; monitorDbtp?: number } | null> {
     this.pendingMeasure?.(null);
     return new Promise((resolve) => {
       this.pendingMeasure = resolve;
@@ -339,7 +344,7 @@ export class DspEngineClient {
   }
 
   /** Called from the port handler; not part of the public surface. */
-  resolveMeasure(result: { lkfs: number; dbtp: number } | null): void {
+  resolveMeasure(result: { lkfs: number; dbtp: number; monitorLkfs?: number; monitorDbtp?: number } | null): void {
     this.pendingMeasure?.(result);
     this.pendingMeasure = null;
   }

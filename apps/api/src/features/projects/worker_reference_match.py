@@ -243,7 +243,7 @@ class ReferenceMatchMixin:
             self._prepare_layout_reference_match(project_id, layout)
 
     def _prepare_layout_reference_match(self, project_id: str, layout: str) -> None:
-        """Mix one layout's bed and persist its reference-match curve."""
+        """Render one layout's programme and persist its reference-match curve."""
         with self.sessions() as session:
             project = get_project(session, project_id)
             if not project or not project.prepared_stems:

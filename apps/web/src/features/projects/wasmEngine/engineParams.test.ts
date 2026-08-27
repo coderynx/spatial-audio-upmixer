@@ -144,11 +144,18 @@ describe("buildEngineParams", () => {
     expect(bedTotal).toBeCloseTo(1 - bass.lfe_send, 12);
   });
 
-  it("arms the look-ahead limiter only on the native path", () => {
+  it("arms the look-ahead limiter before every render path", () => {
     const native = buildEngineParams(input({ outputMode: "native" })).master as {
       limiter: unknown;
     };
     expect(native.limiter).not.toBeNull();
+    const binaural = buildEngineParams(input()).master as { limiter: unknown };
+    expect(binaural.limiter).not.toBeNull();
+    const objects = buildEngineParams(input({ stems: [{
+      id: "V", routing: {}, objectMode: "mono",
+      objectPlacement: { azimuth_deg: 0, elevation_deg: 30, width_deg: 0, spread_deg: 0 },
+    }] })).master as { limiter: unknown };
+    expect(objects.limiter).not.toBeNull();
     expect(buildEngineParams(input()).soft_limit_threshold).toBe(constants.softLimitThreshold);
     expect(buildEngineParams(input({ outputMode: "native" })).soft_limit_threshold).toBe(0);
   });

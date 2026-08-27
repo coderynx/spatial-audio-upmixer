@@ -28,7 +28,10 @@ let capturedCallbacks: Record<string, ((...args: never[]) => void) | undefined> 
 // Lets a test hold `measure()` open to assert playback stays gated while
 // calibration is still in flight; null (the default) resolves immediately.
 let measureGate: Promise<void> | null = null;
-let measureResult = { lkfs: -18, dbtp: -2 };
+let measureResult: { lkfs: number; dbtp: number; monitorLkfs?: number; monitorDbtp?: number } = {
+  lkfs: -18,
+  dbtp: -2,
+};
 
 vi.mock("./wasmEngine/engineClient", () => ({
   DspEngineClient: {
@@ -211,13 +214,15 @@ describe("useStemPreview parameter binding", () => {
     expect(params.master.bass).toBeNull();
   });
 
-  it("arms the look-ahead limiter only on the native path", async () => {
+  it("arms the look-ahead limiter before every output path", async () => {
     await renderPreview({ outputMode: "native" });
     const native = sentParams.at(-1) as { master: { limiter: unknown }; soft_limit_threshold: number };
     expect(native.master.limiter).not.toBeNull();
-    // Native output has the limiter as its safety net, so it does not also
-    // soft-limit; the collapse paths do the reverse.
     expect(native.soft_limit_threshold).toBe(0);
+    await renderPreview();
+    const binaural = sentParams.at(-1) as { master: { limiter: unknown }; soft_limit_threshold: number };
+    expect(binaural.master.limiter).not.toBeNull();
+    expect(binaural.soft_limit_threshold).toBe(TEST_ENGINE_CONSTANTS.softLimitThreshold);
   });
 });
 
@@ -412,6 +417,24 @@ describe("useStemPreview loudness calibration", () => {
     });
     const params = sentParams.at(-1) as { master: { output_gain: number } };
     expect(params.master.output_gain).toBeCloseTo(1, 6);
+  });
+
+  it("corrects an object renderer after preserving the speaker-master gain", async () => {
+    measureResult = { lkfs: -20, dbtp: -6, monitorLkfs: -10, monitorDbtp: -2 };
+    await renderPreview({
+      mix: {
+        stem_object_mode: { Vocals: "linked-stereo" },
+        stem_placement: {
+          Vocals: { azimuth_deg: 0, elevation_deg: 30, width_deg: 30, spread_deg: 0 },
+        },
+      },
+      mastering: { loudness: { normalize: true, target: -18 } },
+    });
+    const params = sentParams.at(-1) as {
+      master: { output_gain: number; monitor_output_gain: number };
+    };
+    expect(20 * Math.log10(params.master.output_gain)).toBeCloseTo(2, 6);
+    expect(20 * Math.log10(params.master.monitor_output_gain)).toBeCloseTo(-10, 6);
   });
 
   it("re-measures when the spatial profile changes, not just the output mode", async () => {

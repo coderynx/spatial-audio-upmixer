@@ -177,6 +177,9 @@ pub struct MasterParams {
     /// Scalar loudness/true-peak correction measured by the precompute pass.
     #[serde(default = "unit_scale")]
     pub output_gain: f64,
+    /// Renderer-only correction for an object-authored collapsed monitor.
+    #[serde(default = "unit_scale")]
+    pub monitor_output_gain: f64,
 }
 
 /// The whole engine configuration.

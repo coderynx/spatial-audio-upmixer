@@ -291,7 +291,9 @@ after this gain correction — limiting the raw pre-gain HRTF sum instead bakes
 in audible saturation no later stage can undo, which is what produced
 distorted output on all three profiles (including `flat`) before this
 ordering was fixed. The same ceiling and ordering runs in the preview through
-the shared core's `stream::master`.
+the shared core. Object-authored previews keep speaker-master correction on
+the authored sources for ADM parity and apply the independently measured
+collapse correction only to the monitor output.
 
 ---
 

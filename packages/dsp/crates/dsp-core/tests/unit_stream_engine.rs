@@ -300,7 +300,7 @@ mod measure {
                 guard += 1;
                 assert!(guard < 100_000, "slice {slice} never finished");
             }
-            let (lkfs, dbtp) = result.expect("measured");
+            let [lkfs, dbtp, _, _] = result.expect("measured");
             assert!((lkfs - want.0).abs() < 1e-9, "slice {slice}: {lkfs} vs {want:?}");
             assert!((dbtp - want.1).abs() < 1e-9, "slice {slice}: {dbtp} vs {want:?}");
         }
@@ -357,7 +357,8 @@ mod measure {
             guard += 1;
             assert!(guard < 100_000, "never finished");
         }
-        result.expect("measured")
+        let [lkfs, dbtp, _, _] = result.expect("measured");
+        (lkfs, dbtp)
     }
 
     #[test]

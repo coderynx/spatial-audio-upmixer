@@ -268,7 +268,7 @@ function run({ label, mode, decode, kind, ambient, objectMode, downmixLock, prod
   if (kind === "idle-exact" || kind === "idle-fast") {
     weightPtr = wasm.dsp_alloc(16);
     new Float64Array(wasm.memory.buffer, weightPtr, 2).set([1, 1]);
-    resultPtr = wasm.dsp_alloc(16);
+    resultPtr = wasm.dsp_alloc(32);
     pass = kind === "idle-exact"
       ? wasm.dsp_measure_begin(engine, weightPtr, 2)
       : wasm.dsp_measure_begin_excerpts(
@@ -333,7 +333,7 @@ function run({ label, mode, decode, kind, ambient, objectMode, downmixLock, prod
   }
   if (pass) wasm.dsp_measure_free(pass);
   if (weightPtr) wasm.dsp_free(weightPtr, 16);
-  if (resultPtr) wasm.dsp_free(resultPtr, 16);
+  if (resultPtr) wasm.dsp_free(resultPtr, 32);
   wasm.dsp_free(out, CHANNELS.length * QUANTUM * 4);
   wasm.dsp_engine_free(engine);
 

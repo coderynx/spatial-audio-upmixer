@@ -178,16 +178,29 @@ pub fn bass_control(
     sample_rate: u32,
     p: &BassParams,
 ) {
-    let nyq = sample_rate as f64 / 2.0;
-    let bed_idx = non_lfe(bed.len(), lfe);
+    let spatial_channels = bed.len();
+    bass_control_sources(bed, lfe, spatial_channels, lf_targets, sample_rate, p);
+}
 
-    if !bed_idx.is_empty() && (p.sub_gain_db != 0.0 || p.mid_gain_db != 0.0) {
+pub fn bass_control_sources(
+    bed: &mut super::Bed,
+    lfe: Option<usize>,
+    spatial_channels: usize,
+    lf_targets: &[(usize, f64)],
+    sample_rate: u32,
+    p: &BassParams,
+) {
+    let nyq = sample_rate as f64 / 2.0;
+    let all_idx = non_lfe(bed.len(), lfe);
+    let bed_idx = non_lfe(spatial_channels.min(bed.len()), lfe);
+
+    if !all_idx.is_empty() && (p.sub_gain_db != 0.0 || p.mid_gain_db != 0.0) {
         let sos_sub_lp = butter_sos(2, p.sub_cutoff_hz / nyq, BandType::Low);
         let sos_mid_lp = butter_sos(2, p.mid_cutoff_hz / nyq, BandType::Low);
         let sos_mid_hp = butter_sos(2, p.sub_cutoff_hz / nyq, BandType::High);
         let sub_lin = 10.0_f64.powf(p.sub_gain_db / 20.0);
         let mid_lin = 10.0_f64.powf(p.mid_gain_db / 20.0);
-        for &i in &bed_idx {
+        for &i in &all_idx {
             let mut shaped = std::mem::take(&mut bed[i]);
             if p.sub_gain_db != 0.0 {
                 shaped = apply_band_gain(&shaped, sub_lin, &sos_sub_lp, None);

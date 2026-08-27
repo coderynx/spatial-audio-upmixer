@@ -90,6 +90,36 @@ def test_adm_limiter_links_bed_and_objects_to_the_rendered_peak():
     np.testing.assert_allclose(mastered["C"], linked["0"])
 
 
+def test_object_tracks_receive_mastering_before_height_rendering():
+    fmt = FORMAT_MAP["5.1.2"]
+    n_samples = _SR
+    bed = {label.value: np.zeros(n_samples) for label in fmt.channels}
+    objects = [
+        AdmObject("Left", np.full(n_samples, 0.5), (0.0, 0.8, 0.6)),
+        AdmObject("Right", np.full(n_samples, 0.5), (0.0, 0.8, 0.6)),
+    ]
+    linked = {str(index): obj.audio for index, obj in enumerate(objects)}
+
+    def render(channels):
+        return render_adm_programme(
+            channels,
+            fmt,
+            [replace(obj, audio=linked[str(index)]) for index, obj in enumerate(objects)],
+        )
+
+    MasteringChain(UpmixConfig(
+        output_format="5.1.2",
+        output_type="adm-bwf",
+        loudness_normalize=False,
+        loudness_max_tp=0.0,
+        mastering_clip_enabled=True,
+        mastering_clip_db=12.0,
+    )).process(bed, _SR, fmt, linked, render)
+
+    assert max(np.max(np.abs(audio)) for audio in linked.values()) < 0.5
+    assert max(np.max(np.abs(audio)) for audio in render(bed).values()) < 1.0
+
+
 def test_adm_pipeline_reports_rendered_qc_without_copying_objects_to_bed(tmp_path):
     n_samples = 4 * _SR
     time = np.arange(n_samples) / _SR
@@ -111,11 +141,16 @@ def test_adm_pipeline_reports_rendered_qc_without_copying_objects_to_bed(tmp_pat
         output_type="adm-bwf",
         mastering_clip_enabled=False,
     ))
+    captured = {}
     with patch(
         "upmixer.separation.stem_pipeline_exec.execute_plan",
         side_effect=fake_execute_plan,
     ):
-        result = pipeline.process_file(str(source), str(output))
+        result = pipeline.process_file(
+            str(source),
+            str(output),
+            pre_master_hook=lambda channels, _sr, _fmt: captured.update(channels),
+        )
     pipeline.close()
 
     delivered, _ = sf.read(output, dtype="float64", always_2d=True)
@@ -131,3 +166,4 @@ def test_adm_pipeline_reports_rendered_qc_without_copying_objects_to_bed(tmp_pat
     )
     assert np.max(np.abs(delivered[:, :_FMT.n_channels])) < 2.0 ** -21
     assert np.max(np.abs(delivered[:, _FMT.n_channels:])) > 0.01
+    assert max(np.max(np.abs(audio)) for audio in captured.values()) > 0.01

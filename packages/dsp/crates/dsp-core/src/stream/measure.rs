@@ -21,6 +21,7 @@ use crate::loudness_stream::{true_peak_dbtp, IntegratedLoudnessMeter, TruePeakMe
 use crate::spatial::downmix::{FoldTo51, FOLD_51_WEIGHTS};
 
 use super::engine::PreviewEngine;
+use super::output::OutputStage;
 
 /// One excerpt to measure: `[start, end)` of the programme, plus the frames
 /// immediately before `start` to render and discard so filter state (Haas
@@ -29,6 +30,14 @@ struct Excerpt {
     start: usize,
     end: usize,
     preroll: usize,
+}
+
+struct MonitorMeasurement {
+    output: OutputStage,
+    loudness: IntegratedLoudnessMeter,
+    peaks: Vec<TruePeakMeter>,
+    bed: Vec<Vec<f64>>,
+    rendered: Vec<Vec<f64>>,
 }
 
 /// A measurement in progress, over the whole programme or a set of excerpts.
@@ -42,10 +51,11 @@ pub struct MeasurementPass {
     fold: Option<FoldTo51>,
     folded: Vec<Vec<f64>>,
     scratch: Vec<f64>,
+    monitor: Option<MonitorMeasurement>,
     measured: usize,
     prepared: usize,
     total: usize,
-    result: Option<(f64, f64)>,
+    result: Option<[f64; 4]>,
     schedule: Vec<Excerpt>,
     excerpt_index: usize,
     skip: usize,
@@ -100,10 +110,17 @@ impl MeasurementPass {
         }
         let channels = engine.output_channels();
         let sample_rate = engine.sample_rate();
+        let monitor = live.measurement_monitor_stage().map(|output| MonitorMeasurement {
+            output,
+            loudness: IntegratedLoudnessMeter::new(&[1.0, 1.0], sample_rate),
+            peaks: (0..2).map(|_| TruePeakMeter::new()).collect(),
+            bed: vec![Vec::new(); channels],
+            rendered: vec![Vec::new(); 2],
+        });
         let fold = engine.measurement_fold();
         let meter_weights: Vec<f64> = match &fold {
             Some(_) => FOLD_51_WEIGHTS.to_vec(),
-            None => (0..channels).map(|i| weights.get(i).copied().unwrap_or(1.0)).collect(),
+            None => engine.measurement_weights(weights),
         };
         let mut pass = Self {
             loudness: IntegratedLoudnessMeter::new(&meter_weights, sample_rate),
@@ -113,6 +130,7 @@ impl MeasurementPass {
             fold,
             folded: Vec::new(),
             scratch: Vec::new(),
+            monitor,
             measured: 0,
             prepared: 0,
             total,
@@ -131,12 +149,15 @@ impl MeasurementPass {
     fn enter_current_excerpt(&mut self) {
         let Some(excerpt) = self.schedule.get(self.excerpt_index) else { return };
         self.engine.jump_to(excerpt.start.saturating_sub(excerpt.preroll));
+        if let Some(monitor) = &mut self.monitor {
+            monitor.output.reset();
+        }
         self.skip = excerpt.preroll;
     }
 
     /// Measure up to `frames` more. Returns the result once every excerpt (or
     /// the whole programme) is exhausted, and keeps returning it afterwards.
-    pub fn advance(&mut self, frames: usize) -> Option<(f64, f64)> {
+    pub fn advance(&mut self, frames: usize) -> Option<[f64; 4]> {
         if let Some(result) = self.result {
             return Some(result);
         }
@@ -158,6 +179,26 @@ impl MeasurementPass {
         if written > 0 {
             let skip = self.skip.min(written);
             self.skip -= skip;
+            if let Some(monitor) = &mut self.monitor {
+                for (channel, bed) in monitor.bed.iter_mut().enumerate() {
+                    bed.clear();
+                    bed.extend_from_slice(&self.scratch[channel * frames..channel * frames + written]);
+                }
+                monitor
+                    .output
+                    .process(&monitor.bed, written, 1.0, &mut monitor.rendered);
+                if skip < written {
+                    let refs: Vec<&[f64]> = monitor
+                        .rendered
+                        .iter()
+                        .map(|channel| &channel[skip..written])
+                        .collect();
+                    monitor.loudness.push(&refs);
+                    for (meter, slice) in monitor.peaks.iter_mut().zip(refs) {
+                        meter.push(slice);
+                    }
+                }
+            }
             if skip < written {
                 let slices: Vec<&[f64]> = (0..self.channels)
                     .map(|c| &self.scratch[c * frames + skip..c * frames + written])
@@ -194,7 +235,17 @@ impl MeasurementPass {
             || (!self.schedule.is_empty() && self.excerpt_index >= self.schedule.len());
         if done {
             let peaks: Vec<f64> = self.peaks.iter_mut().map(|m| m.finish()).collect();
-            self.result = Some((self.loudness.finish(), true_peak_dbtp(&peaks)));
+            let lkfs = self.loudness.finish();
+            let dbtp = true_peak_dbtp(&peaks);
+            let (monitor_lkfs, monitor_dbtp) = self.monitor.as_mut().map_or(
+                (lkfs, dbtp),
+                |monitor| {
+                    let peaks: Vec<f64> =
+                        monitor.peaks.iter_mut().map(|meter| meter.finish()).collect();
+                    (monitor.loudness.finish(), true_peak_dbtp(&peaks))
+                },
+            );
+            self.result = Some([lkfs, dbtp, monitor_lkfs, monitor_dbtp]);
         }
         self.result
     }

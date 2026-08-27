@@ -1,12 +1,14 @@
 //! Live parameter edits and the rebuilds a topology change forces.
 
+use super::mix::build_stem_mix_routes;
 use super::{
-    build_decorrelator, build_output, build_stem_mix_routes, build_unifier, PreviewEngine,
+    build_decorrelator, build_output, build_unifier, mastering_topology, PreviewEngine,
     GAIN_RAMP_MS,
 };
 use crate::mastering::dyneq::DynamicEq;
 use crate::spatial::panner::PannerLayout;
 use crate::stream::limiter::StreamingLimiter;
+use crate::stream::master::CausalChain;
 use crate::stream::params::{EngineParams, SendParams, StemParams};
 use crate::stream::routing::StemRouteState;
 use crate::stream::state::{OnePole, StreamingCompressor};
@@ -60,6 +62,18 @@ fn routing_changed(old: &EngineParams, new: &EngineParams, firs_changed: bool) -
             || a.object_mode != b.object_mode
             || a.object_placement != b.object_placement
     })
+}
+
+fn object_topology(params: &EngineParams) -> Vec<usize> {
+    params
+        .stems
+        .iter()
+        .map(|stem| match (stem.object_mode, stem.object_placement) {
+            (Some(crate::stream::params::ObjectMode::LinkedStereo), Some(_)) => 2,
+            (Some(crate::stream::params::ObjectMode::Mono), Some(_)) => 1,
+            _ => 0,
+        })
+        .collect()
 }
 
 fn master_changed_without_firs(
@@ -165,7 +179,8 @@ impl PreviewEngine {
         }
 
         let topology_changed = old.speakers.len() != self.params.speakers.len()
-            || old.lfe_index != self.params.lfe_index;
+            || old.lfe_index != self.params.lfe_index
+            || object_topology(&old) != object_topology(&self.params);
         if topology_changed {
             let position = self.emitted;
             self.rebuild_for_new_topology();
@@ -224,7 +239,8 @@ impl PreviewEngine {
             }
         }
 
-        let n_channels = self.params.speakers.len();
+        let authored = self.authored_channels;
+        let speakers = self.params.speakers.len();
         // Rebuilt only when the band list actually moved: a rebuild restarts
         // every detector envelope cold.
         if !self
@@ -232,20 +248,38 @@ impl PreviewEngine {
             .as_ref()
             .is_some_and(|s| s.matches(&self.params.master.dynamic_eq))
         {
-            self.dyn_eq = DynamicEq::new(
-                self.sample_rate,
-                n_channels,
-                self.params.lfe_index,
-                &self.params.master.dynamic_eq,
-            );
+            self.dyn_eq = if authored > speakers {
+                DynamicEq::new_linked(
+                    self.sample_rate,
+                    authored,
+                    self.params.lfe_index,
+                    speakers,
+                    self.params.lfe_index,
+                    &self.params.master.dynamic_eq,
+                )
+            } else {
+                DynamicEq::new(
+                    self.sample_rate,
+                    speakers,
+                    self.params.lfe_index,
+                    &self.params.master.dynamic_eq,
+                )
+            };
         }
         match self.params.master.compressor {
             None => self.compressor = None,
             Some(c) => match &mut self.compressor {
                 Some(existing) => existing.retune(c, self.sample_rate),
                 None => {
-                    self.compressor =
-                        Some(StreamingCompressor::new(c, self.sample_rate, n_channels))
+                    self.compressor = Some(StreamingCompressor::new(
+                        c,
+                        self.sample_rate,
+                        if authored > speakers {
+                            speakers
+                        } else {
+                            authored
+                        },
+                    ))
                 }
             },
         }
@@ -253,7 +287,8 @@ impl PreviewEngine {
         let old_unify_hz = old.master.bass.and_then(|bass| bass.unify_hz);
         let new_unify_hz = self.params.master.bass.and_then(|bass| bass.unify_hz);
         let old_unifier_active = old_unify_hz.is_some() && !old.master.lf_targets.is_empty();
-        let new_unifier_active = new_unify_hz.is_some() && !self.params.master.lf_targets.is_empty();
+        let new_unifier_active =
+            new_unify_hz.is_some() && !self.params.master.lf_targets.is_empty();
         if !new_unifier_active {
             self.unifier = None;
         } else if old_unifier_active && old_unify_hz == new_unify_hz {
@@ -261,22 +296,26 @@ impl PreviewEngine {
                 unifier.retune(bass, self.params.master.lf_targets.clone());
             } else {
                 self.unifier =
-                    build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
+                    build_unifier(self.sample_rate, speakers, &self.params, self.unify_done);
             }
         } else {
-            self.unifier =
-                build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
+            self.unifier = build_unifier(self.sample_rate, speakers, &self.params, self.unify_done);
         }
         if decorrelator_topology_changed(old.master.bass, self.params.master.bass) {
             self.decorrelator =
-                build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);
+                build_decorrelator(self.sample_rate, speakers, &self.params, self.unify_done);
         } else if let (Some(decorrelator), Some(bass)) =
             (&mut self.decorrelator, self.params.master.bass)
         {
             decorrelator.retune_amount(bass.decorrelate);
-        } else if self.params.master.bass.is_some_and(|bass| bass.decorrelate > 0.0) {
+        } else if self
+            .params
+            .master
+            .bass
+            .is_some_and(|bass| bass.decorrelate > 0.0)
+        {
             self.decorrelator =
-                build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);
+                build_decorrelator(self.sample_rate, speakers, &self.params, self.unify_done);
             if let Some(decorrelator) = &mut self.decorrelator {
                 decorrelator.fade_in();
             }
@@ -286,7 +325,12 @@ impl PreviewEngine {
             || (!firs_changed && master_changed_without_firs(&old.master, &self.params.master))
         {
             for chain in &mut self.causal {
-                chain.retune(self.sample_rate, &old.master, &self.params.master, firs_changed);
+                chain.retune(
+                    self.sample_rate,
+                    &old.master,
+                    &self.params.master,
+                    firs_changed,
+                );
             }
         }
 
@@ -296,7 +340,7 @@ impl PreviewEngine {
                 self.limiter = Some(StreamingLimiter::new(
                     l,
                     self.sample_rate,
-                    self.params.speakers.len(),
+                    self.rendered_channels.iter().max().map_or(0, |i| i + 1),
                     self.params.lfe_index,
                 ));
             }
@@ -336,18 +380,48 @@ impl PreviewEngine {
             .collect();
         self.panner_layout = PannerLayout::new(&speaker_names);
         self.rebuild_routes();
+        let (authored, rendered, _) =
+            mastering_topology(n_channels, self.params.lfe_index, &self.stem_mix_routes);
+        self.authored_channels = authored;
+        self.rendered_channels = rendered;
+        self.causal = (0..authored)
+            .map(|i| {
+                CausalChain::new(
+                    self.sample_rate,
+                    &self.params.master,
+                    self.params.lfe_index == Some(i),
+                )
+            })
+            .collect();
         self.lfe_bus.retune(self.sample_rate, &self.params.sends);
-        self.dyn_eq = DynamicEq::new(
-            self.sample_rate,
-            n_channels,
-            self.params.lfe_index,
-            &self.params.master.dynamic_eq,
-        );
-        self.compressor = self
-            .params
-            .master
-            .compressor
-            .map(|c| StreamingCompressor::new(c, self.sample_rate, n_channels));
+        self.dyn_eq = if authored > n_channels {
+            DynamicEq::new_linked(
+                self.sample_rate,
+                authored,
+                self.params.lfe_index,
+                n_channels,
+                self.params.lfe_index,
+                &self.params.master.dynamic_eq,
+            )
+        } else {
+            DynamicEq::new(
+                self.sample_rate,
+                n_channels,
+                self.params.lfe_index,
+                &self.params.master.dynamic_eq,
+            )
+        };
+        self.compressor = self.params.master.compressor.map(|c| {
+            StreamingCompressor::new(
+                c,
+                self.sample_rate,
+                if authored > n_channels {
+                    n_channels
+                } else {
+                    authored
+                },
+            )
+        });
         self.unifier = build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
         self.decorrelator =
             build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);

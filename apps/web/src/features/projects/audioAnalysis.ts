@@ -19,7 +19,12 @@ export function applyTruePeakCeiling(preGainTpDbtp: number, loudnessGain: number
 }
 
 /** One programme's BS.1770 measurement: integrated loudness and true peak. */
-export type Measured = { lkfs: number; dbtp: number };
+export type Measured = {
+  lkfs: number;
+  dbtp: number;
+  monitorLkfs?: number;
+  monitorDbtp?: number;
+};
 export type DeliveryTarget = { target_lkfs: number; max_tp_dbtp: number };
 
 /** The correction gain a measurement asks for: the loudness move, then the

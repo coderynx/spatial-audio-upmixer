@@ -143,6 +143,8 @@ class BusCompressor:
         self,
         channels: dict[str, np.ndarray],
         lfe_key: str = "LFE",
+        detector_channels: dict[str, np.ndarray] | None = None,
+        detector_lfe_key: str = "LFE",
     ) -> dict[str, np.ndarray]:
         """Apply linked-sidechain bus compression to all channels except *lfe_key*.
 
@@ -152,6 +154,9 @@ class BusCompressor:
         Args:
             channels: Dict channel_name → 1-D float array.
             lfe_key:  Channel name to bypass (default ``"LFE"``).
+            detector_channels: Optional rendered speaker programme that drives
+                the gain applied to ``channels``.
+            detector_lfe_key: LFE name in ``detector_channels``.
 
         Returns:
             New channel dict with gain reduction applied.  LFE returned
@@ -161,9 +166,7 @@ class BusCompressor:
         if not [n for n in names if n != lfe_key] or self._ratio <= 1.0:
             return channels
 
-        compressed, max_gr, avg_gr = upmixer_dsp.bus_compress(
-            [np.ascontiguousarray(channels[name], dtype=np.float64) for name in names],
-            names.index(lfe_key) if lfe_key in channels else None,
+        args = (
             self._sr,
             self._threshold,
             self._ratio,
@@ -173,6 +176,24 @@ class BusCompressor:
             self._makeup,
             self._sidechain_hpf,
         )
+        target = [np.ascontiguousarray(channels[name], dtype=np.float64) for name in names]
+        if detector_channels is None:
+            compressed, max_gr, avg_gr = upmixer_dsp.bus_compress(
+                target, names.index(lfe_key) if lfe_key in channels else None, *args,
+            )
+        else:
+            detector_names = list(detector_channels)
+            compressed, max_gr, avg_gr = upmixer_dsp.bus_compress_linked(
+                target,
+                names.index(lfe_key) if lfe_key in channels else None,
+                [
+                    np.ascontiguousarray(detector_channels[name], dtype=np.float64)
+                    for name in detector_names
+                ],
+                detector_names.index(detector_lfe_key)
+                if detector_lfe_key in detector_channels else None,
+                *args,
+            )
         self.gr_peak_db = max_gr
         self.gr_avg_db = avg_gr
 

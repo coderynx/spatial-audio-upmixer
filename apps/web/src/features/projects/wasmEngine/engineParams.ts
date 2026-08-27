@@ -97,6 +97,8 @@ export type MasterMix = {
   referenceGain?: number;
   /** Loudness/true-peak correction from the offline precompute pass. */
   outputGain?: number;
+  /** Object renderer correction, applied only after speaker collapse. */
+  monitorOutputGain?: number;
   limiterCeilingDbtp?: number;
 };
 
@@ -221,33 +223,30 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
             decorr_slow_ms: c.decorrSlowMs,
           }
         : null,
-      // On the bed in every output mode, matching `MasteringChain` — unlike
-      // the limiter below, which is native-only.
+      // Runs on authored bed/object sources before any speaker render.
       clip: master.clip
         ? { ceiling_dbtp: master.limiterCeilingDbtp ?? -1, ...master.clip }
         : null,
-      limiter:
-        outputMode === "native"
-          ? {
-              ceiling_dbtp: master.limiterCeilingDbtp ?? -1,
-              lookahead_ms: c.limiterLookaheadMs,
-              release_ms: c.limiterReleaseMs,
-              safety_margin_db: c.safetyMarginDb,
-            }
-          : null,
+      limiter: {
+        ceiling_dbtp: master.limiterCeilingDbtp ?? -1,
+        lookahead_ms: c.limiterLookaheadMs,
+        release_ms: c.limiterReleaseMs,
+        safety_margin_db: c.safetyMarginDb,
+      },
       lf_targets:
         bass && bass.unify_hz !== null
           ? resolveLfTargets(speakers, bass, c.lfSpreads, c.lfeGain)
           : [],
       output_gain: master.outputGain ?? 1,
+      monitor_output_gain: master.monitorOutputGain ?? 1,
     },
     output_mode: outputMode,
     // The decode/XTC banks travel over `DspEngineClient.setDecodeTaps` /
     // `setXtcTaps` instead — see those methods' doc comments — so this block
     // never carries them.
     voicing: voicing ? voicingToWire(voicing) : null,
-    // Only the collapse paths soft-limit; native output has the look-ahead
-    // limiter as its safety net instead.
+    // Collapse paths still need their monitor-output safety stage after the
+    // authored-source limiter and speaker renderer.
     soft_limit_threshold: outputMode === "native" ? 0 : c.softLimitThreshold,
     bypass_mastering: input.bypassMastering ?? false,
     meter_weights: input.meterWeights ?? [],

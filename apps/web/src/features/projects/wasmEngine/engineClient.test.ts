@@ -25,8 +25,9 @@ class FakeAudioWorkletNode {
   disconnect() {}
 }
 
+const addModule = vi.fn(async () => {});
 const context = {
-  audioWorklet: { addModule: async () => {} },
+  audioWorklet: { addModule },
 } as unknown as BaseAudioContext;
 
 async function makeClient() {
@@ -35,6 +36,7 @@ async function makeClient() {
 }
 
 beforeEach(() => {
+  addModule.mockClear();
   vi.stubGlobal("AudioWorkletNode", FakeAudioWorkletNode);
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true })));
   vi.stubGlobal("WebAssembly", { ...WebAssembly, compileStreaming: async () => ({}) });
@@ -45,6 +47,13 @@ afterEach(() => {
 });
 
 describe("DspEngineClient message ordering", () => {
+  it("loads a fresh matching wasm and worklet pair", async () => {
+    await makeClient();
+
+    expect(fetch).toHaveBeenCalledWith("/wasm/upmixer_dsp.wasm", { cache: "no-store" });
+    expect(addModule).toHaveBeenCalledWith(expect.stringMatching(/^\/dsp\.worklet\.js\?v=\d+$/));
+  });
+
   it("flushes the coalesced parameter update before starting a measurement", async () => {
     const { client, port } = await makeClient();
 

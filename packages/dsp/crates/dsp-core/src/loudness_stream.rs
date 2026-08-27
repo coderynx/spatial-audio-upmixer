@@ -55,7 +55,19 @@ impl ChannelGate {
             // The block ends at the newest sample and spans `block_len`; the
             // offline pass sums exactly this window with `pairwise_sum`.
             let start = self.squares.len() - self.block_len;
-            blocks.push(pairwise_sum(&self.squares[start..]) * scale);
+            let window = &self.squares[start..];
+            let sum = if self.block_len % self.hop_len == 0 {
+                let hops_per_block = self.block_len / self.hop_len;
+                let hop_sums: Vec<f64> = window
+                    .chunks_exact(self.hop_len)
+                    .map(pairwise_sum)
+                    .collect();
+                debug_assert_eq!(hop_sums.len(), hops_per_block);
+                pairwise_sum(&hop_sums)
+            } else {
+                pairwise_sum(window)
+            };
+            blocks.push(sum * scale);
             self.until_block = self.hop_len;
             // Only the overlap of the next block needs keeping.
             let keep = self.block_len - self.hop_len;

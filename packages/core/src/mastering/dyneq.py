@@ -128,6 +128,8 @@ def apply_dynamic_eq(
     sample_rate: int,
     bands: list[dict],
     lfe_key: str = "LFE",
+    detector_channels: dict[str, np.ndarray] | None = None,
+    detector_lfe_key: str = "LFE",
 ) -> dict[str, np.ndarray]:
     """Run every band over the bed, leaving *lfe_key* untouched.
 
@@ -136,6 +138,9 @@ def apply_dynamic_eq(
         sample_rate: Audio sample rate in Hz.
         bands:       One dict per band, keyed by :data:`BAND_FIELDS`.
         lfe_key:     Channel name kept out of both the detector and the bells.
+        detector_channels: Optional rendered speaker programme that drives the
+            shared bell curves applied to ``channels``.
+        detector_lfe_key: LFE name in ``detector_channels``.
 
     Returns:
         New channel dict with the same shapes and dtypes.
@@ -143,12 +148,29 @@ def apply_dynamic_eq(
     if not channels or not bands:
         return channels
     names = list(channels)
-    processed, cuts = upmixer_dsp.dynamic_eq(
-        [np.ascontiguousarray(channels[name], dtype=np.float64) for name in names],
-        names.index(lfe_key) if lfe_key in channels else None,
-        sample_rate,
-        [tuple(float(band[field]) for field in BAND_FIELDS) for band in bands],
-    )
+    targets = [np.ascontiguousarray(channels[name], dtype=np.float64) for name in names]
+    params = [tuple(float(band[field]) for field in BAND_FIELDS) for band in bands]
+    if detector_channels is None:
+        processed, cuts = upmixer_dsp.dynamic_eq(
+            targets,
+            names.index(lfe_key) if lfe_key in channels else None,
+            sample_rate,
+            params,
+        )
+    else:
+        detector_names = list(detector_channels)
+        processed, cuts = upmixer_dsp.dynamic_eq_linked(
+            targets,
+            names.index(lfe_key) if lfe_key in channels else None,
+            [
+                np.ascontiguousarray(detector_channels[name], dtype=np.float64)
+                for name in detector_names
+            ],
+            detector_names.index(detector_lfe_key)
+            if detector_lfe_key in detector_channels else None,
+            sample_rate,
+            params,
+        )
     for band, cut in zip(bands, cuts):
         _log.info(
             "  Dynamic EQ: %.0f Hz Q %.1f  peak cut %.2f dB",

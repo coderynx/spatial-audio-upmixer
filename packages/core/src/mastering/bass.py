@@ -268,12 +268,15 @@ class BassController:
         self,
         channels: dict[str, np.ndarray],
         lfe_key: str = "LFE",
+        spatial_channels: int | None = None,
     ) -> dict[str, np.ndarray]:
         """Apply bass control to the multichannel bed.
 
         Args:
             channels: Dict channel_name → 1-D float64 array.
             lfe_key:  Name of the LFE channel (default ``"LFE"``).
+            spatial_channels: Number of leading bed channels. Source-wide tone
+                shaping includes later objects; LF redistribution stays here.
 
         Returns:
             Modified channel dict (new arrays for processed channels;
@@ -296,6 +299,7 @@ class BassController:
         shaped = upmixer_dsp.bass_control(
             [np.ascontiguousarray(channels[name], dtype=np.float64) for name in names],
             names.index(lfe_key) if lfe_key in names else None,
+            len(names) if spatial_channels is None else spatial_channels,
             targets,
             self._sr,
             self._sub_db,

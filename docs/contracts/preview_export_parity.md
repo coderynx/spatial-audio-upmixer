@@ -46,7 +46,7 @@ Every stage below is one function, called from both sides:
 | Stage | Core module | Export entry | Preview entry |
 |---|---|---|---|
 | Per-stem EQ | `spatial`/`kernels::fir_design` | `separation/stem_eq.py` | `stream::routing` |
-| Stem → speaker bed | `stream::routing`, `routing::{sends,decorrelate}` | `separation/stem_router.py` | `stream::routing` |
+| Stem → authored bed/objects | `stream::routing`, `routing::{sends,decorrelate}` | `separation/stem_router.py` | `stream::engine::{mix,render}` |
 | Routing downmix lock | `spatial::downmix::apply_stereo_downmix_lock` | `separation/stem_router.py` | `stream::engine::render` |
 | Primary/ambient split and height allocation | `routing::ambient` | `separation/stem_router.py` (`upmixer_dsp.ambient_split`) | `stream::routing` |
 | Placement → speaker gains | `spatial::{panner,presets}` | `separation/stem_placement.py` | `wasmEngine/panner.ts` |
@@ -144,6 +144,34 @@ the same channel set.
 reference match → EQ → dynamic EQ → compression → bass → BS.1770 loudness →
 soft clip → limiter *last*. Soft limiting after loudness rather than before is
 deliberate; see `packages/core/src/mastering/chain.py`'s module docstring.
+
+For an object-authored presentation, “the mix” at that point is not a flattened
+speaker bed. The chain keeps the bed and every object as separate authored
+signals, applies its shared filters and gains to all of them, and renders them
+to the layout only where a programme detector is required. Reference analysis,
+dynamic-EQ detection, compressor detection, loudness, true peak and limiter
+detection therefore read the rendered speaker programme. Their resulting
+shared curve is applied to every non-LFE authored source; the limiter also
+watches the source tracks so no exported ADM channel escapes its ceiling.
+
+Only operations that would change object identity stay bed-only: LF
+unification/redistribution, punch/excitation, mid-bass decorrelation and LFE
+authoring. Sub/mid tone shaping still reaches objects. The memoryless clipper
+runs independently on each authored source before rendering because clipping a
+speaker sum cannot be represented by unchanged ADM objects. The routing
+downmix lock is likewise disabled when objects are authored.
+
+The preview then renders those mastered sources to speaker channels and passes
+that speaker render—not beds or object metadata—to stereo, binaural or
+transaural monitoring. An external ADM renderer follows the same source-first
+boundary; renderer-specific panning or binaural differences remain outside
+the listening-parity claim. The preview's calibration fork always measures the
+speaker render for object-authored material, even while the live monitor is
+binaural or transaural, so the renderer cannot change the authored gain. That
+same pass also measures the uncapped collapsed monitor and derives a separate
+linear monitor correction. It is applied after rendering, before the final
+safety curve, so HOA summation cannot drive the headphones into the safety
+curve while ADM source gains remain identical to the speaker master.
 
 The dynamic EQ is the one stage whose two halves are literally the same loop
 rather than two implementations of one algorithm: `DynamicEq::process` is
@@ -315,9 +343,9 @@ carry only user values from the manifest (`mastering.highpass.cutoff_hz`,
 the clipper's asymptote is the delivery target's ceiling, which both sides
 read through their own `resolve_delivery_target`. The LFE DC blocker's 5 Hz
 corner is structural and stays in `mastering::head`'s `DC_BLOCK_HZ`.
-The one thing to keep in step is that the clipper runs
-on the bed in *every* output mode — `MasteringChain` masters the bed before
-any collapse — while the limiter is native-only.
+The clipper and look-ahead limiter run on authored bed/object sources before
+every render. Collapse paths retain their separate monitor-output safety stage
+after rendering.
 
 What an unset target and ceiling fall back to with no preset named is served
 too, as `constants.delivery_default`, so neither number is authored in the

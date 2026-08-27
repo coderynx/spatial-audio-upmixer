@@ -60,11 +60,12 @@ pub unsafe extern "C" fn dsp_measure_begin_excerpts(
     )))
 }
 
-/// Measure up to `frames` more. Returns 1 and writes `[lkfs, dbtp]` into `out`
-/// once the programme is exhausted, 0 while there is more to do.
+/// Measure up to `frames` more. Returns 1 and writes
+/// `[lkfs, dbtp, monitor_lkfs, monitor_dbtp]` into `out` once the programme
+/// is exhausted, 0 while there is more to do.
 ///
 /// # Safety
-/// `pass` must come from [`dsp_measure_begin`] and `out` must address two
+/// `pass` must come from [`dsp_measure_begin`] and `out` must address four
 /// writable f64 values.
 #[no_mangle]
 pub unsafe extern "C" fn dsp_measure_advance(
@@ -75,10 +76,9 @@ pub unsafe extern "C" fn dsp_measure_advance(
     let Some(pass) = pass.as_mut() else { return 0 };
     match pass.advance(frames) {
         None => 0,
-        Some((lkfs, dbtp)) => {
-            let dst = std::slice::from_raw_parts_mut(out, 2);
-            dst[0] = lkfs;
-            dst[1] = dbtp;
+        Some(result) => {
+            let dst = std::slice::from_raw_parts_mut(out, 4);
+            dst.copy_from_slice(&result);
             1
         }
     }

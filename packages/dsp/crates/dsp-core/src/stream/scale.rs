@@ -197,8 +197,12 @@ impl RouteScalePass {
                 .stem_params(self.stem)
                 .cloned()
                 .unwrap_or_default();
-            self.scales
-                .push(scale_from(&meters.finish(), self.stem, &params, &self.engine));
+            self.scales.push(scale_from(
+                &meters.finish(),
+                self.stem,
+                &params,
+                &self.engine,
+            ));
             self.stem += 1;
             self.cursor = 0;
             self.excerpt = 0;
@@ -245,11 +249,14 @@ fn scale_from(
     let mut routed_energy = 0.0;
     let route = engine.stem_mix_route(stem);
     if let Some(objects) = route.and_then(|route| route.objects.as_ref()) {
-        for (channel, signal, weight) in objects {
-            let speaker = &params.speakers[*channel];
-            let gain = *weight * speaker.group_gain;
-            routed_power += loudness_channel_weight(&speaker.name) * gain * gain * powers[*signal];
-            routed_energy += gain * gain * energies[*signal];
+        for object in objects {
+            for &(channel, weight) in &object.speakers {
+                let speaker = &params.speakers[channel];
+                let gain = weight * speaker.group_gain;
+                routed_power +=
+                    loudness_channel_weight(&speaker.name) * gain * gain * powers[object.signal];
+                routed_energy += gain * gain * energies[object.signal];
+            }
         }
     } else {
         for (channel, signal, weight) in route.into_iter().flat_map(|route| &route.regular) {

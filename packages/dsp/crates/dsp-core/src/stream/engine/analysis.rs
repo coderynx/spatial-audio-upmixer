@@ -121,14 +121,14 @@ impl PreviewEngine {
             .saturating_sub(self.post.base);
         let meter_end = self.emitted.saturating_sub(self.post.base);
         self.meters.channels = self
-            .post
-            .channels
+            .rendered_channels
             .iter()
             .enumerate()
-            .map(|(channel, c)| {
+            .map(|(channel, source)| {
                 if self.params.speakers.get(channel).is_some_and(|s| s.muted) {
                     Level::default()
                 } else {
+                    let c = &self.post.channels[*source];
                     Level::measure(&c[meter_start..meter_end])
                 }
             })
@@ -156,6 +156,20 @@ impl PreviewEngine {
         FoldTo51::new(&names)
     }
 
+    pub fn measurement_weights(&self, fallback: &[f64]) -> Vec<f64> {
+        if self.authored_channels > self.params.speakers.len() {
+            return self
+                .params
+                .speakers
+                .iter()
+                .map(|speaker| crate::loudness::loudness_channel_weight(&speaker.name))
+                .collect();
+        }
+        (0..self.output_channels())
+            .map(|i| fallback.get(i).copied().unwrap_or(1.0))
+            .collect()
+    }
+
     /// Measure the whole collapsed programme: integrated loudness in LKFS and
     /// true peak in dBTP.
     ///
@@ -170,6 +184,11 @@ impl PreviewEngine {
     /// no longer describes); true peak stays on the delivered channels, which
     /// are what the ceiling applies to.
     pub fn measure(&mut self, weights: &[f64]) -> (f64, f64) {
+        if self.authored_channels > self.params.speakers.len()
+            && self.params.output_mode != OutputMode::Native
+        {
+            return self.fork().measure(weights);
+        }
         let out_channels = self.output_channels();
         self.rewind();
 
@@ -199,10 +218,10 @@ impl PreviewEngine {
                     .zip(folded.iter().map(|c| c.as_slice()))
                     .collect()
             }
-            None => refs
-                .iter()
-                .enumerate()
-                .map(|(i, samples)| (weights.get(i).copied().unwrap_or(1.0), *samples))
+            None => self
+                .measurement_weights(weights)
+                .into_iter()
+                .zip(refs.iter().copied())
                 .collect(),
         };
         (

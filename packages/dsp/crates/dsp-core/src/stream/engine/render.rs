@@ -10,67 +10,8 @@
 use super::{PreviewEngine, METER_WINDOW_FRAMES};
 use crate::mastering::clip::ClipCurve;
 use crate::spatial::downmix::{apply_stereo_downmix_lock, DownmixRole};
-use crate::spatial::panner::{PannerLayout, StemPlacement};
-use crate::stream::params::{ObjectMode, OutputMode, SendShape};
-use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND, SIGNALS, STEM_INPUT};
-
-pub(crate) struct StemMixRoute {
-    pub regular: Vec<(usize, usize, f64)>,
-    pub lfe_weight: f64,
-    pub objects: Option<Vec<(usize, usize, f64)>>,
-    pub ambient: Vec<(usize, usize, f64)>,
-    pub needs_surround: bool,
-    pub needs_height: bool,
-    pub has_surround: bool,
-    pub has_height: bool,
-}
-
-pub(crate) fn build_stem_mix_routes(
-    params: &crate::stream::params::EngineParams,
-    layout: &PannerLayout,
-) -> Vec<StemMixRoute> {
-    params
-        .stems
-        .iter()
-        .map(|stem| {
-            let objects = direct_object_routes(params, stem, layout);
-            let mut lfe_weight = 0.0;
-            let mut regular = Vec::new();
-            let mut needs_surround = false;
-            let mut needs_height = false;
-            for (name, weight) in &stem.routing {
-                if *weight == 0.0 {
-                    continue;
-                }
-                if name == "LFE" {
-                    lfe_weight += weight;
-                } else if objects.is_none() {
-                    if let Some(channel) = params.speaker_index(name) {
-                        needs_surround |= matches!(
-                            params.shapes[channel],
-                            SendShape::SurroundLeft | SendShape::SurroundRight
-                        );
-                        needs_height |= matches!(
-                            params.shapes[channel],
-                            SendShape::HeightLeft | SendShape::HeightRight
-                        );
-                        regular.push((channel, shape_index(params.shapes[channel]), *weight));
-                    }
-                }
-            }
-            StemMixRoute {
-                regular,
-                lfe_weight,
-                objects,
-                ambient: ambient_feeds(params, stem),
-                needs_surround,
-                needs_height,
-                has_surround: params.ambient_share(SendShape::SurroundLeft) > 0.0,
-                has_height: params.ambient_share(SendShape::HeightLeft) > 0.0,
-            }
-        })
-        .collect()
-}
+use crate::stream::params::{OutputMode, SendShape};
+use crate::stream::routing::{shape_index, SIGNALS, STEM_INPUT};
 
 impl PreviewEngine {
     /// Run one stem's routing chain over `count` frames from `start`, leaving
@@ -115,7 +56,7 @@ impl PreviewEngine {
         }
         let start = self.pre.end();
         let count = target - start;
-        let n_channels = self.params.speakers.len();
+        let n_channels = self.authored_channels;
 
         let mut bed = vec![vec![0.0; count]; n_channels];
         let mut lfe_sum = vec![0.0; count];
@@ -142,19 +83,19 @@ impl PreviewEngine {
             let mix = &self.stem_mix_routes[stem_index];
             let ambient = route.has_ambient().then_some(&mix.ambient);
 
-            if !self.params.spatial_downmix_lock {
+            if !self.params.spatial_downmix_lock
+                || self.authored_channels > self.params.speakers.len()
+            {
                 for i in 0..count {
                     let gain = smoother.tick(target_gain);
                     if let Some(objects) = &mix.objects {
-                        for (channel, signal, weight) in objects {
-                            bed[*channel][i] += shaped[*signal][i]
-                                * weight
-                                * self.params.speakers[*channel].group_gain
-                                * gain;
+                        for object in objects {
+                            bed[object.authored_channel][i] += shaped[object.signal][i] * gain;
                         }
                     }
                     if mix.lfe_weight != 0.0 {
-                        lfe_sum[i] += shaped[shape_index(SendShape::Mono)][i] * mix.lfe_weight * gain;
+                        lfe_sum[i] +=
+                            shaped[shape_index(SendShape::Mono)][i] * mix.lfe_weight * gain;
                     }
                     for (channel, signal, weight) in &mix.regular {
                         bed[*channel][i] += shaped[*signal][i]
@@ -177,15 +118,13 @@ impl PreviewEngine {
                     input_left[i] = shaped[STEM_INPUT][i] * gain;
                     input_right[i] = shaped[STEM_INPUT + 1][i] * gain;
                     if let Some(objects) = &mix.objects {
-                        for (channel, signal, weight) in objects {
-                            routed[*channel][i] += shaped[*signal][i]
-                                * weight
-                                * self.params.speakers[*channel].group_gain
-                                * gain;
+                        for object in objects {
+                            bed[object.authored_channel][i] += shaped[object.signal][i] * gain;
                         }
                     }
                     if mix.lfe_weight != 0.0 {
-                        lfe_sum[i] += shaped[shape_index(SendShape::Mono)][i] * mix.lfe_weight * gain;
+                        lfe_sum[i] +=
+                            shaped[shape_index(SendShape::Mono)][i] * mix.lfe_weight * gain;
                     }
                     for (channel, signal, weight) in &mix.regular {
                         routed[*channel][i] += shaped[*signal][i]
@@ -231,22 +170,49 @@ impl PreviewEngine {
             }
             // Between the static EQ and the compressor: surgical correction
             // before glue, and still a shared curve across the bed.
+            let object_sources = self.authored_channels > self.params.speakers.len();
+            let mut detector = object_sources.then(|| {
+                let mut rendered = std::mem::take(&mut self.speaker_render_scratch);
+                self.render_authored_into(&bed, &mut rendered);
+                rendered
+            });
             if let Some(dyn_eq) = &mut self.dyn_eq {
-                dyn_eq.process(&mut bed);
+                if let Some(rendered) = &detector {
+                    dyn_eq.process_linked(&mut bed, rendered);
+                } else {
+                    dyn_eq.process(&mut bed);
+                }
             }
-            let non_lfe = self.non_lfe();
+            let targets = self.non_lfe();
+            if let Some(rendered) = &mut detector {
+                self.render_authored_into(&bed, rendered);
+            }
+            let detector_channels = if object_sources {
+                (0..self.params.speakers.len())
+                    .filter(|i| self.params.lfe_index != Some(*i))
+                    .collect()
+            } else {
+                targets.clone()
+            };
             if let Some(comp) = &mut self.compressor {
-                if !non_lfe.is_empty() {
+                if !targets.is_empty() {
                     let trace = &mut self.comp_gr.channels[0];
                     for i in 0..count {
-                        let rms = comp.linked_rms(&bed, &non_lfe, i);
+                        let rms = if let Some(rendered) = &detector {
+                            comp.linked_rms(rendered, &detector_channels, i)
+                        } else {
+                            comp.linked_rms(&bed, &detector_channels, i)
+                        };
                         let (gain, gr_db) = comp.tick(rms);
                         trace.push(gr_db);
-                        for &ch in &non_lfe {
+                        for &ch in &targets {
                             bed[ch][i] *= gain;
                         }
                     }
                 }
+            }
+            if let Some(rendered) = detector {
+                self.speaker_render_scratch = rendered;
             }
             for (channel, block) in bed.iter_mut().enumerate() {
                 self.causal[channel].band_gains(block);
@@ -267,6 +233,25 @@ impl PreviewEngine {
         let unify = self.unifier.as_ref().map_or(0, |u| u.look_ahead());
         let decorr = self.decorrelator.as_ref().map_or(0, |d| d.look_ahead());
         unify.max(decorr)
+    }
+
+    fn render_authored_into(&self, authored: &[Vec<f64>], rendered: &mut Vec<Vec<f64>>) {
+        let n_speakers = self.params.speakers.len();
+        rendered.resize_with(n_speakers, Vec::new);
+        for (target, source) in rendered.iter_mut().zip(authored) {
+            target.clear();
+            target.extend_from_slice(source);
+        }
+        for route in &self.stem_mix_routes {
+            for object in route.objects.iter().flatten() {
+                let audio = &authored[object.authored_channel];
+                for &(speaker, gain) in &object.speakers {
+                    for (target, source) in rendered[speaker].iter_mut().zip(audio) {
+                        *target += gain * source;
+                    }
+                }
+            }
+        }
     }
 
     /// Run the LF unifier until `post` reaches `target` frames.
@@ -334,7 +319,9 @@ impl PreviewEngine {
         // Clipped on the way into `post`, not at the emit point: the limiter
         // detects a whole look-ahead past what it emits, and that window has
         // to be clipped too (parity contract §1).
-        let native_gain = if self.params.output_mode == OutputMode::Native {
+        let source_gain = if self.params.output_mode == OutputMode::Native
+            || self.authored_channels > self.params.speakers.len()
+        {
             Some(
                 (0..end - start)
                     .map(|_| self.master_gain.tick(self.params.master.output_gain))
@@ -344,10 +331,10 @@ impl PreviewEngine {
             None
         };
         let clip = self.params.master.clip.map(|c| ClipCurve::new(&c));
-        for (channel, mut block) in window.into_iter().enumerate() {
+        for (channel, block) in window.iter_mut().enumerate() {
             if !self.params.bypass_mastering {
-                self.causal[channel].lfe_trim(&mut block, lfe_gain_db);
-                if let Some(gains) = &native_gain {
+                self.causal[channel].lfe_trim(block, lfe_gain_db);
+                if let Some(gains) = &source_gain {
                     for (sample, gain) in block.iter_mut().zip(gains) {
                         *sample *= gain;
                     }
@@ -356,14 +343,24 @@ impl PreviewEngine {
                     .as_ref()
                     .filter(|_| self.params.lfe_index != Some(channel))
                 {
-                    curve.apply(&mut block);
+                    curve.apply(block);
                 }
-            } else if let Some(gains) = &native_gain {
+            } else if let Some(gains) = &source_gain {
                 for (sample, gain) in block.iter_mut().zip(gains) {
                     *sample *= gain;
                 }
             }
-            self.post.channels[channel].extend(block);
+            self.post.channels[channel].extend_from_slice(block);
+        }
+        if self.authored_channels > self.params.speakers.len() {
+            let mut rendered = std::mem::take(&mut self.speaker_render_scratch);
+            self.render_authored_into(&window, &mut rendered);
+            for (speaker, block) in rendered.iter().enumerate() {
+                if self.params.lfe_index != Some(speaker) {
+                    self.post.channels[self.rendered_channels[speaker]].extend_from_slice(block);
+                }
+            }
+            self.speaker_render_scratch = rendered;
         }
         self.unify_done = end;
     }
@@ -378,18 +375,12 @@ impl PreviewEngine {
         if self.pre.end() >= target {
             let end = (self.emitted + frames + limiter).min(self.total_frames);
             let base = self.pre.base;
-            let unifier = self
-                .unifier
-                .as_mut()
-                .map_or(true, |unifier| {
-                    unifier.prewarm(&self.pre.channels, base, self.total_frames, end, step)
-                });
-            let decorrelator = self
-                .decorrelator
-                .as_mut()
-                .map_or(true, |decorrelator| {
-                    decorrelator.prewarm(&self.pre.channels, base, self.total_frames, end, step)
-                });
+            let unifier = self.unifier.as_mut().map_or(true, |unifier| {
+                unifier.prewarm(&self.pre.channels, base, self.total_frames, end, step)
+            });
+            let decorrelator = self.decorrelator.as_mut().map_or(true, |decorrelator| {
+                decorrelator.prewarm(&self.pre.channels, base, self.total_frames, end, step)
+            });
             return unifier && decorrelator;
         }
         self.fill_pre((self.pre.end() + step.max(1)).min(target));
@@ -439,11 +430,11 @@ impl PreviewEngine {
         // above (bass bus, linked compressor, limiter) has already run, so
         // silencing one speaker cannot change what the others get.
         let window: Vec<Vec<f64>> = self
-            .post
-            .channels
+            .rendered_channels
             .iter()
             .enumerate()
-            .map(|(channel, c)| {
+            .map(|(channel, source)| {
+                let c = &self.post.channels[*source];
                 if self.params.speakers.get(channel).is_some_and(|s| s.muted) {
                     vec![0.0; end - start]
                 } else {
@@ -458,8 +449,12 @@ impl PreviewEngine {
         // a per-sample gain array through the collapse stage.
         let gain = if self.params.output_mode == OutputMode::Native {
             1.0
+        } else if self.authored_channels > self.params.speakers.len() {
+            self.monitor_gain
+                .advance(self.params.master.monitor_output_gain, emit)
         } else {
-            self.master_gain.advance(self.params.master.output_gain, emit)
+            self.master_gain
+                .advance(self.params.master.output_gain, emit)
         };
         self.output
             .process(&window, emit, gain, &mut self.collapsed);
@@ -490,78 +485,4 @@ impl PreviewEngine {
             .drain_to(self.emitted.saturating_sub(self.look_ahead()));
         emit
     }
-}
-
-/// Direct-object routes as `(speaker, shaped-signal slot, gain)`.
-pub(crate) fn direct_object_routes(
-    params: &crate::stream::params::EngineParams,
-    sp: &crate::stream::params::StemParams,
-    layout: &PannerLayout,
-) -> Option<Vec<(usize, usize, f64)>> {
-    let mode = sp.object_mode?;
-    let placement = sp.object_placement?;
-    let point = StemPlacement::new(
-        placement.azimuth_deg,
-        placement.elevation_deg,
-        placement.width_deg,
-        placement.spread_deg,
-        0.0,
-    );
-    let routes: Vec<(usize, Vec<f64>)> = match mode {
-        ObjectMode::LinkedStereo => layout.object_routes(&point)
-            .into_iter()
-            .enumerate()
-            .collect(),
-        ObjectMode::Mono => vec![(
-            2,
-            layout.placement_route(
-                &StemPlacement::new(
-                    placement.azimuth_deg,
-                    placement.elevation_deg,
-                    0.0,
-                    placement.spread_deg,
-                    0.0,
-                ),
-            ),
-        )],
-    };
-    Some(
-        routes
-            .into_iter()
-            .flat_map(|(signal, route)| {
-                route
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(move |(channel, gain)| {
-                        (params.lfe_index != Some(channel) && gain > 0.0)
-                            .then_some((channel, signal, gain))
-                    })
-            })
-            .collect(),
-    )
-}
-
-/// Which speakers one stem's ambient sends reach, and at what weight:
-/// `(speaker, signal slot, weight)`, the weight already carrying the class
-/// share and the speaker's group gain.
-fn ambient_feeds(
-    params: &crate::stream::params::EngineParams,
-    sp: &crate::stream::params::StemParams,
-) -> Vec<(usize, usize, f64)> {
-    let mut feeds = Vec::new();
-    for (channel, shape) in params.shapes.iter().enumerate() {
-        let (amount, slot) = match shape {
-            SendShape::SurroundLeft => (sp.ambient_rear, AMBIENT_SURROUND),
-            SendShape::SurroundRight => (sp.ambient_rear, AMBIENT_SURROUND + 1),
-            SendShape::HeightLeft => (sp.ambient_height, AMBIENT_HEIGHT),
-            SendShape::HeightRight => (sp.ambient_height, AMBIENT_HEIGHT + 1),
-            _ => continue,
-        };
-        if amount <= 0.0 {
-            continue;
-        }
-        let weight = amount * params.ambient_share(*shape) * params.speakers[channel].group_gain;
-        feeds.push((channel, slot, weight));
-    }
-    feeds
 }

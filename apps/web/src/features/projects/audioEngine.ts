@@ -352,9 +352,17 @@ export class PreviewAudioEngine {
     );
     const target = delivery.target_lkfs;
     const normalize = this.mastering?.loudness?.normalize ?? true;
-    // One gain stage covers the whole job here, unlike the export chain's two,
-    // so every mode gets the full budget — see
-    // docs/contracts/preview_export_parity.md.
+    const previewable = this.previewableStems();
+    const resolvedStems = resolveStemMixes({
+      stems: previewable,
+      scene: this.scene,
+      mix: this.mix,
+      stemEqTaps: this.taps.stemEqTaps,
+      constants: this.constants,
+    });
+    const objectAuthored = resolvedStems.some((stem) => stem.objectMode !== undefined);
+    // The authored correction gets the same full budget as export. Object
+    // monitors receive their renderer-only correction separately below.
     const measured = this.calibration.measured;
     const correction = correctionGain(
       measured,
@@ -372,15 +380,41 @@ export class PreviewAudioEngine {
       ? applyTruePeakCeiling(measured.dbtp, matched, delivery.max_tp_dbtp)
       : matched;
     const outputGain = this.safeOutputGain(requestedGain);
+    const sourceGainDb = 20 * Math.log10(outputGain);
+    const monitorMeasured = {
+      lkfs: measured.monitorLkfs ?? measured.lkfs,
+      dbtp: measured.monitorDbtp ?? measured.dbtp,
+    };
+    const monitorOutputGain = objectAuthored && this.outputMode !== "native"
+      ? normalize
+        ? correctionGain(
+            {
+              lkfs: monitorMeasured.lkfs + sourceGainDb,
+              dbtp: monitorMeasured.dbtp + sourceGainDb,
+            },
+            delivery,
+            this.constants.loudnessMaxGainDb,
+            true,
+          )
+        : applyTruePeakCeiling(
+            monitorMeasured.dbtp + sourceGainDb,
+            1,
+            delivery.max_tp_dbtp,
+          )
+      : 1;
+    const deliveredGainDb = sourceGainDb + 20 * Math.log10(monitorOutputGain);
     this.publishLoudness({
-      integratedLkfs: measured.lkfs + 20 * Math.log10(correction),
-      truePeakDbtp: measured.dbtp + 20 * Math.log10(correction),
+      integratedLkfs: objectAuthored && this.outputMode !== "native"
+        ? monitorMeasured.lkfs + deliveredGainDb
+        : measured.lkfs + 20 * Math.log10(correction),
+      truePeakDbtp: objectAuthored && this.outputMode !== "native"
+        ? monitorMeasured.dbtp + deliveredGainDb
+        : measured.dbtp + 20 * Math.log10(correction),
       targetLkfs: target,
       ceilingDbtp: delivery.max_tp_dbtp,
       bypassMatchDb: matchDb,
     });
 
-    const previewable = this.previewableStems();
     this.stemOrder = previewable.map((stem) => stem.stem_key.split("@", 1)[0]);
     this.stemChannelCounts = previewable.map((stem) => stem.channels);
     return buildEngineParams({
@@ -391,13 +425,7 @@ export class PreviewAudioEngine {
       },
       speakerEnabled: this.speakerEnabled,
       spatialDownmixLock: this.mix?.spatial_downmix_lock ?? false,
-      stems: resolveStemMixes({
-        stems: this.previewableStems(),
-        scene: this.scene,
-        mix: this.mix,
-        stemEqTaps: this.taps.stemEqTaps,
-        constants: this.constants,
-      }),
+      stems: resolvedStems,
       master: {
         comp,
         bass,
@@ -421,6 +449,7 @@ export class PreviewAudioEngine {
           ? 10 ** ((this.mastering.match_reference.rms_gain_db ?? 0) / 20)
           : 1,
         outputGain,
+        monitorOutputGain,
         limiterCeilingDbtp: delivery.max_tp_dbtp,
       },
       outputMode: this.outputMode,

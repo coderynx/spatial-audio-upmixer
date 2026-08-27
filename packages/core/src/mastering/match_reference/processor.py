@@ -216,13 +216,20 @@ class ReferenceMatchProcessor:
             curve = compute_reference_curve(scaled, self._ref_data, self._sr, self._n_fft, lfe_key)
         return curve, rms_gain_db
 
-    def process(self, channels: dict[str, np.ndarray], lfe_key: str = "LFE") -> dict[str, np.ndarray]:
+    def process(
+        self,
+        channels: dict[str, np.ndarray],
+        lfe_key: str = "LFE",
+        analysis_channels: dict[str, np.ndarray] | None = None,
+    ) -> dict[str, np.ndarray]:
         """Apply spectral and/or level matching against the reference.
 
         Args:
             channels: Dict channel_name -> 1-D float64 array.
             lfe_key:  LFE channel name (default ``"LFE"``). Receives the
                       level-matching gain but not the spectral correction.
+            analysis_channels: Optional rendered speaker programme used to
+                derive both matching corrections.
 
         Returns:
             New channel dict with matching applied.
@@ -230,7 +237,10 @@ class ReferenceMatchProcessor:
         if not self._match_spectrum and not self._match_rms:
             return channels
 
-        curve, rms_gain_db = self.compute_curve(channels, lfe_key)
+        curve, rms_gain_db = self.compute_curve(
+            analysis_channels or channels,
+            "LFE" if analysis_channels is not None else lfe_key,
+        )
         rms_gain_lin = 10.0 ** (rms_gain_db / 20.0)
 
         out: dict[str, np.ndarray] = {}

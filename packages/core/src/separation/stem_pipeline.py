@@ -313,11 +313,11 @@ class StemUpmixPipeline:
             progress_callback: Optional callable ``(message, fraction)`` invoked
                 at key stages.  *fraction* is in [0, 1].
             pre_master_hook: Optional callable ``(channels, sample_rate,
-                output_format)`` invoked with the fully routed, pre-mastering
-                channel bed, right before :class:`~upmixer.mastering.chain.MasteringChain`
-                runs. Lets a caller inspect or analyze the exact bed the export
-                would master (e.g. to precompute a reference-match FIR) without
-                duplicating separation/routing. Raise :class:`PreMasterAbort`
+                output_format)`` invoked with the pre-mastering speaker
+                programme, including rendered objects, right before
+                :class:`~upmixer.mastering.chain.MasteringChain` runs. Lets a
+                caller analyze the exact detector input (e.g. to precompute a
+                reference-match FIR) without duplicating routing. Raise :class:`PreMasterAbort`
                 from the hook to stop the run here, before mastering/writing —
                 safe because no output has been written yet.
 
@@ -412,7 +412,11 @@ class StemUpmixPipeline:
         del all_stems, audio_full, source_zones, passthrough_resampled
 
         if pre_master_hook is not None:
-            pre_master_hook(channels, out_sr, output_fmt)
+            pre_master_hook(
+                _render_programme(channels) if linked_channels else channels,
+                out_sr,
+                output_fmt,
+            )
 
         _progress("  Mastering...", 0.90)
         channels, mastering_result = MasteringChain(cfg).process(

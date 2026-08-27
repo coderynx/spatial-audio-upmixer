@@ -92,6 +92,24 @@ rendered to the native speaker layout. Loudness normalization and QC read that
 combined programme, folding the render to 5.1 when the layout is wider than
 5.1. The scalar gain remains shared by the bed and every object track.
 
+This follows BS.1770-5 Annex 4: channel-object and object signals are rendered
+to a declared loudspeaker configuration before measurement, with the renderer
+and configuration reported. Dolby's Renderer likewise treats bed/object audio
+plus positional metadata as the master source and produces monitoring and
+deliverable renders from it. Apple's Logic guidance exposes the practical
+boundary: processing before its Atmos plug-in reaches only the bed, while
+processing after it affects monitoring/channel bounces rather than the ADM
+master. Consequently, desired mastering cannot live on either side of a
+single rendered bus. It must be baked into the authored bed and object tracks,
+using a rendered speaker programme to drive linked decisions.
+
+Authoritative references:
+
+- [ITU-R BS.1770-5](https://www.itu.int/dms_pubrec/itu-r/rec/bs/R-REC-BS.1770-5-202311-I%21%21PDF-E.pdf), Annex 4.
+- [Dolby Atmos Renderer](https://professional.dolby.com/product/dolby-atmos-content-creation/dolby-atmos-renderer/).
+- [Dolby Atmos Renderer Guide](https://professional.dolby.com/siteassets/content-creation/dolby-atmos/dolby_atmos_renderer_guide.pdf).
+- [Apple Logic Pro: set up for Dolby Atmos](https://support.apple.com/en-sa/guide/logicpro/lgcp337a1f65/mac).
+
 **True peak is not fold-referenced.** It is measured on the native delivered
 bed, or on the native bed-plus-objects render for ADM. The ADM limiter links
 the bed and object tracks against that render so the combined programme stays
