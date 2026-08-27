@@ -1,17 +1,22 @@
 import * as React from "react";
 import type { StemRouting } from "@/api";
-import { SETTLE_FRAMES, canvasTheme, hexToRgb } from "@/lib/canvasTheme";
+import { MIN_ALPHA_SCALE, SETTLE_FRAMES, canvasTheme, hexToRgb, lerp } from "@/lib/canvasTheme";
 import { isBedStem } from "@/lib/stems";
-import { speakerCoordinates, stemPosition, stemPositionStereo, type Vec3 } from "@/lib/spatial";
+import { speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo, type Vec3 } from "@/lib/spatial";
 import { cn } from "@/lib/utils";
-import type { StemSpectrum } from "./audioEngine";
+import type { MeterLevel, StemSpectrum } from "./audioEngine";
+import { IntensitySlider } from "./IntensitySlider";
+import { drawSpeakerPoint } from "./speakerMarker";
 
-const DEFAULT_CAMERA = { yaw: 35 * Math.PI / 180, pitch: 22 * Math.PI / 180 };
+const DEFAULT_CAMERA = { yaw: 35 * Math.PI / 180, pitch: 22 * Math.PI / 180, distance: 4 };
 const MIN_PITCH = 10 * Math.PI / 180;
 const MAX_PITCH = 65 * Math.PI / 180;
+const MIN_DISTANCE = 2;
+const MAX_DISTANCE = 7;
 const MAX_HEIGHT = 0.6;
+const COLOR_RESPONSE = 3;
 
-type Camera = { yaw: number; pitch: number };
+type Camera = { yaw: number; pitch: number; distance?: number };
 type ProjectedPoint = { x: number; y: number; depth: number; scale: number };
 type Voice = {
   key: string;
@@ -19,9 +24,25 @@ type Voice = {
   base: string;
   kind: "object" | "bed";
   position: Vec3;
-  lobes?: { position: Vec3; weight: number }[];
+  lobes?: { channel: string; position: Vec3; weight: number }[];
 };
 type HitTarget = { stem: string; x: number; y: number; radius: number };
+type SpeakerHitTarget = { channel: string; x: number; y: number; radius: number };
+
+export function bedLobeIntensity(level: number, weight: number, muted: boolean) {
+  return muted ? 0 : Math.min(1, level * 8) * (0.45 + weight * 0.55);
+}
+
+export function smoothSceneLevel(previous: number, target: number, delta: number) {
+  return previous + (target - previous) * Math.min(1, delta * COLOR_RESPONSE);
+}
+
+export function zoomSceneCamera(camera: Camera, delta: number): Camera {
+  return {
+    ...camera,
+    distance: Math.min(MAX_DISTANCE, Math.max(MIN_DISTANCE, (camera.distance ?? DEFAULT_CAMERA.distance) * Math.exp(delta * 0.001))),
+  };
+}
 
 function dot(a: Vec3, b: Vec3) {
   return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -42,7 +63,7 @@ function normalize(vector: Vec3): Vec3 {
 
 export function projectScenePoint(point: Vec3, width: number, height: number, camera: Camera): ProjectedPoint {
   const target = { x: 0, y: 0.5, z: 0 };
-  const distance = 4;
+  const distance = camera.distance ?? DEFAULT_CAMERA.distance;
   const cameraPosition = {
     x: Math.sin(camera.yaw) * Math.cos(camera.pitch) * distance,
     y: target.y + Math.sin(camera.pitch) * distance,
@@ -84,6 +105,7 @@ export function isObjectStem(stem: string, objectStems: ReadonlySet<string>) {
 }
 
 export type SceneViewProps = {
+  channels: string[];
   routing: StemRouting;
   objectStems: ReadonlySet<string>;
   selectedStem: string | null;
@@ -91,11 +113,17 @@ export type SceneViewProps = {
   channelCounts?: Record<string, number>;
   onSelectStem: (stem: string | null) => void;
   stemSpectrum: React.MutableRefObject<Map<string, StemSpectrum>>;
+  channelLevels: React.MutableRefObject<Map<string, MeterLevel>>;
+  speakerEnabled: Record<string, boolean>;
+  onToggleSpeaker: (channel: string) => void;
   active: boolean;
+  intensity: number;
+  onIntensity: (next: number) => void;
   className?: string;
 };
 
 function SceneViewImpl({
+  channels,
   routing,
   objectStems,
   selectedStem,
@@ -103,20 +131,32 @@ function SceneViewImpl({
   channelCounts,
   onSelectStem,
   stemSpectrum,
+  channelLevels,
+  speakerEnabled,
+  onToggleSpeaker,
   active,
+  intensity,
+  onIntensity,
   className,
 }: SceneViewProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
+  const blobCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const blurCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const camera = React.useRef<Camera>({ ...DEFAULT_CAMERA });
   const levels = React.useRef(new Map<string, number>());
   const hits = React.useRef<HitTarget[]>([]);
+  const speakerHits = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const idleFrames = React.useRef(0);
   const wakeRef = React.useRef<() => void>(() => {});
   const drag = React.useRef<{ x: number; y: number; moved: boolean } | null>(null);
-  const propsRef = React.useRef({ routing, objectStems, selectedStem, colors, channelCounts });
-  propsRef.current = { routing, objectStems, selectedStem, colors, channelCounts };
+  const propsRef = React.useRef({
+    channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, intensity,
+  });
+  propsRef.current = {
+    channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, intensity,
+  };
   const activeRef = React.useRef(active);
   activeRef.current = active;
 
@@ -126,12 +166,28 @@ function SceneViewImpl({
     if (!canvas || !container) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    if (!blobCanvasRef.current) blobCanvasRef.current = document.createElement("canvas");
+    const blobCanvas = blobCanvasRef.current;
+    const blobCtx = blobCanvas.getContext("2d");
+    if (!blobCtx) return;
+    if (!blurCanvasRef.current) blurCanvasRef.current = document.createElement("canvas");
+    const blurCanvas = blurCanvasRef.current;
+    const blurCtx = blurCanvas.getContext("2d");
+    if (!blurCtx) return;
+    let lastBlurTime = -Infinity;
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.max(1, Math.round(container.clientWidth * dpr));
       canvas.height = Math.max(1, Math.round(container.clientHeight * dpr));
+      blobCanvas.width = canvas.width;
+      blobCanvas.height = canvas.height;
+      blurCanvas.width = canvas.width;
+      blurCanvas.height = canvas.height;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      blobCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      blurCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      lastBlurTime = -Infinity;
     };
     resize();
     const observer = new ResizeObserver(() => {
@@ -154,7 +210,11 @@ function SceneViewImpl({
       lastTime = time;
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
-      const { routing: currentRouting, objectStems: currentObjectStems, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts } = propsRef.current;
+      const {
+        channels: currentChannels, routing: currentRouting, objectStems: currentObjectStems,
+        selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts,
+        speakerEnabled: currentSpeakerEnabled, intensity: currentIntensity,
+      } = propsRef.current;
 
       const field = ctx.createLinearGradient(0, 0, 0, height);
       field.addColorStop(0, canvasTheme.plotFieldCore);
@@ -217,7 +277,7 @@ function SceneViewImpl({
         } else {
           const lobes = Object.entries(route).flatMap(([channel, weight]) => {
             const position = speakerCoordinates[channel];
-            return position && weight > 0 ? [{ position: scenePosition(position), weight }] : [];
+            return position && weight > 0 ? [{ channel, position: scenePosition(position), weight }] : [];
           });
           voices.push({ key: stem, stem, base, kind: "bed", position: scenePosition(stemPosition(route)), lobes });
         }
@@ -226,35 +286,82 @@ function SceneViewImpl({
       const resolved = voices.map((voice) => {
         const target = stemSpectrum.current.get(voice.base)?.level ?? 0;
         const previous = levels.current.get(voice.key) ?? 0;
-        const level = previous + (target - previous) * Math.min(1, delta * 8);
+        const level = smoothSceneLevel(previous, target, delta);
         levels.current.set(voice.key, level);
         return { voice, level, point: projectScenePoint(voice.position, width, height, camera.current) };
       }).sort((a, b) => b.point.depth - a.point.depth);
 
       const nextHits: HitTarget[] = [];
-      ctx.save();
-      ctx.globalCompositeOperation = "screen";
+      const alphaScale = lerp(MIN_ALPHA_SCALE, 1, currentIntensity);
+      blobCtx.clearRect(0, 0, width, height);
+      blobCtx.globalCompositeOperation = "lighter";
       for (const { voice, level, point } of resolved) {
         if (voice.kind !== "bed" || !voice.lobes?.length) continue;
-        const activity = Math.min(1, level * 8);
         const emphasis = currentSelected && currentSelected !== voice.stem ? 0.45 : 1;
         const strongest = Math.max(...voice.lobes.map((lobe) => lobe.weight));
         const [r, g, b] = hexToRgb(currentColors[voice.stem] || canvasTheme.stemFallback);
         for (const lobe of voice.lobes) {
           const lobePoint = projectScenePoint(lobe.position, width, height, camera.current);
           const weight = lobe.weight / strongest;
-          const radius = Math.max(18, Math.min(46, lobePoint.scale * 0.32)) * (0.5 + weight * 0.5);
-          const haze = ctx.createRadialGradient(lobePoint.x, lobePoint.y, 0, lobePoint.x, lobePoint.y, radius);
-          haze.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.14 + activity * 0.18) * weight * emphasis})`);
+          const activity = bedLobeIntensity(
+            level, weight, currentSpeakerEnabled[lobe.channel] === false,
+          );
+          if (activity <= 0.005) continue;
+          const radius = Math.max(30, Math.min(90, lobePoint.scale * 0.62)) * (0.65 + weight * 0.35);
+          const haze = blobCtx.createRadialGradient(lobePoint.x, lobePoint.y, 0, lobePoint.x, lobePoint.y, radius);
+          haze.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.34 + activity * 0.36) * emphasis * alphaScale})`);
+          haze.addColorStop(0.42, `rgba(${r}, ${g}, ${b}, ${(0.16 + activity * 0.14) * emphasis * alphaScale})`);
           haze.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
-          ctx.fillStyle = haze;
-          ctx.beginPath();
-          ctx.arc(lobePoint.x, lobePoint.y, radius, 0, Math.PI * 2);
-          ctx.fill();
+          blobCtx.fillStyle = haze;
+          blobCtx.beginPath();
+          blobCtx.arc(lobePoint.x, lobePoint.y, radius, 0, Math.PI * 2);
+          blobCtx.fill();
         }
         nextHits.push({ stem: voice.stem, x: point.x, y: point.y, radius: Math.max(24, Math.min(80, point.scale * 0.45)) });
       }
+      blobCtx.globalCompositeOperation = "source-over";
+      if (time - lastBlurTime >= 1000 / 30) {
+        blurCtx.clearRect(0, 0, width, height);
+        blurCtx.save();
+        blurCtx.filter = `blur(${Math.max(14, Math.min(42, Math.min(width, height) * 0.1))}px)`;
+        blurCtx.drawImage(blobCanvas, 0, 0, width, height);
+        blurCtx.restore();
+        lastBlurTime = time;
+      }
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.drawImage(blurCanvas, 0, 0, width, height);
       ctx.restore();
+
+      const nextSpeakerHits: SpeakerHitTarget[] = [];
+      ctx.font = "500 10px system-ui, sans-serif";
+      ctx.textAlign = "center";
+      for (const channel of currentChannels) {
+        const position = speakerCoordinates[channel];
+        if (!position) continue;
+        const speakerPoint = projectScenePoint(scenePosition(position), width, height, camera.current);
+        const muted = currentSpeakerEnabled[channel] === false;
+        const target = muted
+          ? 0
+          : Math.min(1, (channelLevels.current.get(channel)?.rms ?? 0) * 8);
+        const activity = smoothSceneLevel(levels.current.get(`speaker:${channel}`) ?? 0, target, delta);
+        levels.current.set(`speaker:${channel}`, activity);
+        if (activity > 0.005) {
+          const glow = ctx.createRadialGradient(speakerPoint.x, speakerPoint.y, 0, speakerPoint.x, speakerPoint.y, 16 + activity * 22);
+          const [r, g, b] = hexToRgb(canvasTheme.headphone);
+          glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.18 + activity * 0.3) * alphaScale})`);
+          glow.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+          ctx.fillStyle = glow;
+          ctx.beginPath();
+          ctx.arc(speakerPoint.x, speakerPoint.y, 16 + activity * 22, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        drawSpeakerPoint(ctx, speakerPoint.x, speakerPoint.y, 4, muted);
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.labelStrong;
+        ctx.fillText(speakerDisplayLabel(channel, currentChannels), speakerPoint.x, speakerPoint.y - 10);
+        nextSpeakerHits.push({ channel, x: speakerPoint.x, y: speakerPoint.y, radius: 12 });
+      }
+      speakerHits.current = nextSpeakerHits;
 
       for (const { voice, level, point } of resolved) {
         if (voice.kind !== "object") continue;
@@ -263,13 +370,13 @@ function SceneViewImpl({
         const glowRadius = radius * (2 + activity * 2);
         const [r, g, b] = hexToRgb(currentColors[voice.stem] || canvasTheme.stemFallback);
         const glow = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, glowRadius);
-        glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${0.18 + activity * 0.52})`);
+        glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.18 + activity * 0.52) * alphaScale})`);
         glow.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
         ctx.fillStyle = glow;
         ctx.beginPath();
         ctx.arc(point.x, point.y, glowRadius, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${0.28 + activity * 0.72})`;
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${(0.28 + activity * 0.72) * alphaScale})`;
         ctx.beginPath();
         ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
         ctx.fill();
@@ -300,16 +407,25 @@ function SceneViewImpl({
       observer.disconnect();
       if (frame.current !== null) window.cancelAnimationFrame(frame.current);
     };
-  }, [stemSpectrum]);
+  }, [stemSpectrum, channelLevels]);
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, routing, objectStems, selectedStem, colors, channelCounts]);
+  }, [active, channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, intensity]);
 
   const selectAt = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
+    let closestSpeaker: { channel: string; distance: number } | null = null;
+    for (const hit of speakerHits.current) {
+      const distance = Math.hypot(hit.x - x, hit.y - y);
+      if (distance <= hit.radius && (!closestSpeaker || distance < closestSpeaker.distance)) closestSpeaker = { channel: hit.channel, distance };
+    }
+    if (closestSpeaker) {
+      onToggleSpeaker(closestSpeaker.channel);
+      return;
+    }
     let closest: { stem: string; distance: number } | null = null;
     for (const hit of hits.current) {
       const distance = Math.hypot(hit.x - x, hit.y - y);
@@ -342,6 +458,11 @@ function SceneViewImpl({
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     if (current && !current.moved) selectAt(event);
   };
+  const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
+    event.preventDefault();
+    camera.current = zoomSceneCamera(camera.current, event.deltaY);
+    wakeRef.current();
+  };
   const handleKeyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
     const turn = 5 * Math.PI / 180;
     if (event.key === "Home") camera.current = { ...DEFAULT_CAMERA };
@@ -349,6 +470,8 @@ function SceneViewImpl({
     else if (event.key === "ArrowRight") camera.current.yaw += turn;
     else if (event.key === "ArrowUp") camera.current.pitch = Math.max(MIN_PITCH, camera.current.pitch - turn);
     else if (event.key === "ArrowDown") camera.current.pitch = Math.min(MAX_PITCH, camera.current.pitch + turn);
+    else if (event.key === "+" || event.key === "=") camera.current = zoomSceneCamera(camera.current, -180);
+    else if (event.key === "-" || event.key === "_") camera.current = zoomSceneCamera(camera.current, 180);
     else return;
     event.preventDefault();
     wakeRef.current();
@@ -359,15 +482,22 @@ function SceneViewImpl({
       <canvas
         ref={canvasRef}
         tabIndex={0}
-        aria-label="3D object scene. Drag to orbit, use arrow keys to rotate, and Home to reset the view."
+        aria-label="3D object scene. Bed clouds show routed speaker channels; click a speaker to mute it. Drag to orbit, scroll or use plus and minus to zoom, use arrow keys to rotate, and Home to reset the view."
         className="h-full w-full touch-none cursor-grab outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={() => { drag.current = null; }}
+        onWheel={handleWheel}
         onKeyDown={handleKeyDown}
       />
     </div>
+    <IntensitySlider
+      value={intensity}
+      onChange={onIntensity}
+      label="Scene intensity"
+      className="absolute left-2 top-2 z-10"
+    />
     <button
       type="button"
       onClick={() => onSelectStem(null)}

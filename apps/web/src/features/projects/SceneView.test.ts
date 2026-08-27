@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isObjectStem, projectScenePoint } from "./SceneView";
+import { bedLobeIntensity, isObjectStem, projectScenePoint, smoothSceneLevel, zoomSceneCamera } from "./SceneView";
 
 describe("scene projection", () => {
   it("keeps the room centre centred and enlarges nearer objects", () => {
@@ -24,5 +24,27 @@ describe("scene stem kinds", () => {
     expect(isObjectStem("Backing Vocals", objects)).toBe(false);
     expect(isObjectStem("Crowd", objects)).toBe(false);
     expect(isObjectStem("Other", new Set(["Other"]))).toBe(false);
+  });
+});
+
+describe("bed lobes", () => {
+  it("keeps stronger routed channels visible and hides muted channels", () => {
+    expect(bedLobeIntensity(0.2, 1, false)).toBeGreaterThan(bedLobeIntensity(0.2, 0.25, false));
+    expect(bedLobeIntensity(0.2, 1, true)).toBe(0);
+  });
+});
+
+describe("scene intensity", () => {
+  it("eases colour changes instead of stepping to the meter value", () => {
+    expect(smoothSceneLevel(0, 1, 1 / 60)).toBeGreaterThan(0);
+    expect(smoothSceneLevel(0, 1, 1 / 60)).toBeLessThan(1);
+  });
+});
+
+describe("scene zoom", () => {
+  it("zooms within the camera's usable range", () => {
+    expect(zoomSceneCamera({ yaw: 0, pitch: 0, distance: 4 }, -1000).distance).toBeLessThan(4);
+    expect(zoomSceneCamera({ yaw: 0, pitch: 0, distance: 2 }, -1000).distance).toBe(2);
+    expect(zoomSceneCamera({ yaw: 0, pitch: 0, distance: 7 }, 1000).distance).toBe(7);
   });
 });

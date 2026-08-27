@@ -141,6 +141,7 @@ describe("ProjectDetailPage tabs", () => {
 
     expect(screen.getByRole("button", { name: "Scene" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByLabelText(/3D object scene/)).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Scene intensity" })).toBeInTheDocument();
     await waitFor(() => expect(api.saveProjectViewState).toHaveBeenLastCalledWith("project-1", expect.objectContaining({ spatial_view: "scene" })));
   });
 
