@@ -4,7 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { JobActions } from "./JobActions";
-import { jobDelivery, jobDetails, statusLabel, statusVariant } from "./status";
+import { jobDelivery, jobDetails, jobOutputFormat, statusLabel, statusVariant } from "./status";
 import type { JobAction } from "./useJobs";
 
 export function JobTable({
@@ -21,11 +21,12 @@ export function JobTable({
   onRemix: (job: Job) => void;
 }) {
   return (
-    <table className="w-full min-w-[880px] text-left text-[13px]">
+    <table className="w-full min-w-[960px] text-left text-[13px]">
       <thead className="sticky top-0 z-10 border-b bg-card text-[11px] font-semibold uppercase tracking-[.06em] text-muted-foreground">
         <tr>
           <th className="px-3 py-1.5 font-semibold">Job</th>
           <th className="px-3 py-1.5 font-semibold">Render</th>
+          <th className="px-3 py-1.5 font-semibold">Output</th>
           <th className="px-3 py-1.5 font-semibold">Delivered</th>
           <th className="px-3 py-1.5 font-semibold">Status</th>
           <th className="min-w-40 px-3 py-1.5 font-semibold">Progress</th>
@@ -56,6 +57,7 @@ export function JobTable({
                 <p className="tabular-nums">{layout}</p>
                 <p className="text-[11px] capitalize text-muted-foreground">{mode}</p>
               </td>
+              <td className="whitespace-nowrap px-3 py-1.5">{jobOutputFormat(job)}</td>
               <td className="whitespace-nowrap px-3 py-1.5">
                 {delivery ? (
                   <>

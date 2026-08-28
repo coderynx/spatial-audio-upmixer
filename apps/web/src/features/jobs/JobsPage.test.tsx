@@ -13,7 +13,11 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     status: "running",
     progress: 0.5,
     status_message: "Rendering",
-    manifest: { mixing: { channel_layout: "7.1.4" }, engine: { mode: "stem" } },
+    manifest: {
+      mixing: { channel_layout: "7.1.4" },
+      engine: { mode: "stem" },
+      format: { type: "multichannel", codec: "wav_pcm" },
+    },
     error: null,
     created_at: "2026-01-01T12:00:00Z",
     started_at: null,
@@ -50,8 +54,28 @@ describe("JobsPage", () => {
     const { onAction } = renderPage([job]);
     expect(screen.getAllByText("Album master").length).toBeGreaterThan(0);
     expect(screen.getAllByText("7.1.4").length).toBeGreaterThan(0);
+    expect(screen.getByText("Multichannel WAV")).toBeInTheDocument();
     fireEvent.click(screen.getAllByLabelText("Pause job")[0]);
     expect(onAction).toHaveBeenCalledWith("pause", job);
+  });
+
+  it.each([
+    ["binaural", "Binaural"],
+    ["transaural", "Transaural"],
+    ["adm-bwf", "ADM-BWF"],
+  ])("shows %s as %s", (type, label) => {
+    renderPage([makeJob({ manifest: { format: { type } } })]);
+    expect(screen.getByText(label)).toBeInTheDocument();
+  });
+
+  it("uses the resolved delivery format", () => {
+    renderPage([
+      makeJob({
+        delivery_formats: [{ type: "adm-bwf", codec: "wav_pcm" }],
+      }),
+    ]);
+    expect(screen.getByText("ADM-BWF")).toBeInTheDocument();
+    expect(screen.queryByText("Multichannel WAV")).not.toBeInTheDocument();
   });
 
   it("shows an empty-state job action", () => {

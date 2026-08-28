@@ -374,12 +374,25 @@ class StemRouter:
             x, y, z = upmixer_dsp.direction(azimuth_deg, placement.elevation_deg)
             return (x, -z, y)
 
+        spread = min(180.0, max(0.0, placement.spread_deg))
+        extent = math.sin(math.radians(spread * 0.5))
         if mode == "mono":
-            return [AdmObject(stem_key, gain * (left + right) * 0.5, position(placement.azimuth_deg))]
+            return [
+                AdmObject(
+                    stem_key, gain * (left + right) * 0.5,
+                    position(placement.azimuth_deg), extent,
+                )
+            ]
         half_width = placement.width_deg * 0.5
         return [
-            AdmObject(f"{stem_key} Left", gain * left, position(placement.azimuth_deg + half_width)),
-            AdmObject(f"{stem_key} Right", gain * right, position(placement.azimuth_deg - half_width)),
+            AdmObject(
+                f"{stem_key} Left", gain * left,
+                position(placement.azimuth_deg + half_width), extent,
+            ),
+            AdmObject(
+                f"{stem_key} Right", gain * right,
+                position(placement.azimuth_deg - half_width), extent,
+            ),
         ]
 
     def _routing_for(self, stem_key: str) -> dict[str, float] | None:

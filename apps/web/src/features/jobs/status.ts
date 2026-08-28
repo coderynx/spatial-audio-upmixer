@@ -1,4 +1,4 @@
-import type { Job } from "@/api";
+import type { DeliveryFormat, Job } from "@/api";
 
 export function statusVariant(status: string) {
   if (status === "completed") return "success" as const;
@@ -23,6 +23,21 @@ export function jobDetails(job: Job) {
       artifact.kind === (job.tracks.length > 1 ? "bundle" : "upmix"),
   );
   return { layout, mode, downloadable };
+}
+
+export function jobOutputFormat(job: Job) {
+  const formats = job.delivery_formats?.length
+    ? job.delivery_formats
+    : [job.manifest.format as DeliveryFormat | undefined];
+  return [...new Set(formats.map(formatLabel))].join(" · ");
+}
+
+function formatLabel(format: DeliveryFormat | undefined) {
+  const type = format?.type === "wav" ? "multichannel" : format?.type;
+  if (!type) return "—";
+  if (type === "adm-bwf") return "ADM-BWF";
+  const label = type[0].toUpperCase() + type.slice(1);
+  return format?.codec === "wav_pcm" ? `${label} WAV` : label;
 }
 
 type FoldMeasurement = {

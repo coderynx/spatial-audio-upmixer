@@ -35,11 +35,13 @@ _DOLBY_ENGINE_ALLOWED_FORMATS = frozenset({"5.1", "7.1", "5.1.2", "5.1.4", "7.1.
 
 @dataclass(frozen=True)
 class AdmObject:
-    """One mono object track and its static ADM position."""
+    """One mono object track and its static ADM position and extent."""
 
     name: str
     audio: np.ndarray
     position: tuple[float, float, float]
+    extent: float = 0.0
+    diffuse: bool = False
 
 
 def render_adm_programme(
@@ -125,6 +127,10 @@ class AdmBwfWriter:
                 raise ValueError("ADM object names must be 1 to 64 characters")
             if any(not -1.0 <= value <= 1.0 for value in obj.position):
                 raise ValueError(f"ADM object '{obj.name}' has an invalid position")
+            if not 0.0 <= obj.extent <= 1.0:
+                raise ValueError(f"ADM object '{obj.name}' has an invalid extent")
+            if not isinstance(obj.diffuse, bool):
+                raise ValueError(f"ADM object '{obj.name}' diffuse must be a boolean")
             ordered.append(obj.audio)
 
         n_samples = len(ordered[0])
@@ -138,7 +144,9 @@ class AdmBwfWriter:
         )
         duration_s = n_samples / sr
 
-        metadata_objects = tuple((obj.name, obj.position) for obj in objects)
+        metadata_objects = tuple(
+            (obj.name, obj.position, obj.extent, obj.diffuse) for obj in objects
+        )
         fmt_bytes  = _fmt_chunk(fmt, sr, bit_depth, len(ordered))
         bext_bytes = _bext_chunk(loudness_lkfs=measured_lkfs, tp_dbtp=measured_tp_dbtp)
         chna_bytes = _chna_chunk(fmt, len(objects))

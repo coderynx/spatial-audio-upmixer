@@ -31,6 +31,11 @@ class TrackView(ApiModel):
     artifacts: list[ArtifactView] = Field(default_factory=list)
 
 
+class DeliveryFormatView(ApiModel):
+    type: str
+    codec: str
+
+
 class JobView(ApiModel):
     id: str
     import_id: str
@@ -48,6 +53,7 @@ class JobView(ApiModel):
     updated_at: datetime
     tracks: list[TrackView] = Field(default_factory=list)
     artifacts: list[ArtifactView] = Field(default_factory=list)
+    delivery_formats: list[DeliveryFormatView] = Field(default_factory=list)
     mastering_reference: MasteringReferenceView | None = None
 
 

@@ -75,6 +75,11 @@ export type JobTrack = {
   artifacts: Artifact[]
 }
 
+export type DeliveryFormat = {
+  type: string
+  codec: string
+}
+
 export type Job = {
   id: string
   import_id: string
@@ -92,6 +97,7 @@ export type Job = {
   updated_at: string
   tracks: JobTrack[]
   artifacts: Artifact[]
+  delivery_formats?: DeliveryFormat[]
   mastering_reference?: MasteringReference | null
 }
 

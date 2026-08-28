@@ -207,7 +207,7 @@ def _axml_chunk(
     sample_rate: int,
     bit_depth: int,
     strict_profile: bool,
-    objects: tuple[tuple[str, tuple[float, float, float]], ...] = (),
+    objects: tuple[tuple[str, tuple[float, float, float], float, bool], ...] = (),
 ) -> bytes:
     """Generate Dolby Atmos Master ADM Profile v1.1 compliant XML."""
     dur = _fmt_time(duration_s)
@@ -261,7 +261,7 @@ def _axml_chunk(
         a(f'          <audioTrackUIDRef>ATU_{i + 1:08d}</audioTrackUIDRef>')
     a('        </audioObject>')
 
-    for i, (name, _) in enumerate(objects):
+    for i, (name, _, _, _) in enumerate(objects):
         number = object_number(i)
         a(f'        <audioObject audioObjectID="AO_{number + 1:04X}"')
         a(f'                     audioObjectName="{name}"')
@@ -296,7 +296,7 @@ def _axml_chunk(
         a('          </audioBlockFormat>')
         a('        </audioChannelFormat>')
 
-    for i, (name, position) in enumerate(objects):
+    for i, (name, position, extent, diffuse) in enumerate(objects):
         number = object_number(i)
         x, y, z = position
         a(f'        <audioPackFormat audioPackFormatID="AP_0003{number:04X}"')
@@ -312,6 +312,12 @@ def _axml_chunk(
         a(f'            <position coordinate="X">{_pos_str(x)}</position>')
         a(f'            <position coordinate="Y">{_pos_str(y)}</position>')
         a(f'            <position coordinate="Z">{_pos_str(z)}</position>')
+        if extent > 0.0:
+            a(f'            <width>{_pos_str(extent)}</width>')
+            a(f'            <height>{_pos_str(extent)}</height>')
+            a(f'            <depth>{_pos_str(extent)}</depth>')
+        if diffuse:
+            a('            <diffuse>1</diffuse>')
         a('            <jumpPosition interpolationLength="0.000000">1</jumpPosition>')
         a('          </audioBlockFormat>')
         a('        </audioChannelFormat>')
@@ -328,7 +334,7 @@ def _axml_chunk(
         a(f'          <audioTrackFormatIDRef>{tid}</audioTrackFormatIDRef>')
         a('        </audioStreamFormat>')
 
-    for i, (name, _) in enumerate(objects):
+    for i, (name, _, _, _) in enumerate(objects):
         number = object_number(i)
         a(f'        <audioStreamFormat audioStreamFormatID="AS_0003{number:04X}"')
         a(f'                           audioStreamFormatName="PCM_{name}"')
@@ -347,7 +353,7 @@ def _axml_chunk(
         a(f'          <audioStreamFormatIDRef>{sid}</audioStreamFormatIDRef>')
         a('        </audioTrackFormat>')
 
-    for i, (name, _) in enumerate(objects):
+    for i, (name, _, _, _) in enumerate(objects):
         number = object_number(i)
         a(f'        <audioTrackFormat audioTrackFormatID="AT_0003{number:04X}_01"')
         a(f'                          audioTrackFormatName="PCM_{name}"')

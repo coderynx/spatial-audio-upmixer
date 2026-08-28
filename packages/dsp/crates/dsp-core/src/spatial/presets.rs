@@ -20,7 +20,7 @@ pub const PRESET_NAMES: [&str; 6] = [
 ];
 
 const BALANCED_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 0.0, 46.0, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 22.0, 46.0, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 3.0, 22.0, 54.0, 0.0)),
     ("Backing Vocals", StemPlacement::new(0.0, 14.0, 84.0, 54.0, 0.0)),
     ("Bass", StemPlacement::new(0.0, 0.0, 66.0, 40.0, 0.75)),
@@ -40,7 +40,7 @@ const BALANCED_PLACEMENTS: [(&str, StemPlacement); 17] = [
 ];
 
 const INTIMATE_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 0.0, 38.0, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 16.0, 38.0, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 0.0, 16.0, 42.0, 0.0)),
     ("Backing Vocals", StemPlacement::new(0.0, 6.0, 52.0, 42.0, 0.0)),
     ("Bass", StemPlacement::new(0.0, 0.0, 52.0, 38.0, 0.7)),
@@ -60,7 +60,7 @@ const INTIMATE_PLACEMENTS: [(&str, StemPlacement); 17] = [
 ];
 
 const STAGE_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 0.0, 46.0, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 22.0, 46.0, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 3.0, 22.0, 54.0, 0.0)),
     ("Backing Vocals", StemPlacement::new(0.0, 16.0, 96.0, 52.0, 0.0)),
     ("Bass", StemPlacement::new(0.0, 0.0, 66.0, 40.0, 0.75)),
@@ -100,7 +100,7 @@ const WIDE_PLACEMENTS: [(&str, StemPlacement); 17] = [
 ];
 
 const IMMERSIVE_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 0.0, 46.0, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 22.0, 46.0, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 3.0, 22.0, 54.0, 0.0)),
     ("Backing Vocals", StemPlacement::new(0.0, 30.0, 108.0, 68.0, 0.0)),
     ("Bass", StemPlacement::new(0.0, 0.0, 66.0, 40.0, 0.75)),
@@ -120,7 +120,7 @@ const IMMERSIVE_PLACEMENTS: [(&str, StemPlacement); 17] = [
 ];
 
 const LIVE_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 0.0, 46.0, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 30.0, 46.0, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 0.0, 30.0, 56.0, 0.0)),
     ("Backing Vocals", StemPlacement::new(0.0, 18.0, 104.0, 60.0, 0.0)),
     ("Bass", StemPlacement::new(0.0, 0.0, 66.0, 40.0, 0.75)),

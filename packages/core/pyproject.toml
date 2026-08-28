@@ -1,6 +1,6 @@
 [project]
 name = "upmixer"
-version = "0.1.0"
+version = "0.1.1"
 description = "Stereo to multichannel audio upmixer"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -17,6 +17,7 @@ dependencies = [
     "numpy>=1.24",
     "scipy>=1.12",
     "soundfile>=0.12",
+    "upmixer-dsp>=0.1.1",
 ]
 
 [project.optional-dependencies]
@@ -50,6 +51,9 @@ separation-gpu = [
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv.sources]
+upmixer-dsp = { workspace = true }
 
 [tool.setuptools]
 packages = [

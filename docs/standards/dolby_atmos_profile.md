@@ -181,7 +181,7 @@ Required sub-elements:
 | `jumpPosition` | **Mandatory** (min 1, max 1) | 1 | 1 |
 | `gain` | optional | 0 | 1 |
 | `importance` | optional; if 0 then gain shall also be present = 0.0 | 0 | 1 |
-| `width`, `depth`, `height` | if any present, all three must be present; value ∈ [0.0, 1.0] | 0 | 1 |
+| `width`, `height`, `depth` | if any present, all three must be present; value ∈ [0.0, 1.0] | 0 | 1 |
 | `diffuse` | shall be 0 or 1 | 0 | 1 |
 | `channelLock` | optional; maxDistance attr shall not be present | 0 | 1 |
 | `zoneExclusion` | see §2.5.1 | 0 | 1 |
@@ -197,6 +197,16 @@ Required sub-elements:
   - For all other blocks: **`0.005208`** (≈ 250 samples @ 48 kHz; ≈ 500 samples @ 96 kHz)
 
 > Renderer treats all audioBlock instances as discrete metadata events. interpolationLength is static, not a ramp.
+
+### Upmixer object authoring
+
+ADM-BWF keeps each linked-stereo stem as two mono objects at the endpoints of
+`azimuth_deg ± width_deg / 2`. The per-endpoint MDAP blur `spread_deg` is
+written as equal ADM `width`, `height`, and `depth` extent values using
+`sin(spread_deg / 2)`, clamped to a 180° spread. This maps the blur's angular
+diameter to the normalized diameter of the unit Cartesian field. `diffuse` is
+only written for an object explicitly marked diffuse; the application's
+ambient sends remain rendered audio in the DirectSpeakers bed.
 
 ---
 

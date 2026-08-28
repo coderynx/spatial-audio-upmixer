@@ -10,6 +10,7 @@ import pytest
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
 from upmixer.io.adm_writer import AdmBwfWriter, AdmObject, _DOLBY_ENGINE_ALLOWED_FORMATS
+from upmixer.separation.stem_router import StemRouter
 
 
 def _chunks(data: bytes) -> dict[bytes, bytes]:
@@ -117,3 +118,44 @@ def test_writes_one_bed_and_a_direct_object(tmp_path):
     assert obj_channel.attrib["typeDefinition"] == "Objects"
     assert obj_channel.findtext("audioBlockFormat/cartesian") == "1"
     assert obj_channel.findtext("audioBlockFormat/jumpPosition") == "1"
+
+
+def test_writes_object_extent_and_diffuse(tmp_path):
+    config = UpmixConfig(output_format="5.1")
+    channels = {label.value: np.zeros(32) for label in FORMAT_MAP["5.1"].channels}
+    output = tmp_path / "out.wav"
+    AdmBwfWriter(str(output), 48_000, config).write(
+        channels,
+        objects=[AdmObject("Crowd", np.ones(32) * 0.1, (0.0, -1.0, 0.0), 0.5, True)],
+    )
+
+    root = ET.fromstring(_chunks(output.read_bytes())[b"axml"])
+    block = root.findall("audioChannelFormat")[-1].find("audioBlockFormat")
+    assert block is not None
+    assert [block.findtext(tag) for tag in ("width", "height", "depth")] == ["0.5"] * 3
+    assert block.findtext("diffuse") == "1"
+
+
+def test_adm_lead_vocal_stereo_objects_are_panned_left_and_right(tmp_path):
+    config = UpmixConfig(output_format="5.1")
+    audio = np.column_stack([np.ones(32), -np.ones(32)])
+    objects: list[AdmObject] = []
+    bed = StemRouter(config, FORMAT_MAP["5.1"], 48_000).route(
+        {"Lead Vocals": audio}, len(audio), object_tracks=objects,
+    )
+    output = tmp_path / "out.wav"
+    AdmBwfWriter(str(output), 48_000, config).write(bed, objects=objects)
+
+    root = ET.fromstring(_chunks(output.read_bytes())[b"axml"])
+    positions = {
+        channel.attrib["audioChannelFormatName"]: {
+            position.attrib["coordinate"]: float(position.text)
+            for position in channel.findall("audioBlockFormat/position")
+        }
+        for channel in root.findall("audioChannelFormat")
+        if channel.attrib["audioChannelFormatName"].startswith("Lead Vocals")
+    }
+
+    assert positions["Lead Vocals Left"]["X"] < 0.0
+    assert positions["Lead Vocals Right"]["X"] > 0.0
+    assert all(obj.extent == pytest.approx(np.sin(np.deg2rad(23.0))) for obj in objects)

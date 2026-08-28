@@ -1906,13 +1906,14 @@ wheels = [
 
 [[package]]
 name = "upmixer"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "numpy" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "scipy", version = "1.18.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "soundfile" },
+    { name = "upmixer-dsp" },
 ]
 
 [package.optional-dependencies]
@@ -1970,6 +1971,7 @@ requires-dist = [
     { name = "torch", marker = "extra == 'separation'", specifier = ">=2.1" },
     { name = "upmixer", extras = ["separation"], marker = "extra == 'separation-cpu'" },
     { name = "upmixer", extras = ["separation"], marker = "extra == 'separation-gpu'" },
+    { name = "upmixer-dsp", editable = "packages/dsp" },
 ]
 provides-extras = ["dev", "manifest", "separation", "separation-cpu", "separation-gpu"]
 
@@ -2007,7 +2009,7 @@ provides-extras = ["dev", "manifest", "separation-cpu", "separation-gpu"]
 
 [[package]]
 name = "upmixer-dsp"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/dsp" }
 
 [[package]]

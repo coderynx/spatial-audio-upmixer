@@ -335,7 +335,7 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "upmixer-dsp-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "num-complex",
  "realfft",
@@ -346,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "upmixer-dsp-py"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "numpy",
  "pyo3",
@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "upmixer-dsp-wasm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",

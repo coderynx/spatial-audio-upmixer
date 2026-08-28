@@ -63,7 +63,7 @@ describe("wasm panner", () => {
     expect(instance.presets).toEqual(["balanced", "intimate", "stage", "wide", "immersive", "live"]);
     const balanced = instance.presetPlacements("balanced");
     expect(balanced["Lead Vocals"]).toEqual({
-      azimuth_deg: 0, elevation_deg: 0, width_deg: 0, spread_deg: 46,
+      azimuth_deg: 0, elevation_deg: 0, width_deg: 22, spread_deg: 46,
     });
     // The `stage` preset is the one that places instruments off-centre.
     expect(instance.presetPlacements("stage").Guitar.azimuth_deg).toBe(48);

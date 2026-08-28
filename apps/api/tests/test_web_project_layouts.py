@@ -215,7 +215,8 @@ def test_export_renders_one_layout_and_only_the_tracks_that_have_it(tmp_path, mo
             manifest={
                 "version": "1.0.0",
                 "engine": {"mode": "stem", "stems": ["Vocals"]},
-                "mixing": {"channel_layout": "5.1"},
+                "mixing": {"channel_layout": "7.1.2"},
+                "format": {"type": "multichannel", "codec": "wav_pcm"},
             },
             status="ready", prepared_stems=["Vocals"], requested_stems=["Vocals"],
         )
@@ -223,11 +224,16 @@ def test_export_renders_one_layout_and_only_the_tracks_that_have_it(tmp_path, mo
             batch, both, stereo_only, project,
             ProjectTrack(
                 project=project, asset=both, position=0,
-                layout_overrides={"5.1": {}, "stereo": {}},
+                layout_overrides={
+                    "7.1.2": {"format": {"type": "adm-bwf", "codec": "wav_pcm"}},
+                    "stereo": {"format": {"type": "multichannel", "codec": "wav_pcm"}},
+                },
             ),
             ProjectTrack(
                 project=project, asset=stereo_only, position=1,
-                layout_overrides={"stereo": {}},
+                layout_overrides={
+                    "stereo": {"format": {"type": "multichannel", "codec": "wav_pcm"}},
+                },
             ),
         ])
         session.commit()
@@ -235,10 +241,11 @@ def test_export_renders_one_layout_and_only_the_tracks_that_have_it(tmp_path, mo
     engine.dispose()
 
     with TestClient(create_app(settings)) as client:
-        exported = client.post(f"/api/v1/projects/{project_id}/exports", json={"layout": "5.1"})
+        exported = client.post(f"/api/v1/projects/{project_id}/exports", json={"layout": "7.1.2"})
         assert exported.status_code == 201
         job = exported.json()
-        assert job["manifest"]["mixing"]["channel_layout"] == "5.1"
+        assert job["manifest"]["mixing"]["channel_layout"] == "7.1.2"
+        assert job["delivery_formats"] == [{"type": "adm-bwf", "codec": "wav_pcm"}]
         assert {track["asset"]["id"] for track in job["tracks"]} == {both_id}
 
         exported = client.post(f"/api/v1/projects/{project_id}/exports", json={"layout": "stereo"})
