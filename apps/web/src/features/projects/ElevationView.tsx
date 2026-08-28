@@ -29,7 +29,9 @@ export type ElevationViewProps = {
   // Per-speaker mute — same channel-bed model as HazeView (see
   // useStemPreview.ts). Clicking a speaker's point on the graph toggles it.
   speakerEnabled: Record<string, boolean>;
+  speakerSolo: ReadonlySet<string>;
   onToggleSpeaker: (channel: string) => void;
+  onSoloSpeaker: (channel: string) => void;
   // True while preview audio is live-updating `stemSpectrum` (i.e.
   // `preview.playing`) — see HazeView's `active` prop for the idle-gating
   // rationale, identical here.
@@ -50,7 +52,9 @@ function ElevationViewImpl({
   channelCounts,
   stemSpectrum,
   speakerEnabled,
+  speakerSolo,
   onToggleSpeaker,
+  onSoloSpeaker,
   active,
   intensity,
   onIntensity,
@@ -64,8 +68,8 @@ function ElevationViewImpl({
   const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
-  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity });
-  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity };
+  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity });
+  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity };
   const activeRef = React.useRef(active);
   activeRef.current = active;
   const idleFrames = React.useRef(0);
@@ -116,7 +120,7 @@ function ElevationViewImpl({
     const draw = (time: number) => {
       const delta = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
-      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled, intensity: currentIntensity } = propsRef.current;
+      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled, speakerSolo: currentSolo, intensity: currentIntensity } = propsRef.current;
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
       // padTop solves (padTop - 8) - chipBottom = pad, so the gap above the
@@ -198,18 +202,22 @@ function ElevationViewImpl({
       for (const channel of floorChannels) {
         const x = toX(speakerCoordinates[channel].x);
         const muted = currentSpeakerEnabled[channel] === false;
-        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.labelStrong;
+        const soloed = currentSolo.has(channel);
+        const silent = !muted && currentSolo.size > 0 && !soloed;
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : soloed ? canvasTheme.meterWarn : silent ? canvasTheme.label : canvasTheme.labelStrong;
         ctx.fillText(speakerDisplayLabel(channel, currentChannels), x, floorY + 15);
-        drawSpeakerPoint(ctx, x, floorY, 3.5, muted);
+        drawSpeakerPoint(ctx, x, floorY, 3.5, muted, soloed, silent);
         nextSpeakerHits.push({ channel, x, y: floorY, radius: 12 });
       }
       ctx.font = "500 9px system-ui, sans-serif";
       for (const channel of topChannels) {
         const x = toX(speakerCoordinates[channel].x);
         const muted = currentSpeakerEnabled[channel] === false;
-        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.label;
+        const soloed = currentSolo.has(channel);
+        const silent = !muted && currentSolo.size > 0 && !soloed;
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : soloed ? canvasTheme.meterWarn : canvasTheme.label;
         ctx.fillText(speakerDisplayLabel(channel, currentChannels), x, padTop - 8);
-        drawSpeakerPoint(ctx, x, padTop, 3.5, muted);
+        drawSpeakerPoint(ctx, x, padTop, 3.5, muted, soloed, silent);
         nextSpeakerHits.push({ channel, x, y: padTop, radius: 11 });
       }
       // LFE has no left/right position (non-positional bass bus), so its
@@ -219,10 +227,12 @@ function ElevationViewImpl({
       // of the left-side labels sitting a consistent inset from their edge.
       if (currentChannels.includes("LFE")) {
         const lfeMuted = currentSpeakerEnabled.LFE === false;
+        const lfeSoloed = currentSolo.has("LFE");
+        const lfeSilent = !lfeMuted && currentSolo.size > 0 && !lfeSoloed;
         const lfePoint = { x: width - padX / 2, y: floorY };
-        drawSpeakerPoint(ctx, lfePoint.x, lfePoint.y, 3.5, lfeMuted);
+        drawSpeakerPoint(ctx, lfePoint.x, lfePoint.y, 3.5, lfeMuted, lfeSoloed, lfeSilent);
         ctx.font = "500 9px system-ui, sans-serif";
-        ctx.fillStyle = lfeMuted ? canvasTheme.muteLabel : canvasTheme.label;
+        ctx.fillStyle = lfeMuted ? canvasTheme.muteLabel : lfeSoloed ? canvasTheme.meterWarn : canvasTheme.label;
         ctx.textAlign = "center";
         ctx.fillText("LFE", lfePoint.x, floorY + 15);
         nextSpeakerHits.push({ channel: "LFE", x: lfePoint.x, y: lfePoint.y, radius: 12 });
@@ -344,7 +354,7 @@ function ElevationViewImpl({
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity]);
+  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -357,7 +367,10 @@ function ElevationViewImpl({
         closestSpeaker = { channel: hit.channel, distance };
       }
     }
-    if (closestSpeaker) onToggleSpeaker(closestSpeaker.channel);
+    if (closestSpeaker) {
+      if (event.altKey) onSoloSpeaker(closestSpeaker.channel);
+      else onToggleSpeaker(closestSpeaker.channel);
+    }
   };
 
   return <div

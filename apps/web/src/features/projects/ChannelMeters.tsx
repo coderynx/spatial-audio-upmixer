@@ -22,7 +22,9 @@ export type ChannelMetersProps = {
   channelLevels: React.MutableRefObject<Map<string, MeterLevel>>;
   headphoneLevels: React.MutableRefObject<{ left: MeterLevel; right: MeterLevel }>;
   speakerEnabled: Record<string, boolean>;
+  speakerSolo: ReadonlySet<string>;
   onToggleSpeaker?: (channel: string) => void;
+  onSoloSpeaker?: (channel: string) => void;
   // Controls the trailing group: headphone bars for binaural, L/R for stereo,
   // nothing for native (per-layout bars already show every discrete channel).
   outputMode: OutputMode;
@@ -78,7 +80,9 @@ function ChannelMetersImpl({
   channelLevels,
   headphoneLevels,
   speakerEnabled,
+  speakerSolo,
   onToggleSpeaker,
+  onSoloSpeaker,
   outputMode,
   active,
   className,
@@ -91,8 +95,8 @@ function ChannelMetersImpl({
   // this display and the mixer's strip meters cannot drift apart.
   const meterState = React.useRef(createMeterState());
   const lastTime = React.useRef<number | null>(null);
-  const propsRef = React.useRef({ channels, speakerEnabled, outputMode });
-  propsRef.current = { channels, speakerEnabled, outputMode };
+  const propsRef = React.useRef({ channels, speakerEnabled, speakerSolo, outputMode });
+  propsRef.current = { channels, speakerEnabled, speakerSolo, outputMode };
   const activeRef = React.useRef(active);
   activeRef.current = active;
   const idleFrames = React.useRef(0);
@@ -123,7 +127,7 @@ function ChannelMetersImpl({
     const draw = (time: number) => {
       const deltaSec = lastTime.current === null ? 0 : Math.min(0.25, (time - lastTime.current) / 1000);
       lastTime.current = time;
-      const { channels: currentChannels, speakerEnabled: currentEnabled, outputMode: currentMode } = propsRef.current;
+      const { channels: currentChannels, speakerEnabled: currentEnabled, speakerSolo: currentSolo, outputMode: currentMode } = propsRef.current;
       const dpr = window.devicePixelRatio || 1;
       const width = canvas.width / dpr;
       const height = canvas.height / dpr;
@@ -194,9 +198,11 @@ function ChannelMetersImpl({
         const centerX = padLeft + (index + 0.5) * pitch;
         const barX = centerX - barWidth / 2;
         const muted = currentEnabled[channel] === false;
+        const soloed = currentSolo.has(channel);
+        const silent = muted || (currentSolo.size > 0 && !soloed);
         const meterLevel = channelLevels.current.get(channel);
         const level = meterState.current.smoothLevel(channel, meterLevel?.rms ?? 0, deltaSec);
-        const currentDb = muted ? -60 : levelToDb(level);
+        const currentDb = silent ? -60 : levelToDb(level);
         // Peak-hold tracks the smoothed RMS bar (decay-held), not the raw
         // instantaneous peak — real music's crest factor made the tick read
         // as detached, floating off the bar. The 0dBFS clip latch below still
@@ -214,7 +220,7 @@ function ChannelMetersImpl({
         );
 
         const label = channel === "LFE" ? "LFE" : speakerDisplayLabel(channel, currentChannels);
-        drawLabel(ctx, label, centerX, meterBottom + 3, muted ? canvasTheme.muteLabel : canvasTheme.labelStrong, pitch);
+        drawLabel(ctx, label, centerX, meterBottom + 3, muted ? canvasTheme.muteLabel : soloed ? canvasTheme.meterWarn : silent ? canvasTheme.label : canvasTheme.labelStrong, pitch);
         nextHits.push({ channel, x: barX, width: barWidth });
       });
       hitTargets.current = nextHits;
@@ -286,14 +292,16 @@ function ChannelMetersImpl({
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, channels, speakerEnabled, outputMode]);
+  }, [active, channels, speakerEnabled, speakerSolo, outputMode]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!onToggleSpeaker) return;
+    if (!onToggleSpeaker || (event.altKey && !onSoloSpeaker)) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const hit = hitTargets.current.find((target) => x >= target.x && x <= target.x + target.width);
-    if (hit) onToggleSpeaker(hit.channel);
+    if (!hit) return;
+    if (event.altKey) onSoloSpeaker?.(hit.channel);
+    else onToggleSpeaker(hit.channel);
   };
 
   // Sizing is the caller's call (passes w-full h-full) — a fixed internal

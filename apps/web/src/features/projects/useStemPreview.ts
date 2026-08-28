@@ -104,6 +104,13 @@ export function useStemPreview(
   const [speakerEnabled, setSpeakerEnabled] = React.useState<Record<string, boolean>>(
     () => Object.fromEntries([...positionalChannels, "LFE"].map((channel) => [channel, true])),
   );
+  const [speakerSolo, setSpeakerSolo] = React.useState<Set<string>>(() => new Set());
+  const effectiveSpeakerEnabled = React.useMemo(() => {
+    if (!speakerSolo.size) return speakerEnabled;
+    return Object.fromEntries(Object.keys(speakerEnabled).map((channel) => [
+      channel, speakerSolo.has(channel) && speakerEnabled[channel] !== false,
+    ]));
+  }, [speakerEnabled, speakerSolo]);
 
   const engineRef = React.useRef<PreviewAudioEngine | null>(null);
   if (!engineRef.current) {
@@ -146,7 +153,7 @@ export function useStemPreview(
   engine.transauralProfile = transauralProfile;
   if (constants) engine.constants = constants;
   engine.positionalChannels = positionalChannels;
-  engine.speakerEnabled = speakerEnabled;
+  engine.speakerEnabled = effectiveSpeakerEnabled;
   engine.masteringBypassed = masteringBypassed;
   engine.matchBypassed = matchBypassed;
 
@@ -158,6 +165,7 @@ export function useStemPreview(
     if (previousLayoutKey.current === layoutChannelsKey) return;
     previousLayoutKey.current = layoutChannelsKey;
     setSpeakerEnabled(Object.fromEntries([...positionalChannels, "LFE"].map((channel) => [channel, true])));
+    setSpeakerSolo(new Set());
   }, [layoutChannelsKey, positionalChannels]);
 
   const hasManifest = Boolean(mix);
@@ -183,10 +191,21 @@ export function useStemPreview(
   React.useEffect(() => {
     engine.applySpeakerMute();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [speakerEnabled]);
+  }, [effectiveSpeakerEnabled]);
 
   const toggleSpeaker = React.useCallback((channel: string) => {
+    setSpeakerSolo(new Set());
     setSpeakerEnabled((current) => ({ ...current, [channel]: current[channel] === false }));
+  }, []);
+
+  const soloSpeaker = React.useCallback((channel: string) => {
+    setSpeakerEnabled((current) => ({ ...current, [channel]: true }));
+    setSpeakerSolo((current) => {
+      const next = new Set(current);
+      if (next.has(channel)) next.delete(channel);
+      else next.add(channel);
+      return next;
+    });
   }, []);
 
   React.useEffect(() => {
@@ -279,7 +298,9 @@ export function useStemPreview(
     masterMeters: engine.masterMeters,
     currentTimeRef: engine.currentTimeRef,
     speakerEnabled,
+    speakerSolo,
     toggleSpeaker,
+    soloSpeaker,
     maxChannels,
     nativeSupported: layoutChannels.length > 0 && layoutChannels.length <= maxChannels,
     outputDevices,

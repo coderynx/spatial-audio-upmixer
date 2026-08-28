@@ -13,7 +13,6 @@ import { drawSpeakerPoint } from "./speakerMarker";
 
 type Voice = { key: string; stem: string; base: string; pan: number; sizeScale: number };
 type SmoothedVoice = { x: number; y: number; level: number };
-type HitTarget = { stem: string; x: number; y: number; radius: number };
 type SpeakerHitTarget = { channel: string; x: number; y: number; radius: number };
 
 const TAU = Math.PI * 2;
@@ -31,12 +30,13 @@ export type StereoPanoramaViewProps = {
   selectedStem: string | null;
   colors: Record<string, string>;
   channelCounts?: Record<string, number>;
-  onSelectStem: (stem: string | null) => void;
   stemSpectrum: React.MutableRefObject<Map<string, { level: number; centroid: number }>>;
   // Per-speaker mute — same channel-bed model as HazeView (see
   // useStemPreview.ts). Clicking a speaker's point on the graph toggles it.
   speakerEnabled: Record<string, boolean>;
+  speakerSolo: ReadonlySet<string>;
   onToggleSpeaker: (channel: string) => void;
+  onSoloSpeaker: (channel: string) => void;
   // True while preview audio is live-updating `stemSpectrum` — see HazeView's
   // `active` prop for the idle-gating rationale, identical here.
   active: boolean;
@@ -51,10 +51,11 @@ function StereoPanoramaViewImpl({
   selectedStem,
   colors,
   channelCounts,
-  onSelectStem,
   stemSpectrum,
   speakerEnabled,
+  speakerSolo,
   onToggleSpeaker,
+  onSoloSpeaker,
   active,
   intensity,
   onIntensity,
@@ -65,12 +66,11 @@ function StereoPanoramaViewImpl({
   const blobCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const blurCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const smoothed = React.useRef<Map<string, SmoothedVoice>>(new Map());
-  const hitTargets = React.useRef<HitTarget[]>([]);
   const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
-  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity });
-  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity };
+  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity });
+  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity };
   const activeRef = React.useRef(active);
   activeRef.current = active;
   const idleFrames = React.useRef(0);
@@ -121,7 +121,7 @@ function StereoPanoramaViewImpl({
     const draw = (time: number) => {
       const delta = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
-      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled, intensity: currentIntensity } = propsRef.current;
+      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled, speakerSolo: currentSolo, intensity: currentIntensity } = propsRef.current;
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
       // Same gutter arithmetic as ElevationView: padTop clears the intensity
@@ -203,8 +203,10 @@ function StereoPanoramaViewImpl({
         if (pan === undefined) continue;
         const x = toX(pan);
         const muted = currentSpeakerEnabled[channel] === false;
-        drawSpeakerPoint(ctx, x, padTop, 4, muted);
-        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.labelStrong;
+        const soloed = currentSolo.has(channel);
+        const silent = !muted && currentSolo.size > 0 && !soloed;
+        drawSpeakerPoint(ctx, x, padTop, 4, muted, soloed, silent);
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : soloed ? canvasTheme.meterWarn : silent ? canvasTheme.label : canvasTheme.labelStrong;
         ctx.fillText(channel === "FL" ? "L" : "R", x, padTop - 10);
         nextSpeakerHits.push({ channel, x, y: padTop, radius: 12 });
       }
@@ -226,7 +228,6 @@ function StereoPanoramaViewImpl({
       // Same melt treatment as the Haze and Elevation views: resolve smoothed
       // voices, paint oversized additive blobs into an offscreen buffer, then
       // blur + screen-composite it back onto the main canvas.
-      const nextHits: HitTarget[] = [];
       type Resolved = { point: { x: number; y: number }; blobRadius: number; emphasis: number; level: number; r: number; g: number; b: number };
       const resolved: Resolved[] = [];
       for (const voice of voices) {
@@ -253,9 +254,7 @@ function StereoPanoramaViewImpl({
         const blobRadius = (28 + next.level * 50) * voice.sizeScale * (currentSelected === voice.stem ? 1.15 : 1);
 
         if (emphasis > 0.005) resolved.push({ point, blobRadius, emphasis, level: next.level, r, g, b });
-        nextHits.push({ stem: voice.stem, x: point.x, y: point.y, radius: Math.max(blobRadius, 16) });
       }
-      hitTargets.current = nextHits;
 
       blobCtx.clearRect(0, 0, width, height);
       blobCtx.globalCompositeOperation = "lighter";
@@ -312,15 +311,13 @@ function StereoPanoramaViewImpl({
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity]);
+  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
 
-    // Speaker points take priority over stem selection — they're small, fixed
-    // targets, and a stem's much larger blob often overlaps them.
     let closestSpeaker: { channel: string; distance: number } | null = null;
     for (const hit of speakerHitTargets.current) {
       const distance = Math.hypot(hit.x - x, hit.y - y);
@@ -329,16 +326,9 @@ function StereoPanoramaViewImpl({
       }
     }
     if (closestSpeaker) {
-      onToggleSpeaker(closestSpeaker.channel);
-      return;
+      if (event.altKey) onSoloSpeaker(closestSpeaker.channel);
+      else onToggleSpeaker(closestSpeaker.channel);
     }
-
-    let closest: { stem: string; distance: number } | null = null;
-    for (const hit of hitTargets.current) {
-      const distance = Math.hypot(hit.x - x, hit.y - y);
-      if (distance <= hit.radius && (!closest || distance < closest.distance)) closest = { stem: hit.stem, distance };
-    }
-    onSelectStem(closest ? (closest.stem === selectedStem ? null : closest.stem) : null);
   };
 
   return <div
@@ -354,13 +344,6 @@ function StereoPanoramaViewImpl({
       label="Panorama intensity"
       className="absolute left-2 top-2 z-10"
     />
-    <button
-      type="button"
-      onClick={() => onSelectStem(null)}
-      className="absolute right-2 top-2 z-10 rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[11px] text-white/70 backdrop-blur-sm transition-colors hover:bg-white/10 hover:text-white"
-    >
-      {selectedStem || "Aggregate output"}
-    </button>
   </div>;
 }
 

@@ -14,6 +14,8 @@ export function drawSpeakerPoint(
   y: number,
   radius: number,
   muted: boolean,
+  soloed = false,
+  inactive = false,
 ) {
   if (muted) {
     ctx.fillStyle = canvasTheme.mute;
@@ -22,11 +24,11 @@ export function drawSpeakerPoint(
     ctx.fill();
     return;
   }
-  ctx.fillStyle = canvasTheme.plotFieldCore;
+  ctx.fillStyle = soloed ? canvasTheme.meterWarn : inactive ? canvasTheme.plotField : canvasTheme.plotFieldCore;
   ctx.beginPath();
   ctx.arc(x, y, radius, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = canvasTheme.ring;
+  ctx.strokeStyle = soloed ? canvasTheme.meterWarn : inactive ? canvasTheme.grid : canvasTheme.ring;
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.arc(x, y, radius - 0.75, 0, Math.PI * 2);

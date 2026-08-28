@@ -17,7 +17,6 @@ type Voice = { key: string; stem: string; base: string; angle: number; heightAng
 
 type SmoothedVoice = { angle: number; radius: number; heightRadius: number; level: number; heightLevel: number };
 
-type HitTarget = { stem: string; x: number; y: number; radius: number };
 type SpeakerHitTarget = { channel: string; x: number; y: number; radius: number };
 
 const TAU = Math.PI * 2;
@@ -39,13 +38,14 @@ export type HazeViewProps = {
   selectedStem: string | null;
   colors: Record<string, string>;
   channelCounts?: Record<string, number>;
-  onSelectStem: (stem: string | null) => void;
   stemSpectrum: React.MutableRefObject<Map<string, StemSpectrum>>;
   // Per-speaker mute — the preview renders the channel bed (see
   // useStemPreview.ts), so a speaker can be silenced independently of any
   // stem. Clicking a speaker's point on the graph toggles it directly.
   speakerEnabled: Record<string, boolean>;
+  speakerSolo: ReadonlySet<string>;
   onToggleSpeaker: (channel: string) => void;
+  onSoloSpeaker: (channel: string) => void;
   // True while preview audio is live-updating `stemSpectrum` (i.e.
   // `preview.playing`). While inactive, the draw loop keeps running only
   // until every voice has faded out and the trailing background fade has
@@ -64,10 +64,11 @@ function HazeViewImpl({
   selectedStem,
   colors,
   channelCounts,
-  onSelectStem,
   stemSpectrum,
   speakerEnabled,
+  speakerSolo,
   onToggleSpeaker,
+  onSoloSpeaker,
   active,
   intensity,
   onIntensity,
@@ -78,13 +79,12 @@ function HazeViewImpl({
   const blobCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const blurCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const smoothed = React.useRef<Map<string, SmoothedVoice>>(new Map());
-  const hitTargets = React.useRef<HitTarget[]>([]);
   const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
   // Latest props, read fresh by the draw loop without restarting it.
-  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity });
-  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity };
+  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity });
+  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity };
   const activeRef = React.useRef(active);
   activeRef.current = active;
   const idleFrames = React.useRef(0);
@@ -139,7 +139,7 @@ function HazeViewImpl({
     const draw = (time: number) => {
       const delta = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
-      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled, intensity: currentIntensity } = propsRef.current;
+      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled, speakerSolo: currentSolo, intensity: currentIntensity } = propsRef.current;
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
       const center = { x: width / 2, y: height / 2 };
@@ -209,9 +209,11 @@ function HazeViewImpl({
         const angle = vecAngle(speakerCoordinates[channel]);
         const point = polar(center, radius, angle);
         const muted = currentSpeakerEnabled[channel] === false;
-        drawSpeakerPoint(ctx, point.x, point.y, 4, muted);
+        const soloed = currentSolo.has(channel);
+        const silent = !muted && currentSolo.size > 0 && !soloed;
+        drawSpeakerPoint(ctx, point.x, point.y, 4, muted, soloed, silent);
         const labelPoint = polar(center, radius + 14, angle);
-        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.labelStrong;
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : soloed ? canvasTheme.meterWarn : silent ? canvasTheme.label : canvasTheme.labelStrong;
         ctx.textAlign = "center";
         ctx.fillText(speakerDisplayLabel(channel, currentChannels), labelPoint.x, labelPoint.y + 4);
         nextSpeakerHits.push({ channel, x: point.x, y: point.y, radius: 12 });
@@ -221,9 +223,11 @@ function HazeViewImpl({
         const angle = vecAngle(speakerCoordinates[channel]);
         const point = polar(center, heightRingRadius, angle);
         const muted = currentSpeakerEnabled[channel] === false;
-        drawSpeakerPoint(ctx, point.x, point.y, 3.25, muted);
+        const soloed = currentSolo.has(channel);
+        const silent = !muted && currentSolo.size > 0 && !soloed;
+        drawSpeakerPoint(ctx, point.x, point.y, 3.25, muted, soloed, silent);
         const labelPoint = polar(center, heightRingRadius + 12, angle);
-        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.label;
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : soloed ? canvasTheme.meterWarn : canvasTheme.label;
         ctx.fillText(speakerDisplayLabel(channel, currentChannels), labelPoint.x, labelPoint.y + 3);
         nextSpeakerHits.push({ channel, x: point.x, y: point.y, radius: 11 });
       }
@@ -232,9 +236,11 @@ function HazeViewImpl({
       // on the ring.
       if (currentChannels.includes("LFE")) {
         const lfeMuted = currentSpeakerEnabled.LFE === false;
-        drawSpeakerPoint(ctx, center.x, center.y, 4, lfeMuted);
+        const lfeSoloed = currentSolo.has("LFE");
+        const lfeSilent = !lfeMuted && currentSolo.size > 0 && !lfeSoloed;
+        drawSpeakerPoint(ctx, center.x, center.y, 4, lfeMuted, lfeSoloed, lfeSilent);
         ctx.font = "500 9px system-ui, sans-serif";
-        ctx.fillStyle = lfeMuted ? canvasTheme.muteLabel : canvasTheme.label;
+        ctx.fillStyle = lfeMuted ? canvasTheme.muteLabel : lfeSoloed ? canvasTheme.meterWarn : canvasTheme.label;
         ctx.textAlign = "center";
         ctx.fillText("LFE", center.x, center.y + 16);
         nextSpeakerHits.push({ channel: "LFE", x: center.x, y: center.y, radius: 12 });
@@ -263,10 +269,9 @@ function HazeViewImpl({
         }
       }
 
-      // Two-pass render: resolve voice state and hit targets, then paint soft
+      // Two-pass render: resolve voice state, then paint soft
       // blobs into an offscreen buffer that is blurred and screen-composited
       // back — additive blending is what melts overlapping halos into one field.
-      const nextHits: HitTarget[] = [];
       type Resolved = { voice: Voice; point: { x: number; y: number }; blobRadius: number; emphasis: number; level: number; r: number; g: number; b: number };
       const resolved: Resolved[] = [];
       for (const voice of voices) {
@@ -316,9 +321,7 @@ function HazeViewImpl({
           ctx.fill();
         }
 
-        nextHits.push({ stem: voice.stem, x: point.x, y: point.y, radius: Math.max(blobRadius, 16) });
       }
-      hitTargets.current = nextHits;
 
       blobCtx.clearRect(0, 0, width, height);
       blobCtx.globalCompositeOperation = "lighter";
@@ -382,15 +385,13 @@ function HazeViewImpl({
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled, intensity]);
+  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
 
-    // Speaker points take priority over stem selection — they're small,
-    // fixed targets, and a stem's much larger blob often overlaps them.
     let closestSpeaker: { channel: string; distance: number } | null = null;
     for (const hit of speakerHitTargets.current) {
       const distance = Math.hypot(hit.x - x, hit.y - y);
@@ -399,16 +400,9 @@ function HazeViewImpl({
       }
     }
     if (closestSpeaker) {
-      onToggleSpeaker(closestSpeaker.channel);
-      return;
+      if (event.altKey) onSoloSpeaker(closestSpeaker.channel);
+      else onToggleSpeaker(closestSpeaker.channel);
     }
-
-    let closest: { stem: string; distance: number } | null = null;
-    for (const hit of hitTargets.current) {
-      const distance = Math.hypot(hit.x - x, hit.y - y);
-      if (distance <= hit.radius && (!closest || distance < closest.distance)) closest = { stem: hit.stem, distance };
-    }
-    onSelectStem(closest ? (closest.stem === selectedStem ? null : closest.stem) : null);
   };
 
   // The wrapper takes the canvas's own background so the panel and the
@@ -427,13 +421,6 @@ function HazeViewImpl({
       label="Haze intensity"
       className="absolute left-2 top-2 z-10"
     />
-    <button
-      type="button"
-      onClick={() => onSelectStem(null)}
-      className="absolute right-2 top-2 z-10 rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[11px] text-white/70 backdrop-blur-sm transition-colors hover:bg-white/10 hover:text-white"
-    >
-      {selectedStem || "Aggregate output"}
-    </button>
   </div>;
 }
 

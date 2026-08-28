@@ -15,6 +15,8 @@ const MIN_DISTANCE = 2;
 const MAX_DISTANCE = 7;
 const MAX_HEIGHT = 0.6;
 const COLOR_RESPONSE = 3;
+const RELEASE_RESPONSE = 8;
+const SILENCE_LEVEL = 0.003;
 
 type Camera = { yaw: number; pitch: number; distance?: number };
 type ProjectedPoint = { x: number; y: number; depth: number; scale: number };
@@ -26,7 +28,6 @@ type Voice = {
   position: Vec3;
   lobes?: { channel: string; position: Vec3; weight: number }[];
 };
-type HitTarget = { stem: string; x: number; y: number; radius: number };
 type SpeakerHitTarget = { channel: string; x: number; y: number; radius: number };
 
 export function bedLobeIntensity(level: number, weight: number, muted: boolean) {
@@ -34,7 +35,16 @@ export function bedLobeIntensity(level: number, weight: number, muted: boolean) 
 }
 
 export function smoothSceneLevel(previous: number, target: number, delta: number) {
-  return previous + (target - previous) * Math.min(1, delta * COLOR_RESPONSE);
+  const response = target > previous ? COLOR_RESPONSE : RELEASE_RESPONSE;
+  return previous + (target - previous) * Math.min(1, delta * response);
+}
+
+export function sceneActivityOpacity(activity: number) {
+  return Math.min(1, Math.max(0, activity));
+}
+
+export function isSceneObjectAudible(level: number) {
+  return level > SILENCE_LEVEL;
 }
 
 export function zoomSceneCamera(camera: Camera, delta: number): Camera {
@@ -115,11 +125,12 @@ export type SceneViewProps = {
   selectedStem: string | null;
   colors: Record<string, string>;
   channelCounts?: Record<string, number>;
-  onSelectStem: (stem: string | null) => void;
   stemSpectrum: React.MutableRefObject<Map<string, StemSpectrum>>;
   channelLevels: React.MutableRefObject<Map<string, MeterLevel>>;
   speakerEnabled: Record<string, boolean>;
+  speakerSolo: ReadonlySet<string>;
   onToggleSpeaker: (channel: string) => void;
+  onSoloSpeaker: (channel: string) => void;
   active: boolean;
   intensity: number;
   onIntensity: (next: number) => void;
@@ -133,11 +144,12 @@ function SceneViewImpl({
   selectedStem,
   colors,
   channelCounts,
-  onSelectStem,
   stemSpectrum,
   channelLevels,
   speakerEnabled,
+  speakerSolo,
   onToggleSpeaker,
+  onSoloSpeaker,
   active,
   intensity,
   onIntensity,
@@ -149,17 +161,16 @@ function SceneViewImpl({
   const blurCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const camera = React.useRef<Camera>({ ...DEFAULT_CAMERA });
   const levels = React.useRef(new Map<string, number>());
-  const hits = React.useRef<HitTarget[]>([]);
   const speakerHits = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const idleFrames = React.useRef(0);
   const wakeRef = React.useRef<() => void>(() => {});
   const drag = React.useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const propsRef = React.useRef({
-    channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, intensity,
+    channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity,
   });
   propsRef.current = {
-    channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, intensity,
+    channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity,
   };
   const activeRef = React.useRef(active);
   activeRef.current = active;
@@ -217,7 +228,7 @@ function SceneViewImpl({
       const {
         channels: currentChannels, routing: currentRouting, objectStems: currentObjectStems,
         selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts,
-        speakerEnabled: currentSpeakerEnabled, intensity: currentIntensity,
+        speakerEnabled: currentSpeakerEnabled, speakerSolo: currentSolo, intensity: currentIntensity,
       } = propsRef.current;
 
       const field = ctx.createLinearGradient(0, 0, 0, height);
@@ -280,11 +291,10 @@ function SceneViewImpl({
         return { voice, level, point: projectScenePoint(voice.position, width, height, camera.current) };
       }).sort((a, b) => b.point.depth - a.point.depth);
 
-      const nextHits: HitTarget[] = [];
       const alphaScale = lerp(MIN_ALPHA_SCALE, 1, currentIntensity);
       blobCtx.clearRect(0, 0, width, height);
       blobCtx.globalCompositeOperation = "lighter";
-      for (const { voice, level, point } of resolved) {
+      for (const { voice, level } of resolved) {
         if (voice.kind !== "bed" || !voice.lobes?.length) continue;
         const emphasis = currentSelected && currentSelected !== voice.stem ? 0.45 : 1;
         const strongest = Math.max(...voice.lobes.map((lobe) => lobe.weight));
@@ -298,15 +308,15 @@ function SceneViewImpl({
           if (activity <= 0.005) continue;
           const radius = Math.max(30, Math.min(90, lobePoint.scale * 0.62)) * (0.65 + weight * 0.35);
           const haze = blobCtx.createRadialGradient(lobePoint.x, lobePoint.y, 0, lobePoint.x, lobePoint.y, radius);
-          haze.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.34 + activity * 0.36) * emphasis * alphaScale})`);
-          haze.addColorStop(0.42, `rgba(${r}, ${g}, ${b}, ${(0.16 + activity * 0.14) * emphasis * alphaScale})`);
+          const opacity = sceneActivityOpacity(activity);
+          haze.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${opacity * 0.7 * emphasis * alphaScale})`);
+          haze.addColorStop(0.42, `rgba(${r}, ${g}, ${b}, ${opacity * 0.3 * emphasis * alphaScale})`);
           haze.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
           blobCtx.fillStyle = haze;
           blobCtx.beginPath();
           blobCtx.arc(lobePoint.x, lobePoint.y, radius, 0, Math.PI * 2);
           blobCtx.fill();
         }
-        nextHits.push({ stem: voice.stem, x: point.x, y: point.y, radius: Math.max(24, Math.min(80, point.scale * 0.45)) });
       }
       blobCtx.globalCompositeOperation = "source-over";
       if (time - lastBlurTime >= 1000 / 30) {
@@ -330,7 +340,9 @@ function SceneViewImpl({
         if (!position) continue;
         const speakerPoint = projectScenePoint(scenePosition(position), width, height, camera.current);
         const muted = currentSpeakerEnabled[channel] === false;
-        const target = muted
+        const soloed = currentSolo.has(channel);
+        const silent = !muted && currentSolo.size > 0 && !soloed;
+        const target = silent
           ? 0
           : Math.min(1, (channelLevels.current.get(channel)?.rms ?? 0) * 8);
         const activity = smoothSceneLevel(levels.current.get(`speaker:${channel}`) ?? 0, target, delta);
@@ -345,42 +357,35 @@ function SceneViewImpl({
           ctx.arc(speakerPoint.x, speakerPoint.y, 16 + activity * 22, 0, Math.PI * 2);
           ctx.fill();
         }
-        drawSpeakerPoint(ctx, speakerPoint.x, speakerPoint.y, 4, muted);
-        ctx.fillStyle = muted ? canvasTheme.muteLabel : canvasTheme.labelStrong;
+        drawSpeakerPoint(ctx, speakerPoint.x, speakerPoint.y, 4, muted, soloed, silent);
+        ctx.fillStyle = muted ? canvasTheme.muteLabel : soloed ? canvasTheme.meterWarn : silent ? canvasTheme.label : canvasTheme.labelStrong;
         ctx.fillText(speakerDisplayLabel(channel, currentChannels), speakerPoint.x, speakerPoint.y - 10);
         nextSpeakerHits.push({ channel, x: speakerPoint.x, y: speakerPoint.y, radius: 12 });
       }
       speakerHits.current = nextSpeakerHits;
 
       for (const { voice, level, point } of resolved) {
-        if (voice.kind !== "object") continue;
+        if (voice.kind !== "object" || !isSceneObjectAudible(level)) continue;
         const activity = Math.min(1, level * 8);
+        const opacity = sceneActivityOpacity(activity);
+        const emphasis = currentSelected && currentSelected !== voice.stem ? 0.35 : 1;
         const radius = Math.max(4, Math.min(11, point.scale * 0.08));
         const glowRadius = radius * (2 + activity * 2);
         const [r, g, b] = hexToRgb(currentColors[voice.stem] || canvasTheme.stemFallback);
         const glow = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, glowRadius);
-        glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.18 + activity * 0.52) * alphaScale})`);
+        glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${opacity * 0.7 * emphasis * alphaScale})`);
         glow.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
         ctx.fillStyle = glow;
         ctx.beginPath();
         ctx.arc(point.x, point.y, glowRadius, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${(0.28 + activity * 0.72) * alphaScale})`;
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${opacity * emphasis * alphaScale})`;
         ctx.beginPath();
         ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
         ctx.fill();
-        if (voice.stem === currentSelected) {
-          ctx.strokeStyle = canvasTheme.labelStrong;
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(point.x, point.y, radius + 3, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        nextHits.push({ stem: voice.stem, x: point.x, y: point.y, radius: Math.max(14, glowRadius) });
       }
-      hits.current = nextHits;
 
-      const quiet = resolved.every(({ level }) => level <= 0.003);
+      const quiet = resolved.every(({ level }) => !isSceneObjectAudible(level));
       idleFrames.current = !activeRef.current && quiet ? idleFrames.current + 1 : 0;
       if (activeRef.current || idleFrames.current < SETTLE_FRAMES) frame.current = window.requestAnimationFrame(draw);
       else frame.current = null;
@@ -400,9 +405,9 @@ function SceneViewImpl({
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, intensity]);
+  }, [active, channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity]);
 
-  const selectAt = (event: React.PointerEvent<HTMLCanvasElement>) => {
+  const toggleSpeakerAt = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
@@ -412,15 +417,9 @@ function SceneViewImpl({
       if (distance <= hit.radius && (!closestSpeaker || distance < closestSpeaker.distance)) closestSpeaker = { channel: hit.channel, distance };
     }
     if (closestSpeaker) {
-      onToggleSpeaker(closestSpeaker.channel);
-      return;
+      if (event.altKey) onSoloSpeaker(closestSpeaker.channel);
+      else onToggleSpeaker(closestSpeaker.channel);
     }
-    let closest: { stem: string; distance: number } | null = null;
-    for (const hit of hits.current) {
-      const distance = Math.hypot(hit.x - x, hit.y - y);
-      if (distance <= hit.radius && (!closest || distance < closest.distance)) closest = { stem: hit.stem, distance };
-    }
-    onSelectStem(closest ? (closest.stem === selectedStem ? null : closest.stem) : null);
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -445,7 +444,7 @@ function SceneViewImpl({
     const current = drag.current;
     drag.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-    if (current && !current.moved) selectAt(event);
+    if (current && !current.moved) toggleSpeakerAt(event);
   };
   const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
     event.preventDefault();
@@ -471,7 +470,7 @@ function SceneViewImpl({
       <canvas
         ref={canvasRef}
         tabIndex={0}
-        aria-label="3D object scene. Bed clouds show routed speaker channels; click a speaker to mute it. Drag to orbit, scroll or use plus and minus to zoom, use arrow keys to rotate, and Home to reset the view."
+        aria-label="3D object scene. Bed clouds show routed speaker channels; click a speaker to mute it, or Option/Alt-click to solo it. Drag to orbit, scroll or use plus and minus to zoom, use arrow keys to rotate, and Home to reset the view."
         className="h-full w-full touch-none cursor-grab outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -487,13 +486,6 @@ function SceneViewImpl({
       label="Scene intensity"
       className="absolute left-2 top-2 z-10"
     />
-    <button
-      type="button"
-      onClick={() => onSelectStem(null)}
-      className="absolute right-2 top-2 z-10 rounded-md border border-white/10 bg-white/5 px-1.5 py-0.5 text-[11px] text-white/70 backdrop-blur-sm transition-colors hover:bg-white/10 hover:text-white"
-    >
-      {selectedStem || "Aggregate output"}
-    </button>
   </div>;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bedLobeIntensity, isObjectStem, projectScenePoint, sceneSpeakerPosition, smoothSceneLevel, zoomSceneCamera } from "./SceneView";
+import { bedLobeIntensity, isObjectStem, isSceneObjectAudible, projectScenePoint, sceneActivityOpacity, sceneSpeakerPosition, smoothSceneLevel, zoomSceneCamera } from "./SceneView";
 
 describe("scene projection", () => {
   it("keeps the room centre centred and enlarges nearer objects", () => {
@@ -44,6 +44,22 @@ describe("scene intensity", () => {
   it("eases colour changes instead of stepping to the meter value", () => {
     expect(smoothSceneLevel(0, 1, 1 / 60)).toBeGreaterThan(0);
     expect(smoothSceneLevel(0, 1, 1 / 60)).toBeLessThan(1);
+    expect(smoothSceneLevel(1, 0, 1 / 60)).toBeGreaterThan(0.8);
+  });
+});
+
+describe("scene activity", () => {
+  it("fades from transparent without a minimum-opacity jump", () => {
+    expect(sceneActivityOpacity(0)).toBe(0);
+    expect(sceneActivityOpacity(0.1)).toBeLessThan(sceneActivityOpacity(1));
+  });
+});
+
+describe("scene objects", () => {
+  it("hides settled-silent objects", () => {
+    expect(isSceneObjectAudible(0)).toBe(false);
+    expect(isSceneObjectAudible(0.003)).toBe(false);
+    expect(isSceneObjectAudible(0.004)).toBe(true);
   });
 });
 

@@ -214,6 +214,46 @@ describe("useStemPreview parameter binding", () => {
     expect(params.master.bass).toBeNull();
   });
 
+  it("solos multiple speakers without losing the previous mute state", async () => {
+    await renderPreview();
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      toggleSpeaker: (channel: string) => void;
+      soloSpeaker: (channel: string) => void;
+      speakerEnabled: Record<string, boolean>;
+      speakerSolo: ReadonlySet<string>;
+    };
+    await act(async () => {
+      preview.toggleSpeaker("FR");
+    });
+    await act(async () => {
+      preview.soloSpeaker("FL");
+    });
+    const speakers = (sentParams.at(-1) as { speakers: { name: string; muted: boolean }[] }).speakers;
+    const muted = (channel: string) => speakers.find((speaker) => speaker.name === channel)?.muted;
+    expect(muted("FL")).toBe(false);
+    expect(muted("FR")).toBe(true);
+    expect(muted("C")).toBe(true);
+    const soloState = (globalThis as unknown as Record<string, unknown>).preview as typeof preview;
+    expect(soloState.speakerEnabled.C).toBe(true);
+    expect(soloState.speakerSolo).toEqual(new Set(["FL"]));
+
+    await act(async () => {
+      preview.soloSpeaker("C");
+    });
+    const multiSolo = (sentParams.at(-1) as { speakers: { name: string; muted: boolean }[] }).speakers;
+    expect(multiSolo.find((speaker) => speaker.name === "FL")?.muted).toBe(false);
+    expect(multiSolo.find((speaker) => speaker.name === "C")?.muted).toBe(false);
+    expect(multiSolo.find((speaker) => speaker.name === "FR")?.muted).toBe(true);
+
+    await act(async () => {
+      preview.soloSpeaker("FL");
+      preview.soloSpeaker("C");
+    });
+    const restored = (sentParams.at(-1) as { speakers: { name: string; muted: boolean }[] }).speakers;
+    expect(restored.find((speaker) => speaker.name === "FR")?.muted).toBe(true);
+    expect(restored.find((speaker) => speaker.name === "C")?.muted).toBe(false);
+  });
+
   it("arms the look-ahead limiter before every output path", async () => {
     await renderPreview({ outputMode: "native" });
     const native = sentParams.at(-1) as { master: { limiter: unknown }; soft_limit_threshold: number };
