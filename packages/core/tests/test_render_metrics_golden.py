@@ -73,11 +73,11 @@ _GOLDEN_REFMATCH_CHANNEL_RMS_HEX = {
 
 # Regenerate via `REGENERATE_GOLDEN=1 python3 -m pytest
 # tests/test_render_metrics_golden.py::test_python_binaural_metrics_golden -s`.
-_GOLDEN_BINAURAL_LKFS_HEX = "c032000000000001"
-_GOLDEN_BINAURAL_TP_HEX = "c02665f9b8da211d"
+_GOLDEN_BINAURAL_LKFS_HEX = "c032000000000000"
+_GOLDEN_BINAURAL_TP_HEX = "c023c67ef534946a"
 _GOLDEN_BINAURAL_CHANNEL_RMS_HEX = {
-    "FL": "3fb6718db241fd9c",
-    "FR": "3fb680f1259e8f02",
+    "FL": "3fb70f7bd7743148",
+    "FR": "3fb5a4f88fbfb0cf",
 }
 
 

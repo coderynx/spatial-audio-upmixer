@@ -120,6 +120,27 @@ def test_load_xtc_filter_set_resamples():
     assert ratio == pytest.approx(44100 / 48000, rel=0.05)
 
 
+@pytest.mark.parametrize("profile", CROSSTALK_PROFILES)
+def test_xtc_filter_set_is_delayed_identity_below_active_band(profile):
+    resolved_profile = resolve_profile(profile)
+    params = XTC_PARAMS[resolved_profile]
+    taps = load_xtc_filter_set(XTC_FILTER_SET[resolved_profile], SR).taps
+    n_fft = 4096
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / SR)
+    response = np.fft.rfft(taps, n_fft, axis=-1)
+    delay = np.exp(
+        -2j * np.pi * np.arange(response.shape[-1]) * (taps.shape[-1] // 2) / n_fft
+    )
+    low = (freqs >= 20.0) & (freqs <= params.xtc_lo_hz)
+
+    diagonal = np.concatenate(
+        (response[0, 0, low] / delay[low], response[1, 1, low] / delay[low])
+    )
+    crossfeed = np.concatenate((response[0, 1, low], response[1, 0, low]))
+    assert np.allclose(diagonal, 1.0, atol=0.01)
+    assert np.max(np.abs(crossfeed)) <= 0.01
+
+
 def test_apply_xtc_silence_in_silence_out():
     filter_set = load_xtc_filter_set("stereo_xtc", SR)
     left = np.zeros(1000)

@@ -219,7 +219,7 @@ function params(mode, decodeTaps, options = {}) {
     },
     output_mode: mode,
     decode_taps: decodeTaps,
-    xtc_taps: [],
+    xtc_taps: mode === "transaural" ? xtcBank() : [],
     voicing: {
       crossfeed_amount: 0.25, crossfeed_cutoff_hz: 700, bass_shelf_hz: 120, bass_shelf_gain_db: 1.5,
       air_shelf_hz: 9000, air_shelf_gain_db: 1.5, presence_hz: 2500, presence_gain_db: 1,
@@ -234,6 +234,16 @@ function decodeBank() {
   const bank = new Array(16 * 2 * DECODE_TAPS);
   for (let i = 0; i < bank.length; i += 1) bank[i] = Math.sin(i * 0.001) / (1 + (i % DECODE_TAPS));
   return bank;
+}
+
+function xtcBank() {
+  const taps = new Array(4 * 1024).fill(0);
+  for (const [filter, gain] of [[0, 1.1], [1, -0.28], [2, -0.28], [3, 1.1]]) {
+    const offset = filter * 1024;
+    taps[offset + 512] = gain;
+    taps[offset + 560] = gain * 0.08;
+  }
+  return taps;
 }
 
 function run({ label, mode, decode, kind, ambient, objectMode, downmixLock, productionFirs, silenceTail }) {

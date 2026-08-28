@@ -131,8 +131,6 @@ def build_filter_set(params: XtcParams) -> np.ndarray:
     out[:, 2] = windowed[1, 0]  # H_RL
     out[:, 3] = windowed[1, 1]  # H_RR
 
-    peak = float(np.max(np.abs(out))) or 1.0
-    out *= 0.9 / peak
     return out
 
 

@@ -203,6 +203,7 @@ def normalize_loudness(
     max_gain_db: float = 30.0,
     apply_tp_gain: bool = True,
     fold_measurement: bool = False,
+    apply_loudness_gain: bool = True,
 ) -> tuple[dict[str, np.ndarray], dict]:
     """Apply a single linear gain for BS.1770-4 loudness (+ optional True Peak) compliance.
 
@@ -228,6 +229,9 @@ def normalize_loudness(
             — the 5.1 re-render for beds wider than 5.1 — instead of the
             delivered bed.  The correction is still one scalar gain, which
             commutes with the fold, so nothing has to iterate.
+        apply_loudness_gain: if ``False``, preserve the supplied programme
+            level while still enforcing ``max_tp_dbtp`` when
+            ``apply_tp_gain`` is enabled.
 
     Returns:
         (adjusted_channels, info) where info dict has keys:
@@ -241,7 +245,11 @@ def normalize_loudness(
 
     measured_lkfs = _measure(channels)
     measurable = measured_lkfs > ABS_GATE
-    gain_db = min(target_lkfs - measured_lkfs, max_gain_db) if measurable else 0.0
+    gain_db = (
+        min(target_lkfs - measured_lkfs, max_gain_db)
+        if apply_loudness_gain and measurable
+        else 0.0
+    )
     gain_linear = 10.0 ** (gain_db / 20.0)
     adjusted = {k: v.copy() for k, v in channels.items()}
     for v in adjusted.values():

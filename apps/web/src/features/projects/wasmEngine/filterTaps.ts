@@ -57,15 +57,11 @@ export class FilterTapCache {
     isCurrent: () => boolean,
   ): Promise<boolean> {
     if (this.loadedDecodeProfile === profile && this.decodeTaps) return true;
-    try {
-      const taps = await loadDecodeTaps(context, constants.decodeFilterSet[profile]);
-      if (!isCurrent()) return false;
-      this.decodeTaps = taps;
-      this.loadedDecodeProfile = profile;
-      return true;
-    } catch {
-      return false;
-    }
+    const taps = await loadDecodeTaps(context, constants.decodeFilterSet[profile]);
+    if (!isCurrent()) return false;
+    this.decodeTaps = taps;
+    this.loadedDecodeProfile = profile;
+    return true;
   }
 
   async loadXtc(
@@ -75,15 +71,11 @@ export class FilterTapCache {
     isCurrent: () => boolean,
   ): Promise<boolean> {
     if (this.loadedXtcProfile === profile && this.xtcTaps) return true;
-    try {
-      const taps = await loadXtcTaps(context, constants.xtcFilterSet[profile]);
-      if (!isCurrent()) return false;
-      this.xtcTaps = taps;
-      this.loadedXtcProfile = profile;
-      return true;
-    } catch {
-      return false;
-    }
+    const taps = await loadXtcTaps(context, constants.xtcFilterSet[profile]);
+    if (!isCurrent()) return false;
+    this.xtcTaps = taps;
+    this.loadedXtcProfile = profile;
+    return true;
   }
 
   async loadMastering(

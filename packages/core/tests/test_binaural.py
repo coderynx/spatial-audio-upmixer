@@ -68,11 +68,32 @@ def test_head_shadow_ild_is_frequency_dependent():
     assert _band_ild_db(30.0, 48000, 2000.0, 6000.0) >= 4.0
 
 
-def test_synth_hrir_is_exactly_mirror_symmetric():
-    left_pos, right_pos = synth_hrir(math.radians(30.0), 0.0, 48000, 256)
-    left_neg, right_neg = synth_hrir(math.radians(-30.0), 0.0, 48000, 256)
+@pytest.mark.parametrize("azimuth_deg", [30.0, 135.0])
+def test_synth_hrir_is_exactly_mirror_symmetric(azimuth_deg):
+    left_pos, right_pos = synth_hrir(math.radians(azimuth_deg), 0.0, 48000, 256)
+    left_neg, right_neg = synth_hrir(math.radians(-azimuth_deg), 0.0, 48000, 256)
     assert np.array_equal(left_pos, right_neg)
     assert np.array_equal(right_pos, left_neg)
+
+
+def test_synth_hrir_uses_the_rear_hemisphere_woodworth_branch():
+    # Woodworth gives the same path difference at 45° and 135°; applying its
+    # front-hemisphere equation to the rear source would instead over-delay it.
+    _, right_front = synth_hrir(math.radians(45.0), 0.0, 48000, 256)
+    _, right_rear = synth_hrir(math.radians(135.0), 0.0, 48000, 256)
+    np.testing.assert_allclose(right_rear, right_front, atol=1e-12)
+
+
+def test_synth_hrir_is_periodic_at_axial_endpoints():
+    front = synth_hrir(0.0, 0.0, 48000, 256)
+    full_turn = synth_hrir(2.0 * math.pi, 0.0, 48000, 256)
+    rear_left = synth_hrir(math.pi, 0.0, 48000, 256)
+    rear_right = synth_hrir(-math.pi, 0.0, 48000, 256)
+    for actual, expected in zip(full_turn, front):
+        assert np.array_equal(actual, expected)
+    for actual, expected in zip(rear_left, rear_right):
+        assert np.array_equal(actual, expected)
+    assert np.array_equal(rear_left[0], rear_left[1])
 
 
 def test_listening_voicing_params_exact():
@@ -229,7 +250,7 @@ def test_binaural_bed_formats_are_valid_output_formats():
 def test_render_binaural_is_left_right_balanced_for_a_centered_signal(bed_name, profile):
     # Regression: the decode filter set's virtual-loudspeaker direction set
     # must be exactly mirror-symmetric (see scripts/build_binaural_filters.py
-    # fibonacci_sphere) or a perfectly centered/symmetric bed decodes to
+    # real_speaker_directions) or a perfectly centered/symmetric bed decodes to
     # audibly unequal L/R levels even though nothing in the mix is panned.
     sr = 48000
     n = sr

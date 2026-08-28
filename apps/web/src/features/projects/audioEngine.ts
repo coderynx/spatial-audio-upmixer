@@ -116,6 +116,7 @@ export class PreviewAudioEngine {
   private scrubbing = false;
   private loadToken = 0;
   private appliedOutputGain = 1;
+  private spatialLoadFailed = false;
 
   private readonly taps = new FilterTapCache();
   private readonly calibration = new LoudnessCalibration({
@@ -275,17 +276,32 @@ export class PreviewAudioEngine {
   }
 
   async syncProgram() {
+    if (!this.loaded && !this.spatialLoadFailed) return;
     const key = this.programKey;
-    await Promise.all([
-      this.loadMasteringFirs(),
-      this.loadReferenceMatchFir(),
-      this.loadStemEqFirs(),
-      this.loadDecodeFilterSet(this.spatialProfile),
-      this.loadXtcFilterSet(this.transauralProfile),
-    ]);
-    if (key !== this.programKey) return;
-    this.apply();
-    if (!this.playing) await this.measureIfNeeded();
+    try {
+      const [, , , spatialLoaded] = await Promise.all([
+        this.loadMasteringFirs(),
+        this.loadReferenceMatchFir(),
+        this.loadStemEqFirs(),
+        this.loadCurrentSpatialFilterSets(),
+      ]);
+      if (!spatialLoaded || key !== this.programKey) return;
+      const recovered = this.spatialLoadFailed;
+      this.callbacks.onError(null);
+      this.spatialLoadFailed = false;
+      if (recovered) {
+        this.loaded = true;
+        this.callbacks.onReady(true);
+      }
+      this.apply();
+      if (!this.playing) await this.measureIfNeeded();
+    } catch (error) {
+      if (key === this.programKey) {
+        this.spatialLoadFailed = true;
+        this.callbacks.onReady(false);
+        this.callbacks.onError(error instanceof Error ? error.message : "Preview filter assets failed to load");
+      }
+    }
   }
 
   applySpeakerMute() {
@@ -294,22 +310,46 @@ export class PreviewAudioEngine {
 
   async loadDecodeFilterSet(profile: SpatialProfile): Promise<boolean> {
     if (!this.context || !this.constants) return false;
-    const ok = await this.taps.loadDecode(
-      this.context, this.constants, profile, () => profile === this.spatialProfile,
+    return this.taps.loadDecode(
+      this.context, this.constants, profile, () => profile === this.decodeProfile(),
     );
-    // A slice, not the cached field itself: `setDecodeTaps` transfers its
-    // argument's buffer, which would detach the cache entry.
-    if (ok && this.taps.decodeTaps) this.client?.setDecodeTaps(this.taps.decodeTaps.slice());
-    return ok;
   }
 
   async loadXtcFilterSet(profile: TransauralProfile): Promise<boolean> {
     if (!this.context || !this.constants) return false;
-    const ok = await this.taps.loadXtc(
-      this.context, this.constants, profile, () => profile === this.transauralProfile,
+    return this.taps.loadXtc(
+      this.context, this.constants, profile,
+      () => this.outputMode === "transaural" && profile === this.transauralProfile,
     );
-    if (ok && this.taps.xtcTaps) this.client?.setXtcTaps(this.taps.xtcTaps.slice());
-    return ok;
+  }
+
+  private decodeProfile(): SpatialProfile | null {
+    if (this.outputMode === "transaural") return "flat";
+    return this.outputMode === "binaural" ? this.spatialProfile : null;
+  }
+
+  private async loadSpatialFilterSets(): Promise<boolean> {
+    const decodeProfile = this.decodeProfile();
+    if (decodeProfile && !await this.loadDecodeFilterSet(decodeProfile)) return false;
+    if (this.outputMode === "transaural" && !await this.loadXtcFilterSet(this.transauralProfile)) {
+      return false;
+    }
+    if (decodeProfile !== this.decodeProfile()) return false;
+    if (this.outputMode === "transaural" && this.taps.loadedXtcProfile !== this.transauralProfile) {
+      return false;
+    }
+    // `set*Taps` transfers its argument's buffer, so keep the cached source
+    // intact and only hand both spatial banks to the worklet after they load.
+    if (decodeProfile && this.taps.decodeTaps) this.client?.setDecodeTaps(this.taps.decodeTaps.slice());
+    if (this.outputMode === "transaural" && this.taps.xtcTaps) this.client?.setXtcTaps(this.taps.xtcTaps.slice());
+    return true;
+  }
+
+  private async loadCurrentSpatialFilterSets(token = this.loadToken): Promise<boolean> {
+    while (token === this.loadToken && this.context && this.client && this.constants) {
+      if (await this.loadSpatialFilterSets()) return true;
+    }
+    return false;
   }
 
   private async loadMasteringFirs() {
@@ -526,6 +566,7 @@ export class PreviewAudioEngine {
     this.callbacks.onError(null);
     this.callbacks.onReady(false);
     this.callbacks.onLoadProgress(0);
+    let spatialFailure = false;
 
     try {
       const Ctor =
@@ -567,19 +608,9 @@ export class PreviewAudioEngine {
       this.monitorGain.gain.value = this.muted ? 0 : this.volume;
       client.node.connect(this.monitorGain).connect(context.destination);
 
-      // `setParams` always builds a fresh engine with no taps of its own, so a
-      // profile already cached from a prior init has to be re-pushed here —
-      // the loaders' cache-hit path would otherwise find nothing to fetch.
       client.setParams(this.buildParams());
-      if (this.taps.loadedDecodeProfile === this.spatialProfile && this.taps.decodeTaps) {
-        client.setDecodeTaps(this.taps.decodeTaps.slice());
-      }
-      if (this.taps.loadedXtcProfile === this.transauralProfile && this.taps.xtcTaps) {
-        client.setXtcTaps(this.taps.xtcTaps.slice());
-      }
-      await Promise.all([
-        this.loadDecodeFilterSet(this.spatialProfile),
-        this.loadXtcFilterSet(this.transauralProfile),
+      const initialLoads = await Promise.allSettled([
+        this.loadSpatialFilterSets(),
         Promise.all([this.loadMasteringFirs(), this.loadReferenceMatchFir()]).then(() => this.apply()),
         this.loadStemEqFirs().then(() => this.apply()),
         this.loadStems(token, context, client),
@@ -589,25 +620,36 @@ export class PreviewAudioEngine {
         void context.close();
         return;
       }
+      const initialFailure = initialLoads.slice(1).find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (initialFailure) throw initialFailure.reason;
 
-      // A profile switch during the loads above was dropped by the gate in
-      // `measureIfNeeded`, so re-resolve both against the current fields: the
-      // cached sets only need re-pushing into the fresh engine.
-      await Promise.all([
-        this.loadDecodeFilterSet(this.spatialProfile),
-        this.loadXtcFilterSet(this.transauralProfile),
-      ]);
+      let spatialLoaded: boolean;
+      try {
+        spatialLoaded = await this.loadCurrentSpatialFilterSets(token);
+      } catch (error) {
+        spatialFailure = true;
+        throw error;
+      }
+      if (!spatialLoaded) {
+        this.spatialLoadFailed = true;
+        return;
+      }
       if (token !== this.loadToken) {
         client.dispose();
         void context.close();
         return;
       }
 
+      this.apply();
       this.loaded = true;
+      this.spatialLoadFailed = false;
       this.callbacks.onReady(true);
       await this.measureIfNeeded();
     } catch (error) {
       if (token === this.loadToken) {
+        this.spatialLoadFailed = spatialFailure;
         this.callbacks.onError(error instanceof Error ? error.message : "Preview failed to load");
       }
     }
@@ -685,6 +727,7 @@ export class PreviewAudioEngine {
   reset() {
     this.loadToken += 1;
     this.loaded = false;
+    this.spatialLoadFailed = false;
     this.playing = false;
     this.duration = 0;
     this.currentTimeRef.current = 0;

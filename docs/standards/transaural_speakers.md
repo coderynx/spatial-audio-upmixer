@@ -137,8 +137,9 @@ dataclass) and `packages/core/src/crosstalk/geometry.py::speaker_azimuths_rad`.
 
 The acoustic path from each speaker to each ear is synthesized with the
 **same parametric spherical-head HRTF model** the binaural engine's decode
-filters use — Woodworth ITD + frequency-dependent head-shadow ILD (a lowpass
-plus a `SHADOW_SHELF_HZ = 700 Hz` high shelf) —
+filters use — piecewise Woodworth ITD for front and rear hemispheres plus
+frequency-dependent head-shadow ILD (a lowpass plus a
+`SHADOW_SHELF_HZ = 700 Hz` high shelf) —
 now promoted to a shared module, `packages/core/src/binaural/head_model.py::synth_hrir`,
 imported by both `scripts/build_binaural_filters.py` and
 `scripts/build_crosstalk_filters.py` so the two spatial-audio targets never
@@ -208,7 +209,8 @@ with `w` a raised-cosine ramp (one octave up from `xtc_lo_hz`, and down over
   since the cancellation wavelength is only centimeters.
 
 The blend is applied **before** the bulk delay, so both branches carry the
-same delay and the crossover cannot comb.
+same delay and the crossover cannot comb. No post-design gain normalization
+is applied: the identity branch remains unity-gain.
 
 ### 4.4 Windowing
 
@@ -232,6 +234,7 @@ separation-quality change ships without a report" discipline
 | Contralateral leakage falls vs. no cancellation, 300 Hz–6 kHz, with ipsilateral level inside a bounded coloration window | `test_xtc_reduces_contralateral_leakage_within_coloration_bound` |
 | Both halves of that tradeoff also hold *per sub-band* (300 Hz–1 k, 1–3 k, 3–6 k), so a good total can't hide a dead or colored octave | `test_xtc_per_band_depth_and_coloration` |
 | Filters still work on a head they were not designed for (±10 % head radius) — catches a design that scores well only by overfitting the model head | `test_xtc_survives_head_size_mismatch` |
+| Below the active band the delayed filter matrix remains identity (unity diagonal, negligible crossfeed) | `test_xtc_filter_set_is_delayed_identity_below_active_band` |
 | The §4.3 crossover passes low frequencies flat and adds no comb notch | `test_xtc_passes_low_frequencies_without_a_crossover_notch` |
 
 Measured depth on the design head (300 Hz–6 kHz leakage suppression, with

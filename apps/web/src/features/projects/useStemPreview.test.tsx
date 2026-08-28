@@ -539,6 +539,122 @@ describe("useStemPreview loudness calibration", () => {
     expect(callOrder.indexOf("xtcTaps")).toBeLessThan(callOrder.indexOf("measure"));
   });
 
+  it("uses the flat decode bank for transaural regardless of the binaural profile", async () => {
+    await renderPreview({ outputMode: "transaural", spatialProfile: "listening" });
+    const { loadDecodeTaps } = await import("./wasmEngine/filterAssets");
+    expect((loadDecodeTaps as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1]).toBe("flat_o3_decode");
+  });
+
+  it("surfaces a required transaural filter failure", async () => {
+    const { loadXtcTaps } = await import("./wasmEngine/filterAssets");
+    (loadXtcTaps as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("XTC unavailable"));
+
+    await renderPreview({ outputMode: "transaural" });
+
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      error: string | null;
+      ready: boolean;
+    };
+    expect(preview.error).toBe("XTC unavailable");
+    expect(preview.ready).toBe(false);
+    expect(callOrder).not.toContain("decodeTaps");
+  });
+
+  it("retries a failed spatial load after a transaural profile change", async () => {
+    const { loadXtcTaps } = await import("./wasmEngine/filterAssets");
+    const loader = loadXtcTaps as ReturnType<typeof vi.fn>;
+    loader.mockRejectedValue(new Error("XTC unavailable"));
+    const result = await renderPreview({ outputMode: "transaural", transauralProfile: "stereo" });
+    callOrder.length = 0;
+    loader.mockResolvedValue(new Float64Array(8));
+
+    await act(async () => {
+      result.rerender(<Harness outputMode="transaural" transauralProfile="car" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      error: string | null;
+      ready: boolean;
+    };
+    expect(preview.error).toBeNull();
+    expect(preview.ready).toBe(true);
+    expect(callOrder).toContain("decodeTaps");
+    expect(callOrder).toContain("xtcTaps");
+  });
+
+  it("waits for pending stems before recovering a failed initial spatial load", async () => {
+    const { loadXtcTaps } = await import("./wasmEngine/filterAssets");
+    (loadXtcTaps as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("XTC unavailable"));
+    let releaseStems: ((data: ArrayBuffer) => void) | null = null;
+    const stemData = new Promise<ArrayBuffer>((resolve) => { releaseStems = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+      ok: true,
+      arrayBuffer: async () => url.startsWith("/stems/") ? stemData : new ArrayBuffer(8),
+    })));
+
+    const result = await renderPreview({ outputMode: "transaural", transauralProfile: "stereo" });
+    await act(async () => {
+      result.rerender(<Harness outputMode="transaural" transauralProfile="car" />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    let preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      ready: boolean;
+    };
+    expect(preview.ready).toBe(false);
+    expect(measureCalls).toHaveLength(0);
+
+    await act(async () => {
+      releaseStems!(new ArrayBuffer(8));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    preview = (globalThis as unknown as Record<string, unknown>).preview as { ready: boolean };
+    expect(preview.ready).toBe(true);
+    expect(measureCalls).toHaveLength(1);
+  });
+
+  it("follows rapid transaural profile changes until the spatial filters stabilize", async () => {
+    const { loadXtcTaps } = await import("./wasmEngine/filterAssets");
+    const loader = loadXtcTaps as ReturnType<typeof vi.fn>;
+    const initialCalls = loader.mock.calls.length;
+    let releaseStereo: ((taps: Float64Array) => void) | null = null;
+    let releaseCar: ((taps: Float64Array) => void) | null = null;
+    const stereoTaps = new Promise<Float64Array>((resolve) => { releaseStereo = resolve; });
+    const carTaps = new Promise<Float64Array>((resolve) => { releaseCar = resolve; });
+    loader.mockImplementationOnce(() => stereoTaps).mockImplementationOnce(() => carTaps);
+
+    const result = await renderPreview({ outputMode: "transaural", transauralProfile: "stereo" });
+    await act(async () => {
+      result.rerender(<Harness outputMode="transaural" transauralProfile="car" />);
+      releaseStereo!(new Float64Array(8));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(loader.mock.calls).toHaveLength(initialCalls + 2);
+
+    await act(async () => {
+      result.rerender(<Harness outputMode="transaural" transauralProfile="laptop" />);
+      releaseCar!(new Float64Array(8));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as { ready: boolean };
+    expect(loader.mock.calls).toHaveLength(initialCalls + 3);
+    expect(loader.mock.calls.at(-1)?.[1]).toBe("laptop_xtc");
+    expect(preview.ready).toBe(true);
+    expect(measureCalls).toHaveLength(1);
+  });
+
   it("re-measures when the transaural profile changes", async () => {
     const result = await renderPreview({ outputMode: "transaural", transauralProfile: "stereo" });
     expect(measureCalls).toHaveLength(1);

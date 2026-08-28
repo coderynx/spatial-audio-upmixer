@@ -93,11 +93,6 @@ def render_crosstalk_delivery(
     )
     stereo_channels = {ChannelLabel.FL.value: left, ChannelLabel.FR.value: right}
 
-    if not cfg.loudness_normalize:
-        stereo_channels[ChannelLabel.FL.value] = soft_limit(left, cfg.peak_limit_threshold)
-        stereo_channels[ChannelLabel.FR.value] = soft_limit(right, cfg.peak_limit_threshold)
-        return stereo_channels, MasteringResult()
-
     resolved = resolve_profile(cfg.transaural_profile)
     delivery = resolve_delivery_target(cfg)
     target_lkfs = VOICING_PARAMS[resolved].loudness_target_lkfs or delivery.target_lkfs
@@ -108,6 +103,7 @@ def render_crosstalk_delivery(
         target_lkfs=target_lkfs,
         max_tp_dbtp=delivery.max_tp_dbtp,
         max_gain_db=min(cfg.loudness_max_gain_db, CROSSTALK_LOUDNESS_MAX_GAIN_DB),
+        apply_loudness_gain=cfg.loudness_normalize,
     )
     stereo_channels[ChannelLabel.FL.value] = soft_limit(
         stereo_channels[ChannelLabel.FL.value], cfg.peak_limit_threshold

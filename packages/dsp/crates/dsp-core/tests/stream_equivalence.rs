@@ -324,6 +324,65 @@ fn binaural_collapse_is_two_channels_and_block_size_independent() {
 }
 
 #[test]
+fn transaural_collapse_with_decode_and_xtc_is_block_size_independent() {
+    let decode: Vec<String> = (0..N_ACN * 2 * DECODE_TAPS)
+        .map(|i| format!("{:.6}", ((i % 17) as f64 - 8.0) / 400.0))
+        .collect();
+    let xtc = [
+        0.0, 1.25, 0.0, 0.0, // LL: one-frame delay
+        0.0, 0.0, -0.5, 0.0, // LR: two-frame delay
+        0.0, 0.0, 0.0, 0.75, // RL: three-frame delay
+        1.5, 0.0, 0.0, 0.0, // RR: no delay
+    ];
+    let taps = decode.join(",");
+    let binaural_params = params_with_mode("binaural").replace(
+        r#""output_mode""#,
+        &format!(r#""decode_taps": [{taps}], "output_mode""#),
+    );
+    let transaural_params = params_with_mode("transaural").replace(
+        r#""output_mode""#,
+        &format!(
+            r#""decode_taps": [{taps}], "xtc_taps": [{}], "output_mode""#,
+            xtc.iter().map(ToString::to_string).collect::<Vec<_>>().join(","),
+        ),
+    );
+    let render = |params_json: &str, block: usize| -> Vec<Vec<f64>> {
+        let params: EngineParams = serde_json::from_str(params_json).expect("engine params");
+        let bed_channels = params.speakers.len();
+        let mut engine = PreviewEngine::new(SR, params, stems());
+        let mut out = vec![Vec::with_capacity(N); 2];
+        let mut scratch = vec![0.0; bed_channels.max(2) * block];
+        loop {
+            let written = engine.render(&mut scratch, block);
+            if written == 0 {
+                break;
+            }
+            for channel in 0..2 {
+                out[channel].extend_from_slice(&scratch[channel * block..channel * block + written]);
+            }
+        }
+        out
+    };
+
+    let binaural = render(&binaural_params, N);
+    let transaural = render(&transaural_params, N);
+    for i in 0..N {
+        let expected_left = if i > 0 { 1.25 * binaural[0][i - 1] } else { 0.0 }
+            + if i > 1 { -0.5 * binaural[1][i - 2] } else { 0.0 };
+        let expected_right = if i > 2 { 0.75 * binaural[0][i - 3] } else { 0.0 }
+            + 1.5 * binaural[1][i];
+        assert!((transaural[0][i] - expected_left).abs() <= 1e-8, "LL/LR at {i}");
+        assert!((transaural[1][i] - expected_right).abs() <= 1e-8, "RL/RR at {i}");
+    }
+    assert_same(
+        &render(&transaural_params, 128),
+        &transaural,
+        1e-8,
+        "transaural collapse",
+    );
+}
+
+#[test]
 fn measuring_leaves_the_transport_where_it_found_it() {
     let params: EngineParams =
         serde_json::from_str(&params_with_mode("stereo")).expect("engine params");

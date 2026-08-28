@@ -61,9 +61,24 @@ def synth_hrir(azimuth: float, elevation: float, sr: int, n_taps: int) -> tuple[
     repository. ``azimuth``/``elevation`` in radians, 0 = front/horizon,
     positive azimuth = left, positive elevation = up.
     """
-    itd_s = (HEAD_RADIUS_M / SPEED_OF_SOUND) * (azimuth + math.sin(azimuth))
+    signed_azimuth = (
+        azimuth
+        if -math.pi <= azimuth <= math.pi
+        else math.atan2(math.sin(azimuth), math.cos(azimuth))
+    )
+    abs_azimuth = abs(signed_azimuth)
+    if abs_azimuth <= math.pi / 2.0:
+        itd_angle = signed_azimuth + math.sin(signed_azimuth)
+    else:
+        itd_angle = math.copysign(
+            math.pi - abs_azimuth + math.sin(abs_azimuth), signed_azimuth
+        )
+    itd_s = (HEAD_RADIUS_M / SPEED_OF_SOUND) * itd_angle
     itd_samples = itd_s * sr
-    shadow_amount = abs(math.sin(azimuth))
+    shadow_amount = abs(math.sin(signed_azimuth))
+    # Floating-point wraparound makes sin(n*pi) nonzero.
+    if shadow_amount < 1e-12:
+        shadow_amount = 0.0
     shadow_cutoff_hz = max(1500.0, 8000.0 - 5000.0 * shadow_amount)
     shadow_atten_db = -8.0 * shadow_amount
     sos_shadow = butter(2, shadow_cutoff_hz / (sr / 2.0), btype="low", output="sos")
@@ -80,7 +95,7 @@ def synth_hrir(azimuth: float, elevation: float, sr: int, n_taps: int) -> tuple[
     else:
         far = fractional_impulse(abs(itd_samples), n_taps)
         far = _shadow_shelf(sosfilt(sos_shadow, far), sr, shadow_atten_db)
-    left, right = (near, far) if azimuth >= 0 else (far, near)
+    left, right = (near, far) if signed_azimuth >= 0 else (far, near)
 
     elevation_gain = max(0.0, math.sin(elevation))
     if elevation_gain > 0:
