@@ -245,8 +245,22 @@ def test_export_renders_one_layout_and_only_the_tracks_that_have_it(tmp_path, mo
         assert exported.status_code == 201
         job = exported.json()
         assert job["manifest"]["mixing"]["channel_layout"] == "7.1.2"
+        assert job["manifest"]["mastering"]["qc"]["measure_binaural"] is False
         assert job["delivery_formats"] == [{"type": "adm-bwf", "codec": "wav_pcm"}]
         assert {track["asset"]["id"] for track in job["tracks"]} == {both_id}
+
+        with factory() as session:
+            project = session.get(Project, project_id)
+            assert project is not None
+            project.manifest = {
+                **project.manifest,
+                "mastering": {"qc": {"measure_binaural": True}},
+            }
+            session.commit()
+
+        qc_export = client.post(f"/api/v1/projects/{project_id}/exports", json={"layout": "7.1.2"})
+        assert qc_export.status_code == 201
+        assert qc_export.json()["manifest"]["mastering"]["qc"]["measure_binaural"] is True
 
         exported = client.post(f"/api/v1/projects/{project_id}/exports", json={"layout": "stereo"})
         assert exported.status_code == 201

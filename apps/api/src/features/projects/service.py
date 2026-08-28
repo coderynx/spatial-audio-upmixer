@@ -489,6 +489,9 @@ def project_export_job(
     manifest = copy.deepcopy(project.manifest)
     manifest.setdefault("engine", {})["stems"] = list(project.prepared_stems)
     manifest.setdefault("mixing", {})["channel_layout"] = layout
+    manifest.setdefault("mastering", {}).setdefault("qc", {}).setdefault(
+        "measure_binaural", False
+    )
 
     tracks_snapshot: dict[str, dict[str, Any]] = {}
     for track in tracks:
