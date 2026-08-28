@@ -48,8 +48,6 @@ export function AssetsTab({
   const subtypes = choices?.output_subtypes || ["PCM_16", "PCM_24", "PCM_32", "FLOAT"];
   const channelLayouts = choices?.channel_layouts || CHANNEL_LAYOUTS;
   const engineDefaults = defaultManifest.engine;
-  const referenceModels = choices?.stem_phase_fix_reference_models || [engineDefaults.stem_phase_fix_reference_model];
-  const debleedModels = choices?.stem_debleed_models || [engineDefaults.stem_debleed_model];
   const projectLayout = (project.manifest as { mixing?: { channel_layout?: string } }).mixing?.channel_layout;
 
   const defaultSettings = React.useCallback((): Defaults => ({
@@ -58,12 +56,6 @@ export function AssetsTab({
     subtype: subtypes.includes("PCM_24") ? "PCM_24" : subtypes[0],
     channelLayout: projectLayout || channelLayouts[channelLayouts.length - 1],
     bleedReduction: engineDefaults.stem_bleed_reduction,
-    phaseFixLowHz: engineDefaults.stem_phase_fix_low_hz,
-    phaseFixHighHz: engineDefaults.stem_phase_fix_high_hz,
-    phaseFixScale: engineDefaults.stem_phase_fix_scale,
-    phaseFixReferenceModel: engineDefaults.stem_phase_fix_reference_model,
-    debleedModel: engineDefaults.stem_debleed_model,
-    debleed: {},
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable option lists derived from `configuration`, not worth re-deriving the callback identity for
   }), [project.requested_stems, projectLayout]);
 
@@ -106,12 +98,6 @@ export function AssetsTab({
           engine: {
             stems: settings.stems,
             stem_bleed_reduction: settings.bleedReduction,
-            stem_phase_fix_low_hz: settings.phaseFixLowHz,
-            stem_phase_fix_high_hz: settings.phaseFixHighHz,
-            stem_phase_fix_scale: settings.phaseFixScale,
-            stem_phase_fix_reference_model: settings.phaseFixReferenceModel,
-            stem_debleed_model: settings.debleedModel,
-            stem_debleed: settings.debleed,
           },
           format: { sample_rate: settings.sampleRate, subtype: settings.subtype },
           mixing: { channel_layout: settings.channelLayout },
@@ -187,8 +173,6 @@ export function AssetsTab({
                   sampleRates={sampleRates}
                   subtypes={subtypes}
                   channelLayouts={channelLayouts}
-                  referenceModels={referenceModels}
-                  debleedModels={debleedModels}
                   onChange={(patch) => updateStaged(item.localId, patch)}
                   onRemove={() => removeStaged(item.localId)}
                 />

@@ -80,6 +80,15 @@ def _migrate_format(block: Any) -> Any:
 # written while they existed still carries them, and validation rejects an
 # unknown field, so they are dropped rather than allowed to fail a load.
 _RETIRED_FIELDS: dict[str, set[str]] = {
+    "engine": {
+        "stem_phase_fix",
+        "stem_phase_fix_low_hz",
+        "stem_phase_fix_high_hz",
+        "stem_phase_fix_scale",
+        "stem_phase_fix_reference_model",
+        "stem_debleed",
+        "stem_debleed_model",
+    },
     "mixing": {"spatial"},
     "routing": {
         "center_extraction_gain",

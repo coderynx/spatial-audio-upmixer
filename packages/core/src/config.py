@@ -202,18 +202,9 @@ class UpmixConfig:
 
     stem_source_anchor_strength: float = 0.5
 
-    # Baked into the cached stems at separation time, so the default gate keys
-    # on a stem's default spatial role, not on any later user 3D placement.
-    # Per-stem dicts override per canonical stem name (or "*"). See the
-    # knowledge base's techniques/phase_and_bleed.md.
+    # Fixed DSP cleanup over the separator's vocal/instrumental estimates.
+    # Baked into cached stems; default-off until corpus and listening gates pass.
     stem_bleed_reduction: bool = False
-    stem_phase_fix: dict | None = None
-    stem_phase_fix_low_hz: float = 500.0
-    stem_phase_fix_high_hz: float = 5000.0
-    stem_phase_fix_scale: float = 0.8
-    stem_phase_fix_reference_model: str = "kimmel_unwa_ft2_bleedless.ckpt"
-    stem_debleed: dict | None = None
-    stem_debleed_model: str = "mel_band_roformer_bleed_suppressor_v1.ckpt"
 
     # Share the remainder each split leaves on its parent back over the
     # children, so they sum to it. Full re-projection was measured worse on

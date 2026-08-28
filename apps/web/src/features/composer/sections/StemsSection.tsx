@@ -1,6 +1,6 @@
 import * as React from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { NumberField, SelectField, SliderField, SwitchRow, ToggleField } from "@/components/forms/fields";
+import { NumberField, ToggleField } from "@/components/forms/fields";
 import { StemTargetButton, stemBorderClasses, stemToggleKey } from "@/components/stems/StemTargetButton";
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
@@ -26,12 +26,6 @@ export function StemsSection({
 }: ManifestSectionProps) {
   const stems = configuration?.choices.stems || fallbackStems;
   const availableStems = new Set(stems);
-  const referenceModels =
-    configuration?.choices.stem_phase_fix_reference_models ||
-    [manifest.engine.stem_phase_fix_reference_model];
-  const debleedModels =
-    configuration?.choices.stem_debleed_models ||
-    [manifest.engine.stem_debleed_model];
   const selectedStems = React.useMemo(
     () => normalizeStemHierarchy(manifest.engine.stems),
     [manifest.engine.stems],
@@ -337,15 +331,12 @@ export function StemsSection({
 
       <details className="rounded-md border">
         <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium">
-          Bleed reduction
-          <span className="ml-2 text-xs font-normal text-muted-foreground">
-            Phase-fixer and debleed passes on separated stems
-          </span>
+          DSP stem cleanup
         </summary>
         <div className="space-y-3 border-t p-3">
           <ToggleField
-            label="Bleed reduction"
-            description="Phase-fixer during separation, on by default for diffuse/surround-oriented stems (not affected by 3D placement). Debleed is opt-in per stem. Off overall by default; changing it re-separates stems."
+            label="DSP stem cleanup"
+            description="Apply cleanup during separation. Changing it re-separates stems."
             checked={manifest.engine.stem_bleed_reduction}
             onChange={(stem_bleed_reduction) =>
               setManifest({
@@ -354,119 +345,6 @@ export function StemsSection({
               })
             }
           />
-          {manifest.engine.stem_bleed_reduction && (
-            <>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <SelectField
-                  label="Phase-fix reference model"
-                  value={manifest.engine.stem_phase_fix_reference_model}
-                  options={referenceModels.map((model) => ({
-                    value: model,
-                    label: model,
-                  }))}
-                  onChange={(stem_phase_fix_reference_model) =>
-                    setManifest({
-                      ...manifest,
-                      engine: {
-                        ...manifest.engine,
-                        stem_phase_fix_reference_model,
-                      },
-                    })
-                  }
-                />
-                <SelectField
-                  label="Debleed model"
-                  value={manifest.engine.stem_debleed_model}
-                  hint="Opt-in per stem via stem_debleed; one inference per stem."
-                  options={debleedModels.map((model) => ({
-                    value: model,
-                    label: model,
-                  }))}
-                  onChange={(stem_debleed_model) =>
-                    setManifest({
-                      ...manifest,
-                      engine: { ...manifest.engine, stem_debleed_model },
-                    })
-                  }
-                />
-              </div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <NumberField
-                  label="Phase-fix low cutoff"
-                  value={manifest.engine.stem_phase_fix_low_hz}
-                  min={1}
-                  step={50}
-                  suffix="Hz"
-                  onChange={(value) => {
-                    if (value != null)
-                      setManifest({
-                        ...manifest,
-                        engine: {
-                          ...manifest.engine,
-                          stem_phase_fix_low_hz: value,
-                        },
-                      });
-                  }}
-                />
-                <NumberField
-                  label="Phase-fix high cutoff"
-                  value={manifest.engine.stem_phase_fix_high_hz}
-                  min={1}
-                  step={100}
-                  suffix="Hz"
-                  onChange={(value) => {
-                    if (value != null)
-                      setManifest({
-                        ...manifest,
-                        engine: {
-                          ...manifest.engine,
-                          stem_phase_fix_high_hz: value,
-                        },
-                      });
-                  }}
-                />
-                <SliderField
-                  label="Phase-fix scale"
-                  value={manifest.engine.stem_phase_fix_scale}
-                  min={0.05}
-                  max={1}
-                  step={0.05}
-                  onChange={(stem_phase_fix_scale) =>
-                    setManifest({
-                      ...manifest,
-                      engine: { ...manifest.engine, stem_phase_fix_scale },
-                    })
-                  }
-                />
-              </div>
-              <div className="space-y-1.5">
-                <p className="text-[11px] font-medium uppercase tracking-[.08em] text-muted-foreground">
-                  Debleed stems
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  Opt in per stem — each adds one model inference at separation.
-                </p>
-                <div className="grid gap-x-3 sm:grid-cols-2">
-                  {manifest.engine.stems.map((stem) => (
-                    <SwitchRow
-                      key={stem}
-                      label={stem}
-                      checked={Boolean(manifest.engine.stem_debleed?.[stem])}
-                      onChange={(on) => {
-                        const next = { ...(manifest.engine.stem_debleed || {}) };
-                        if (on) next[stem] = true;
-                        else delete next[stem];
-                        setManifest({
-                          ...manifest,
-                          engine: { ...manifest.engine, stem_debleed: next },
-                        });
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
         </div>
       </details>
     </div>

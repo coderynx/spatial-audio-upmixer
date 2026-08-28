@@ -206,8 +206,6 @@ export type Configuration = {
     bass_spreads?: string[]
     bass_lfe_modes?: string[]
     stem_eq_profiles: string[]
-    stem_phase_fix_reference_models?: string[]
-    stem_debleed_models?: string[]
     stem_routing_presets?: string[]
     layout_channels?: Record<string, string[]>
     stems: string[]

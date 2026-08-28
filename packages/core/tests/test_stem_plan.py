@@ -366,46 +366,22 @@ def test_stem_cache_identity_changes_for_inference_overrides():
     assert len({overlap_identity, tta_identity, pitch_identity, tuned_identity}) == 4
 
 
-def test_stem_cache_identity_changes_for_bleed_reduction():
+def test_stem_cache_identity_changes_for_dsp_stem_cleanup():
     from upmixer.config import UpmixConfig
     from upmixer.separation.stem_identity import stem_cache_identity
 
-    plan = resolve_separation_plan(["Vocals", "Bass"])
-    default_identity = stem_cache_identity(plan, UpmixConfig())
-    gate_identity = stem_cache_identity(
-        plan, UpmixConfig(stem_bleed_reduction=True)
+    deux_plan = resolve_separation_plan(["Vocals"])
+    raw = stem_cache_identity(deux_plan, UpmixConfig())
+    cleaned = stem_cache_identity(
+        deux_plan, UpmixConfig(stem_bleed_reduction=True)
     )
-    low_identity = stem_cache_identity(
-        plan, UpmixConfig(stem_bleed_reduction=True, stem_phase_fix_low_hz=200.0)
-    )
-    scale_identity = stem_cache_identity(
-        plan, UpmixConfig(stem_bleed_reduction=True, stem_phase_fix_scale=0.5)
-    )
-    debleed_identity = stem_cache_identity(
-        plan,
-        UpmixConfig(
-            stem_bleed_reduction=True,
-            stem_debleed_model="mel_band_roformer_denoise_debleed_gabox.ckpt",
-        ),
-    )
-    override_identity = stem_cache_identity(
-        plan, UpmixConfig(stem_bleed_reduction=True, stem_phase_fix={"Other": False})
-    )
+    crowd_plan = resolve_separation_plan(["Crowd"])
 
-    # Gate off leaves the plan hash untouched; any enabled variant diverges.
+    assert raw == deux_plan.inference_hash
+    assert cleaned != raw
     assert stem_cache_identity(
-        plan, UpmixConfig(stem_primary_remask=False)
-    ) == plan.inference_hash
-    assert gate_identity != default_identity
-    assert len(
-        {
-            gate_identity,
-            low_identity,
-            scale_identity,
-            debleed_identity,
-            override_identity,
-        }
-    ) == 5
+        crowd_plan, UpmixConfig(stem_bleed_reduction=True)
+    ) == crowd_plan.inference_hash
 
 
 def test_stem_cache_identity_changes_for_remask():

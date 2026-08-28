@@ -86,3 +86,25 @@ def test_halving_input_halves_output_exactly(tmp_path):
     assert len(full) == len(half) == 2
     for full_path, half_path in zip(sorted(full), sorted(half)):
         assert np.allclose(half[half_path], full[full_path] * 0.5, atol=1e-6)
+
+
+def test_retains_exact_resampled_parent_in_restored_level_domain(tmp_path):
+    from upmixer.separation.inference.audio_io import load_audio
+
+    input_rate = 48_000
+    t = np.arange(input_rate, dtype=np.float32) / input_rate
+    audio = np.stack([
+        1.05 * np.sin(2 * np.pi * 440.0 * t),
+        0.95 * np.sin(2 * np.pi * 660.0 * t),
+    ]).astype(np.float32)
+    source = tmp_path / "native-rate.wav"
+    sf.write(source, audio.T, input_rate, subtype="FLOAT")
+    engine = _make_engine(str(tmp_path / "out"))
+
+    engine.separate(str(source), retain_parent=True)
+    parent = engine.take_last_parent()
+
+    assert np.array_equal(parent, load_audio(str(source), 44_100).T)
+    assert np.max(np.abs(parent)) > 0.9
+    with pytest.raises(RuntimeError, match="No completed separation input"):
+        engine.take_last_parent()

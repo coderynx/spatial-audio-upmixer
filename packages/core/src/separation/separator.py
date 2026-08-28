@@ -325,12 +325,19 @@ class StemSeparator:
 
         return self._engine
 
-    def _separate_paths(self, audio_path: str) -> list[str]:
+    def _separate_paths(
+        self, audio_path: str, retain_parent: bool = False
+    ) -> list[str]:
         """Separate with progressively lower-memory retries after OOM."""
         while True:
             try:
                 started = time.monotonic()
-                paths = self._get_separator().separate(audio_path)
+                engine = self._get_separator()
+                paths = (
+                    engine.separate(audio_path, retain_parent=True)
+                    if retain_parent
+                    else engine.separate(audio_path)
+                )
                 if self._batch_size_is_auto:
                     _SUCCESSFUL_BATCHES[(self._model, self._backend)] = self._batch_size
                 _log.info(
@@ -435,6 +442,7 @@ class StemSeparator:
         keep_on_disk: frozenset[str],
         stem_overrides: dict[str, str] | None = None,
         wanted: frozenset[str] | None = None,
+        retain_parent: bool = False,
     ) -> tuple[dict[str, np.ndarray], dict[str, str]]:
         """Separate audio, keeping specified stems as on-disk WAV files.
 
@@ -457,6 +465,8 @@ class StemSeparator:
                           run on a vocals-free residual still writes a Vocals
                           file, and letting it through overwrites the real one.
                           ``None`` accepts everything the model emits.
+            retain_parent: Keep the exact resampled stage input until
+                          :meth:`take_last_parent` consumes it.
 
         Returns:
             ``(loaded, on_disk)`` where:
@@ -464,7 +474,7 @@ class StemSeparator:
               ``on_disk`` — canonical_name → absolute WAV path for kept stems.
         """
         tmp_dir = self._ensure_tmp_dir()
-        output_paths = self._separate_paths(audio_path)
+        output_paths = self._separate_paths(audio_path, retain_parent=retain_parent)
 
         _log.debug(
             "[separator] model=%s produced %d output file(s): %s",
@@ -542,6 +552,10 @@ class StemSeparator:
             sorted(on_disk.keys()),
         )
         return loaded, on_disk
+
+    def take_last_parent(self) -> np.ndarray:
+        """Return the last separation input at the engine's working rate."""
+        return self._get_separator().take_last_parent()
 
     def close(self) -> None:
         """Remove the persistent temp directory and release the loaded model."""

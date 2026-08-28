@@ -430,9 +430,6 @@ def test_add_project_assets_stores_per_file_overrides_and_unions_stems(tmp_path,
                     "engine": {
                         "stems": ["Bass"],
                         "stem_bleed_reduction": True,
-                        "stem_phase_fix_scale": 0.6,
-                        "stem_debleed_model": "mel_band_roformer_denoise_debleed_gabox.ckpt",
-                        "stem_debleed": {"Bass": True},
                     },
                     "format": {"sample_rate": 48000, "subtype": "PCM_24"},
                     "mixing": {"channel_layout": "7.1.4"},
@@ -449,9 +446,6 @@ def test_add_project_assets_stores_per_file_overrides_and_unions_stems(tmp_path,
         engine = overrides["engine"]
         assert engine["stems"] == ["Bass"]
         assert engine["stem_bleed_reduction"] is True
-        assert engine["stem_phase_fix_scale"] == 0.6
-        assert engine["stem_debleed_model"] == "mel_band_roformer_denoise_debleed_gabox.ckpt"
-        assert engine["stem_debleed"] == {"Bass": True}
         assert overrides["format"]["sample_rate"] == 48000
         assert overrides["format"]["subtype"] == "PCM_24"
         assert overrides["mixing"]["channel_layout"] == "7.1.4"

@@ -48,25 +48,14 @@ _SEPARATION_ENGINE_KEYS = (
     "stem_batch_size", "stem_segment_size", "stem_chunk_duration_s",
     "stem_model_cache_size", "stem_silence_skip", "stem_silence_threshold_db",
     "stem_silence_min_duration_s", "stem_silence_crossfade_ms", "stem_silence_pad_ms",
-    "stem_bleed_reduction", "stem_phase_fix", "stem_phase_fix_low_hz",
-    "stem_phase_fix_high_hz", "stem_phase_fix_scale", "stem_phase_fix_reference_model",
-    "stem_debleed", "stem_debleed_model",
+    "stem_bleed_reduction",
     "stem_drum_remask", "stem_primary_remask",
     "stem_wet_dry_split", "stem_dereverb_model", "stem_wet_denoise",
 )
 
-# Engine keys a per-file extraction override may set (bleed reduction is chosen
-# per file at prepare time, like the stem list).
 _TRACK_ENGINE_OVERRIDE_KEYS = {
     "stems",
     "stem_bleed_reduction",
-    "stem_phase_fix",
-    "stem_phase_fix_low_hz",
-    "stem_phase_fix_high_hz",
-    "stem_phase_fix_scale",
-    "stem_phase_fix_reference_model",
-    "stem_debleed",
-    "stem_debleed_model",
     "stem_wet_dry_split",
     "stem_dereverb_model",
     "stem_wet_denoise",
@@ -86,8 +75,6 @@ def _separation_settings(manifest: dict[str, Any]) -> tuple[object, ...]:
     minimal stored manifest (only ever `engine.mode`/`engine.stems`) compares
     equal to a client save that always sends the full engine block — a
     missing key and its default value must not look like a settings change.
-    An empty per-stem override dict (`stem_debleed: {}}`, the client's
-    "unset" shape) is canonicalized to `None` to match the config default.
     """
     engine = manifest.get("engine")
     if not isinstance(engine, dict):
@@ -96,8 +83,6 @@ def _separation_settings(manifest: dict[str, Any]) -> tuple[object, ...]:
     values: list[object] = []
     for key in _SEPARATION_ENGINE_KEYS:
         value = engine.get(key, getattr(defaults, key))
-        if isinstance(value, dict) and not value:
-            value = None
         values.append(value)
     return tuple(values)
 

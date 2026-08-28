@@ -96,12 +96,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         # samples; 705600 (16s @ 44.1kHz) lands mid-range at an exact dim_t.
         default_chunk_samples=705600,
     ),
-    "kimmel_unwa_ft2_bleedless.ckpt": ModelSpec(
-        filename="kimmel_unwa_ft2_bleedless.ckpt",
-        arch="mel_band_roformer",
-        config_name="kimmel_unwa_ft2_bleedless",
-        weights_url="https://huggingface.co/pcunwa/Kim-Mel-Band-Roformer-FT/resolve/main/kimmel_unwa_ft2_bleedless.ckpt",
-    ),
     "mel_band_roformer_vocals_becruily.ckpt": ModelSpec(
         filename="mel_band_roformer_vocals_becruily.ckpt",
         arch="mel_band_roformer",
@@ -119,18 +113,6 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         arch="mel_band_roformer",
         config_name="mel_band_roformer_karaoke_becruily",
         weights_url="https://huggingface.co/becruily/mel-band-roformer-karaoke/resolve/main/mel_band_roformer_karaoke_becruily.ckpt",
-    ),
-    "mel_band_roformer_bleed_suppressor_v1.ckpt": ModelSpec(
-        filename="mel_band_roformer_bleed_suppressor_v1.ckpt",
-        arch="mel_band_roformer",
-        config_name="mel_band_roformer_bleed_suppressor_v1",
-        weights_url="https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/mel_band_roformer_bleed_suppressor_v1.ckpt",
-    ),
-    "mel_band_roformer_denoise_debleed_gabox.ckpt": ModelSpec(
-        filename="mel_band_roformer_denoise_debleed_gabox.ckpt",
-        arch="mel_band_roformer",
-        config_name="mel_band_roformer_denoise_debleed_gabox",
-        weights_url="https://github.com/nomadkaraoke/python-audio-separator/releases/download/model-configs/mel_band_roformer_denoise_debleed_gabox.ckpt",
     ),
     "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt": ModelSpec(
         filename="denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt",
