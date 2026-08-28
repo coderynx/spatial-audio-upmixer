@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { PreparationPanel } from "../PreparationView";
 import { AssetStagingRow, type StagedAsset } from "./AssetStagingRow";
 import { PreparedTrackTree } from "./PreparedTrackTree";
+import type { ReprepareSettings } from "./ReprepareStemsDialog";
 
 let stagingCounter = 0;
 function nextStagingId() {
@@ -40,7 +41,7 @@ export function AssetsTab({
   onProjectUpdate: (project: Project) => void;
   onOpenTrack: (trackId: string) => void;
   onRetry: () => void;
-  onReprepare: () => void;
+  onReprepare: (settings: ReprepareSettings) => Promise<void>;
 }) {
   const choices = configuration?.choices;
   const availableStems = choices?.stems || fallbackStems;

@@ -266,7 +266,12 @@ def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(
                 status="ready", prepared_stems=["Vocals"], requested_stems=["Vocals"],
                 stem_generation=1,
             )
-            ready_track = ProjectTrack(project=ready_project, asset=ready_asset, position=0)
+            ready_track = ProjectTrack(
+                project=ready_project,
+                asset=ready_asset,
+                position=0,
+                layout_overrides={"7.1.4": {"engine": {"stems": ["Vocals"]}}},
+            )
             expanding_asset = MediaAsset(
                 import_batch=batch, filename="expanding.wav", relative_path="expanding.wav",
                 storage_key="objects/expanding.wav", sha256="1" * 64, size_bytes=1,
@@ -287,11 +292,20 @@ def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(
             expanding_id = expanding_project.id
             empty_id = empty_project.id
 
-        response = client.post(f"/api/v1/projects/{ready_id}/stems/reprepare")
+        response = client.post(f"/api/v1/projects/{ready_id}/stems/reprepare", json={
+            "stems": ["Vocals", "Bass"],
+            "stem_bleed_reduction": True,
+        })
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "expanding"
         assert body["progress"] == 0.0
+        assert body["requested_stems"] == ["Vocals", "Bass"]
+        assert body["manifest"]["engine"]["stem_bleed_reduction"] is True
+        assert body["tracks"][0]["layout_overrides"]["7.1.4"]["engine"] == {
+            "stems": ["Vocals", "Bass"],
+            "stem_bleed_reduction": True,
+        }
         assert all(track["status"] == "queued" for track in body["tracks"])
 
         conflict = client.post(f"/api/v1/projects/{expanding_id}/stems/reprepare")
