@@ -117,6 +117,8 @@ export class PreviewAudioEngine {
   private loadToken = 0;
   private appliedOutputGain = 1;
   private spatialLoadFailed = false;
+  private sentDecodeTaps: Float64Array | null = null;
+  private sentXtcTaps: Float64Array | null = null;
 
   private readonly taps = new FilterTapCache();
   private readonly calibration = new LoudnessCalibration({
@@ -340,8 +342,14 @@ export class PreviewAudioEngine {
     }
     // `set*Taps` transfers its argument's buffer, so keep the cached source
     // intact and only hand both spatial banks to the worklet after they load.
-    if (decodeProfile && this.taps.decodeTaps) this.client?.setDecodeTaps(this.taps.decodeTaps.slice());
-    if (this.outputMode === "transaural" && this.taps.xtcTaps) this.client?.setXtcTaps(this.taps.xtcTaps.slice());
+    if (decodeProfile && this.taps.decodeTaps && this.taps.decodeTaps !== this.sentDecodeTaps) {
+      this.client?.setDecodeTaps(this.taps.decodeTaps.slice());
+      this.sentDecodeTaps = this.taps.decodeTaps;
+    }
+    if (this.outputMode === "transaural" && this.taps.xtcTaps && this.taps.xtcTaps !== this.sentXtcTaps) {
+      this.client?.setXtcTaps(this.taps.xtcTaps.slice());
+      this.sentXtcTaps = this.taps.xtcTaps;
+    }
     return true;
   }
 
@@ -733,6 +741,8 @@ export class PreviewAudioEngine {
     this.currentTimeRef.current = 0;
     this.calibration.reset();
     this.appliedOutputGain = 1;
+    this.sentDecodeTaps = null;
+    this.sentXtcTaps = null;
     this.taps.resetPerProject();
     this.client?.dispose();
     this.client = null;

@@ -257,7 +257,7 @@ describe("ProjectDetailPage tabs", () => {
     expect(screen.getByRole("slider", { name: "Resize Master strip" })).toBeInTheDocument();
   });
 
-  it("puts the stem title above the position controls, and drops the fader's own nameplate below them", async () => {
+  it("puts an object panner below an object stem title and above its fader", async () => {
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
@@ -267,13 +267,12 @@ describe("ProjectDetailPage tabs", () => {
 
     const inspectorFader = screen.getByRole("slider", { name: "Selected stem gain" });
     const title = screen.getByText("enabled").closest("p")!;
-    const frontBackLabel = screen.getByText("Front");
+    const panner = screen.getByRole("button", { name: "Object panner" });
 
     expect(title.textContent).toContain("Vocals");
-    // DOCUMENT_POSITION_FOLLOWING (4): title precedes the Front/Back slider.
-    expect(title.compareDocumentPosition(frontBackLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // ...which precedes the fader — position/EQ sit between the title and it.
-    expect(frontBackLabel.compareDocumentPosition(inspectorFader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Object panner" })).toHaveLength(1);
+    expect(title.compareDocumentPosition(panner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(panner.compareDocumentPosition(inspectorFader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("writes mastering edits to the selected track's selected layout", async () => {

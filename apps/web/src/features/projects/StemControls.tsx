@@ -1,13 +1,14 @@
 import * as React from "react";
 import { ArrowLeftRight, ArrowUpDown, AudioWaveform, CloudFog, MoveVertical, Waves } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
+import { azimuthFromPosition, positionFromAzimuth, type PannerPosition } from "./ObjectPannerWindow";
 import type { StemPlacement } from "./wasmEngine/panner";
 
 /** Slider positions on the floor plane, both 0..1. `lateral` runs left to
  * right, `depth` front to back; together they name a direction, which is what
  * the panner takes. Dead centre (0.5, 0.5) has no direction of its own and
  * resolves to front. */
-type Position = { lateral: number; depth: number };
+type Position = PannerPosition;
 
 /** Half the slider spends the image out to the side pair; the rest turns it
  * around. A placement wider than the full arc reads as fully wrapped. */
@@ -15,24 +16,11 @@ const SIDE_ARC_DEG = 180;
 
 /** `azimuth = atan2(-x, -z)`, matching `binaural/geometry.py`'s convention:
  * 0 = front, positive = left, listener facing -Z. */
-export function azimuthFromPosition({ lateral, depth }: Position): number {
-  const x = lateral * 2 - 1;
-  const z = depth * 2 - 1;
-  if (x === 0 && z === 0) return 0;
-  return (Math.atan2(-x, -z) * 180) / Math.PI;
-}
-
-export function positionFromAzimuth(azimuthDeg: number): Position {
-  const azimuth = (azimuthDeg * Math.PI) / 180;
-  return {
-    lateral: (-Math.sin(azimuth) + 1) / 2,
-    depth: (-Math.cos(azimuth) + 1) / 2,
-  };
-}
+export { azimuthFromPosition, positionFromAzimuth } from "./ObjectPannerWindow";
 
 export const StemControls = React.memo(function StemControls({
   placement, route, channels, eq, maxElevationDeg, ambientRear, ambientHeight, ambientHeightCrossoverHz,
-  onPlacement, onRoute, onEq, onAmbient, stemEqProfiles,
+  onPlacement, onRoute, onEq, onAmbient, stemEqProfiles, showPositionControls = true,
 }: {
   placement: StemPlacement;
   route: Record<string, number>;
@@ -48,6 +36,7 @@ export const StemControls = React.memo(function StemControls({
   onEq: (eq: string) => void;
   onAmbient: (patch: { rear?: number; height?: number; heightCrossoverHz?: number }) => void;
   stemEqProfiles?: string[];
+  showPositionControls?: boolean;
 }) {
   // The sliders are the Cartesian face of a direction, so a round trip through
   // azimuth normalizes them onto the unit circle. Holding the dragged pair
@@ -115,17 +104,17 @@ export const StemControls = React.memo(function StemControls({
     </label>
   );
 
-  if (stereo) return <div className="space-y-3">{lateralSlider}{stemEqSelect}</div>;
+  if (stereo) return <div className="space-y-3">{showPositionControls && lateralSlider}{stemEqSelect}</div>;
 
   return (
     <div className="space-y-3">
-      {lateralSlider}
-      <label className="block text-[11px] text-muted-foreground">
+      {showPositionControls && lateralSlider}
+      {showPositionControls && <label className="block text-[11px] text-muted-foreground">
         <span className="flex items-center gap-1"><ArrowUpDown className="h-3 w-3" />Front <span className="ml-auto">Back</span></span>
         <Slider aria-label="Front to back" className="mt-1.5" min={0} max={1} step={0.01}
           value={[depth]} onValueChange={([value]) => moveDepth(value)} />
-      </label>
-      {hasHeight && (
+      </label>}
+      {showPositionControls && hasHeight && (
         <label className="block text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1"><MoveVertical className="h-3 w-3" />Floor <span className="ml-auto">Height</span></span>
           <Slider aria-label="Floor to height" className="mt-1.5" min={0} max={1} step={0.01}

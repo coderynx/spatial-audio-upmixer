@@ -525,6 +525,23 @@ describe("useStemPreview loudness calibration", () => {
     expect(callOrder.indexOf("decodeTaps")).toBeLessThan(callOrder.indexOf("measure"));
   });
 
+  it("does not reinstall spatial banks for an ordinary mix edit", async () => {
+    const result = await renderPreview({
+      outputMode: "transaural",
+      mix: { stem_rebalance: { Vocals: 0 } },
+    });
+    callOrder.length = 0;
+
+    await act(async () => {
+      result.rerender(<Harness outputMode="transaural" mix={{ stem_rebalance: { Vocals: -3 } }} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(callOrder).not.toContain("decodeTaps");
+    expect(callOrder).not.toContain("xtcTaps");
+  });
+
   it("loads the new XTC filter set before it re-measures", async () => {
     const result = await renderPreview({ outputMode: "transaural", transauralProfile: "stereo" });
     callOrder.length = 0;

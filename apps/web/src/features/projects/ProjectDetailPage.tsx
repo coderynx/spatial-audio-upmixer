@@ -23,7 +23,7 @@ import { SliderField, SwitchRow } from "@/components/forms/fields";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { isStereoLayout, outputModeForLayoutSwitch } from "@/lib/layouts";
 import { normalizeManifest, type Manifest } from "@/lib/manifest";
-import { getStemColor, getStemIcon } from "@/lib/stems";
+import { getStemColor, getStemIcon, isBedStem } from "@/lib/stems";
 import { AssetsTab } from "./assets/AssetsTab";
 import { KeyCommandsDialog } from "./KeyCommandsDialog";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
@@ -50,6 +50,7 @@ import { useStemPreview, type OutputMode } from "./useStemPreview";
 import { resolveEngineConstants } from "./masteringProfiles";
 import { useProjectState } from "./useProjectState";
 import { StemControls } from "./StemControls";
+import { ObjectPannerWindow } from "./ObjectPannerWindow";
 import { loadPanner, NEUTRAL_PLACEMENT, type Panner, type StemPlacement } from "./wasmEngine/panner";
 import { useTrackPeaks } from "./useTrackPeaks";
 
@@ -601,6 +602,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             {selectedStem ? (() => {
               const SelectedStemIcon = getStemIcon(selectedStem);
               const stemMuted = trackManifest.mixing.stem_enabled[selectedStem] === false;
+              const objectStem = !isBedStem(selectedStem);
               return <>
                 <p className="mb-3 flex items-center gap-1.5 text-[13px] font-semibold">
                   <SelectedStemIcon className="h-3.5 w-3.5 shrink-0" style={{ color: getStemColor(selectedStem) }} aria-hidden="true" />
@@ -613,7 +615,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                     <option value="linked-stereo">Linked stereo</option><option value="mono">Mono</option>
                   </select>
                 </label>
-                <StemControls key={selectedStem} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} ambientRear={trackManifest.mixing.stem_ambient_rear[selectedStem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[selectedStem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[selectedStem] ?? 2000} onAmbient={(patch) => updateAmbient(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
+                {objectStem && <ObjectPannerWindow key={`panner-${selectedStem}`} stemName={selectedStem} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} />}
+                <StemControls key={`controls-${selectedStem}`} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} ambientRear={trackManifest.mixing.stem_ambient_rear[selectedStem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[selectedStem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[selectedStem] ?? 2000} onAmbient={(patch) => updateAmbient(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
+                  showPositionControls={!objectStem}
                   stemEqProfiles={configuration?.choices.stem_eq_profiles}
                 />
                 <div className="mt-3 flex justify-center border-t pt-3">
