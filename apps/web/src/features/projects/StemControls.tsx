@@ -20,7 +20,7 @@ export { azimuthFromPosition, positionFromAzimuth } from "./ObjectPannerWindow";
 
 export const StemControls = React.memo(function StemControls({
   placement, route, channels, eq, maxElevationDeg, ambientRear, ambientHeight, ambientHeightCrossoverHz,
-  onPlacement, onRoute, onEq, onAmbient, stemEqProfiles, showPositionControls = true, showObjectSize = false,
+  onPlacement, onRoute, onEq, onAmbient, stemEqProfiles, showPositionControls = true, showObjectSends = true,
 }: {
   placement: StemPlacement;
   route: Record<string, number>;
@@ -37,7 +37,7 @@ export const StemControls = React.memo(function StemControls({
   onAmbient: (patch: { rear?: number; height?: number; heightCrossoverHz?: number }) => void;
   stemEqProfiles?: string[];
   showPositionControls?: boolean;
-  showObjectSize?: boolean;
+  showObjectSends?: boolean;
 }) {
   // The sliders are the Cartesian face of a direction, so a round trip through
   // azimuth normalizes them onto the unit circle. Holding the dragged pair
@@ -123,21 +123,14 @@ export const StemControls = React.memo(function StemControls({
             onValueChange={([value]) => onPlacement({ ...placement, elevation_deg: value * maxElevationDeg })} />
         </label>
       )}
-      {showObjectSize && (
-        <label className="block text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1"><Waves className="h-3 w-3" />Object size <span className="ml-auto">{Math.round(placement.object_size * 100)}%</span></span>
-          <Slider aria-label="Object size" className="mt-1.5" min={0} max={1} step={0.01}
-            value={[placement.object_size]} onValueChange={([object_size]) => onPlacement({ ...placement, object_size })} />
-        </label>
-      )}
-      {hasSurround && (
+      {showObjectSends && hasSurround && (
         <label className="block text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1"><CloudFog className="h-3 w-3" />Ambience to rear</span>
           <Slider aria-label="Ambience to rear" className="mt-1.5" min={0} max={1} step={0.01}
             value={[ambientRear]} onValueChange={([rear]) => onAmbient({ rear })} />
         </label>
       )}
-      {hasHeight && (
+      {showObjectSends && hasHeight && (
         <>
           <label className="block text-[11px] text-muted-foreground">
             <span className="flex items-center gap-1"><CloudFog className="h-3 w-3" />Ambience to height</span>
@@ -151,7 +144,7 @@ export const StemControls = React.memo(function StemControls({
           </label>
         </>
       )}
-      {hasLfe && (
+      {showObjectSends && hasLfe && (
         <label className="block text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1"><Waves className="h-3 w-3" />LFE send</span>
           <Slider aria-label="LFE send" className="mt-1.5" min={0} max={1} step={0.01}

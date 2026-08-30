@@ -99,6 +99,15 @@ describe("MixerView channel strips", () => {
     expect(screen.getByRole("slider", { name: "Monitor level" })).toBeInTheDocument();
   });
 
+  it("places stem-specific controls above the matching fader", () => {
+    renderMixer({ topControlForStem: (stem) => stem === "Vocals" && <button type="button">Open Vocals panner</button> });
+
+    const control = screen.getByRole("button", { name: "Open Vocals panner" });
+    const fader = screen.getByRole("slider", { name: "Vocals gain" });
+    expect(control.compareDocumentPosition(fader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open Bass panner" })).not.toBeInTheDocument();
+  });
+
   it("labels the master fader's readout as monitor gain, not program gain", () => {
     renderMixer();
 

@@ -285,10 +285,11 @@ describe("ProjectDetailPage tabs", () => {
 
     const inspectorFader = screen.getByRole("slider", { name: "Selected stem gain" });
     const title = screen.getByText("enabled").closest("p")!;
-    const panner = screen.getByRole("button", { name: "Object panner" });
+    const panner = screen.getAllByRole("button", { name: /^Object panner$/ }).at(-1)!;
 
     expect(title.textContent).toContain("Vocals");
-    expect(screen.getAllByRole("button", { name: "Object panner" })).toHaveLength(1);
+    expect(panner).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Object panner Vocals" })).not.toHaveLength(0);
     expect(title.compareDocumentPosition(panner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(panner.compareDocumentPosition(inspectorFader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -322,6 +323,7 @@ describe("ProjectDetailPage tabs", () => {
 
     await user.click(screen.getByRole("button", { name: "Mixer" }));
     await user.click(screen.getByRole("button", { name: "Vocals" }));
+    await user.click(screen.getAllByRole("button", { name: /^Object panner$/ }).at(-1)!);
     const lfeSlider = screen.getByRole("slider", { name: "LFE send" });
     fireEvent.keyDown(lfeSlider, { key: "ArrowUp" });
 
@@ -345,6 +347,7 @@ describe("ProjectDetailPage tabs", () => {
 
     await user.click(screen.getByRole("button", { name: "Mixer" }));
     await user.click(screen.getByRole("button", { name: "Vocals" }));
+    await user.click(screen.getAllByRole("button", { name: /^Object panner$/ }).at(-1)!);
     fireEvent.keyDown(screen.getByRole("slider", { name: "Ambience to height" }), { key: "ArrowUp" });
 
     await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());

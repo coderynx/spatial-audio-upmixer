@@ -76,6 +76,7 @@ export type PreviewPanelProps = {
   onGain: (stem: string, gain: number) => void;
   onAnchorStrength: (value: number) => void;
   onCommitScrub: (value: number) => void;
+  topControlForStem?: (stem: string) => React.ReactNode;
 };
 
 function PreviewStatus({ preview, project, previewStemCount }: Pick<PreviewPanelProps, "preview" | "project" | "previewStemCount">) {
@@ -113,7 +114,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
     channels, routing, objectStems, outputMode, stereoLayout, stemChannelCounts, selectedStem, onSelectStem,
     onHazeIntensity, onElevationIntensity, onSpatialViewChange, orderedStems, silentStems, previewStemCount,
     peaks, peaksLoading, peaksDuration, draggedStem, onDragStart, onDragEnd, onDropOn,
-    onToggleMute, onToggleSolo, onGain, onAnchorStrength, onCommitScrub,
+    onToggleMute, onToggleSolo, onGain, onAnchorStrength, onCommitScrub, topControlForStem,
   } = props;
   const {
     paneView, paneHeight, changePane, resizePaneTo,
@@ -277,6 +278,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
         onToggleMasterMute={preview.toggleMute}
         active={preview.playing}
         disabled={!previewStemCount}
+        topControlForStem={topControlForStem}
       />
     )}
   </section>;

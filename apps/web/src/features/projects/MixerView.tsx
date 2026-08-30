@@ -214,6 +214,7 @@ function MixerViewImpl({
   onToggleMasterMute,
   active,
   disabled,
+  topControlForStem,
   className,
   style,
 }: MixerViewProps) {
@@ -267,6 +268,7 @@ function MixerViewImpl({
             selected={selectedStem === stem}
             onSelect={() => onSelectStem(stem)}
             disabled={disabled}
+            topControl={topControlForStem?.(stem)}
             extraWidth={stripWidths[widthKey] ?? 0}
             onExtraWidthChange={(px) => setLiveWidth(widthKey, px)}
             onExtraWidthCommit={(px) => commitWidth(widthKey, px)}
@@ -324,6 +326,7 @@ export type MixerViewProps = {
   onToggleMasterMute: () => void;
   active: boolean;
   disabled: boolean;
+  topControlForStem?: (stem: string) => React.ReactNode;
   className?: string;
   style?: React.CSSProperties;
 };

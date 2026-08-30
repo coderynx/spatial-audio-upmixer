@@ -20,10 +20,10 @@ describe("ObjectPannerWindow", () => {
     expect(screen.getByRole("dialog", { name: "Object panner" })).toHaveStyle({ borderColor: `${getStemColor("Vocals")}40` });
     expect(screen.getByLabelText("Move object panner window")).toHaveClass("cursor-default");
     expect(screen.getByLabelText("Move object panner window")).not.toHaveClass("bg-secondary");
-    fireEvent.keyDown(screen.getByRole("group", { name: "Object horizontal position" }), { key: "ArrowRight" });
+    fireEvent.keyDown(screen.getByRole("group", { name: "Left/right and back/front" }), { key: "ArrowRight" });
     expect(onPlacement).toHaveBeenLastCalledWith(expect.objectContaining({ azimuth_deg: expect.any(Number) }));
 
-    const elevationPanner = screen.getByRole("group", { name: "Object elevation position" });
+    const elevationPanner = screen.getByRole("group", { name: "Elevation" });
     fireEvent.keyDown(elevationPanner, { key: "ArrowUp" });
     expect(onPlacement).toHaveBeenLastCalledWith(expect.objectContaining({ elevation_deg: 1 }));
 
@@ -31,12 +31,23 @@ describe("ObjectPannerWindow", () => {
     expect(onPlacement).toHaveBeenLastCalledWith(expect.objectContaining({ azimuth_deg: expect.any(Number) }));
   });
 
+  it("shows the planar current position instead of button text or an icon", () => {
+    const { container } = render(<ObjectPannerWindow stemName="Vocals" placement={{ ...PLACEMENT, azimuth_deg: 90 }} maxElevationDeg={35} onPlacement={vi.fn()} />);
+
+    expect(screen.getByRole("button", { name: "Object panner" })).toHaveClass("h-10", "w-10");
+    expect(screen.getByRole("button", { name: "Object panner" })).toHaveTextContent("");
+    const puck = container.querySelector("[data-panner-preview-puck]") as HTMLElement;
+    expect(puck).toHaveStyle({ left: "0%" });
+    expect(Number.parseFloat(puck.style.top)).toBeCloseTo(50, 9);
+    expect(container.querySelectorAll("[data-panner-preview-channel]")).toHaveLength(0);
+  });
+
   it("keeps the centre handle at its free Cartesian position", async () => {
     const user = userEvent.setup();
     const { container } = render(<ObjectPannerWindow stemName="Vocals" placement={PLACEMENT} maxElevationDeg={35} onPlacement={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: "Object panner" }));
 
-    const panner = screen.getByRole("group", { name: "Object horizontal position" });
+    const panner = screen.getByRole("group", { name: "Left/right and back/front" });
     fireEvent.keyDown(panner, { key: "ArrowDown" });
     fireEvent.keyDown(panner, { key: "ArrowDown" });
 
@@ -49,7 +60,7 @@ describe("ObjectPannerWindow", () => {
     const { rerender } = render(<ObjectPannerWindow stemName="Vocals" placement={PLACEMENT} maxElevationDeg={35} onPlacement={onPlacement} />);
     await user.click(screen.getByRole("button", { name: "Object panner" }));
 
-    const panner = screen.getByRole("group", { name: "Object horizontal position" });
+    const panner = screen.getByRole("group", { name: "Left/right and back/front" });
     let captured = false;
     Object.assign(panner, {
       setPointerCapture: () => { captured = true; },
@@ -99,6 +110,66 @@ describe("ObjectPannerWindow", () => {
       object_size: 0.5,
       elevation_deg: 0,
     });
+  });
+
+  it("updates width and size independently of the centre position", async () => {
+    const user = userEvent.setup();
+    const onPlacement = vi.fn();
+    render(<ObjectPannerWindow stemName="Vocals" placement={PLACEMENT} maxElevationDeg={35} onPlacement={onPlacement} />);
+    await user.click(screen.getByRole("button", { name: "Object panner" }));
+
+    fireEvent.keyDown(screen.getByLabelText("Stereo spread"), { key: "ArrowRight" });
+    expect(onPlacement).toHaveBeenLastCalledWith(expect.objectContaining({ width_deg: 1, object_size: 0.5, azimuth_deg: 0 }));
+
+    fireEvent.keyDown(screen.getByLabelText("Object size"), { key: "ArrowRight" });
+    expect(onPlacement).toHaveBeenLastCalledWith(expect.objectContaining({ width_deg: 0, object_size: 0.51, azimuth_deg: 0 }));
+  });
+
+  it("shows width only for linked stereo objects", async () => {
+    const user = userEvent.setup();
+    render(<ObjectPannerWindow stemName="Vocals" placement={PLACEMENT} maxElevationDeg={35} objectMode="mono" onPlacement={vi.fn()} />);
+    await user.click(screen.getByRole("button", { name: "Object panner" }));
+
+    expect(screen.queryByLabelText("Stereo spread")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Object size")).toBeInTheDocument();
+    expect(document.querySelectorAll("[data-channel]")).toHaveLength(0);
+  });
+
+  it("resets pucks to Logic's default positions with Option-click", async () => {
+    const user = userEvent.setup();
+    const onPlacement = vi.fn();
+    render(<ObjectPannerWindow stemName="Vocals" placement={{ ...PLACEMENT, azimuth_deg: 90, elevation_deg: 20 }} maxElevationDeg={35} onPlacement={onPlacement} />);
+    await user.click(screen.getByRole("button", { name: "Object panner" }));
+
+    fireEvent.pointerDown(screen.getByRole("group", { name: "Left/right and back/front" }), { altKey: true });
+    const front = onPlacement.mock.calls.at(-1)?.[0] as StemPlacement;
+    expect(front.azimuth_deg).toBeCloseTo(0, 9);
+    expect(front.elevation_deg).toBe(20);
+
+    fireEvent.pointerDown(screen.getByRole("group", { name: "Elevation" }), { altKey: true });
+    expect(onPlacement).toHaveBeenLastCalledWith(expect.objectContaining({ elevation_deg: 0 }));
+  });
+
+  it("keeps direct-image and object send controls in the panner window", async () => {
+    const user = userEvent.setup();
+    const onObjectMode = vi.fn();
+    const onRoute = vi.fn();
+    const onAmbient = vi.fn();
+    render(<ObjectPannerWindow stemName="Vocals" placement={PLACEMENT} maxElevationDeg={35}
+      channels={["FL", "FR", "LFE", "SL", "SR", "TFL", "TFR"]} route={{ LFE: 0.5 }}
+      ambientRear={0.5} ambientHeight={0.5} onPlacement={vi.fn()}
+      onObjectMode={onObjectMode} onRoute={onRoute} onAmbient={onAmbient} />);
+    await user.click(screen.getByRole("button", { name: "Object panner" }));
+
+    fireEvent.change(screen.getByLabelText("Direct image"), { target: { value: "mono" } });
+    fireEvent.keyDown(screen.getByLabelText("Ambience to rear"), { key: "ArrowRight" });
+    fireEvent.keyDown(screen.getByLabelText("Ambience to height"), { key: "ArrowRight" });
+    fireEvent.keyDown(screen.getByLabelText("LFE send"), { key: "ArrowRight" });
+
+    expect(onObjectMode).toHaveBeenCalledWith("mono");
+    expect(onAmbient).toHaveBeenCalledWith({ rear: 0.51 });
+    expect(onAmbient).toHaveBeenCalledWith({ height: 0.51 });
+    expect(onRoute).toHaveBeenCalledWith({ LFE: 0.51 });
   });
 
   it("places the L and R markers at the ends of the stereo image width", () => {

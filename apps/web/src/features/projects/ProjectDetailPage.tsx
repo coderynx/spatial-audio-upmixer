@@ -336,6 +336,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       },
     }, true);
   };
+  const objectPannerForStem = (stem: string, ariaLabel = "Object panner") => {
+    if (!trackManifest || isBedStem(stem)) return null;
+    return <ObjectPannerWindow key={`panner-${stem}`} stemName={stem} placement={placementFor(stem)} maxElevationDeg={maxElevationDeg} objectMode={trackManifest.mixing.stem_object_mode[stem] ?? "linked-stereo"} route={routing[stem] || {}} channels={channels} ambientRear={trackManifest.mixing.stem_ambient_rear[stem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[stem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[stem] ?? 2000} ariaLabel={ariaLabel} onPlacement={(next) => updatePlacement(stem, next)} onObjectMode={(mode) => setStemObjectMode(stem, mode)} onRoute={(patch) => updateRoute(stem, patch)} onAmbient={(patch) => updateAmbient(stem, patch)} />;
+  };
   const applyPreset = () => {
     if (!trackManifest || !stemNames.length || !panner) return;
     const table = panner.presetPlacements(preset);
@@ -581,6 +585,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         onGain={setStemGain}
         onAnchorStrength={setAnchorStrength}
         onCommitScrub={commitScrub}
+        topControlForStem={(stem) => objectPannerForStem(stem, `Object panner ${stem}`)}
       />;
       if (activeTab === "mixing") return <div className="grid min-h-0 flex-1 xl:grid-cols-[auto_minmax(0,1fr)_320px]">
         {trackRail}
@@ -609,16 +614,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                   <span className="min-w-0 flex-1 truncate">{selectedStem}</span>
                   <span className="text-[11px] font-normal text-muted-foreground">{stemMuted ? "muted" : "enabled"}</span>
                 </p>
-                <label className="mb-3 block text-[11px] text-muted-foreground">
-                  <span>Direct image</span>
-                  <select className="mt-1.5 flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px] text-foreground" value={trackManifest.mixing.stem_object_mode[selectedStem] ?? "linked-stereo"} onChange={(event) => setStemObjectMode(selectedStem, event.target.value as "linked-stereo" | "mono")}>
-                    <option value="linked-stereo">Linked stereo</option><option value="mono">Mono</option>
-                  </select>
-                </label>
-                {objectStem && <ObjectPannerWindow key={`panner-${selectedStem}`} stemName={selectedStem} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} />}
                 <StemControls key={`controls-${selectedStem}`} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} ambientRear={trackManifest.mixing.stem_ambient_rear[selectedStem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[selectedStem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[selectedStem] ?? 2000} onAmbient={(patch) => updateAmbient(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
                   showPositionControls={!objectStem}
-                  showObjectSize={objectStem}
+                  showObjectSends={!objectStem}
                   stemEqProfiles={configuration?.choices.stem_eq_profiles}
                 />
                 <div className="mt-3 flex justify-center border-t pt-3">
@@ -626,6 +624,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                     stem={selectedStem}
                     subjectName="Selected stem"
                     showNameplate={false}
+                    topControl={objectPannerForStem(selectedStem)}
+                    showPeakReadout={false}
                     channels={stemChannelCounts[selectedStem] ?? 1}
                     gain={trackManifest.mixing.stem_rebalance[selectedStem] || 0}
                     onGain={(gain) => setStemGain(selectedStem, gain)}

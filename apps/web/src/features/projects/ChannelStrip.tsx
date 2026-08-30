@@ -126,22 +126,22 @@ export function StripResizeHandle({
 
 /** The two numeric readouts Logic prints above a strip's fader: the fader's
  * own value, and the meter's held peak in warning yellow. */
-export function StripReadouts({ value, peakDb }: { value: string; peakDb: number }) {
+export function StripReadouts({ value, peakDb, showPeak = true }: { value: string; peakDb: number; showPeak?: boolean }) {
   return (
     <div className="flex w-full items-stretch gap-1">
       <span
-        className="flex-1 rounded-[3px] py-px text-center text-[10px] font-medium tabular-nums"
+        className={cn(showPeak ? "flex-1" : "w-full", "rounded-[3px] py-px text-center text-[10px] font-medium tabular-nums")}
         style={{ backgroundColor: canvasTheme.stripWell, color: canvasTheme.labelStrong }}
       >
         {value}
       </span>
-      <span
+      {showPeak && <span
         className="flex-1 rounded-[3px] py-px text-center text-[10px] font-medium tabular-nums"
         style={{ backgroundColor: canvasTheme.stripWell, color: canvasTheme.meterWarn }}
         title="Highest level reached"
       >
         {peakDb <= -60 ? "-∞" : peakDb.toFixed(1)}
-      </span>
+      </span>}
     </div>
   );
 }
@@ -206,6 +206,8 @@ export type StemChannelStripProps = {
    * second, redundant header for the same value one scroll away from the
    * first. */
   showNameplate?: boolean;
+  topControl?: React.ReactNode;
+  showPeakReadout?: boolean;
   /** Extra pixels added on top of the computed minimum width — this strip's
    * own independent resize state, dragged via `StripResizeHandle`. */
   extraWidth?: number;
@@ -236,6 +238,8 @@ export function StemChannelStrip({
   disabled = false,
   subjectName = stem,
   showNameplate = true,
+  topControl,
+  showPeakReadout = true,
   extraWidth = 0,
   onExtraWidthChange,
   onExtraWidthCommit,
@@ -284,7 +288,8 @@ export function StemChannelStrip({
           onCommit={onExtraWidthCommit}
         />
       )}
-      <StripReadouts value={gain > 0 ? `+${gain.toFixed(1)}` : gain.toFixed(1)} peakDb={peakDb} />
+      {topControl}
+      <StripReadouts value={gain > 0 ? `+${gain.toFixed(1)}` : gain.toFixed(1)} peakDb={peakDb} showPeak={showPeakReadout} />
 
       <div className="flex items-stretch gap-1" style={{ height: FADER_TRAVEL }}>
         <Fader
