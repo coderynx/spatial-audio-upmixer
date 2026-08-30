@@ -281,3 +281,23 @@ fn preset_ambient_keeps_the_pulse_dry_and_scales_the_room_per_preset() {
     );
     assert_eq!(preset_ambient_height_crossover("nope", "Crowd"), None);
 }
+
+#[test]
+fn preset_object_sizes_are_normalized_and_expand_with_scope() {
+    use upmixer_dsp_core::spatial::presets::{preset_placement, preset_stems, PRESET_NAMES};
+
+    for preset in PRESET_NAMES {
+        for (_, placement) in preset_stems(preset) {
+            assert!((0.0..=1.0).contains(&placement.object_size));
+        }
+    }
+
+    assert!(
+        preset_placement("intimate", "Crowd").unwrap().object_size
+            < preset_placement("balanced", "Crowd").unwrap().object_size
+    );
+    assert!(
+        preset_placement("balanced", "Crowd").unwrap().object_size
+            < preset_placement("wide", "Crowd").unwrap().object_size
+    );
+}

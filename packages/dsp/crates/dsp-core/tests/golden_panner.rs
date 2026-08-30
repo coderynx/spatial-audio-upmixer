@@ -62,7 +62,7 @@ fn placement_projection_matches_python() {
     ];
     let placement =
         resolve_placement("balanced", "Lead Vocals", &channels).expect("balanced lead vocal");
-    assert_eq!(placement.object_size, 0.0);
+    assert_eq!(placement.object_size, 0.1);
 }
 
 #[test]
