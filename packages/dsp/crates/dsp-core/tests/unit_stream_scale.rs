@@ -56,6 +56,48 @@ fn engine(routing: &str) -> PreviewEngine {
     PreviewEngine::new(SR, params, vec![stem()])
 }
 
+fn object_engine() -> PreviewEngine {
+    let params: EngineParams = serde_json::from_str(
+        r#"{
+            "speakers": [
+                {"name": "FL", "azimuth_rad": 0.5236, "elevation_rad": 0.0, "group_gain": 1.0},
+                {"name": "FR", "azimuth_rad": -0.5236, "elevation_rad": 0.0, "group_gain": 1.0},
+                {"name": "C", "azimuth_rad": 0.0, "elevation_rad": 0.0, "group_gain": 1.0}
+            ],
+            "shapes": ["left", "right", "mono"],
+            "surround_downmix_coeff": 0.7071067811865476,
+            "height_downmix_coeff": 0.7071067811865476,
+            "sends": {"surround_bass_cutoff_hz": 250.0,
+                      "height_low_rolloff_hz": 150.0, "height_low_rolloff_gain": 0.15,
+                      "height_crossover_hz": 3000.0, "height_high_shelf_gain": 1.5,
+                      "height_directional_band_hz": 8000.0,
+                      "height_directional_band_gain": 1.0,
+                      "lfe_cutoff_hz": 120.0, "lfe_filter_order": 4, "lfe_gain": 1.0},
+            "stems": [{"routing": [], "enabled": true, "route_scale": 1.0,
+                       "object_mode": "linked-stereo",
+                       "object_placement": {"azimuth_deg": 0.0, "elevation_deg": 0.0,
+                                            "width_deg": 0.0, "object_size": 0.0}}],
+            "master": {},
+            "output_mode": "native",
+            "bypass_mastering": true,
+            "soft_limit_threshold": 0.0
+        }"#,
+    )
+    .expect("object engine parameters");
+    let mut signal = Vec::with_capacity(FRAMES);
+    for i in 0..FRAMES {
+        signal.push((0.3 * (2.0 * std::f64::consts::PI * 220.0 * i as f64 / SR as f64).sin()) as f32);
+    }
+    PreviewEngine::new(
+        SR,
+        params,
+        vec![Arc::new(StemSource {
+            left: signal.clone(),
+            right: signal,
+        })],
+    )
+}
+
 fn measure(engine: &PreviewEngine) -> f64 {
     let mut pass = RouteScalePass::new(engine);
     for _ in 0..1000 {
@@ -125,4 +167,9 @@ fn a_measurement_belongs_to_the_mix_it_was_measured_on() {
     params.stems[0].routing[0].1 = 0.8;
     engine.update_params(params);
     assert!((engine.route_scale(0) - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn linked_object_scale_accounts_for_feeds_summing_in_one_speaker() {
+    assert!(measure(&object_engine()) < 0.8);
 }

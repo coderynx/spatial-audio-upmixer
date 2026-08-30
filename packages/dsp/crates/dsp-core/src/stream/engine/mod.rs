@@ -410,10 +410,6 @@ impl PreviewEngine {
         self.params.stems.get(index)
     }
 
-    pub(crate) fn stem_mix_route(&self, index: usize) -> Option<&StemMixRoute> {
-        self.stem_mix_routes.get(index)
-    }
-
     pub fn params(&self) -> &EngineParams {
         &self.params
     }

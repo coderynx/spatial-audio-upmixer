@@ -14,7 +14,7 @@ export type MixPreviewShape = {
   stem_ambient_height_crossover_hz?: Record<string, number>;
   spatial_downmix_lock?: boolean;
   stem_object_mode?: Record<string, "linked-stereo" | "mono">;
-  stem_placement?: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; spread_deg: number }>;
+  stem_placement?: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; object_size: number }>;
   stem_source_anchor_strength?: number;
 };
 
@@ -65,7 +65,7 @@ export function resolveStemMixes(options: {
         azimuth_deg: scene.azimuth_deg,
         elevation_deg: scene.elevation_deg ?? 0,
         width_deg: 0,
-        spread_deg: 60,
+        object_size: 0,
       } : undefined);
     const objectMode = placement
       ? mix?.stem_object_mode?.[stem.stem_key] ?? mix?.stem_object_mode?.[base] ?? "linked-stereo"

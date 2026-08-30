@@ -20,7 +20,7 @@ fn unpack(value: &StemPlacement) -> PlacementTuple {
         value.azimuth_deg,
         value.elevation_deg,
         value.width_deg,
-        value.spread_deg,
+        value.object_size,
         value.lfe,
     )
 }
@@ -40,10 +40,10 @@ fn panning_gains(
     azimuth_deg: f64,
     elevation_deg: f64,
     width_deg: f64,
-    spread_deg: f64,
+    object_size: f64,
     speakers: Vec<String>,
 ) -> Vec<f64> {
-    let value = placement((azimuth_deg, elevation_deg, width_deg, spread_deg, 0.0));
+    let value = placement((azimuth_deg, elevation_deg, width_deg, object_size, 0.0));
     panner::panning_gains(&value, &as_refs(&speakers))
 }
 
@@ -52,11 +52,11 @@ fn placement_route(
     azimuth_deg: f64,
     elevation_deg: f64,
     width_deg: f64,
-    spread_deg: f64,
+    object_size: f64,
     lfe: f64,
     channels: Vec<String>,
 ) -> Vec<f64> {
-    let value = placement((azimuth_deg, elevation_deg, width_deg, spread_deg, lfe));
+    let value = placement((azimuth_deg, elevation_deg, width_deg, object_size, lfe));
     panner::placement_route(&value, &as_refs(&channels))
 }
 
@@ -65,10 +65,10 @@ fn object_routes(
     azimuth_deg: f64,
     elevation_deg: f64,
     width_deg: f64,
-    spread_deg: f64,
+    object_size: f64,
     channels: Vec<String>,
 ) -> (Vec<f64>, Vec<f64>) {
-    let value = placement((azimuth_deg, elevation_deg, width_deg, spread_deg, 0.0));
+    let value = placement((azimuth_deg, elevation_deg, width_deg, object_size, 0.0));
     let [left, right] = panner::object_routes(&value, &as_refs(&channels));
     (left, right)
 }
@@ -78,11 +78,11 @@ fn project_placement(
     azimuth_deg: f64,
     elevation_deg: f64,
     width_deg: f64,
-    spread_deg: f64,
+    object_size: f64,
     lfe: f64,
     channels: Vec<String>,
 ) -> PlacementTuple {
-    let value = placement((azimuth_deg, elevation_deg, width_deg, spread_deg, lfe));
+    let value = placement((azimuth_deg, elevation_deg, width_deg, object_size, lfe));
     unpack(&panner::project(&value, &as_refs(&channels)))
 }
 
@@ -124,7 +124,6 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(preset_names, m)?)?;
     m.add_function(wrap_pyfunction!(preset_placements, m)?)?;
     m.add("VIRTUAL_SOURCE_STEP_DEG", panner::VIRTUAL_SOURCE_STEP_DEG)?;
-    m.add("SPREAD_RING_FACTOR", panner::SPREAD_RING_FACTOR)?;
     m.add("MINIMUM_SEND", panner::MINIMUM_SEND)?;
     m.add(
         "HEIGHT_FLATTEN_WIDTH_FACTOR",

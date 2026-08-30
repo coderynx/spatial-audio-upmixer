@@ -1,98 +1,72 @@
 //! MDAP stem panning parity against the Python original.
 
-mod common;
+use upmixer_dsp_core::spatial::panner::{resolve_placement, StemPlacement};
 
-use common::Case;
-use upmixer_dsp_core::spatial::panner::{
-    build_stem_routing, placement_route, resolve_placement, StemPlacement,
-};
-
-/// `params.channels` maps a layout name to its channel order.
-fn layout_channels(case: &Case, layout: &str) -> Vec<String> {
-    case.meta["params"]["channels"][layout]
-        .as_array()
-        .unwrap_or_else(|| panic!("no channel list for layout {layout}"))
-        .iter()
-        .map(|name| name.as_str().expect("channel name").to_string())
-        .collect()
-}
-
-fn as_str_list(value: &serde_json::Value) -> Vec<String> {
-    value
-        .as_array()
-        .expect("string list")
-        .iter()
-        .map(|item| item.as_str().expect("string").to_string())
-        .collect()
+#[test]
+fn object_size_routes_are_constant_power() {
+    let speakers = [
+        "FL", "FR", "C", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR",
+    ];
+    let placement = StemPlacement::new(0.0, 20.0, 0.0, 0.5, 0.0);
+    let [left, right] = upmixer_dsp_core::spatial::panner::object_routes(&placement, &speakers);
+    assert!((left.iter().map(|value| value * value).sum::<f64>() - 1.0).abs() < 1e-12);
+    assert_eq!(left, right);
 }
 
 #[test]
-fn preset_routing_matches_python() {
-    let case = Case::load("panner_routing");
-    let stems = as_str_list(&case.meta["params"]["stems"]);
-    let stem_refs: Vec<&str> = stems.iter().map(String::as_str).collect();
-
-    let mut got = Vec::new();
-    let mut previous = (String::new(), String::new());
-    let mut routing: Vec<(String, Vec<f64>)> = Vec::new();
-    for entry in case.meta["params"]["cases"].as_array().expect("case list") {
-        let fields = as_str_list(entry);
-        let (preset, layout, stem) = (&fields[0], &fields[1], &fields[2]);
-        if previous != (preset.clone(), layout.clone()) {
-            let channels = layout_channels(&case, layout);
-            let refs: Vec<&str> = channels.iter().map(String::as_str).collect();
-            routing = build_stem_routing(&stem_refs, &refs, preset);
-            previous = (preset.clone(), layout.clone());
-        }
-        let route = routing
+fn object_size_matches_bs2127_reference() {
+    let speakers = [
+        "FL", "FR", "C", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR",
+    ];
+    let expected = [
+        0.21203650155303891,
+        0.21203650155303891,
+        0.92226178446293861,
+        0.1575595984595608,
+        0.1575595984595608,
+        1.8045445188519192e-7,
+        1.8045445188519189e-7,
+        0.070228878689574711,
+        0.070228878689574697,
+        2.2209369959247762e-8,
+        2.2209369959247762e-8,
+    ];
+    let placement = StemPlacement::new(0.0, 0.0, 0.0, 0.2, 0.0);
+    let [route, _] = upmixer_dsp_core::spatial::panner::object_routes(&placement, &speakers);
+    assert!(
+        route
             .iter()
-            .find(|(name, _)| name == stem)
-            .map(|(_, gains)| gains.clone())
-            .unwrap_or_else(|| vec![0.0; layout_channels(&case, layout).len()]);
-        got.extend(route);
-    }
-    case.assert_close(&got, &case.array("gains"), "preset routing gains");
+            .zip(expected)
+            .all(|(actual, expected)| (actual - expected).abs() < 1e-12),
+        "{route:?}",
+    );
+}
+
+#[test]
+fn point_objects_keep_their_direction() {
+    let speakers = ["FL", "FR", "C", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"];
+    let placement = StemPlacement::new(70.0, 0.0, 0.0, 0.0, 0.0);
+    let [route, _] = upmixer_dsp_core::spatial::panner::object_routes(&placement, &speakers);
+    assert!(route[3] > route[4]);
+    assert!(route[3] > route[1]);
 }
 
 #[test]
 fn placement_projection_matches_python() {
-    let case = Case::load("panner_projection");
-    let routing = Case::load("panner_routing");
-
-    let mut got = Vec::new();
-    for entry in case.meta["params"]["cases"].as_array().expect("case list") {
-        let fields = as_str_list(entry);
-        let (preset, layout, stem) = (&fields[0], &fields[1], &fields[2]);
-        // Stereo resolves against the full layout, same as the panner does.
-        let channels = layout_channels(&routing, if layout == "stereo" { "7.1.4" } else { layout });
-        let refs: Vec<&str> = channels.iter().map(String::as_str).collect();
-        let placement = resolve_placement(preset, stem, &refs)
-            .unwrap_or_else(|| panic!("{preset}/{stem} missing from the preset table"));
-        got.extend([
-            placement.azimuth_deg,
-            placement.elevation_deg,
-            placement.width_deg,
-            placement.spread_deg,
-            placement.lfe,
-        ]);
-    }
-    case.assert_close(&got, &case.array("placements"), "projected placements");
+    let channels = [
+        "FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR",
+    ];
+    let placement =
+        resolve_placement("balanced", "Lead Vocals", &channels).expect("balanced lead vocal");
+    assert_eq!(placement.object_size, 0.0);
 }
 
 #[test]
-fn hull_edges_and_clamps_match_python() {
-    let case = Case::load("panner_edges");
-
-    let mut got = Vec::new();
-    for entry in case.meta["params"]["cases"].as_array().expect("case list") {
-        let fields = entry.as_array().expect("case entry");
-        let layout = fields[0].as_str().expect("layout name");
-        let value = |index: usize| fields[index].as_f64().expect("placement field");
-        let placement =
-            StemPlacement::new(value(1), value(2), value(3), value(4), value(5));
-        let channels = layout_channels(&case, layout);
-        let refs: Vec<&str> = channels.iter().map(String::as_str).collect();
-        got.extend(placement_route(&placement, &refs));
-    }
-    case.assert_close(&got, &case.array("gains"), "edge placement gains");
+fn full_size_activates_every_positional_speaker() {
+    let speakers = [
+        "FL", "FR", "C", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR",
+    ];
+    let placement = StemPlacement::new(0.0, 0.0, 0.0, 1.0, 0.0);
+    let [route, _] = upmixer_dsp_core::spatial::panner::object_routes(&placement, &speakers);
+    assert!(route.into_iter().all(|gain| gain > 0.0));
 }

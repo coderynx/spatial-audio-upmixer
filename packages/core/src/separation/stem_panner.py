@@ -24,11 +24,6 @@ from upmixer.formats import ChannelLabel
 VIRTUAL_SOURCE_STEP_DEG: float = upmixer_dsp.VIRTUAL_SOURCE_STEP_DEG
 """Angular spacing of the virtual sources spanning a placement's width."""
 
-SPREAD_RING_FACTOR: float = upmixer_dsp.SPREAD_RING_FACTOR
-"""Half-width of the blur applied to each virtual source, as a fraction of
-``spread_deg`` — so the blur spans ``spread_deg`` in total."""
-
-
 def direction(azimuth_deg: float, elevation_deg: float) -> tuple[float, float, float]:
     """Unit vector in ``binaural.geometry``'s convention: +azimuth = left."""
     return upmixer_dsp.direction(azimuth_deg, elevation_deg)
@@ -38,7 +33,7 @@ def panning_gains(
     azimuth_deg: float,
     elevation_deg: float,
     width_deg: float,
-    spread_deg: float,
+    object_size: float,
     labels: tuple[ChannelLabel, ...],
 ) -> dict[str, float]:
     """Constant-power speaker gains for one placement, keyed by channel name."""
@@ -46,7 +41,7 @@ def panning_gains(
         return {}
     names = [label.value for label in labels]
     gains = upmixer_dsp.panning_gains(
-        azimuth_deg, elevation_deg, width_deg, spread_deg, names
+        azimuth_deg, elevation_deg, width_deg, object_size, names
     )
     if not any(gains):
         return {}

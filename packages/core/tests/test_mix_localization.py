@@ -28,7 +28,7 @@ import pytest
 from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
 from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
 from upmixer.separation.stem_placement import (
-    SCENE_PLACEMENT_SPREAD_DEG,
+    SCENE_OBJECT_SIZE,
     STEM_ROUTING_PRESETS,
     StemPlacement,
     placement_route,
@@ -111,7 +111,7 @@ def test_localization_concentration() -> None:
         rows = []
         for azimuth in _AZIMUTHS:
             for elevation in (0.0, 20.0):
-                placement = StemPlacement(azimuth, elevation, 0.0, SCENE_PLACEMENT_SPREAD_DEG)
+                placement = StemPlacement(azimuth, elevation, 0.0, SCENE_OBJECT_SIZE)
                 fraction, speakers = _concentration(placement, output_format)
                 spread = _angular_spread_deg(placement, output_format)
                 rows.append(
@@ -125,7 +125,7 @@ def test_localization_concentration() -> None:
                 )
                 assert 0.0 <= fraction <= 1.0
         _print_table(
-            f"6a. Point placement (width 0, spread {SCENE_PLACEMENT_SPREAD_DEG:.0f}°) — {layout}",
+                f"6a. Point placement (width 0, size {SCENE_OBJECT_SIZE:.2f}) — {layout}",
             ("azimuth", "elevation", "routed speakers", "concentration", "spread °"),
             rows,
         )
@@ -161,7 +161,7 @@ def test_spread_linearity() -> None:
         for width in _WIDTHS:
             spreads = [
                 _angular_spread_deg(
-                    StemPlacement(azimuth, 0.0, width, SCENE_PLACEMENT_SPREAD_DEG), output_format
+                    StemPlacement(azimuth, 0.0, width, SCENE_OBJECT_SIZE), output_format
                 )
                 for azimuth in _AZIMUTHS
             ]
@@ -185,7 +185,7 @@ def test_spread_linearity() -> None:
             (
                 stem,
                 f"{placement.width_deg:.0f}",
-                f"{placement.spread_deg:.0f}",
+                f"{placement.object_size:.2f}",
                 *[
                     f"{_angular_spread_deg(placement, FORMAT_MAP[layout]):.1f}"
                     for layout in _LAYOUTS
@@ -194,6 +194,6 @@ def test_spread_linearity() -> None:
         )
     _print_table(
         "6d. Angular spread of the balanced preset's placements",
-        ("Stem", "width_deg", "spread_deg", *[f"spread ° {layout}" for layout in _LAYOUTS]),
+        ("Stem", "width_deg", "object_size", *[f"spread ° {layout}" for layout in _LAYOUTS]),
         rows,
     )

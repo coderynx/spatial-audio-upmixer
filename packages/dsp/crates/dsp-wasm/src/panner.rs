@@ -100,7 +100,7 @@ pub unsafe extern "C" fn dsp_preset_placement(preset: usize, stem: usize, out: *
         placement.azimuth_deg,
         placement.elevation_deg,
         placement.width_deg,
-        placement.spread_deg,
+        placement.object_size,
         placement.lfe,
     ];
     std::slice::from_raw_parts_mut(out, fields.len()).copy_from_slice(&fields);
@@ -144,7 +144,7 @@ pub unsafe extern "C" fn dsp_placement_route(
     azimuth_deg: f64,
     elevation_deg: f64,
     width_deg: f64,
-    spread_deg: f64,
+    object_size: f64,
     lfe: f64,
     channels: *const u32,
     n_channels: usize,
@@ -156,7 +156,7 @@ pub unsafe extern "C" fn dsp_placement_route(
     if out.is_null() {
         return -1;
     }
-    let placement = StemPlacement::new(azimuth_deg, elevation_deg, width_deg, spread_deg, lfe);
+    let placement = StemPlacement::new(azimuth_deg, elevation_deg, width_deg, object_size, lfe);
     let route = panner::placement_route(&placement, &names);
     std::slice::from_raw_parts_mut(out, n_channels).copy_from_slice(&route);
     0
@@ -172,7 +172,7 @@ pub unsafe extern "C" fn dsp_object_routes(
     azimuth_deg: f64,
     elevation_deg: f64,
     width_deg: f64,
-    spread_deg: f64,
+    object_size: f64,
     channels: *const u32,
     n_channels: usize,
     left_out: *mut f64,
@@ -184,7 +184,7 @@ pub unsafe extern "C" fn dsp_object_routes(
     if left_out.is_null() || right_out.is_null() {
         return -1;
     }
-    let placement = StemPlacement::new(azimuth_deg, elevation_deg, width_deg, spread_deg, 0.0);
+    let placement = StemPlacement::new(azimuth_deg, elevation_deg, width_deg, object_size, 0.0);
     let [left, right] = panner::object_routes(&placement, &names);
     std::slice::from_raw_parts_mut(left_out, n_channels).copy_from_slice(&left);
     std::slice::from_raw_parts_mut(right_out, n_channels).copy_from_slice(&right);
@@ -202,7 +202,7 @@ pub unsafe extern "C" fn dsp_project_placement(
     azimuth_deg: f64,
     elevation_deg: f64,
     width_deg: f64,
-    spread_deg: f64,
+    object_size: f64,
     lfe: f64,
     channels: *const u32,
     n_channels: usize,
@@ -214,13 +214,13 @@ pub unsafe extern "C" fn dsp_project_placement(
     if out.is_null() {
         return -1;
     }
-    let placement = StemPlacement::new(azimuth_deg, elevation_deg, width_deg, spread_deg, lfe);
+    let placement = StemPlacement::new(azimuth_deg, elevation_deg, width_deg, object_size, lfe);
     let projected = panner::project(&placement, &names);
     let fields = [
         projected.azimuth_deg,
         projected.elevation_deg,
         projected.width_deg,
-        projected.spread_deg,
+        projected.object_size,
         projected.lfe,
     ];
     std::slice::from_raw_parts_mut(out, fields.len()).copy_from_slice(&fields);

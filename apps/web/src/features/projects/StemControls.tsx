@@ -20,7 +20,7 @@ export { azimuthFromPosition, positionFromAzimuth } from "./ObjectPannerWindow";
 
 export const StemControls = React.memo(function StemControls({
   placement, route, channels, eq, maxElevationDeg, ambientRear, ambientHeight, ambientHeightCrossoverHz,
-  onPlacement, onRoute, onEq, onAmbient, stemEqProfiles, showPositionControls = true,
+  onPlacement, onRoute, onEq, onAmbient, stemEqProfiles, showPositionControls = true, showObjectSize = false,
 }: {
   placement: StemPlacement;
   route: Record<string, number>;
@@ -37,6 +37,7 @@ export const StemControls = React.memo(function StemControls({
   onAmbient: (patch: { rear?: number; height?: number; heightCrossoverHz?: number }) => void;
   stemEqProfiles?: string[];
   showPositionControls?: boolean;
+  showObjectSize?: boolean;
 }) {
   // The sliders are the Cartesian face of a direction, so a round trip through
   // azimuth normalizes them onto the unit circle. Holding the dragged pair
@@ -120,6 +121,13 @@ export const StemControls = React.memo(function StemControls({
           <Slider aria-label="Floor to height" className="mt-1.5" min={0} max={1} step={0.01}
             value={[height]}
             onValueChange={([value]) => onPlacement({ ...placement, elevation_deg: value * maxElevationDeg })} />
+        </label>
+      )}
+      {showObjectSize && (
+        <label className="block text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1"><Waves className="h-3 w-3" />Object size <span className="ml-auto">{Math.round(placement.object_size * 100)}%</span></span>
+          <Slider aria-label="Object size" className="mt-1.5" min={0} max={1} step={0.01}
+            value={[placement.object_size]} onValueChange={([object_size]) => onPlacement({ ...placement, object_size })} />
         </label>
       )}
       {hasSurround && (

@@ -26,7 +26,7 @@ pub struct ObjectPlacement {
     pub azimuth_deg: f64,
     pub elevation_deg: f64,
     pub width_deg: f64,
-    pub spread_deg: f64,
+    pub object_size: f64,
 }
 
 /// How the mastered bed reaches the listener.

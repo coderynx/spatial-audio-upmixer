@@ -17,15 +17,12 @@
 
 use crate::loudness::{gated_power, loudness_channel_weight};
 use crate::loudness_stream::IntegratedLoudnessMeter;
-use crate::stream::params::SendShape;
-use crate::stream::params::StemParams;
-use crate::stream::routing::{AMBIENT_HEIGHT, AMBIENT_SURROUND, STEM_INPUT};
+use crate::stream::routing::STEM_INPUT;
 
 use super::engine::PreviewEngine;
 
 /// The stem's own level, which the routed sum is matched to.
 const INPUT: usize = STEM_INPUT;
-use crate::stream::routing::SIGNALS;
 
 /// The part of a block that is metered: the preroll in front of an excerpt is
 /// rendered to warm the send filters, then dropped.
@@ -37,35 +34,48 @@ fn kept(signal: &[f64], skip: usize) -> &[f64] {
 /// stem's own input pair, and the raw energies the offline path falls back to
 /// when the material is too short or too quiet to gate.
 struct Meters {
-    gated: Vec<IntegratedLoudnessMeter>,
-    energy: Vec<f64>,
+    input: [IntegratedLoudnessMeter; 2],
+    input_energy: [f64; 2],
+    speakers: Vec<IntegratedLoudnessMeter>,
+    speaker_energy: Vec<f64>,
 }
 
 impl Meters {
-    fn new(sample_rate: u32) -> Self {
+    fn new(sample_rate: u32, speakers: usize) -> Self {
         Self {
-            gated: (0..SIGNALS)
+            input: std::array::from_fn(|_| IntegratedLoudnessMeter::new(&[1.0], sample_rate)),
+            input_energy: [0.0; 2],
+            speakers: (0..speakers)
                 .map(|_| IntegratedLoudnessMeter::new(&[1.0], sample_rate))
                 .collect(),
-            energy: vec![0.0; SIGNALS],
+            speaker_energy: vec![0.0; speakers],
         }
     }
 
-    fn push(&mut self, index: usize, signal: &[f64]) {
+    fn push_input(&mut self, index: usize, signal: &[f64]) {
         if signal.is_empty() {
             return;
         }
-        self.gated[index].push(&[signal]);
-        self.energy[index] += signal.iter().map(|v| v * v).sum::<f64>();
+        self.input[index].push(&[signal]);
+        self.input_energy[index] += signal.iter().map(|v| v * v).sum::<f64>();
     }
 
-    fn finish(mut self) -> (Vec<f64>, Vec<f64>) {
-        let powers = self
-            .gated
+    fn push_speaker(&mut self, index: usize, signal: &[f64]) {
+        if signal.is_empty() {
+            return;
+        }
+        self.speakers[index].push(&[signal]);
+        self.speaker_energy[index] += signal.iter().map(|v| v * v).sum::<f64>();
+    }
+
+    fn finish(mut self) -> ([f64; 2], [f64; 2], Vec<f64>, Vec<f64>) {
+        let input = std::array::from_fn(|index| gated_power(self.input[index].finish()));
+        let speakers = self
+            .speakers
             .iter_mut()
             .map(|m| gated_power(m.finish()))
             .collect();
-        (powers, self.energy)
+        (input, self.input_energy, speakers, self.speaker_energy)
     }
 }
 
@@ -135,6 +145,7 @@ impl RouteScalePass {
         let sample_rate = engine.sample_rate();
         let total = engine.total_frames();
         let stems = engine.stem_count();
+        let speakers = engine.params().speakers.len();
         let mut pass = Self {
             engine,
             stem: 0,
@@ -143,7 +154,7 @@ impl RouteScalePass {
             schedule,
             excerpt: 0,
             skip: 0,
-            meters: Meters::new(sample_rate),
+            meters: Meters::new(sample_rate, speakers),
             scales: Vec::with_capacity(stems),
             done: stems == 0 || total == 0,
         };
@@ -176,10 +187,21 @@ impl RouteScalePass {
         }
         let count = frames.max(1).min(self.remaining()).max(1);
         self.engine.route_stem_block(self.stem, self.cursor, count);
-        let route = self.engine.route(self.stem);
         let skip = self.skip.min(count);
-        for signal in 0..SIGNALS {
-            self.meters.push(signal, kept(route.signal(signal), skip));
+        {
+            let route = self.engine.route(self.stem);
+            self.meters
+                .push_input(0, kept(route.signal(INPUT), skip));
+            self.meters
+                .push_input(1, kept(route.signal(INPUT + 1), skip));
+        }
+        for (channel, signal) in self
+            .engine
+            .mixed_stem_speakers(self.stem, count)
+            .iter()
+            .enumerate()
+        {
+            self.meters.push_speaker(channel, kept(signal, skip));
         }
         self.cursor += count;
         self.skip -= skip;
@@ -191,18 +213,12 @@ impl RouteScalePass {
 
         if self.remaining() == 0 {
             let sample_rate = self.engine.sample_rate();
-            let meters = std::mem::replace(&mut self.meters, Meters::new(sample_rate));
-            let params = self
-                .engine
-                .stem_params(self.stem)
-                .cloned()
-                .unwrap_or_default();
-            self.scales.push(scale_from(
-                &meters.finish(),
-                self.stem,
-                &params,
-                &self.engine,
-            ));
+            let speakers = self.engine.params().speakers.len();
+            let meters = std::mem::replace(
+                &mut self.meters,
+                Meters::new(sample_rate, speakers),
+            );
+            self.scales.push(scale_from(&meters.finish(), &self.engine));
             self.stem += 1;
             self.cursor = 0;
             self.excerpt = 0;
@@ -238,59 +254,23 @@ impl RouteScalePass {
 /// LFE outside both sums and raw energy as the fallback for material too short
 /// or too quiet to gate.
 fn scale_from(
-    measured: &(Vec<f64>, Vec<f64>),
-    stem: usize,
-    sp: &StemParams,
+    measured: &([f64; 2], [f64; 2], Vec<f64>, Vec<f64>),
     engine: &PreviewEngine,
 ) -> f64 {
-    let (powers, energies) = measured;
+    let (input_powers, input_energies, powers, energies) = measured;
     let params = engine.params();
-    let mut routed_power = 0.0;
-    let mut routed_energy = 0.0;
-    let route = engine.stem_mix_route(stem);
-    if let Some(objects) = route.and_then(|route| route.objects.as_ref()) {
-        for object in objects {
-            for &(channel, weight) in &object.speakers {
-                let speaker = &params.speakers[channel];
-                let gain = weight * speaker.group_gain;
-                routed_power +=
-                    loudness_channel_weight(&speaker.name) * gain * gain * powers[object.signal];
-                routed_energy += gain * gain * energies[object.signal];
-            }
-        }
-    } else {
-        for (channel, signal, weight) in route.into_iter().flat_map(|route| &route.regular) {
-            let speaker = &params.speakers[*channel];
-            let gain = *weight * speaker.group_gain;
-            routed_power += loudness_channel_weight(&speaker.name) * gain * gain * powers[*signal];
-            routed_energy += gain * gain * energies[*signal];
-        }
-    }
-
-    // The ambient sends reach their whole speaker class rather than the
-    // stem's placement, so they are summed off the shapes, not the routing.
-    for (channel, shape) in params.shapes.iter().enumerate() {
-        let (amount, signal) = match shape {
-            SendShape::SurroundLeft => (sp.ambient_rear, AMBIENT_SURROUND),
-            SendShape::SurroundRight => (sp.ambient_rear, AMBIENT_SURROUND + 1),
-            SendShape::HeightLeft => (sp.ambient_height, AMBIENT_HEIGHT),
-            SendShape::HeightRight => (sp.ambient_height, AMBIENT_HEIGHT + 1),
-            _ => continue,
-        };
-        if amount <= 0.0 {
-            continue;
-        }
-        let speaker = &params.speakers[channel];
-        let gain = amount * params.ambient_share(*shape) * speaker.group_gain;
-        routed_power += loudness_channel_weight(&speaker.name) * gain * gain * powers[signal];
-        routed_energy += gain * gain * energies[signal];
-    }
-
-    let input_power = powers[INPUT] + powers[INPUT + 1];
+    let routed_power = params
+        .speakers
+        .iter()
+        .zip(powers)
+        .map(|(speaker, power)| loudness_channel_weight(&speaker.name) * power)
+        .sum::<f64>();
+    let routed_energy = energies.iter().sum::<f64>();
+    let input_power = input_powers.iter().sum::<f64>();
     if input_power > 0.0 && routed_power > 0.0 {
         return (input_power / routed_power).sqrt();
     }
-    let input_energy = energies[INPUT] + energies[INPUT + 1];
+    let input_energy = input_energies.iter().sum::<f64>();
     if routed_energy > 1e-20 {
         (input_energy / routed_energy).sqrt()
     } else {

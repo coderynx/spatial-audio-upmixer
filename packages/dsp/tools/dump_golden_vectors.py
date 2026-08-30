@@ -534,12 +534,12 @@ def dump_panner() -> None:
             for stem in stems:
                 p = placements[stem]
                 projected.extend(
-                    (p.azimuth_deg, p.elevation_deg, p.width_deg, p.spread_deg, p.lfe)
+                    (p.azimuth_deg, p.elevation_deg, p.width_deg, p.object_size, p.lfe)
                 )
     write_case(
         "panner_projection",
         {"cases": cases, "stems": stems,
-         "fields": ["azimuth_deg", "elevation_deg", "width_deg", "spread_deg", "lfe"]},
+         "fields": ["azimuth_deg", "elevation_deg", "width_deg", "object_size", "lfe"]},
         {"placements": np.array(projected, dtype=np.float64)},
         1e-12,
     )
@@ -547,7 +547,7 @@ def dump_panner() -> None:
     # Hull edges and clamps: the rear of a 5.1 bed (no rear pair, projects onto
     # the side pair), elevation above the height layer and below the floor,
     # azimuth stated past +/-180, a width beyond a full ring, and a zero-width
-    # point with no spread.
+    # point with zero object size.
     edges = [
         (0.0, 0.0, 0.0, 0.0, 0.0),
         (0.0, 0.0, 0.0, 60.0, 0.0),
@@ -574,7 +574,7 @@ def dump_panner() -> None:
     write_case(
         "panner_edges",
         {"cases": edge_cases, "channels": channels,
-         "fields": ["azimuth_deg", "elevation_deg", "width_deg", "spread_deg", "lfe"]},
+         "fields": ["azimuth_deg", "elevation_deg", "width_deg", "object_size", "lfe"]},
         {"gains": np.array(edge_gains, dtype=np.float64)},
         1e-12,
     )

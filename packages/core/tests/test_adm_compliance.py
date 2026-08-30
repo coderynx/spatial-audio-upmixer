@@ -158,4 +158,4 @@ def test_adm_lead_vocal_stereo_objects_are_panned_left_and_right(tmp_path):
 
     assert positions["Lead Vocals Left"]["X"] < 0.0
     assert positions["Lead Vocals Right"]["X"] > 0.0
-    assert all(obj.extent == pytest.approx(np.sin(np.deg2rad(23.0))) for obj in objects)
+    assert all(obj.object_size == 0.0 for obj in objects)

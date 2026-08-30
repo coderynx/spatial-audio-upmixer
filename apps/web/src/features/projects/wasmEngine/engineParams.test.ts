@@ -96,7 +96,7 @@ describe("buildEngineParams", () => {
   it("forwards object placement without a TypeScript renderer", () => {
     const params = buildEngineParams(input({ stems: [{
       id: "V", routing: { LFE: 0.2 }, objectMode: "linked-stereo",
-      objectPlacement: { azimuth_deg: 10, elevation_deg: 20, width_deg: 40, spread_deg: 30 },
+      objectPlacement: { azimuth_deg: 10, elevation_deg: 20, width_deg: 40, object_size: 0.5 },
     }] }));
     const stems = params.stems as { object_mode: string; object_placement: { width_deg: number } }[];
     expect(stems[0]).toMatchObject({ object_mode: "linked-stereo" });
@@ -153,7 +153,7 @@ describe("buildEngineParams", () => {
     expect(binaural.limiter).not.toBeNull();
     const objects = buildEngineParams(input({ stems: [{
       id: "V", routing: {}, objectMode: "mono",
-      objectPlacement: { azimuth_deg: 0, elevation_deg: 30, width_deg: 0, spread_deg: 0 },
+      objectPlacement: { azimuth_deg: 0, elevation_deg: 30, width_deg: 0, object_size: 0 },
     }] })).master as { limiter: unknown };
     expect(objects.limiter).not.toBeNull();
     expect(buildEngineParams(input()).soft_limit_threshold).toBe(constants.softLimitThreshold);

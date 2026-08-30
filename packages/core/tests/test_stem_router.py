@@ -499,10 +499,30 @@ def test_object_bed_routes_linked_feeds_to_placement_endpoints():
     audio = np.column_stack([_audio()[:, 0], -_audio()[:, 0]])
     config = UpmixConfig(
         output_format="7.1.4",
-        stem_placement={"Vocals": {"azimuth_deg": 0, "elevation_deg": 0, "width_deg": 100, "spread_deg": 0}},
+        stem_placement={"Vocals": {"azimuth_deg": 0, "elevation_deg": 0, "width_deg": 100, "object_size": 0}},
     )
     rendered = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route({"Vocals": audio}, len(audio))
     assert np.max(np.abs(rendered["FL"] - rendered["FR"])) > 1e-5
+
+
+def test_correlated_object_feeds_keep_the_stem_energy():
+    audio = _noise()
+    config = UpmixConfig(
+        output_format="7.1.4",
+        stem_placement={"Vocals": {
+            "azimuth_deg": 0,
+            "elevation_deg": 0,
+            "width_deg": 0,
+            "object_size": 0,
+        }},
+    )
+    rendered = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route(
+        {"Vocals": audio}, len(audio)
+    )
+
+    source = float(np.vdot(audio, audio).real)
+    routed = sum(float(np.vdot(channel, channel).real) for channel in rendered.values())
+    assert routed == pytest.approx(source, rel=1e-6)
 
 
 def test_stem_object_and_bed_classes_follow_the_delivery_table():
@@ -519,7 +539,7 @@ def test_object_bed_mono_mode_collapses_the_direct_feed():
     config = UpmixConfig(
         output_format="7.1.4",
         stem_object_mode={"Vocals": "mono"},
-        stem_placement={"Vocals": {"azimuth_deg": 0, "elevation_deg": 0, "width_deg": 100, "spread_deg": 0}},
+        stem_placement={"Vocals": {"azimuth_deg": 0, "elevation_deg": 0, "width_deg": 100, "object_size": 0}},
     )
     rendered = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route({"Vocals": audio}, len(audio))
     assert max(np.max(np.abs(channel)) for channel in rendered.values()) < 1e-10

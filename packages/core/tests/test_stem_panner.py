@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+import upmixer_dsp
 
 from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
 from upmixer.formats import FORMAT_MAP, ChannelLabel
@@ -38,12 +39,15 @@ def test_placement_on_a_speaker_resolves_to_that_speaker() -> None:
         assert route == {label.value: pytest.approx(1.0)}, f"{label.value} did not resolve to itself"
 
 
-def test_spread_widens_a_point_without_moving_it() -> None:
-    narrow = placement_route(StemPlacement(0.0, 0.0, 0.0, 0.0), FORMAT_MAP["7.1.4"])
-    wide = placement_route(StemPlacement(0.0, 0.0, 0.0, 60.0), FORMAT_MAP["7.1.4"])
+def test_object_size_widens_a_point_without_moving_it() -> None:
+    speakers = [label.value for label in FORMAT_MAP["7.1.4"].channels]
+    narrow, _ = upmixer_dsp.object_routes(0.0, 0.0, 0.0, 0.0, speakers)
+    wide, _ = upmixer_dsp.object_routes(0.0, 0.0, 0.0, 0.5, speakers)
+    narrow = dict(zip(speakers, narrow))
+    wide = dict(zip(speakers, wide))
 
-    assert set(narrow) == {"C"}
-    assert {"FL", "FR"} <= set(wide)
+    assert narrow["C"] == pytest.approx(1.0)
+    assert wide["FL"] > 0.0 and wide["FR"] > 0.0
     assert wide["C"] > max(wide["FL"], wide["FR"])
     assert wide["FL"] == pytest.approx(wide["FR"])
 

@@ -102,6 +102,19 @@ _RETIRED_FIELDS: dict[str, set[str]] = {
 
 def _migrate_blocks(data: dict) -> dict:
     migrated = dict(data)
+    mixing = migrated.get("mixing")
+    if isinstance(mixing, dict) and isinstance(mixing.get("stem_placement"), dict):
+        placements = {}
+        for stem, placement in mixing["stem_placement"].items():
+            if not isinstance(placement, dict):
+                placements[stem] = placement
+                continue
+            value = dict(placement)
+            if "spread_deg" in value:
+                value.pop("spread_deg")
+                value.setdefault("object_size", 0.0)
+            placements[stem] = value
+        migrated["mixing"] = {**mixing, "stem_placement": placements}
     if "format" in migrated:
         migrated["format"] = _migrate_format(migrated["format"])
     for block_name, retired in _RETIRED_FIELDS.items():

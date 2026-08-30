@@ -32,7 +32,7 @@ export type Manifest = {
     spatial_downmix_lock: boolean;
     stem_object_mode: Record<string, "linked-stereo" | "mono">;
     stem_routing: Record<string, Record<string, number>>;
-    stem_placement: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; spread_deg: number }>;
+    stem_placement: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; object_size: number }>;
     stem_enabled: Record<string, boolean>;
     stem_solo: string[];
     stem_source_anchor_strength: number;

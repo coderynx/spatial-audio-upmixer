@@ -8,7 +8,7 @@ from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel
 from upmixer.separation import default_lfe_send
 from upmixer.separation.stem_placement import (
-    SCENE_PLACEMENT_SPREAD_DEG,
+    SCENE_OBJECT_SIZE,
     StemPlacement,
     placement_route,
 )
@@ -58,7 +58,7 @@ def routing_for_scene(scene: dict[str, Any], config: UpmixConfig) -> dict[str, d
             azimuth_deg=float(raw.get("azimuth_deg", 0.0)),
             elevation_deg=float(raw.get("elevation_deg", 0.0)),
             width_deg=0.0,
-            spread_deg=SCENE_PLACEMENT_SPREAD_DEG,
+            object_size=SCENE_OBJECT_SIZE,
             lfe=lfe,
         )
         mapping = {label.value: 0.0 for label in labels}

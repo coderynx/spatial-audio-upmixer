@@ -7,7 +7,7 @@ const FULL = ["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL
 
 /** A wide front placement, the shape a preset hands a guitar. */
 const WIDE: StemPlacement = {
-  azimuth_deg: 0, elevation_deg: 0, width_deg: 128, spread_deg: 70,
+  azimuth_deg: 0, elevation_deg: 0, width_deg: 128, object_size: 0.5,
 };
 
 function renderControls(props: Partial<React.ComponentProps<typeof StemControls>> = {}) {
@@ -78,7 +78,7 @@ describe("StemControls", () => {
 
     for (const [placement] of onPlacement.mock.calls as [StemPlacement][]) {
       expect(placement.width_deg).toBe(WIDE.width_deg);
-      expect(placement.spread_deg).toBe(WIDE.spread_deg);
+      expect(placement.object_size).toBe(WIDE.object_size);
       expect(placement.elevation_deg).toBe(WIDE.elevation_deg);
     }
   });

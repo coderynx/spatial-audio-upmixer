@@ -5,7 +5,7 @@ import { getStemColor } from "@/lib/stems";
 import { ObjectPannerWindow, objectChannelPositions, placementFromPannerPosition } from "./ObjectPannerWindow";
 import type { StemPlacement } from "./wasmEngine/panner";
 
-const PLACEMENT: StemPlacement = { azimuth_deg: 0, elevation_deg: 0, width_deg: 0, spread_deg: 60 };
+const PLACEMENT: StemPlacement = { azimuth_deg: 0, elevation_deg: 0, width_deg: 0, object_size: 0.5 };
 
 describe("ObjectPannerWindow", () => {
   it("moves horizontal and vertical placement from the panner controls", async () => {
@@ -94,9 +94,9 @@ describe("ObjectPannerWindow", () => {
   });
 
   it("keeps stereo width and spread when the centre handle moves", () => {
-    expect(placementFromPannerPosition({ ...PLACEMENT, width_deg: 90, spread_deg: 70 }, { lateral: 0.75, depth: 0.25 })).toMatchObject({
+    expect(placementFromPannerPosition({ ...PLACEMENT, width_deg: 90, object_size: 0.5 }, { lateral: 0.75, depth: 0.25 })).toMatchObject({
       width_deg: 90,
-      spread_deg: 70,
+      object_size: 0.5,
       elevation_deg: 0,
     });
   });

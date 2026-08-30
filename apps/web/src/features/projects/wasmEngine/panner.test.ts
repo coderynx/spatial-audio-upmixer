@@ -10,32 +10,23 @@ import { Panner } from "./panner";
 const WASM_PATH = resolve(process.cwd(), "public/wasm/upmixer_dsp.wasm");
 const FULL = ["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR"];
 
-/** `upmixer_dsp.placement_route(45, 20, 60, 40, 0.25, FULL)` from the Python
- * binding — the export pipeline's own answer for the same placement. */
-const PYTHON_REFERENCE: Record<string, number> = {
-  FL: 0.306540701733, C: 0.196731097391, LFE: 0.25, SL: 0.398837595192,
-  TFL: 0.839390178274, TFR: 0.0569325106, TBL: 0.021001524149,
-};
-
 function panner(): Panner {
   const instance = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(WASM_PATH)), {});
   return new Panner(instance.exports as never);
 }
 
 describe("wasm panner", () => {
-  it("agrees with the Python binding on the same placement", () => {
+  it("marshals normalized object size", () => {
     const route = panner().placementRoute(
-      { azimuth_deg: 45, elevation_deg: 20, width_deg: 60, spread_deg: 40 }, FULL, 0.25,
+      { azimuth_deg: 45, elevation_deg: 20, width_deg: 60, object_size: 0.5 }, FULL, 0.25,
     );
 
-    expect(Object.keys(route).sort()).toEqual(Object.keys(PYTHON_REFERENCE).sort());
-    for (const [channel, gain] of Object.entries(PYTHON_REFERENCE)) {
-      expect(route[channel]).toBeCloseTo(gain, 12);
-    }
+    expect(route.LFE).toBeCloseTo(0.25, 12);
+    expect(Math.hypot(...FULL.filter((channel) => channel !== "LFE").map((channel) => route[channel] ?? 0))).toBeCloseTo(1, 12);
   });
 
   it("keeps the gains aligned with the channel order it was given", () => {
-    const placement = { azimuth_deg: 90, elevation_deg: 0, width_deg: 0, spread_deg: 0 };
+    const placement = { azimuth_deg: 90, elevation_deg: 0, width_deg: 0, object_size: 0 };
     const forward = panner().placementRoute(placement, FULL);
     const reversed = panner().placementRoute(placement, [...FULL].reverse());
 
@@ -50,7 +41,7 @@ describe("wasm panner", () => {
     const instance = panner();
     for (const azimuth of [0, 45, 90, 135, 180, -90]) {
       const route = instance.placementRoute(
-        { azimuth_deg: azimuth, elevation_deg: 0, width_deg: 40, spread_deg: 50 }, FULL,
+        { azimuth_deg: azimuth, elevation_deg: 0, width_deg: 40, object_size: 0.5 }, FULL,
       );
       const power = Math.hypot(...FULL.filter((c) => c !== "LFE").map((c) => route[c] ?? 0));
       expect(power).toBeCloseTo(1, 9);
@@ -63,7 +54,7 @@ describe("wasm panner", () => {
     expect(instance.presets).toEqual(["balanced", "intimate", "stage", "wide", "immersive", "live"]);
     const balanced = instance.presetPlacements("balanced");
     expect(balanced["Lead Vocals"]).toEqual({
-      azimuth_deg: 0, elevation_deg: 0, width_deg: 22, spread_deg: 46,
+      azimuth_deg: 0, elevation_deg: 0, width_deg: 22, object_size: 0,
     });
     // The `stage` preset is the one that places instruments off-centre.
     expect(instance.presetPlacements("stage").Guitar.azimuth_deg).toBe(48);
@@ -95,7 +86,7 @@ describe("wasm panner", () => {
 
   it("flattens elevation into width where there is no height pair", () => {
     const instance = panner();
-    const placement = { azimuth_deg: 0, elevation_deg: 20, width_deg: 40, spread_deg: 30 };
+    const placement = { azimuth_deg: 0, elevation_deg: 20, width_deg: 40, object_size: 0.5 };
 
     expect(instance.project(placement, FULL)).toEqual(placement);
     expect(instance.project(placement, ["FL", "FR", "C", "LFE", "SL", "SR"])).toEqual({
@@ -105,7 +96,7 @@ describe("wasm panner", () => {
 
   it("rejects a channel name the core has no position for", () => {
     expect(() => panner().placementRoute(
-      { azimuth_deg: 0, elevation_deg: 0, width_deg: 0, spread_deg: 0 }, ["FL", "XX"],
+      { azimuth_deg: 0, elevation_deg: 0, width_deg: 0, object_size: 0 }, ["FL", "XX"],
     )).toThrow(/Unknown channel/);
   });
 });

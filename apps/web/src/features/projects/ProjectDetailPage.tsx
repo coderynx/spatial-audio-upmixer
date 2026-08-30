@@ -618,6 +618,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                 {objectStem && <ObjectPannerWindow key={`panner-${selectedStem}`} stemName={selectedStem} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} />}
                 <StemControls key={`controls-${selectedStem}`} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} ambientRear={trackManifest.mixing.stem_ambient_rear[selectedStem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[selectedStem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[selectedStem] ?? 2000} onAmbient={(patch) => updateAmbient(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
                   showPositionControls={!objectStem}
+                  showObjectSize={objectStem}
                   stemEqProfiles={configuration?.choices.stem_eq_profiles}
                 />
                 <div className="mt-3 flex justify-center border-t pt-3">

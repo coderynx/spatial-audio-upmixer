@@ -24,6 +24,20 @@ def _bed(n_samples: int) -> dict[str, np.ndarray]:
     return {label.value: np.zeros(n_samples) for label in _FMT.channels}
 
 
+def test_adm_reference_render_uses_object_size():
+    bed = _bed(128)
+    point = AdmObject("Object", np.ones(128), (0.0, 1.0, 0.0), object_size=0.0)
+    wide = replace(point, object_size=0.5)
+
+    point_render = render_adm_programme(bed, _FMT, [point])
+    wide_render = render_adm_programme(bed, _FMT, [wide])
+
+    assert any(
+        not np.array_equal(point_render[channel], wide_render[channel])
+        for channel in point_render
+    )
+
+
 def test_adm_loudness_uses_the_rendered_bed_and_object_programme():
     n_samples = 4 * _SR
     time = np.arange(n_samples) / _SR

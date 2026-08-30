@@ -13,8 +13,8 @@ Placement model
   left, positive elevation = up.  ``width_deg`` is the image's left/right
   extent: the stem renders as an arc of virtual sources spanning
   ``azimuth ± width/2``, so a stem can be L/R-dominant with only a center fill
-  rather than collapsing onto the nearest speaker.  ``spread_deg`` is how far
-  each of those sources is blurred to either side (see ``stem_panner``).
+  rather than collapsing onto the nearest speaker. ``object_size`` is the
+  normalized ADM Cartesian extent shared with the renderer.
 
 The preset tables and the projection live in ``packages/dsp``
 (``spatial::presets`` and ``spatial::panner``) so the export pipeline and the
@@ -34,10 +34,8 @@ STEREO_PLACEMENT_LAYOUT = "7.1.4"
 caller (``stem_router.build_stem_routing``), so a stereo mix keeps the same
 relative image the immersive layouts get."""
 
-SCENE_PLACEMENT_SPREAD_DEG = 60.0
-"""Falloff radius for a single dragged scene position, which carries no width
-or spread of its own. Wide enough that dragging a stem crossfades smoothly
-between neighbouring speakers instead of snapping to the nearest one."""
+SCENE_OBJECT_SIZE = 0.0
+"""ADM extent for a single dragged scene position, which starts as a point."""
 
 MINIMUM_SEND: float = upmixer_dsp.MINIMUM_SEND
 """Sends below this are dropped: without a floor a wide placement's outermost
@@ -55,7 +53,7 @@ class StemPlacement:
     azimuth_deg: float
     elevation_deg: float
     width_deg: float
-    spread_deg: float
+    object_size: float
     lfe: float = 0.0
 
 
@@ -95,7 +93,7 @@ def resolve_placements(preset: str, layout: str) -> dict[str, StemPlacement]:
                 placement.azimuth_deg,
                 placement.elevation_deg,
                 placement.width_deg,
-                placement.spread_deg,
+                placement.object_size,
                 placement.lfe,
                 channels,
             )
@@ -116,7 +114,7 @@ def placement_route(placement: StemPlacement, output_format: OutputFormat) -> di
         placement.azimuth_deg,
         placement.elevation_deg,
         placement.width_deg,
-        placement.spread_deg,
+        placement.object_size,
         placement.lfe,
         channels,
     )

@@ -2,6 +2,8 @@ use crate::spatial::panner::{PannerLayout, StemPlacement};
 use crate::stream::params::{EngineParams, ObjectMode, SendShape, StemParams};
 use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND};
 
+use super::PreviewEngine;
+
 pub(crate) struct StemMixRoute {
     pub regular: Vec<(usize, usize, f64)>,
     pub lfe_weight: f64,
@@ -91,7 +93,7 @@ fn direct_object_routes(
         placement.azimuth_deg,
         placement.elevation_deg,
         placement.width_deg,
-        placement.spread_deg,
+        placement.object_size,
         0.0,
     );
     let routes: Vec<(usize, Vec<f64>)> = match mode {
@@ -102,13 +104,11 @@ fn direct_object_routes(
             .collect(),
         ObjectMode::Mono => vec![(
             2,
-            layout.placement_route(&StemPlacement::new(
+            layout.exact_object_route(
                 placement.azimuth_deg,
                 placement.elevation_deg,
-                0.0,
-                placement.spread_deg,
-                0.0,
-            )),
+                placement.object_size,
+            ),
         )],
     };
     Some(
@@ -119,8 +119,7 @@ fn direct_object_routes(
                     .into_iter()
                     .enumerate()
                     .filter_map(|(channel, gain)| {
-                        (params.lfe_index != Some(channel) && gain > 0.0)
-                            .then_some((channel, gain))
+                        (params.lfe_index != Some(channel) && gain > 0.0).then_some((channel, gain))
                     })
                     .collect();
                 (signal, speakers)
@@ -146,4 +145,38 @@ fn ambient_feeds(params: &EngineParams, stem: &StemParams) -> Vec<(usize, usize,
         feeds.push((channel, slot, weight));
     }
     feeds
+}
+
+impl PreviewEngine {
+    pub(crate) fn mixed_stem_speakers(&self, stem: usize, count: usize) -> Vec<Vec<f64>> {
+        let mut speakers = vec![vec![0.0; count]; self.params.speakers.len()];
+        let Some(mix) = self.stem_mix_routes.get(stem) else {
+            return speakers;
+        };
+        let route = &self.routes[stem];
+        if let Some(objects) = &mix.objects {
+            for object in objects {
+                let signal = route.signal(object.signal);
+                for &(channel, weight) in &object.speakers {
+                    let gain = weight * self.params.speakers[channel].group_gain;
+                    for (output, sample) in speakers[channel].iter_mut().zip(signal) {
+                        *output += gain * sample;
+                    }
+                }
+            }
+        } else {
+            for &(channel, signal, weight) in &mix.regular {
+                let gain = weight * self.params.speakers[channel].group_gain;
+                for (output, sample) in speakers[channel].iter_mut().zip(route.signal(signal)) {
+                    *output += gain * sample;
+                }
+            }
+        }
+        for &(channel, signal, gain) in &mix.ambient {
+            for (output, sample) in speakers[channel].iter_mut().zip(route.signal(signal)) {
+                *output += gain * sample;
+            }
+        }
+        speakers
+    }
 }

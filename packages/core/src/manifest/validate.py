@@ -198,8 +198,8 @@ _ASSET_NON_BLOCK_KEYS: frozenset[str] = frozenset({
 })
 
 
-_PLACEMENT_FIELDS = frozenset({"azimuth_deg", "elevation_deg", "width_deg", "spread_deg"})
-_PLACEMENT_NON_NEGATIVE = frozenset({"width_deg", "spread_deg"})
+_PLACEMENT_FIELDS = frozenset({"azimuth_deg", "elevation_deg", "width_deg", "object_size"})
+_PLACEMENT_NON_NEGATIVE = frozenset({"width_deg", "object_size"})
 
 
 def validate_manifest(data: dict) -> None:
@@ -381,6 +381,10 @@ def validate_manifest(data: dict) -> None:
                     if field in _PLACEMENT_NON_NEGATIVE and float(value) < 0.0:
                         raise ManifestError(
                             f"Placement '{stem_key}.{field}' must be non-negative."
+                        )
+                    if field == "object_size" and float(value) > 1.0:
+                        raise ManifestError(
+                            f"Placement '{stem_key}.object_size' must not exceed 1."
                         )
         for field in ("stem_ambient_rear", "stem_ambient_height"):
             sends = mixing.get(field)

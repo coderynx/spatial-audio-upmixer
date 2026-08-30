@@ -1,4 +1,4 @@
-//! MDAP panning of a stem placement into speaker gains.
+//! Stem placement and ADM object-size panning into speaker gains.
 //!
 //! Multiple-Direction Amplitude Panning: a placement becomes a set of virtual
 //! sources spanning its width, each panned by VBAP onto one speaker simplex;
@@ -25,15 +25,6 @@
 //! route. Flat layouts have no height to lean on and are solved in the
 //! horizontal plane directly, where the same test picks out the ring's
 //! adjacent pairs.
-//!
-//! # Spread
-//!
-//! `spread_deg` blurs each virtual source horizontally, by
-//! [`SPREAD_RING_FACTOR`] of its value to either side. The blur is horizontal
-//! and not a full ring on purpose: elevation is what puts a placement
-//! overhead, and a vertical blur would lift part of every floor-level stem
-//! into the height layer — the lifted-bed sound the preset tables are voiced
-//! against.
 //!
 //! # Coplanar walls
 //!
@@ -62,19 +53,13 @@
 //! resolved by the first candidate in sorted order. Pinned against the Python
 //! original by the `panner_*` golden fixtures.
 
+use super::adm_extent;
 use super::downmix::ITU_CENTER_COEFF;
 
 /// Angular spacing of the virtual sources spanning a placement's width. Finer
 /// than the tightest speaker spacing in any supported layout, so a width reads
 /// as an arc rather than as its two edges.
 pub const VIRTUAL_SOURCE_STEP_DEG: f64 = 15.0;
-
-/// Half-width of the blur applied to each virtual source, as a fraction of
-/// `spread_deg` — so the blur spans `spread_deg` in total. Also where the
-/// perceived width of the shipped preset tables moves least against the panner
-/// this replaced, within ~2° on average: see
-/// `docs/plans/mixing/phase10_report.md` §3.
-pub const SPREAD_RING_FACTOR: f64 = 0.5;
 
 /// Sends below this are dropped: without a floor a wide placement's outermost
 /// virtual sources leave dust in channels the image does not reach.
@@ -116,14 +101,13 @@ const SPEAKER_COORDINATES: [(&str, [f64; 3]); 11] = [
 /// `azimuth_deg`/`elevation_deg` is the image centre — 0 = front, positive
 /// azimuth = left, positive elevation = up. `width_deg` is the image's
 /// left/right extent: the stem renders as an arc of virtual sources spanning
-/// `azimuth ± width/2`. `spread_deg` is how far each of those sources is
-/// blurred to either side.
+/// `azimuth ± width/2`. `object_size` is the normalized ADM Cartesian extent.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StemPlacement {
     pub azimuth_deg: f64,
     pub elevation_deg: f64,
     pub width_deg: f64,
-    pub spread_deg: f64,
+    pub object_size: f64,
     pub lfe: f64,
 }
 
@@ -132,48 +116,85 @@ impl StemPlacement {
         azimuth_deg: f64,
         elevation_deg: f64,
         width_deg: f64,
-        spread_deg: f64,
+        object_size: f64,
         lfe: f64,
     ) -> Self {
         Self {
             azimuth_deg,
             elevation_deg,
             width_deg,
-            spread_deg,
+            object_size,
             lfe,
         }
+    }
+}
+
+fn allocentric_position(name: &str, has_rear: bool) -> Option<[f64; 3]> {
+    match name {
+        "FL" => Some([-1.0, 1.0, 0.0]),
+        "FR" => Some([1.0, 1.0, 0.0]),
+        "C" => Some([0.0, 1.0, 0.0]),
+        "SL" => Some([-1.0, if has_rear { 0.0 } else { -1.0 }, 0.0]),
+        "SR" => Some([1.0, if has_rear { 0.0 } else { -1.0 }, 0.0]),
+        "BL" => Some([-1.0, -1.0, 0.0]),
+        "BR" => Some([1.0, -1.0, 0.0]),
+        "TFL" => Some([-1.0, 1.0, 1.0]),
+        "TFR" => Some([1.0, 1.0, 1.0]),
+        "TBL" => Some([-1.0, -1.0, 1.0]),
+        "TBR" => Some([1.0, -1.0, 1.0]),
+        _ => None,
     }
 }
 
 /// MDAP routes for a linked stereo object's left and right feeds.
 ///
 /// The feeds are independent mono objects at the two ends of the placement's
-/// width.  Their spread remains linked, while width zero deliberately puts
+/// width. Their object size remains linked, while width zero deliberately puts
 /// both at the same point.
 pub fn object_routes(placement: &StemPlacement, speakers: &[&str]) -> [Vec<f64>; 2] {
     let half_width = placement.width_deg * 0.5;
     [
-        placement_route(
-            &StemPlacement::new(
-                placement.azimuth_deg + half_width,
-                placement.elevation_deg,
-                0.0,
-                placement.spread_deg,
-                0.0,
-            ),
+        object_route(
+            placement.azimuth_deg + half_width,
+            placement.elevation_deg,
+            placement.object_size,
             speakers,
         ),
-        placement_route(
-            &StemPlacement::new(
-                placement.azimuth_deg - half_width,
-                placement.elevation_deg,
-                0.0,
-                placement.spread_deg,
-                0.0,
-            ),
+        object_route(
+            placement.azimuth_deg - half_width,
+            placement.elevation_deg,
+            placement.object_size,
             speakers,
         ),
     ]
+}
+
+fn object_route(
+    azimuth_deg: f64,
+    elevation_deg: f64,
+    object_size: f64,
+    speakers: &[&str],
+) -> Vec<f64> {
+    let has_rear = speakers.iter().any(|name| matches!(*name, "BL" | "BR"));
+    let positions: Vec<[f64; 3]> = speakers
+        .iter()
+        .filter_map(|name| allocentric_position(name, has_rear))
+        .collect();
+    let [x, y, z] = direction(azimuth_deg, elevation_deg);
+    let gains = adm_extent::gains(&positions, [x, -z, y], object_size.clamp(0.0, 1.0));
+    let mut next = 0;
+    speakers
+        .iter()
+        .map(|name| {
+            if is_positional(name) {
+                let value = gains.get(next).copied().unwrap_or(0.0);
+                next += 1;
+                value
+            } else {
+                0.0
+            }
+        })
+        .collect()
 }
 
 /// Azimuth/elevation of one speaker label, in the geometry convention above.
@@ -413,7 +434,7 @@ impl Layout {
         panned
     }
 
-    /// The virtual sources spanning a placement, blurred by its spread.
+    /// The virtual sources spanning a placement's width.
     fn virtual_sources(&self, placement: &StemPlacement) -> Vec<[f64; 3]> {
         let elevation = placement.elevation_deg.max(0.0).min(self.max_elevation_deg);
         let width = placement.width_deg.max(0.0);
@@ -422,23 +443,14 @@ impl Layout {
         } else {
             (2.0_f64).max((width / VIRTUAL_SOURCE_STEP_DEG).ceil() + 1.0) as usize
         };
-        let ring = SPREAD_RING_FACTOR * placement.spread_deg.max(0.0);
-        let offsets: &[f64] = if ring <= 0.0 {
-            &[0.0]
-        } else {
-            &[-ring, 0.0, ring]
-        };
-
-        let mut sources = Vec::with_capacity(count * offsets.len());
+        let mut sources = Vec::with_capacity(count);
         for index in 0..count {
             let azimuth = if count == 1 {
                 placement.azimuth_deg
             } else {
                 placement.azimuth_deg - width / 2.0 + width * index as f64 / (count - 1) as f64
             };
-            for offset in offsets {
-                sources.push(direction(azimuth + offset, elevation));
-            }
+            sources.push(direction(azimuth, elevation));
         }
         sources
     }
@@ -449,6 +461,7 @@ impl Layout {
 pub struct PannerLayout {
     layout: Layout,
     positional_channels: Vec<usize>,
+    positional_names: Vec<String>,
     channels: usize,
     lfe_index: Option<usize>,
 }
@@ -467,6 +480,7 @@ impl PannerLayout {
         Self {
             layout: Layout::new(&positional_names),
             positional_channels,
+            positional_names: positional_names.into_iter().map(str::to_owned).collect(),
             channels: channels.len(),
             lfe_index: channels.iter().position(|name| *name == "LFE"),
         }
@@ -500,21 +514,45 @@ impl PannerLayout {
     pub fn object_routes(&self, placement: &StemPlacement) -> [Vec<f64>; 2] {
         let half_width = placement.width_deg * 0.5;
         [
-            self.placement_route(&StemPlacement::new(
+            self.exact_object_route(
                 placement.azimuth_deg + half_width,
                 placement.elevation_deg,
-                0.0,
-                placement.spread_deg,
-                0.0,
-            )),
-            self.placement_route(&StemPlacement::new(
+                placement.object_size,
+            ),
+            self.exact_object_route(
                 placement.azimuth_deg - half_width,
                 placement.elevation_deg,
-                0.0,
-                placement.spread_deg,
-                0.0,
-            )),
+                placement.object_size,
+            ),
         ]
+    }
+
+    pub fn exact_object_route(
+        &self,
+        azimuth_deg: f64,
+        elevation_deg: f64,
+        object_size: f64,
+    ) -> Vec<f64> {
+        let has_rear = self
+            .positional_names
+            .iter()
+            .any(|name| matches!(name.as_str(), "BL" | "BR"));
+        let positions: Vec<[f64; 3]> = self
+            .positional_names
+            .iter()
+            .filter_map(|name| allocentric_position(name, has_rear))
+            .collect();
+        let [x, y, z] = direction(azimuth_deg, elevation_deg);
+        let gains = adm_extent::gains(
+            &positions,
+            [x, -z, y],
+            object_size.clamp(0.0, 1.0),
+        );
+        let mut route = vec![0.0; self.channels];
+        for (&channel, gain) in self.positional_channels.iter().zip(gains) {
+            route[channel] = gain;
+        }
+        route
     }
 
     fn layout_gains(&self, placement: &StemPlacement) -> Vec<f64> {

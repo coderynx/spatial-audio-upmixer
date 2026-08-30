@@ -329,7 +329,7 @@ class StemRouter:
             float(raw.get("azimuth_deg", default.azimuth_deg if default else 0.0)),
             float(raw.get("elevation_deg", default.elevation_deg if default else 0.0)),
             float(raw.get("width_deg", default.width_deg if default else 0.0)),
-            float(raw.get("spread_deg", default.spread_deg if default else 60.0)),
+            float(raw.get("object_size", default.object_size if default else 0.0)),
         )
         return placement
 
@@ -342,13 +342,16 @@ class StemRouter:
             stem_key, (self._config.stem_object_mode or {}).get(stem_name, "linked-stereo")
         )
         if mode == "mono":
-            return [placement_route(StemPlacement(
-                placement.azimuth_deg, placement.elevation_deg, 0.0, placement.spread_deg
-            ), self._fmt)]
+            labels = [label.value for label in self._fmt.channels if label != ChannelLabel.LFE]
+            mono, _ = upmixer_dsp.object_routes(
+                placement.azimuth_deg, placement.elevation_deg, 0.0,
+                placement.object_size, labels,
+            )
+            return [{label: gain for label, gain in zip(labels, mono) if gain > 0.0}]
         labels = [label.value for label in self._fmt.channels if label != ChannelLabel.LFE]
         left, right = upmixer_dsp.object_routes(
             placement.azimuth_deg, placement.elevation_deg, placement.width_deg,
-            placement.spread_deg, labels,
+            placement.object_size, labels,
         )
         return [
             {label: gain for label, gain in zip(labels, left) if gain > 0.0},
@@ -374,24 +377,22 @@ class StemRouter:
             x, y, z = upmixer_dsp.direction(azimuth_deg, placement.elevation_deg)
             return (x, -z, y)
 
-        spread = min(180.0, max(0.0, placement.spread_deg))
-        extent = math.sin(math.radians(spread * 0.5))
         if mode == "mono":
             return [
                 AdmObject(
                     stem_key, gain * (left + right) * 0.5,
-                    position(placement.azimuth_deg), extent,
+                    position(placement.azimuth_deg), placement.object_size,
                 )
             ]
         half_width = placement.width_deg * 0.5
         return [
             AdmObject(
                 f"{stem_key} Left", gain * left,
-                position(placement.azimuth_deg + half_width), extent,
+                position(placement.azimuth_deg + half_width), placement.object_size,
             ),
             AdmObject(
                 f"{stem_key} Right", gain * right,
-                position(placement.azimuth_deg - half_width), extent,
+                position(placement.azimuth_deg - half_width), placement.object_size,
             ),
         ]
 
@@ -514,18 +515,19 @@ class StemRouter:
             return powers[key]
 
         input_power = power(stem_L) + power(stem_R)
+        routed: dict[ChannelLabel, np.ndarray] = {}
+        for label, gain, signal in route_items:
+            contribution = gain * signal
+            routed[label] = routed[label] + contribution if label in routed else contribution
         routed_power = sum(
-            CHANNEL_WEIGHT.get(label, 1.0) * gain * gain * power(signal)
-            for label, gain, signal in route_items
+            CHANNEL_WEIGHT.get(label, 1.0) * power(signal)
+            for label, signal in routed.items()
         )
         if input_power > 0.0 and routed_power > 0.0:
             return math.sqrt(input_power / routed_power)
 
         input_energy = float(np.dot(stem_L, stem_L) + np.dot(stem_R, stem_R))
-        routed_energy = sum(
-            gain * gain * float(np.dot(signal, signal))
-            for _, gain, signal in route_items
-        )
+        routed_energy = sum(float(np.dot(signal, signal)) for signal in routed.values())
         return math.sqrt(input_energy / routed_energy) if routed_energy > 1e-20 else 1.0
 
     def route(

@@ -465,7 +465,7 @@ describe("useStemPreview loudness calibration", () => {
       mix: {
         stem_object_mode: { Vocals: "linked-stereo" },
         stem_placement: {
-          Vocals: { azimuth_deg: 0, elevation_deg: 30, width_deg: 30, spread_deg: 0 },
+          Vocals: { azimuth_deg: 0, elevation_deg: 30, width_deg: 30, object_size: 0 },
         },
       },
       mastering: { loudness: { normalize: true, target: -18 } },

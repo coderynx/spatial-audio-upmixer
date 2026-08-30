@@ -201,10 +201,8 @@ Required sub-elements:
 ### Upmixer object authoring
 
 ADM-BWF keeps each linked-stereo stem as two mono objects at the endpoints of
-`azimuth_deg ± width_deg / 2`. The per-endpoint MDAP blur `spread_deg` is
-written as equal ADM `width`, `height`, and `depth` extent values using
-`sin(spread_deg / 2)`, clamped to a 180° spread. This maps the blur's angular
-diameter to the normalized diameter of the unit Cartesian field. `diffuse` is
+`azimuth_deg ± width_deg / 2`. The direct normalized `object_size` is written
+unchanged as equal ADM `width`, `height`, and `depth` values. `diffuse` is
 only written for an object explicitly marked diffuse; the application's
 ambient sends remain rendered audio in the DirectSpeakers bed.
 

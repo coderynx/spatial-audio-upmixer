@@ -6,13 +6,13 @@ export type StemPlacement = {
   azimuth_deg: number;
   elevation_deg: number;
   width_deg: number;
-  spread_deg: number;
+  object_size: number;
 };
 
 /** Where a stem sits when neither the manifest nor the preset names it: front
  * and centred, with the same falloff a dragged scene position gets. */
 export const NEUTRAL_PLACEMENT: StemPlacement = {
-  azimuth_deg: 0, elevation_deg: 0, width_deg: 0, spread_deg: 60,
+  azimuth_deg: 0, elevation_deg: 0, width_deg: 0, object_size: 0,
 };
 
 /** What a preset sends a stem outside its panned image. */
@@ -133,8 +133,8 @@ export class Panner {
           this.exports.dsp_preset_stem_name_len(index, stem),
         );
         if (this.exports.dsp_preset_placement(index, stem, ptr) !== 0) continue;
-        const [azimuth_deg, elevation_deg, width_deg, spread_deg] = this.read(ptr, 5);
-        out[name] = { azimuth_deg, elevation_deg, width_deg, spread_deg };
+        const [azimuth_deg, elevation_deg, width_deg, object_size] = this.read(ptr, 5);
+        out[name] = { azimuth_deg, elevation_deg, width_deg, object_size };
       }
     } finally {
       this.exports.dsp_free(ptr, bytes);
@@ -177,7 +177,7 @@ export class Panner {
     const gains = this.withBuffers(channels, channels.length, (channelPtr, outPtr) => {
       const status = this.exports.dsp_placement_route(
         placement.azimuth_deg, placement.elevation_deg, placement.width_deg,
-        placement.spread_deg, lfe, channelPtr, channels.length, outPtr,
+        placement.object_size, lfe, channelPtr, channels.length, outPtr,
       );
       if (status !== 0) throw new Error("placement_route rejected the channel set");
       return this.read(outPtr, channels.length);
@@ -195,7 +195,7 @@ export class Panner {
       const rightPtr = outPtr + channels.length * 8;
       const status = this.exports.dsp_object_routes(
         placement.azimuth_deg, placement.elevation_deg, placement.width_deg,
-        placement.spread_deg, channelPtr, channels.length, outPtr, rightPtr,
+        placement.object_size, channelPtr, channels.length, outPtr, rightPtr,
       );
       if (status !== 0) throw new Error("object_routes rejected the channel set");
       return [this.read(outPtr, channels.length), this.read(rightPtr, channels.length)];
@@ -218,13 +218,13 @@ export class Panner {
     const fields = this.withBuffers(channels, 5, (channelPtr, outPtr) => {
       const status = this.exports.dsp_project_placement(
         placement.azimuth_deg, placement.elevation_deg, placement.width_deg,
-        placement.spread_deg, 0, channelPtr, channels.length, outPtr,
+        placement.object_size, 0, channelPtr, channels.length, outPtr,
       );
       if (status !== 0) throw new Error("project_placement rejected the channel set");
       return this.read(outPtr, 5);
     });
-    const [azimuth_deg, elevation_deg, width_deg, spread_deg] = fields;
-    return { azimuth_deg, elevation_deg, width_deg, spread_deg };
+    const [azimuth_deg, elevation_deg, width_deg, object_size] = fields;
+    return { azimuth_deg, elevation_deg, width_deg, object_size };
   }
 }
 

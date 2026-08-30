@@ -104,6 +104,11 @@ def _pos_str(v: float) -> str:
     return str(int(v)) if v == int(v) else f"{v:.6g}"
 
 
+def _object_size_str(v: float) -> str:
+    """Render an ADM object-size scalar without losing precision."""
+    return repr(v)
+
+
 def _fmt_chunk(
     fmt: OutputFormat, sample_rate: int, bit_depth: int, n_channels: int | None = None,
 ) -> bytes:
@@ -313,9 +318,9 @@ def _axml_chunk(
         a(f'            <position coordinate="Y">{_pos_str(y)}</position>')
         a(f'            <position coordinate="Z">{_pos_str(z)}</position>')
         if extent > 0.0:
-            a(f'            <width>{_pos_str(extent)}</width>')
-            a(f'            <height>{_pos_str(extent)}</height>')
-            a(f'            <depth>{_pos_str(extent)}</depth>')
+            a(f'            <width>{_object_size_str(extent)}</width>')
+            a(f'            <height>{_object_size_str(extent)}</height>')
+            a(f'            <depth>{_object_size_str(extent)}</depth>')
         if diffuse:
             a('            <diffuse>1</diffuse>')
         a('            <jumpPosition interpolationLength="0.000000">1</jumpPosition>')

@@ -174,7 +174,7 @@ function params(mode, decodeTaps, options = {}) {
       ambient_height_crossover_hz: 2000,
       object_mode: objectMode ? "linked-stereo" : null,
       object_placement: objectMode
-        ? { azimuth_deg: 45, elevation_deg: 20, width_deg: 60, spread_deg: 40 }
+        ? { azimuth_deg: 45, elevation_deg: 20, width_deg: 60, object_size: 0.4 }
         : null,
     })),
     master: {

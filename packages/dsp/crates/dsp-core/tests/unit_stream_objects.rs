@@ -6,7 +6,12 @@ use upmixer_dsp_core::stream::params::EngineParams;
 
 const N: usize = 1024;
 
-fn engine(bypass_mastering: bool, output_mode: &str, limited: bool) -> PreviewEngine {
+fn engine_at(
+    bypass_mastering: bool,
+    output_mode: &str,
+    limited: bool,
+    elevation_deg: f64,
+) -> PreviewEngine {
     let limiter = if limited {
         r#", "limiter": {"ceiling_dbtp": -6.0, "lookahead_ms": 5.0,
                              "release_ms": 50.0, "safety_margin_db": 0.1}"#
@@ -32,20 +37,24 @@ fn engine(bypass_mastering: bool, output_mode: &str, limited: bool) -> PreviewEn
                       "lfe_cutoff_hz": 120.0, "lfe_filter_order": 4, "lfe_gain": 1.0}},
             "stems": [{{"routing": [], "enabled": true, "route_scale": 1.0,
                        "object_mode": "linked-stereo",
-                       "object_placement": {{"azimuth_deg": 0.0, "elevation_deg": 30.0,
-                                              "width_deg": 0.0, "spread_deg": 0.0}}}}],
+                       "object_placement": {{"azimuth_deg": 0.0, "elevation_deg": {elevation_deg},
+                                              "width_deg": 0.0, "object_size": 0.0}}}}],
             "master": {{"clip": {{"ceiling_dbtp": -12.0, "clip_db": 0.5, "knee": 1.0}}{limiter}}},
             "output_mode": "{output_mode}",
             "bypass_mastering": {bypass_mastering},
             "soft_limit_threshold": 0.0
         }}"#,
     )).expect("object engine parameters");
-    let source = vec![0.9f32; N];
+    let source = vec![2.0f32; N];
     let stem = Arc::new(StemSource {
         left: source.clone(),
         right: source,
     });
     PreviewEngine::new(48_000, params, vec![stem])
+}
+
+fn engine(bypass_mastering: bool, output_mode: &str, limited: bool) -> PreviewEngine {
+    engine_at(bypass_mastering, output_mode, limited, 0.0)
 }
 
 fn render(bypass_mastering: bool, block: usize) -> Vec<f64> {
@@ -90,7 +99,10 @@ fn clip_processes_object_tracks_before_the_speaker_render() {
 fn object_mastering_is_block_size_independent() {
     let whole = render(false, N);
     let blocked = render(false, 128);
-    assert!(whole.iter().zip(blocked).all(|(a, b)| (a - b).abs() < 1e-10));
+    assert!(whole
+        .iter()
+        .zip(blocked)
+        .all(|(a, b)| (a - b).abs() < 1e-10));
 }
 
 #[test]
@@ -102,7 +114,7 @@ fn object_measurement_uses_the_speaker_render() {
 
 #[test]
 fn object_measurement_also_reports_the_uncapped_monitor_render() {
-    let engine = engine(false, "stereo", false);
+    let engine = engine_at(false, "stereo", false, 30.0);
     let mut pass = MeasurementPass::new(&engine, &[1.0, 1.0]);
     let result = loop {
         if let Some(result) = pass.advance(128) {
@@ -113,10 +125,7 @@ fn object_measurement_also_reports_the_uncapped_monitor_render() {
     let [speaker_lkfs, speaker_dbtp, monitor_lkfs, monitor_dbtp] = result;
     assert!(monitor_lkfs.is_finite());
     assert!(monitor_dbtp.is_finite());
-    assert!(
-        (speaker_lkfs - monitor_lkfs).abs() > 0.1
-            || (speaker_dbtp - monitor_dbtp).abs() > 0.1
-    );
+    assert!((speaker_lkfs - monitor_lkfs).abs() > 0.1 || (speaker_dbtp - monitor_dbtp).abs() > 0.1);
 }
 
 #[test]
@@ -142,6 +151,8 @@ fn limiter_caps_the_rendered_object_programme() {
     engine.render(&mut out, N);
 
     let ceiling = 10.0_f64.powf((-6.0 - 0.1) / 20.0);
-    let peak = out.iter().fold(0.0_f64, |max, sample| max.max(sample.abs()));
+    let peak = out
+        .iter()
+        .fold(0.0_f64, |max, sample| max.max(sample.abs()));
     assert!(peak <= ceiling + 1e-6, "object limiter leaked to {peak}");
 }
