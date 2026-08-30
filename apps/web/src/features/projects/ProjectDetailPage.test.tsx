@@ -37,6 +37,7 @@ vi.mock("@/api", async (importOriginal) => {
       saveProject: vi.fn(async () => project),
       saveProjectTrackLayout: vi.fn(async () => project),
       retryProject: vi.fn(async () => project),
+      reprepareProjectStems: vi.fn(async () => project),
       saveProjectViewState: vi.fn(async () => undefined),
     },
   };
@@ -114,6 +115,23 @@ describe("ProjectDetailPage tabs", () => {
     fireEvent.click(exportButton);
     // One export renders one layout: the selected one.
     await waitFor(() => expect(api.exportProject).toHaveBeenCalledWith("project-1", "7.1.4"));
+  });
+
+  it("configures stem selection and cleanup before re-preparing", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Prepare" }));
+    await user.click(screen.getByRole("button", { name: "Re-prepare stems" }));
+    expect(screen.getByRole("dialog", { name: "Re-prepare stems" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Bass" }));
+    await user.click(screen.getByRole("button", { name: "Re-prepare stems" }));
+
+    await waitFor(() => expect(api.reprepareProjectStems).toHaveBeenCalledWith("project-1", {
+      stems: ["Vocals", "Bass"], stem_bleed_reduction: false,
+    }));
   });
 
   it("puts transport position on the timeline instead of a second seek bar in the transport", async () => {

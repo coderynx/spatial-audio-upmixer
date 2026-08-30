@@ -96,17 +96,21 @@ class SeparationEngine:
         self._default_chunk_samples = default_chunk_samples
         self._tta = tta
         self._pitch_shift = pitch_shift
+        self._last_parent: np.ndarray | None = None
 
-    def separate(self, audio_path: str) -> list[str]:
+    def separate(self, audio_path: str, retain_parent: bool = False) -> list[str]:
         """Separate ``audio_path``, writing one WAV per stem to output_dir.
 
         Stems are written in the input file's level domain — the pre-demix
         peak normalization is divided back out — so they sum to the input
         rather than to an arbitrary per-stem peak.
 
+        When ``retain_parent`` is true, :meth:`take_last_parent` exposes the
+        exact resampled input in its original level domain after the run.
         Returns the list of written file paths.
         """
         mix = audio_io.load_audio(audio_path, self._sample_rate)
+        self._last_parent = np.ascontiguousarray(mix.T) if retain_parent else None
         mix, input_scale = audio_io.normalize(mix)
 
         started = time.monotonic()
@@ -125,6 +129,14 @@ class SeparationEngine:
             audio_io.write_stem(path, stem_audio / input_scale, self._sample_rate)
             paths.append(path)
         return paths
+
+    def take_last_parent(self) -> np.ndarray:
+        """Return and release the exact resampled input of the last run."""
+        if self._last_parent is None:
+            raise RuntimeError("No completed separation input is available")
+        parent = self._last_parent
+        self._last_parent = None
+        return parent
 
     def _demix_with_chunking(self, mix: np.ndarray) -> dict[str, np.ndarray]:
         n_samples = mix.shape[1]

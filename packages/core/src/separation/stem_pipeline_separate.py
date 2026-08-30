@@ -13,13 +13,11 @@ import soundfile as sf
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, INPUT_FORMAT_MAP, InputFormat, OutputFormat, detect_input_format
 from upmixer.io.reader import AudioReader
-from upmixer.separation.bleed_reduction import apply_bleed_reduction
-from upmixer.separation.stem_identity import stem_cache_identity, validate_bleed_config
+from upmixer.separation.stem_identity import stem_cache_identity
 from upmixer.separation.stem_pipeline_exec import (
     GetSeparator,
     execute_plan,
     execute_plan_with_silence_skip,
-    temporary_wav_path,
 )
 from upmixer.separation.stem_plan import (
     DEFAULT_STEMS,
@@ -50,23 +48,6 @@ class SeparationResult:
     source_zones: dict[str, np.ndarray]
     n_samples: int
     stem_summary: list[str]
-
-
-def _separate_array(
-    get_separator: GetSeparator,
-    model: str,
-    audio: np.ndarray,
-    in_sr: int,
-    sep_sr: int,
-) -> dict[str, np.ndarray]:
-    """Run one model on an in-memory array via a temp-WAV round-trip."""
-    tmp = temporary_wav_path("upmixer_bleed_")
-    try:
-        sf.write(tmp, audio, in_sr, subtype="FLOAT")
-        return get_separator(model, sep_sr).separate(tmp)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
 
 
 def warn_combined_vocal_split(plan: SeparationPlan) -> None:
@@ -301,8 +282,6 @@ def separate(
     progress: Callable[[str, float], None],
 ) -> SeparationResult:
     """Read, zone-split, separate, and cache stems — no routing or mastering."""
-    if cfg.stem_bleed_reduction:
-        validate_bleed_config(cfg)
     if cfg.stem_wet_dry_split:
         from upmixer.separation.inference.registry import get_model_spec
         get_model_spec(cfg.stem_dereverb_model)
@@ -414,21 +393,6 @@ def separate(
             stereo_mode, progress,
             _resume_key(cfg, input_path, cache_identity, sep_sr),
         )
-
-        if cfg.stem_bleed_reduction and all_stems:
-            progress("  Reducing stem bleed...", 0.72)
-            all_stems = apply_bleed_reduction(
-                all_stems,
-                source_zones,
-                sr,
-                sep_sr,
-                cfg,
-                output_fmt,
-                lambda model, audio, in_sr: _separate_array(
-                    get_separator, model, audio, in_sr, sep_sr
-                ),
-                progress=lambda msg: progress(msg, 0.72),
-            )
 
         if cfg.stem_cache_dir and not cfg.stem_input_dir and all_stems:
             _save_cached_stems(cfg, input_path, cache_identity, sep_sr, all_stems)

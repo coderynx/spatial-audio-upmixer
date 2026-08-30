@@ -56,40 +56,6 @@ def test_prepare_stems_skips_routing_and_mastering(tmp_path):
     assert "Mastering" not in joined
 
 
-def test_prepare_stems_runs_bleed_reduction(tmp_path):
-    cfg = UpmixConfig(
-        stems=["Vocals", "Other"],
-        output_format="7.1.4",
-        stem_bleed_reduction=True,
-        stem_debleed={"*": True},  # opt into debleed (off by default)
-    )
-    pipeline = StemUpmixPipeline(cfg)
-    source = str(tmp_path / "in.wav")
-    sf.write(source, _sine(SR), SR, subtype="FLOAT")
-    models: list[str] = []
-
-    def _fake_separate_array(get_separator, model, audio, in_sr, sep_sr):
-        models.append(model)
-        n = len(audio)
-        return {
-            "Instrumental": np.full((n, 2), 0.3, dtype=np.float32),
-            "Vocals": np.zeros((n, 2), dtype=np.float32),
-        }
-
-    with patch(_EXEC_PLAN, side_effect=_fake_execute_plan), patch(
-        "upmixer.separation.stem_pipeline_separate._separate_array",
-        side_effect=_fake_separate_array,
-    ):
-        result = pipeline.prepare_stems(source)
-    pipeline.close()
-
-    assert result.mode == "stem"
-    assert "Other" in result.stems
-    # Other routes to surround/height, so both passes run inference.
-    assert cfg.stem_phase_fix_reference_model in models
-    assert cfg.stem_debleed_model in models
-
-
 def test_prepare_stems_writes_cache(tmp_path):
     cache_dir = tmp_path / "cache"
     cfg = UpmixConfig(stems=["Vocals"], output_format="5.1", stem_cache_dir=str(cache_dir))

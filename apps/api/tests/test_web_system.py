@@ -23,13 +23,8 @@ def test_configuration_lists_every_stem_and_runtime_capability(web_client):
         "Lead Vocals", "Backing Vocals", "Vocals Reverb",
     ]
     assert "vocal-presence" in configuration["choices"]["stem_eq_profiles"]
-    assert configuration["choices"]["stem_phase_fix_reference_models"] == [
-        "kimmel_unwa_ft2_bleedless.ckpt",
-    ]
-    assert (
-        "mel_band_roformer_bleed_suppressor_v1.ckpt"
-        in configuration["choices"]["stem_debleed_models"]
-    )
+    assert "stem_phase_fix_reference_models" not in configuration["choices"]
+    assert "stem_debleed_models" not in configuration["choices"]
     capability = configuration["capabilities"]["stem_separation"]
     assert isinstance(capability["available"], bool)
     assert isinstance(capability["accelerated"], bool)

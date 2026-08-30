@@ -48,25 +48,14 @@ _SEPARATION_ENGINE_KEYS = (
     "stem_batch_size", "stem_segment_size", "stem_chunk_duration_s",
     "stem_model_cache_size", "stem_silence_skip", "stem_silence_threshold_db",
     "stem_silence_min_duration_s", "stem_silence_crossfade_ms", "stem_silence_pad_ms",
-    "stem_bleed_reduction", "stem_phase_fix", "stem_phase_fix_low_hz",
-    "stem_phase_fix_high_hz", "stem_phase_fix_scale", "stem_phase_fix_reference_model",
-    "stem_debleed", "stem_debleed_model",
+    "stem_bleed_reduction",
     "stem_drum_remask", "stem_primary_remask",
     "stem_wet_dry_split", "stem_dereverb_model", "stem_wet_denoise",
 )
 
-# Engine keys a per-file extraction override may set (bleed reduction is chosen
-# per file at prepare time, like the stem list).
 _TRACK_ENGINE_OVERRIDE_KEYS = {
     "stems",
     "stem_bleed_reduction",
-    "stem_phase_fix",
-    "stem_phase_fix_low_hz",
-    "stem_phase_fix_high_hz",
-    "stem_phase_fix_scale",
-    "stem_phase_fix_reference_model",
-    "stem_debleed",
-    "stem_debleed_model",
     "stem_wet_dry_split",
     "stem_dereverb_model",
     "stem_wet_denoise",
@@ -86,8 +75,6 @@ def _separation_settings(manifest: dict[str, Any]) -> tuple[object, ...]:
     minimal stored manifest (only ever `engine.mode`/`engine.stems`) compares
     equal to a client save that always sends the full engine block — a
     missing key and its default value must not look like a settings change.
-    An empty per-stem override dict (`stem_debleed: {}}`, the client's
-    "unset" shape) is canonicalized to `None` to match the config default.
     """
     engine = manifest.get("engine")
     if not isinstance(engine, dict):
@@ -96,8 +83,6 @@ def _separation_settings(manifest: dict[str, Any]) -> tuple[object, ...]:
     values: list[object] = []
     for key in _SEPARATION_ENGINE_KEYS:
         value = engine.get(key, getattr(defaults, key))
-        if isinstance(value, dict) and not value:
-            value = None
         values.append(value)
     return tuple(values)
 
@@ -540,9 +525,33 @@ def retry_project(session: Session, project: Project) -> Project:
     return project
 
 
-def reprepare_project_stems(session: Session, project: Project) -> Project:
+def _set_preparation_settings(
+    block: dict[str, Any], stems: list[str], stem_bleed_reduction: bool, layout: str
+) -> dict[str, Any]:
+    updated = copy.deepcopy(block)
+    updated.setdefault("engine", {}).update({
+        "stems": stems,
+        "stem_bleed_reduction": stem_bleed_reduction,
+    })
+    mixing = updated.setdefault("mixing", {})
+    existing_routing = mixing.get("stem_routing", {})
+    defaults = build_stem_routing(stems, FORMAT_MAP[layout])
+    mixing["stem_routing"] = {
+        stem: existing_routing.get(stem, defaults[stem])
+        for stem in stems
+    }
+    return updated
+
+
+def reprepare_project_stems(
+    session: Session,
+    project: Project,
+    stems: Iterable[str] | None = None,
+    stem_bleed_reduction: bool | None = None,
+) -> Project:
     """Force a full stem re-separation for a project that already has
-    prepared stems, re-running its exact current `requested_stems`.
+    prepared stems, optionally replacing its extraction targets and cleanup
+    setting for every track.
 
     Unlike `retry_project` (only for a failed run), this is for a `ready`
     project whose on-disk stems now miss the separation engine's cache
@@ -556,14 +565,31 @@ def reprepare_project_stems(session: Session, project: Project) -> Project:
         raise ProjectStateConflict("Project stem preparation is already in progress")
     if not project.tracks:
         raise ProjectStateConflict("Project has no tracks to prepare")
+    requested_stems = _normalize_project_stems(stems) if stems is not None else list(project.requested_stems)
+    if not requested_stems:
+        raise ValueError("Select at least one stem")
+    engine = project.manifest.get("engine", {})
+    cleanup = (
+        stem_bleed_reduction
+        if stem_bleed_reduction is not None
+        else bool(engine.get("stem_bleed_reduction", UpmixConfig().stem_bleed_reduction))
+    )
+    layout = str(project.manifest.get("mixing", {}).get("channel_layout", "7.1.4"))
+    project.manifest = _set_preparation_settings(project.manifest, requested_stems, cleanup, layout)
+    project.requested_stems = requested_stems
     project.status = "expanding" if project.prepared_stems else "queued"
     project.progress = 0.0
     project.error = None
     project.status_message = "Waiting for worker"
     for track in project.tracks:
+        track.layout_overrides = {
+            layout: _set_preparation_settings(overrides, requested_stems, cleanup, layout)
+            for layout, overrides in track.layout_overrides.items()
+        }
         track.status = "queued"
         track.progress = 0.0
         track.error = None
+    project.revision += 1
     session.commit()
     return project
 

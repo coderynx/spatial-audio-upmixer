@@ -206,8 +206,6 @@ export type Configuration = {
     bass_spreads?: string[]
     bass_lfe_modes?: string[]
     stem_eq_profiles: string[]
-    stem_phase_fix_reference_models?: string[]
-    stem_debleed_models?: string[]
     stem_routing_presets?: string[]
     layout_channels?: Record<string, string[]>
     stems: string[]
@@ -281,7 +279,8 @@ export const api = {
   expandProjectStems: (id: string, stems: string[]) =>
     request<Project>(`/api/v1/projects/${id}/stems`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stems }) }),
   retryProject: (id: string) => request<Project>(`/api/v1/projects/${id}/retry`, { method: "POST" }),
-  reprepareProjectStems: (id: string) => request<Project>(`/api/v1/projects/${id}/stems/reprepare`, { method: "POST" }),
+  reprepareProjectStems: (id: string, payload: { stems: string[]; stem_bleed_reduction: boolean }) =>
+    request<Project>(`/api/v1/projects/${id}/stems/reprepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   exportProject: (id: string, layout: string) =>
     request<Job>(`/api/v1/projects/${id}/exports`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout }) }),
   deleteProject: (id: string) => request(`/api/v1/projects/${id}`, { method: "DELETE" }),

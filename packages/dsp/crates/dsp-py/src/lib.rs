@@ -14,6 +14,7 @@ mod mastering;
 mod panner;
 mod reference;
 mod spatial;
+mod stem_cleanup;
 
 pub(crate) type Bed = Vec<Vec<f64>>;
 
@@ -40,5 +41,6 @@ fn upmixer_dsp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     panner::register(m)?;
     reference::register(m)?;
     spatial::register(m)?;
+    stem_cleanup::register(m)?;
     Ok(())
 }

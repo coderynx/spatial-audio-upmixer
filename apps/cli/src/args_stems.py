@@ -221,60 +221,7 @@ def add_stem_args(parser: argparse.ArgumentParser) -> None:
         action=argparse.BooleanOptionalAction,
         default=None,
         dest="stem_bleed_reduction",
-        help=(
-            "Enable bleed-reduction post-processing (phase-fixer + debleed pass) "
-            "on separated stems (stem mode only). Passes default on for stems "
-            "routed to surround/height channels. Default: disabled."
-        ),
-    )
-
-    parser.add_argument(
-        "--stem-phase-fix-low-hz",
-        type=float,
-        default=None,
-        metavar="HZ",
-        help="Phase-fixer low cutoff in Hz. Default: 500.0.",
-    )
-
-    parser.add_argument(
-        "--stem-phase-fix-high-hz",
-        type=float,
-        default=None,
-        metavar="HZ",
-        help="Phase-fixer high cutoff in Hz. Default: 5000.0.",
-    )
-
-    parser.add_argument(
-        "--stem-phase-fix-scale",
-        type=float,
-        default=None,
-        metavar="FLOAT",
-        help=(
-            "Phase-fixer blend factor toward the reference phase in-band "
-            "(0.0 to 1.0). Default: 0.8."
-        ),
-    )
-
-    parser.add_argument(
-        "--stem-phase-fix-reference-model",
-        type=str,
-        default=None,
-        metavar="CKPT",
-        help=(
-            "Bleedless vocal-target model whose instrumental supplies the "
-            "reference phase. Default: kimmel_unwa_ft2_bleedless.ckpt."
-        ),
-    )
-
-    parser.add_argument(
-        "--stem-debleed-model",
-        type=str,
-        default=None,
-        metavar="CKPT",
-        help=(
-            "Model for the inference-based debleed pass on separated stems. "
-            "Default: mel_band_roformer_bleed_suppressor_v1.ckpt."
-        ),
+        help="Enable DSP stem cleanup on separated stems (stem mode only). Default: disabled.",
     )
 
     parser.add_argument(

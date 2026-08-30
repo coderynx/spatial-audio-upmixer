@@ -14,6 +14,7 @@ from upmixer.config import UpmixConfig
 from upmixer.separation.remask import share_parent_residual
 from upmixer.separation.separator import StemSeparator
 from upmixer.separation.stem_plan import (
+    MODEL_DEUX,
     MODEL_DRUMS,
     MODEL_PRIMARY,
     SeparationPlan,
@@ -93,6 +94,49 @@ def _remask_stage(
             loaded[name] = audio
 
 
+def _write_float_atomic(path: str, audio: np.ndarray, sample_rate: int) -> None:
+    handle = tempfile.NamedTemporaryFile(
+        suffix=".wav", prefix="upmixer_cleanup_",
+        dir=os.path.dirname(path), delete=False,
+    )
+    temporary = handle.name
+    handle.close()
+    try:
+        sf.write(temporary, audio, sample_rate, subtype="FLOAT")
+        os.replace(temporary, path)
+    finally:
+        _discard(temporary)
+
+
+def _cleanup_deux_stage(
+    loaded: dict[str, np.ndarray],
+    on_disk: dict[str, str],
+    parent: np.ndarray,
+    sample_rate: int,
+) -> None:
+    from upmixer.separation.stem_cleanup import apply_stem_cleanup
+
+    children: dict[str, np.ndarray] = {}
+    for name in ("Vocals", "_deux_inst"):
+        if name in loaded:
+            children[name] = loaded[name]
+        elif name in on_disk:
+            children[name], _ = sf.read(
+                on_disk[name], dtype="float32", always_2d=True
+            )
+        else:
+            raise RuntimeError(f"DSP stem cleanup requires the {name} estimate")
+
+    vocals, instrumental = apply_stem_cleanup(
+        parent, children["Vocals"], children["_deux_inst"], sample_rate
+    )
+    for name, audio in (("Vocals", vocals), ("_deux_inst", instrumental)):
+        if name in on_disk:
+            _write_float_atomic(on_disk[name], audio, sample_rate)
+        else:
+            loaded[name] = audio
+
+
 def execute_plan(
     get_separator: GetSeparator,
     plan: SeparationPlan,
@@ -113,9 +157,8 @@ def execute_plan(
     Args:
         stage_callback: Optional callable ``(stage_idx, n_tasks, model,
             output_stems)`` invoked before each model stage runs.
-        cfg: Configuration for the post-separation passes run here (parent
-            remainder sharing on the primary and drumsep stages). ``None``
-            runs none of them.
+        cfg: Configuration for stage-local DSP passes: parent remainder
+            sharing and optional two-child stem cleanup. ``None`` runs none.
         resume_key: Identity of this run, enabling the crash checkpoint in
             ``stem_resume``: a failing stage leaves the finished stages'
             stems on disk under ``cfg.stem_cache_dir`` and the next run with
@@ -253,12 +296,19 @@ def _run_one_stage(
     keep_on_disk = task.output_stems & later_inputs
 
     sep = get_separator(task.model, sep_sr)
+    retain_parent = (
+        cfg is not None
+        and cfg.stem_bleed_reduction
+        and task.model == MODEL_DEUX
+    )
     loaded, on_disk = sep.separate_to_file(
         input_path_for_task,
         keep_on_disk,
         task.stem_overrides,
         task.output_stems,
+        **({"retain_parent": True} if retain_parent else {}),
     )
+    cleanup_parent = sep.take_last_parent() if retain_parent else None
 
     for name, path in on_disk.items():
         stable_path = temporary_wav_path("upmixer_intermediate_")
@@ -283,6 +333,10 @@ def _run_one_stage(
             all_disk[task.input_source],
             task.output_stems,
         )
+
+    if cleanup_parent is not None:
+        _log.info("  [stage %d/%d] applying DSP stem cleanup", stage_idx + 1, n_tasks)
+        _cleanup_deux_stage(loaded, on_disk, cleanup_parent, sep_sr)
 
     _log.info(
         "  [stage %d/%d] produced: loaded=%s  on_disk=%s",

@@ -10,6 +10,7 @@ import { downloadWithProgress } from "@/lib/download";
 import { CHANNEL_LAYOUTS } from "@/lib/layouts";
 import { getStemColor, getStemIcon } from "@/lib/stems";
 import { cn } from "@/lib/utils";
+import { ReprepareStemsDialog, type ReprepareSettings } from "./ReprepareStemsDialog";
 
 function statusVariant(status: string) {
   if (status === "ready") return "success" as const;
@@ -31,10 +32,11 @@ export function PreparedTrackTree({
   project: Project;
   configuration: Configuration | null;
   onOpenTrack: (trackId: string) => void;
-  onReprepare: () => void;
+  onReprepare: (settings: ReprepareSettings) => Promise<void>;
   onProjectUpdate: (project: Project) => void;
 }) {
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({});
+  const [reprepareOpen, setReprepareOpen] = React.useState(false);
   const canReprepare = !IN_FLIGHT_STATUSES.has(project.status);
   return (
     <div className="overflow-hidden rounded-lg border bg-card">
@@ -47,7 +49,7 @@ export function PreparedTrackTree({
           <Button
             variant="ghost"
             size="sm"
-            onClick={onReprepare}
+            onClick={() => setReprepareOpen(true)}
             title="Re-run stem separation for every track — e.g. after a separation model update leaves prepared stems stale"
           >
             <RotateCcw />
@@ -69,6 +71,13 @@ export function PreparedTrackTree({
           />
         ))}
       </div>
+      <ReprepareStemsDialog
+        open={reprepareOpen}
+        project={project}
+        configuration={configuration}
+        onOpenChange={setReprepareOpen}
+        onReprepare={onReprepare}
+      />
     </div>
   );
 }

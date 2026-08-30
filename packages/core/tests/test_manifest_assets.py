@@ -431,6 +431,30 @@ class TestMigrateFormatBlock:
         assert config.output_type == "multichannel"
         assert config.output_codec == "wav_pcm"
 
+    def test_removes_retired_cleanup_fields_from_root_and_assets(self):
+        retired = {
+            "stem_phase_fix": {"*": True},
+            "stem_phase_fix_low_hz": 500.0,
+            "stem_phase_fix_high_hz": 5000.0,
+            "stem_phase_fix_scale": 0.8,
+            "stem_phase_fix_reference_model": "old.ckpt",
+            "stem_debleed": {"Bass": True},
+            "stem_debleed_model": "old.ckpt",
+        }
+        migrated = migrate_manifest({
+            "engine": {"stem_bleed_reduction": True, **retired},
+            "assets": [{
+                "input": "in.wav",
+                "output": "out.wav",
+                "engine": {"stem_bleed_reduction": False, **retired},
+            }],
+        })
+
+        assert migrated["engine"] == {"stem_bleed_reduction": True}
+        assert migrated["assets"][0]["engine"] == {
+            "stem_bleed_reduction": False
+        }
+
 
 class TestValidateStereoDelivery:
     def test_accepts_stereo_with_wav(self):

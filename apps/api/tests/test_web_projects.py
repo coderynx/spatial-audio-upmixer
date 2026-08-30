@@ -11,20 +11,12 @@ from upmixer_web.settings import Settings
 from _helpers import _wav_bytes
 
 
-def test_separation_settings_detects_bleed_reduction_changes():
+def test_separation_settings_detects_dsp_stem_cleanup_changes():
     from upmixer_web.features.projects.service import _separation_settings
 
     off = {"engine": {"mode": "stem"}}
     on = {"engine": {"mode": "stem", "stem_bleed_reduction": True}}
-    tuned = {
-        "engine": {
-            "mode": "stem",
-            "stem_bleed_reduction": True,
-            "stem_phase_fix_scale": 0.5,
-        }
-    }
     assert _separation_settings(off) != _separation_settings(on)
-    assert _separation_settings(on) != _separation_settings(tuned)
 
 
 def test_separation_settings_treats_missing_keys_as_client_defaults():
@@ -47,20 +39,9 @@ def test_separation_settings_treats_missing_keys_as_client_defaults():
             "stem_silence_crossfade_ms": 10,
             "stem_silence_pad_ms": 200,
             "stem_bleed_reduction": False,
-            "stem_phase_fix_low_hz": 500,
-            "stem_phase_fix_high_hz": 5000,
-            "stem_phase_fix_scale": 0.8,
-            "stem_phase_fix_reference_model": "kimmel_unwa_ft2_bleedless.ckpt",
-            "stem_debleed": {},
-            "stem_debleed_model": "mel_band_roformer_bleed_suppressor_v1.ckpt",
         }
     }
     assert _separation_settings(minimal) == _separation_settings(client_defaults)
-
-    debleed_on = {
-        "engine": {**client_defaults["engine"], "stem_debleed": {"Vocals": True}},
-    }
-    assert _separation_settings(client_defaults) != _separation_settings(debleed_on)
 
 
 def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch):
@@ -285,7 +266,12 @@ def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(
                 status="ready", prepared_stems=["Vocals"], requested_stems=["Vocals"],
                 stem_generation=1,
             )
-            ready_track = ProjectTrack(project=ready_project, asset=ready_asset, position=0)
+            ready_track = ProjectTrack(
+                project=ready_project,
+                asset=ready_asset,
+                position=0,
+                layout_overrides={"7.1.4": {"engine": {"stems": ["Vocals"]}}},
+            )
             expanding_asset = MediaAsset(
                 import_batch=batch, filename="expanding.wav", relative_path="expanding.wav",
                 storage_key="objects/expanding.wav", sha256="1" * 64, size_bytes=1,
@@ -306,11 +292,20 @@ def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(
             expanding_id = expanding_project.id
             empty_id = empty_project.id
 
-        response = client.post(f"/api/v1/projects/{ready_id}/stems/reprepare")
+        response = client.post(f"/api/v1/projects/{ready_id}/stems/reprepare", json={
+            "stems": ["Vocals", "Bass"],
+            "stem_bleed_reduction": True,
+        })
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "expanding"
         assert body["progress"] == 0.0
+        assert body["requested_stems"] == ["Vocals", "Bass"]
+        assert body["manifest"]["engine"]["stem_bleed_reduction"] is True
+        assert body["tracks"][0]["layout_overrides"]["7.1.4"]["engine"] == {
+            "stems": ["Vocals", "Bass"],
+            "stem_bleed_reduction": True,
+        }
         assert all(track["status"] == "queued" for track in body["tracks"])
 
         conflict = client.post(f"/api/v1/projects/{expanding_id}/stems/reprepare")
@@ -382,12 +377,6 @@ def test_settings_save_with_full_client_engine_block_does_not_reseparate(tmp_pat
                 "stem_silence_crossfade_ms": 10,
                 "stem_silence_pad_ms": 200,
                 "stem_bleed_reduction": False,
-                "stem_phase_fix_low_hz": 500,
-                "stem_phase_fix_high_hz": 5000,
-                "stem_phase_fix_scale": 0.8,
-                "stem_phase_fix_reference_model": "kimmel_unwa_ft2_bleedless.ckpt",
-                "stem_debleed": {},
-                "stem_debleed_model": "mel_band_roformer_bleed_suppressor_v1.ckpt",
             },
             "mixing": {"channel_layout": "5.1.4", "stem_routing": {}},
         }

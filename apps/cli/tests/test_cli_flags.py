@@ -1,4 +1,4 @@
-"""CLI coverage for --stem-lfe/--stem-pan parsing and merge-not-clobber behavior."""
+"""CLI flag parsing and manifest-override coverage."""
 from __future__ import annotations
 
 import math
@@ -40,6 +40,38 @@ def test_stem_lfe_absent_leaves_manifest_routing_untouched():
     _apply_cli_flags(config, args, sample_rate_set=False)
 
     assert config.stem_routing == {"Bass": {"LFE": 0.5}}
+
+
+@pytest.mark.parametrize(
+    ("manifest_value", "argv", "expected"),
+    [
+        (False, ["--stem-bleed-reduction"], True),
+        (True, ["--no-stem-bleed-reduction"], False),
+        (True, [], True),
+    ],
+)
+def test_dsp_stem_cleanup_flag_preserves_cli_precedence(manifest_value, argv, expected):
+    config = UpmixConfig(stem_bleed_reduction=manifest_value)
+    args = _parsed(argv)
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    assert config.stem_bleed_reduction is expected
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--stem-phase-fix-low-hz", "500"],
+        ["--stem-phase-fix-high-hz", "5000"],
+        ["--stem-phase-fix-scale", "0.8"],
+        ["--stem-phase-fix-reference-model", "model.ckpt"],
+        ["--stem-debleed-model", "model.ckpt"],
+    ],
+)
+def test_retired_stem_cleanup_flags_are_rejected(argv):
+    with pytest.raises(SystemExit):
+        _parsed(argv)
 
 
 def test_stem_lfe_rejects_a_negative_amount():

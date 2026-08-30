@@ -213,16 +213,6 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.stem_source_anchor_strength = args.stem_source_anchor_strength
     if args.stem_bleed_reduction is not None:
         config.stem_bleed_reduction = args.stem_bleed_reduction
-    if args.stem_phase_fix_low_hz is not None:
-        config.stem_phase_fix_low_hz = args.stem_phase_fix_low_hz
-    if args.stem_phase_fix_high_hz is not None:
-        config.stem_phase_fix_high_hz = args.stem_phase_fix_high_hz
-    if args.stem_phase_fix_scale is not None:
-        config.stem_phase_fix_scale = args.stem_phase_fix_scale
-    if args.stem_phase_fix_reference_model is not None:
-        config.stem_phase_fix_reference_model = args.stem_phase_fix_reference_model
-    if args.stem_debleed_model is not None:
-        config.stem_debleed_model = args.stem_debleed_model
     if args.stem_drum_remask is not None:
         config.stem_drum_remask = args.stem_drum_remask
     if args.stem_primary_remask is not None:

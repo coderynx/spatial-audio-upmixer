@@ -146,6 +146,11 @@ class ExpandProjectStemsRequest(BaseModel):
     stems: list[str] = Field(min_length=1)
 
 
+class ReprepareProjectStemsRequest(BaseModel):
+    stems: list[str] | None = Field(default=None, min_length=1)
+    stem_bleed_reduction: bool | None = None
+
+
 class AddProjectAssetsRequest(BaseModel):
     """Adds every asset from an already-ingested import batch to a project as
     new tracks. ``per_asset_overrides`` carries per-file stems/sample-rate/
