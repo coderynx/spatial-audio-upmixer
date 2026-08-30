@@ -21,12 +21,18 @@ pub enum ObjectMode {
     Mono,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct ObjectPlacement {
     pub azimuth_deg: f64,
     pub elevation_deg: f64,
     pub width_deg: f64,
     pub object_size: f64,
+    #[serde(default = "unit_scale")]
+    pub gain: f64,
+    #[serde(default)]
+    pub channel_lock: bool,
+    #[serde(default)]
+    pub zone_exclusion: Vec<String>,
 }
 
 /// How the mastered bed reaches the listener.

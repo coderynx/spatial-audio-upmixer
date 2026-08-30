@@ -206,6 +206,12 @@ unchanged as equal ADM `width`, `height`, and `depth` values. `diffuse` is
 only written for an object explicitly marked diffuse; the application's
 ambient sends remain rendered audio in the DirectSpeakers bed.
 
+`mixing.stem_object_metadata` authors `gain`, `importance`, `channelLock`,
+and the named Dolby `zoneExclusion` sets. The shared Rust renderer applies
+gain, channel lock, zone exclusion, and extent before both live preview and
+the export QC speaker render. Importance remains selection metadata except
+for the profile rule that importance 0 requires gain 0.
+
 ---
 
 ## Zone Exclusion
@@ -307,6 +313,11 @@ Only the following channel configurations are allowed, with the specified channe
 | 7.0.2 | L R C Lss Rss Lrs Rrs Lts Rts |
 | 7.1.2 | L R C LFE Lss Rss Lrs Rrs Lts Rts |
 
+Upmixer currently emits the profile configurations that map exactly to its
+speaker layouts: 5.1, 7.1, and 7.1.2. Other application layouts remain
+available for WAV, binaural, and transaural delivery but are rejected at the
+ADM-BWF boundary.
+
 ---
 
 ## BWF Chunk Requirements
@@ -358,3 +369,4 @@ Profile targets BS.2076-0. Known divergences in existing files:
 - [ ] Channel configuration matches one of the 8 allowed sets (Table 2-21)
 - [ ] DirectSpeakers speakerLabel values from RC_* set only (Table 2-14)
 - [ ] DirectSpeakers position coordinates match Table 2-14 exactly
+- [ ] LFE audioChannelFormat carries a 120 Hz low-pass frequency descriptor

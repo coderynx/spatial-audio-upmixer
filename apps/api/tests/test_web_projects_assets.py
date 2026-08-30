@@ -469,13 +469,14 @@ def test_narrowing_the_layout_retargets_a_delivery_it_cannot_carry(
     )
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
     monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
+    initial_layout = "7.1.2" if output_type == "adm-bwf" else "7.1.4"
     with TestClient(create_app(settings)) as client:
         created = client.post("/api/v1/projects", json={
             "name": "Bed delivery",
             "manifest": {
                 "version": "1.0.0",
                 "engine": {"mode": "stem", "stems": ["Vocals"]},
-                "mixing": {"channel_layout": "7.1.4"},
+                "mixing": {"channel_layout": initial_layout},
                 "format": {"type": output_type, "subtype": "PCM_24", "sample_rate": 48000},
             },
         })

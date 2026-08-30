@@ -1,10 +1,10 @@
 {
-  "_comment": "7.1.4 ADM-BWF music-authoring bed for downstream authoring, QC, and encoding",
+  "_comment": "7.1.2 ADM-BWF music-authoring bed for downstream authoring, QC, and encoding",
 
   "version": "1.0",
 
   "metadata": {
-    "name": "7.1.4 ADM-BWF Music Bed",
+    "name": "7.1.2 ADM-BWF Music Bed",
     "description": "Spatial Audio Upmixer bed for downstream immersive authoring"
   },
 
@@ -15,8 +15,16 @@
   },
 
   "mixing": {
-    "channel_layout": "7.1.4",
-    "stem_source_anchor_strength": 0.5
+    "channel_layout": "7.1.2",
+    "stem_source_anchor_strength": 0.5,
+    "stem_object_metadata": {
+      "Vocals": {
+        "gain": 1.0,
+        "importance": 10,
+        "channel_lock": true,
+        "zone_exclusion": []
+      }
+    }
   },
 
   "format": {

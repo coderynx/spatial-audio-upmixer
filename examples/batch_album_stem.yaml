@@ -1,4 +1,4 @@
-# Batch album upmix — stem mode, 7.1.4 ADM-BWF beds
+# Batch album upmix — stem mode, 7.1.2 ADM-BWF beds
 #
 # Stem separation models are loaded once and reused across all tracks —
 # dramatically faster than running upmixer per file.
@@ -11,7 +11,7 @@
 version: "1.0"
 
 metadata:
-  name: "Album Batch — Stem 7.1.4"
+  name: "Album Batch — Stem 7.1.2"
   description: "Full album upmix with automatic stem planning and model reuse"
 
 # ── Engine ────────────────────────────────────────────────────────────────────
@@ -23,12 +23,12 @@ engine:
 
 # ── Mixing ────────────────────────────────────────────────────────────────────
 mixing:
-  channel_layout: 7.1.4
+  channel_layout: 7.1.2
   stem_source_anchor_strength: 0.5
 
 # ── Output format — ADM-BWF authoring beds ────────────────────────────────────
 format:
-  type: adm-bwf           # ITU-R BS.2076-2 ADM-BWF container (WAV)
+  type: adm-bwf           # Dolby profile based on ITU-R BS.2076-0
   subtype: PCM_24
   sample_rate: 48000
 

@@ -96,11 +96,27 @@ describe("buildEngineParams", () => {
   it("forwards object placement without a TypeScript renderer", () => {
     const params = buildEngineParams(input({ stems: [{
       id: "V", routing: { LFE: 0.2 }, objectMode: "linked-stereo",
-      objectPlacement: { azimuth_deg: 10, elevation_deg: 20, width_deg: 40, object_size: 0.5 },
+      objectPlacement: {
+        azimuth_deg: 10,
+        elevation_deg: 20,
+        width_deg: 40,
+        object_size: 0.5,
+        gain: 0.5,
+        channel_lock: true,
+        zone_exclusion: ["ZT"],
+      },
     }] }));
-    const stems = params.stems as { object_mode: string; object_placement: { width_deg: number } }[];
+    const stems = params.stems as {
+      object_mode: string;
+      object_placement: { width_deg: number; gain: number; channel_lock: boolean; zone_exclusion: string[] };
+    }[];
     expect(stems[0]).toMatchObject({ object_mode: "linked-stereo" });
-    expect(stems[0].object_placement.width_deg).toBe(40);
+    expect(stems[0].object_placement).toMatchObject({
+      width_deg: 40,
+      gain: 0.5,
+      channel_lock: true,
+      zone_exclusion: ["ZT"],
+    });
   });
 
   it("drops routing to channels the layout does not have", () => {

@@ -11,6 +11,7 @@ fn engine_at(
     output_mode: &str,
     limited: bool,
     elevation_deg: f64,
+    object_gain: f64,
 ) -> PreviewEngine {
     let limiter = if limited {
         r#", "limiter": {"ceiling_dbtp": -6.0, "lookahead_ms": 5.0,
@@ -38,7 +39,8 @@ fn engine_at(
             "stems": [{{"routing": [], "enabled": true, "route_scale": 1.0,
                        "object_mode": "linked-stereo",
                        "object_placement": {{"azimuth_deg": 0.0, "elevation_deg": {elevation_deg},
-                                              "width_deg": 0.0, "object_size": 0.0}}}}],
+                                              "width_deg": 0.0, "object_size": 0.0,
+                                              "gain": {object_gain}}}}}],
             "master": {{"clip": {{"ceiling_dbtp": -12.0, "clip_db": 0.5, "knee": 1.0}}{limiter}}},
             "output_mode": "{output_mode}",
             "bypass_mastering": {bypass_mastering},
@@ -54,7 +56,7 @@ fn engine_at(
 }
 
 fn engine(bypass_mastering: bool, output_mode: &str, limited: bool) -> PreviewEngine {
-    engine_at(bypass_mastering, output_mode, limited, 0.0)
+    engine_at(bypass_mastering, output_mode, limited, 0.0, 1.0)
 }
 
 fn render(bypass_mastering: bool, block: usize) -> Vec<f64> {
@@ -114,7 +116,7 @@ fn object_measurement_uses_the_speaker_render() {
 
 #[test]
 fn object_measurement_also_reports_the_uncapped_monitor_render() {
-    let engine = engine_at(false, "stereo", false, 30.0);
+    let engine = engine_at(false, "stereo", false, 30.0, 1.0);
     let mut pass = MeasurementPass::new(&engine, &[1.0, 1.0]);
     let result = loop {
         if let Some(result) = pass.advance(128) {
@@ -126,6 +128,17 @@ fn object_measurement_also_reports_the_uncapped_monitor_render() {
     assert!(monitor_lkfs.is_finite());
     assert!(monitor_dbtp.is_finite());
     assert!((speaker_lkfs - monitor_lkfs).abs() > 0.1 || (speaker_dbtp - monitor_dbtp).abs() > 0.1);
+}
+
+#[test]
+fn object_gain_scales_the_rendered_speakers() {
+    let peak = |gain| {
+        let mut engine = engine_at(true, "native", false, 0.0, gain);
+        let mut out = vec![0.0; 4 * N];
+        engine.render(&mut out, N);
+        out.into_iter().fold(0.0_f64, |max, sample| max.max(sample.abs()))
+    };
+    assert!((peak(0.25) / peak(1.0) - 0.25).abs() < 1e-12);
 }
 
 #[test]

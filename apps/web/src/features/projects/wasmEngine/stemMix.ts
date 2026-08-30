@@ -14,6 +14,7 @@ export type MixPreviewShape = {
   stem_ambient_height_crossover_hz?: Record<string, number>;
   spatial_downmix_lock?: boolean;
   stem_object_mode?: Record<string, "linked-stereo" | "mono">;
+  stem_object_metadata?: Record<string, { gain?: number; importance?: number; channel_lock?: boolean; zone_exclusion?: string[] }>;
   stem_placement?: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; object_size: number }>;
   stem_source_anchor_strength?: number;
 };
@@ -70,6 +71,8 @@ export function resolveStemMixes(options: {
     const objectMode = placement
       ? mix?.stem_object_mode?.[stem.stem_key] ?? mix?.stem_object_mode?.[base] ?? "linked-stereo"
       : undefined;
+    const objectMetadata = mix?.stem_object_metadata?.[stem.stem_key]
+      ?? mix?.stem_object_metadata?.[base];
 
     const anchorDb = 20 * Math.log10(Math.max(1 - anchor * frontFraction, 1e-6));
     return {
@@ -83,7 +86,12 @@ export function resolveStemMixes(options: {
       ambientHeight: send(mix?.stem_ambient_height),
       ambientHeightCrossoverHz: Math.min(4000, Math.max(500, crossover)),
       objectMode,
-      objectPlacement: placement,
+      objectPlacement: placement && {
+        ...placement,
+        gain: objectMetadata?.gain ?? 1,
+        channel_lock: objectMetadata?.channel_lock ?? false,
+        zone_exclusion: objectMetadata?.zone_exclusion ?? [],
+      },
     };
   });
 }

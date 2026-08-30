@@ -51,6 +51,12 @@ class TestValidateCodec:
     def test_accepts_a_wide_bed_as_wav(self):
         validate_codec("7.1.4", "multichannel", "wav_pcm", "PCM_24")
 
+    def test_requires_profile_adm_pcm_and_rate(self):
+        with pytest.raises(ValueError, match="PCM_24"):
+            validate_codec("5.1", "adm-bwf", "wav_pcm", "PCM_16")
+        with pytest.raises(ValueError, match="48 kHz or 96 kHz"):
+            validate_codec("5.1", "adm-bwf", "wav_pcm", "PCM_24", 44_100)
+
     @pytest.mark.parametrize("layout", ["5.1.4", "7.1.2", "7.1.4"])
     def test_rejects_flac_above_eight_channels(self, layout):
         with pytest.raises(ValueError, match="at most 8 channels"):

@@ -173,6 +173,11 @@ linear monitor correction. It is applied after rendering, before the final
 safety curve, so HOA summation cannot drive the headphones into the safety
 curve while ADM source gains remain identical to the speaker master.
 
+Static Dolby object extent, gain, channel lock, and zone exclusion are resolved
+in the shared Rust panner. The browser preview and the export QC render therefore
+consume the same speaker gains; importance is metadata-only unless it is zero,
+which the manifest boundary requires to carry zero gain as the profile specifies.
+
 The dynamic EQ is the one stage whose two halves are literally the same loop
 rather than two implementations of one algorithm: `DynamicEq::process` is
 called on the whole bed offline and on each block of `fill_pre` in the

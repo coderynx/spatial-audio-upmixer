@@ -200,6 +200,10 @@ _ASSET_NON_BLOCK_KEYS: frozenset[str] = frozenset({
 
 _PLACEMENT_FIELDS = frozenset({"azimuth_deg", "elevation_deg", "width_deg", "object_size"})
 _PLACEMENT_NON_NEGATIVE = frozenset({"width_deg", "object_size"})
+_ADM_ZONE_SETS = frozenset({
+    "ZM1", "ZM2L", "ZM2R", "ZM3L", "ZM3Lss", "ZM3R", "ZM3Rss",
+    "ZM4", "ZM5", "ZB", "ZT",
+})
 
 
 def validate_manifest(data: dict) -> None:
@@ -353,6 +357,64 @@ def validate_manifest(data: dict) -> None:
                 if not _valid_route_stem(stem_key) or mode not in {"linked-stereo", "mono"}:
                     raise ManifestError(
                         f"{location}.mixing.stem_object_mode.{stem_key} must be linked-stereo or mono."
+                    )
+        object_metadata = mixing.get("stem_object_metadata")
+        if object_metadata is not None:
+            if not isinstance(object_metadata, dict):
+                raise ManifestError(
+                    f"{location}.mixing.stem_object_metadata must be a mapping."
+                )
+            for stem_key, fields in object_metadata.items():
+                if not _valid_route_stem(stem_key) or not isinstance(fields, dict):
+                    raise ManifestError(
+                        f"{location}.mixing.stem_object_metadata.{stem_key} must be a mapping."
+                    )
+                unknown = set(fields) - {
+                    "gain", "importance", "channel_lock", "zone_exclusion",
+                }
+                if unknown:
+                    raise ManifestError(
+                        f"Unknown ADM object field '{sorted(unknown)[0]}' for stem '{stem_key}'."
+                    )
+                gain = fields.get("gain", 1.0)
+                if (
+                    isinstance(gain, bool)
+                    or not isinstance(gain, (int, float))
+                    or not math.isfinite(float(gain))
+                    or gain < 0
+                ):
+                    raise ManifestError(
+                        f"ADM object '{stem_key}.gain' must be a finite non-negative number."
+                    )
+                importance = fields.get("importance", 10)
+                if (
+                    isinstance(importance, bool)
+                    or not isinstance(importance, int)
+                    or not 0 <= importance <= 10
+                ):
+                    raise ManifestError(
+                        f"ADM object '{stem_key}.importance' must be an integer in 0..10."
+                    )
+                if importance == 0 and gain != 0:
+                    raise ManifestError(
+                        f"ADM object '{stem_key}.gain' must be 0 when importance is 0."
+                    )
+                if not isinstance(fields.get("channel_lock", False), bool):
+                    raise ManifestError(
+                        f"ADM object '{stem_key}.channel_lock' must be true or false."
+                    )
+                zones = fields.get("zone_exclusion", [])
+                if not isinstance(zones, list) or any(
+                    zone not in _ADM_ZONE_SETS for zone in zones
+                ):
+                    raise ManifestError(
+                        f"ADM object '{stem_key}.zone_exclusion' contains an unknown Dolby zone."
+                    )
+                basic = [zone for zone in zones if zone not in {"ZB", "ZT"}]
+                height = [zone for zone in zones if zone in {"ZB", "ZT"}]
+                if len(basic) > 1 or len(height) > 1 or len(zones) != len(set(zones)):
+                    raise ManifestError(
+                        f"ADM object '{stem_key}.zone_exclusion' allows one basic and one elevation zone."
                     )
         placement = mixing.get("stem_placement")
         if placement is not None:

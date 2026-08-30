@@ -129,6 +129,11 @@ def validate_codec(
             f"adm-bwf output is a WAV container only; codec '{codec.name}' "
             f"is not available for it"
         )
+    if output_type == "adm-bwf":
+        if output_subtype != "PCM_24":
+            raise ValueError("Dolby ADM-BWF requires PCM_24")
+        if sample_rate is not None and sample_rate not in (48_000, 96_000):
+            raise ValueError("Dolby ADM-BWF requires 48 kHz or 96 kHz")
     channels = delivered_channels(output_format, output_type)
     if codec.max_channels is not None and channels > codec.max_channels:
         raise ValueError(

@@ -74,6 +74,23 @@ fn object_routes(
 }
 
 #[pyfunction]
+fn adm_object_routes(
+    azimuth_deg: f64,
+    elevation_deg: f64,
+    width_deg: f64,
+    object_size: f64,
+    channel_lock: bool,
+    zone_exclusion: Vec<String>,
+    channels: Vec<String>,
+) -> (Vec<f64>, Vec<f64>) {
+    let value = placement((azimuth_deg, elevation_deg, width_deg, object_size, 0.0));
+    let zones = as_refs(&zone_exclusion);
+    let [left, right] =
+        panner::object_routes_with_metadata(&value, &as_refs(&channels), channel_lock, &zones);
+    (left, right)
+}
+
+#[pyfunction]
 fn project_placement(
     azimuth_deg: f64,
     elevation_deg: f64,
@@ -118,6 +135,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(panning_gains, m)?)?;
     m.add_function(wrap_pyfunction!(placement_route, m)?)?;
     m.add_function(wrap_pyfunction!(object_routes, m)?)?;
+    m.add_function(wrap_pyfunction!(adm_object_routes, m)?)?;
     m.add_function(wrap_pyfunction!(project_placement, m)?)?;
     m.add_function(wrap_pyfunction!(build_stem_routing, m)?)?;
     m.add_function(wrap_pyfunction!(fold_route_to_stereo, m)?)?;

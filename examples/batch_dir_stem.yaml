@@ -12,7 +12,7 @@
 version: "1.0"
 
 metadata:
-  name: "Dir Batch — Stem 7.1.4"
+  name: "Dir Batch — Stem 7.1.2"
   description: "Scan a directory and upmix every track with one command"
 
 # ── Engine ────────────────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ engine:
 
 # ── Mixing ────────────────────────────────────────────────────────────────────
 mixing:
-  channel_layout: 7.1.4
+  channel_layout: 7.1.2
   stem_source_anchor_strength: 0.5
 
 # ── Output format — ADM-BWF authoring beds ────────────────────────────────────

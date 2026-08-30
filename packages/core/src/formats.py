@@ -135,6 +135,9 @@ FORMAT_MAP = {
     "7.1.4": SURROUND_714,
 }
 
+DOLBY_ADM_BED_FORMATS: tuple[str, ...] = ("5.1", "7.1", "7.1.2")
+"""Bed configurations permitted by Dolby Atmos Master ADM Profile v1.1."""
+
 BINAURAL_BED_FORMATS: tuple[str, ...] = ("5.1.4", "7.1.2", "7.1.4")
 """Valid speaker-layout beds for ``UpmixConfig.output_format`` when
 ``UpmixConfig.binaural`` is enabled."""
@@ -285,8 +288,9 @@ def validate_delivery(output_format: str, output_type: str) -> None:
             f"transaural output requires output_format one of {TRANSAURAL_BED_FORMATS}, "
             f"got '{output_format}'"
         )
-    if output_type == "adm-bwf" and output_format == STEREO_OUT.name:
+    if output_type == "adm-bwf" and output_format not in DOLBY_ADM_BED_FORMATS:
         raise ValueError(
-            "adm-bwf output requires a surround bed; "
-            f"output_format '{STEREO_OUT.name}' delivers WAV only"
+            f"adm-bwf output requires a Dolby surround bed, one of "
+            f"{DOLBY_ADM_BED_FORMATS}; "
+            f"output_format '{output_format}' delivers WAV only"
         )

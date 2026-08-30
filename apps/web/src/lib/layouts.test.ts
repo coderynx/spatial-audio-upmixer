@@ -17,6 +17,11 @@ describe("deliveryTypeForLayout", () => {
   it("leaves the delivery type alone for a multichannel layout", () => {
     expect(deliveryTypeForLayout("5.1", "binaural")).toBe("binaural");
   });
+
+  it("retargets ADM when the layout is outside the Dolby profile", () => {
+    expect(deliveryTypeForLayout("7.1.4", "adm-bwf")).toBe("multichannel");
+    expect(deliveryTypeForLayout("7.1.2", "adm-bwf")).toBe("adm-bwf");
+  });
 });
 
 describe("outputModeForLayoutSwitch", () => {

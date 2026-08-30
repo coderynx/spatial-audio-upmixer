@@ -68,10 +68,15 @@ fn object_topology(params: &EngineParams) -> Vec<usize> {
     params
         .stems
         .iter()
-        .map(|stem| match (stem.object_mode, stem.object_placement) {
-            (Some(crate::stream::params::ObjectMode::LinkedStereo), Some(_)) => 2,
-            (Some(crate::stream::params::ObjectMode::Mono), Some(_)) => 1,
-            _ => 0,
+        .map(|stem| {
+            if stem.object_placement.is_none() {
+                return 0;
+            }
+            match stem.object_mode {
+                Some(crate::stream::params::ObjectMode::LinkedStereo) => 2,
+                Some(crate::stream::params::ObjectMode::Mono) => 1,
+                None => 0,
+            }
         })
         .collect()
 }

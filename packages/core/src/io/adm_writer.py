@@ -16,7 +16,12 @@ import soundfile as sf
 import upmixer_dsp
 
 from upmixer.config import UpmixConfig
-from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
+from upmixer.formats import (
+    DOLBY_ADM_BED_FORMATS,
+    FORMAT_MAP,
+    ChannelLabel,
+    OutputFormat,
+)
 from upmixer.io.adm_chunks import (
     _audio_to_pcm,
     _axml_chunk,
@@ -30,18 +35,35 @@ from upmixer.io.adm_chunks import (
 from upmixer.io.atomic import atomic_output_path
 from upmixer.io.writer import dither_channels
 
-_DOLBY_ENGINE_ALLOWED_FORMATS = frozenset({"5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"})
+_DOLBY_ENGINE_ALLOWED_FORMATS = frozenset(DOLBY_ADM_BED_FORMATS)
+_DOLBY_BASIC_ZONES = frozenset({
+    "ZM1", "ZM2L", "ZM2R", "ZM3L", "ZM3Lss", "ZM3R", "ZM3Rss", "ZM4", "ZM5",
+})
+_DOLBY_HEIGHT_ZONES = frozenset({"ZB", "ZT"})
+
+
+def _valid_zone_exclusion(zones: tuple[str, ...]) -> bool:
+    return (
+        len(zones) == len(set(zones))
+        and sum(zone in _DOLBY_BASIC_ZONES for zone in zones) <= 1
+        and sum(zone in _DOLBY_HEIGHT_ZONES for zone in zones) <= 1
+        and all(zone in _DOLBY_BASIC_ZONES | _DOLBY_HEIGHT_ZONES for zone in zones)
+    )
 
 
 @dataclass(frozen=True)
 class AdmObject:
-    """One mono object track and its static ADM position and size."""
+    """One mono object track and its static Dolby-profile ADM parameters."""
 
     name: str
     audio: np.ndarray
     position: tuple[float, float, float]
     object_size: float = 0.0
     diffuse: bool = False
+    gain: float = 1.0
+    importance: int = 10
+    channel_lock: bool = False
+    zone_exclusion: tuple[str, ...] = ()
 
 
 def render_adm_programme(
@@ -57,18 +79,19 @@ def render_adm_programme(
         radius = math.sqrt(x * x + y * y + z * z)
         elevation = math.degrees(math.asin(z / radius)) if radius else 0.0
         azimuth = math.degrees(math.atan2(-x, y)) if radius else 0.0
-        gains, _ = upmixer_dsp.object_routes(
-            azimuth, elevation, 0.0, obj.object_size, speakers,
+        gains, _ = upmixer_dsp.adm_object_routes(
+            azimuth, elevation, 0.0, obj.object_size, obj.channel_lock,
+            list(obj.zone_exclusion), speakers,
         )
         for speaker, gain in zip(speakers, gains):
-            rendered[speaker] += gain * obj.audio
+            rendered[speaker] += obj.gain * gain * obj.audio
     return rendered
 
 
 class AdmBwfWriter:
     """Writes multichannel audio as a Dolby Atmos Master ADM Profile v1.1 BWF file.
 
-    Supports bed configurations: 5.1, 7.1, 5.1.2, 7.1.2, 5.1.4, 7.1.4.
+    Supports bed configurations: 5.1, 7.1, and 7.1.2.
     Use --output-type wav for any other format.
     """
 
@@ -113,8 +136,8 @@ class AdmBwfWriter:
         )
 
         objects = objects or []
-        if len(objects) > 117:
-            raise ValueError("Dolby ADM-BWF allows at most 117 objects with one bed")
+        if len(objects) > 118 or fmt.n_channels + len(objects) > 128:
+            raise ValueError("Dolby ADM-BWF allows at most 128 tracks and 118 objects")
 
         ordered = []
         for label in fmt.channels:
@@ -131,6 +154,25 @@ class AdmBwfWriter:
                 raise ValueError(f"ADM object '{obj.name}' has an invalid object size")
             if not isinstance(obj.diffuse, bool):
                 raise ValueError(f"ADM object '{obj.name}' diffuse must be a boolean")
+            if (
+                isinstance(obj.gain, bool)
+                or not isinstance(obj.gain, (int, float))
+                or not math.isfinite(obj.gain)
+                or obj.gain < 0.0
+            ):
+                raise ValueError(f"ADM object '{obj.name}' gain must be finite and non-negative")
+            if (
+                isinstance(obj.importance, bool)
+                or not isinstance(obj.importance, int)
+                or not 0 <= obj.importance <= 10
+            ):
+                raise ValueError(f"ADM object '{obj.name}' importance must be in 0..10")
+            if obj.importance == 0 and obj.gain != 0.0:
+                raise ValueError(f"ADM object '{obj.name}' gain must be 0 when importance is 0")
+            if not isinstance(obj.channel_lock, bool):
+                raise ValueError(f"ADM object '{obj.name}' channel lock must be a boolean")
+            if not _valid_zone_exclusion(obj.zone_exclusion):
+                raise ValueError(f"ADM object '{obj.name}' has an invalid zone exclusion")
             ordered.append(obj.audio)
 
         n_samples = len(ordered[0])
@@ -145,13 +187,17 @@ class AdmBwfWriter:
         duration_s = n_samples / sr
 
         metadata_objects = tuple(
-            (obj.name, obj.position, obj.object_size, obj.diffuse) for obj in objects
+            (
+                obj.name, obj.position, obj.object_size, obj.diffuse, obj.gain,
+                obj.importance, obj.channel_lock, obj.zone_exclusion,
+            )
+            for obj in objects
         )
         fmt_bytes  = _fmt_chunk(fmt, sr, bit_depth, len(ordered))
         bext_bytes = _bext_chunk(loudness_lkfs=measured_lkfs, tp_dbtp=measured_tp_dbtp)
         chna_bytes = _chna_chunk(fmt, len(objects))
         axml_bytes = _axml_chunk(
-            fmt, duration_s, sr, bit_depth, strict_profile=False, objects=metadata_objects,
+            fmt, duration_s, sr, bit_depth, objects=metadata_objects,
         )
         dbmd_bytes = _dbmd_chunk()
         data_size = n_samples * len(ordered) * (bit_depth // 8)

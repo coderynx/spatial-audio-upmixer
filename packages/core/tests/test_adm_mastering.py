@@ -38,6 +38,23 @@ def test_adm_reference_render_uses_object_size():
     )
 
 
+def test_adm_reference_render_uses_object_gain_channel_lock_and_zones():
+    bed = _bed(128)
+    point = AdmObject("Object", np.ones(128), (-0.2, 1.0, 0.0))
+    plain = render_adm_programme(bed, _FMT, [point])
+    metadata = replace(
+        point, gain=0.25, channel_lock=True, zone_exclusion=("ZM5",),
+    )
+    rendered = render_adm_programme(bed, _FMT, [metadata])
+
+    assert max(np.max(np.abs(audio)) for audio in rendered.values()) <= 0.25
+    assert all(np.max(np.abs(rendered[channel])) == 0.0 for channel in ("FL", "FR", "C"))
+    assert any(
+        not np.array_equal(plain[channel], rendered[channel])
+        for channel in plain
+    )
+
+
 def test_adm_loudness_uses_the_rendered_bed_and_object_programme():
     n_samples = 4 * _SR
     time = np.arange(n_samples) / _SR

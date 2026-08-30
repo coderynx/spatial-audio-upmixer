@@ -198,6 +198,32 @@ class TestValidateManifestAssets:
             }],
         })
 
+    def test_accepts_and_maps_dolby_object_metadata(self):
+        metadata = {
+            "Vocals": {
+                "gain": 0.5,
+                "importance": 7,
+                "channel_lock": True,
+                "zone_exclusion": ["ZM1", "ZT"],
+            },
+        }
+        data = _minimal(mixing={"stem_object_metadata": metadata})
+        validate_manifest(data)
+        _, jobs = parse_manifest(data)
+        assert jobs[0].config["stem_object_metadata"] == metadata
+
+    @pytest.mark.parametrize("metadata", [
+        {"gain": -1.0},
+        {"importance": 11},
+        {"channel_lock": 1},
+        {"zone_exclusion": ["unknown"]},
+        {"zone_exclusion": ["ZM1", "ZM4"]},
+    ])
+    def test_rejects_invalid_dolby_object_metadata(self, metadata):
+        data = _minimal(mixing={"stem_object_metadata": {"Vocals": metadata}})
+        with pytest.raises(ManifestError, match="ADM object"):
+            validate_manifest(data)
+
 
 class TestDirAssetExpansion:
     def _make_data(self, asset_extra: dict | None = None, global_extra: dict | None = None) -> dict:

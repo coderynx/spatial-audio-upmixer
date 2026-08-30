@@ -140,6 +140,115 @@ pub fn gains(channel_positions: &[[f64; 3]], position: [f64; 3], size: f64) -> V
     )
 }
 
+/// Apply Dolby-profile channel lock and preset zone exclusions around BS.2127 panning.
+pub fn gains_with_metadata(
+    channel_positions: &[[f64; 3]],
+    priorities: &[[i64; 4]],
+    mut position: [f64; 3],
+    size: f64,
+    channel_lock: bool,
+    zone_exclusion: &[&str],
+) -> Vec<f64> {
+    let mut excluded = vec![false; channel_positions.len()];
+    for (index, point) in channel_positions.iter().enumerate() {
+        excluded[index] = zone_exclusion
+            .iter()
+            .filter_map(|zone| zone_bounds(zone))
+            .any(|bounds| {
+                point[0] >= bounds[0]
+                    && point[0] <= bounds[1]
+                    && point[1] >= bounds[2]
+                    && point[1] <= bounds[3]
+                    && point[2] >= bounds[4]
+                    && point[2] <= bounds[5]
+            });
+    }
+    for index in 0..channel_positions.len() {
+        let point = channel_positions[index];
+        if excluded[index] && point[0].abs() == 1.0 && point[1].abs() != 1.0 {
+            for (other, candidate) in channel_positions.iter().enumerate() {
+                if candidate[1] == point[1] && candidate[2] == point[2] {
+                    excluded[other] = true;
+                }
+            }
+        }
+    }
+    if excluded.iter().all(|value| *value) {
+        excluded.fill(false);
+    }
+    if channel_lock {
+        let weighted_distance = |point: [f64; 3]| {
+            (point[0] - position[0]).powi(2) / 16.0
+                + 4.0 * (point[1] - position[1]).powi(2)
+                + 32.0 * (point[2] - position[2]).powi(2)
+        };
+        position = channel_positions
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !excluded[*index])
+            .min_by(|(a, left), (b, right)| {
+                weighted_distance(**left)
+                    .total_cmp(&weighted_distance(**right))
+                    .then_with(|| priorities[*a].cmp(&priorities[*b]))
+            })
+            .map(|(_, point)| *point)
+            .unwrap_or(position);
+    }
+    let active: Vec<[f64; 3]> = channel_positions
+        .iter()
+        .enumerate()
+        .filter_map(|(index, point)| (!excluded[index]).then_some(*point))
+        .collect();
+    let mut active_gains = gains(&active, position, size.clamp(0.0, 1.0));
+    if size == 0.0 {
+        for gain in &mut active_gains {
+            if *gain < 1e-6 {
+                *gain = 0.0;
+            }
+        }
+        let norm = active_gains
+            .iter()
+            .map(|gain| gain * gain)
+            .sum::<f64>()
+            .sqrt();
+        if norm > 0.0 {
+            for gain in &mut active_gains {
+                *gain /= norm;
+            }
+        }
+    }
+    let mut next = 0;
+    excluded
+        .into_iter()
+        .map(|is_excluded| {
+            if is_excluded {
+                0.0
+            } else {
+                let gain = active_gains[next];
+                next += 1;
+                gain
+            }
+        })
+        .collect()
+}
+
+fn zone_bounds(name: &str) -> Option<[f64; 6]> {
+    Some(match name {
+        "ZM1" => [-1.0, 1.0, -1.0, -0.41934, -0.499, 0.499],
+        "ZM2L" => [-1.0, -0.75806, -0.41934, 0.83871, -0.499, 0.499],
+        "ZM2R" => [0.75806, 1.0, -0.41934, 0.83871, -0.499, 0.499],
+        "ZM3L" => [-1.0, -0.16129, 0.5, 1.0, -0.499, 0.499],
+        "ZM3Lss" => [-1.0, -0.51611, -0.707, 0.49999, -0.499, 0.499],
+        "ZM3R" => [0.16129, 1.0, 0.5, 1.0, -0.499, 0.499],
+        "ZM3Rss" => [0.51611, 1.0, -0.707, 0.49999, -0.499, 0.499],
+        "ZM4" => [-1.0, 1.0, -1.0, 0.83871, -0.499, 0.499],
+        "ZM5" => [-1.0, 1.0, 0.5, 1.0, -0.499, 0.499],
+        "ZB" => [-1.0, 1.0, -1.0, 1.0, -1.0, -0.4995],
+        "ZT" => [-1.0, 1.0, -1.0, 1.0, 0.4995, 1.0],
+        _ => return None,
+    })
+}
+
 fn scale_size(value: f64) -> f64 {
     let points = [(0.0, 0.0), (0.2, 0.3), (0.5, 1.0), (0.75, 1.8), (1.0, 2.8)];
     for pair in points.windows(2) {
@@ -184,9 +293,7 @@ fn balance_gain(point: f64, value: f64, bounds: (Option<f64>, Option<f64>)) -> f
         (Some(lo), Some(hi)) if (point - lo).abs() < 1e-12 => {
             ((value - lo) / (hi - lo) * std::f64::consts::FRAC_PI_2).cos()
         }
-        (Some(lo), Some(hi)) => {
-            ((value - lo) / (hi - lo) * std::f64::consts::FRAC_PI_2).sin()
-        }
+        (Some(lo), Some(hi)) => ((value - lo) / (hi - lo) * std::f64::consts::FRAC_PI_2).sin(),
         _ => 0.0,
     }
 }

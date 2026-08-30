@@ -1,4 +1,4 @@
-# ADM-BWF music-authoring bed — 7.1.4
+# ADM-BWF music-authoring bed — 7.1.2
 #
 # Produces a 24-bit, 48 kHz channel bed with ADM metadata for downstream
 # authoring, QC, and encoding. It is not a distribution codec bitstream.
@@ -9,7 +9,7 @@
 version: "1.0"
 
 metadata:
-  name: "7.1.4 ADM-BWF Music Bed"
+  name: "7.1.2 ADM-BWF Music Bed"
   description: "Spatial Audio Upmixer bed for downstream immersive authoring"
 
 # ── Engine ────────────────────────────────────────────────────────────────────
@@ -21,7 +21,14 @@ engine:
 
 # ── Mixing (stem mode only) ───────────────────────────────────────────────────
 mixing:
-  channel_layout: 7.1.4
+  channel_layout: 7.1.2
+  # Optional Dolby object metadata, resolved by exact stem key then base name.
+  stem_object_metadata:
+    Vocals:
+      gain: 1.0
+      importance: 10
+      channel_lock: true
+      zone_exclusion: []
   stem_source_anchor_strength: 0.5
   # Stem rebalance — per-stem gain adjustments in dB
   # stem_rebalance:

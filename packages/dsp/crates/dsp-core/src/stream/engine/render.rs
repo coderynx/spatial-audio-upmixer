@@ -247,7 +247,7 @@ impl PreviewEngine {
                 let audio = &authored[object.authored_channel];
                 for &(speaker, gain) in &object.speakers {
                     for (target, source) in rendered[speaker].iter_mut().zip(audio) {
-                        *target += gain * source;
+                        *target += gain * object.gain * source;
                     }
                 }
             }

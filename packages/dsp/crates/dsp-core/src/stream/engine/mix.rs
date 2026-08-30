@@ -19,6 +19,7 @@ pub(crate) struct ObjectMixRoute {
     pub authored_channel: usize,
     pub signal: usize,
     pub speakers: Vec<(usize, f64)>,
+    pub gain: f64,
 }
 
 pub(crate) fn build_stem_mix_routes(
@@ -30,7 +31,7 @@ pub(crate) fn build_stem_mix_routes(
         .stems
         .iter()
         .map(|stem| {
-            let objects = direct_object_routes(params, stem, layout).map(|routes| {
+            let objects = direct_object_routes(params, stem, layout).map(|(gain, routes)| {
                 routes
                     .into_iter()
                     .map(|(signal, speakers)| {
@@ -40,6 +41,7 @@ pub(crate) fn build_stem_mix_routes(
                             authored_channel,
                             signal,
                             speakers,
+                            gain,
                         }
                     })
                     .collect()
@@ -86,9 +88,9 @@ fn direct_object_routes(
     params: &EngineParams,
     stem: &StemParams,
     layout: &PannerLayout,
-) -> Option<Vec<(usize, Vec<(usize, f64)>)>> {
+) -> Option<(f64, Vec<(usize, Vec<(usize, f64)>)>)> {
     let mode = stem.object_mode?;
-    let placement = stem.object_placement?;
+    let placement = stem.object_placement.as_ref()?;
     let point = StemPlacement::new(
         placement.azimuth_deg,
         placement.elevation_deg,
@@ -98,20 +100,35 @@ fn direct_object_routes(
     );
     let routes: Vec<(usize, Vec<f64>)> = match mode {
         ObjectMode::LinkedStereo => layout
-            .object_routes(&point)
+            .object_routes_with_metadata(
+                &point,
+                placement.channel_lock,
+                &placement
+                    .zone_exclusion
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+            )
             .into_iter()
             .enumerate()
             .collect(),
         ObjectMode::Mono => vec![(
             2,
-            layout.exact_object_route(
+            layout.exact_object_route_with_metadata(
                 placement.azimuth_deg,
                 placement.elevation_deg,
                 placement.object_size,
+                placement.channel_lock,
+                &placement
+                    .zone_exclusion
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
             ),
         )],
     };
-    Some(
+    Some((
+        placement.gain.max(0.0),
         routes
             .into_iter()
             .map(|(signal, route)| {
@@ -125,7 +142,7 @@ fn direct_object_routes(
                 (signal, speakers)
             })
             .collect(),
-    )
+    ))
 }
 
 fn ambient_feeds(params: &EngineParams, stem: &StemParams) -> Vec<(usize, usize, f64)> {

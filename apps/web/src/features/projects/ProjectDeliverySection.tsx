@@ -61,6 +61,8 @@ export function ProjectDeliverySection({
   onChange: (next: Manifest) => void;
 }) {
   const choices = configuration?.choices;
+  const admBeds = choices?.adm_beds || ["5.1", "7.1", "7.1.2"];
+  const admBedSupported = admBeds.includes(manifest.mixing.channel_layout);
   const binauralBeds = choices?.binaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
   const bedSupported = binauralBeds.includes(manifest.mixing.channel_layout);
   const transauralBeds = choices?.transaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
@@ -94,6 +96,7 @@ export function ProjectDeliverySection({
   // A disabled option has to say why it is disabled, but that belongs on the
   // option itself rather than as prose under the picker.
   const noteFor = (value: string) => {
+    if (value === "adm-bwf" && !admBedSupported) return `Needs ${admBeds.join(" / ")}`;
     if (value === "binaural" && !bedSupported) return `Needs ${binauralBeds.join(" / ")}`;
     if (value === "transaural" && !transauralBedSupported) return `Needs ${transauralBeds.join(" / ")}`;
     return undefined;
@@ -119,7 +122,11 @@ export function ProjectDeliverySection({
               <SelectItem
                 key={value}
                 value={value}
-                disabled={(value === "binaural" && !bedSupported) || (value === "transaural" && !transauralBedSupported)}
+                disabled={
+                  (value === "adm-bwf" && !admBedSupported) ||
+                  (value === "binaural" && !bedSupported) ||
+                  (value === "transaural" && !transauralBedSupported)
+                }
                 className="h-11"
               >
                 <FormatOption value={value} note={noteFor(value)} stereo={stereo} />

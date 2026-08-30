@@ -194,6 +194,7 @@ export type Configuration = {
     output_codecs?: CodecChoice[]
     output_subtypes: string[]
     sample_rates: number[]
+    adm_beds?: string[]
     binaural_profiles?: string[]
     binaural_beds?: string[]
     transaural_profiles?: string[]

@@ -75,7 +75,15 @@ export type StemMix = {
   ambientHeight?: number;
   ambientHeightCrossoverHz?: number;
   objectMode?: "linked-stereo" | "mono";
-  objectPlacement?: { azimuth_deg: number; elevation_deg: number; width_deg: number; object_size: number };
+  objectPlacement?: {
+    azimuth_deg: number;
+    elevation_deg: number;
+    width_deg: number;
+    object_size: number;
+    gain?: number;
+    channel_lock?: boolean;
+    zone_exclusion?: string[];
+  };
 };
 
 export type MasterMix = {

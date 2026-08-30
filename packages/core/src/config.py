@@ -147,6 +147,7 @@ class UpmixConfig:
     spatial_downmix_lock: bool = False
     spatial_render_model: str = "object-bed"
     stem_object_mode: dict | None = None
+    stem_object_metadata: dict | None = None
 
     # Explicit per-stem speaker-bed routing.  Each value maps a canonical stem
     # name (or ``Stem@zone`` key) to output channel weights.

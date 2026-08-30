@@ -137,7 +137,12 @@ def engine_constants() -> dict[str, Any]:
 def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     """Return defaults used by dynamic and advanced web controls."""
     from upmixer.crosstalk.profiles import CROSSTALK_PROFILES
-    from upmixer.formats import BINAURAL_BED_FORMATS, FORMAT_MAP, TRANSAURAL_BED_FORMATS
+    from upmixer.formats import (
+        BINAURAL_BED_FORMATS,
+        DOLBY_ADM_BED_FORMATS,
+        FORMAT_MAP,
+        TRANSAURAL_BED_FORMATS,
+    )
     from upmixer.manifest import list_manifest_keys, manifest_parameter_schema
     from upmixer.mastering.bass import BASS_PROFILES, LFE_MODES, LF_SPREAD_NAMES
     from upmixer.mastering.compressor import COMP_PROFILES
@@ -171,6 +176,7 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
             ],
             "output_subtypes": list(WAV_SUBTYPES),
             "sample_rates": [44100, 48000, 88200, 96000, 192000],
+            "adm_beds": list(DOLBY_ADM_BED_FORMATS),
             "binaural_profiles": ["studio", "listening", "flat"],
             "binaural_beds": list(BINAURAL_BED_FORMATS),
             "transaural_profiles": list(CROSSTALK_PROFILES),

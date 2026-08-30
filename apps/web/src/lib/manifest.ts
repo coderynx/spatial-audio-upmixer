@@ -8,6 +8,13 @@ export type DynamicEqBand = {
   release_ms: number;
 };
 
+export type AdmObjectMetadata = {
+  gain: number;
+  importance: number;
+  channel_lock: boolean;
+  zone_exclusion: string[];
+};
+
 export type Manifest = {
   version: string;
   metadata: { name: string; author?: string; description?: string };
@@ -31,6 +38,7 @@ export type Manifest = {
     stem_ambient_height_crossover_hz: Record<string, number>;
     spatial_downmix_lock: boolean;
     stem_object_mode: Record<string, "linked-stereo" | "mono">;
+    stem_object_metadata: Record<string, AdmObjectMetadata>;
     stem_routing: Record<string, Record<string, number>>;
     stem_placement: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; object_size: number }>;
     stem_enabled: Record<string, boolean>;
@@ -162,6 +170,7 @@ export const defaultManifest: Manifest = {
     stem_ambient_height_crossover_hz: {},
     spatial_downmix_lock: false,
     stem_object_mode: {},
+    stem_object_metadata: {},
     stem_placement: {},
     stem_routing: {},
     stem_enabled: {},
@@ -254,6 +263,10 @@ export function normalizeManifest(source: Record<string, unknown>): Manifest {
       stem_ambient_height_crossover_hz: {
         ...defaultManifest.mixing.stem_ambient_height_crossover_hz,
         ...value.mixing?.stem_ambient_height_crossover_hz,
+      },
+      stem_object_metadata: {
+        ...defaultManifest.mixing.stem_object_metadata,
+        ...value.mixing?.stem_object_metadata,
       },
       stem_routing: { ...defaultManifest.mixing.stem_routing, ...value.mixing?.stem_routing },
       stem_enabled: { ...defaultManifest.mixing.stem_enabled, ...value.mixing?.stem_enabled },

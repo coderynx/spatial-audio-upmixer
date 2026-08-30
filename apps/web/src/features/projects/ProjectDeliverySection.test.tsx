@@ -31,7 +31,7 @@ describe("ProjectDeliverySection", () => {
   it.each([
     ["multichannel", "7.1.4", "Multichannel audio"],
     ["multichannel", "stereo", "Stereo audio"],
-    ["adm-bwf", "7.1.4", "ADM Broadcast Wave Format"],
+    ["adm-bwf", "7.1.2", "ADM Broadcast Wave Format"],
     ["binaural", "7.1.4", "Binaural"],
     ["transaural", "7.1.4", "Transaural"],
   ])("names the %s delivery on a %s layout", (type, layout, label) => {

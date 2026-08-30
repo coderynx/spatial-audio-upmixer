@@ -560,3 +560,28 @@ def test_adm_objects_keep_the_dry_stem_out_of_the_shared_bed():
     assert len(objects) == 2
     assert np.max(np.abs(bed["FL"])) < 1e-10
     assert np.max(np.abs(bed["SL"])) > 1e-10
+
+
+def test_adm_objects_carry_profile_rendering_metadata():
+    audio = _audio()
+    config = UpmixConfig(
+        output_format="5.1",
+        stem_object_metadata={
+            "Vocals": {
+                "gain": 0.5,
+                "importance": 7,
+                "channel_lock": True,
+                "zone_exclusion": ["ZM1", "ZT"],
+            },
+        },
+    )
+    objects = []
+    StemRouter(config, FORMAT_MAP["5.1"], 48_000).route(
+        {"Vocals": audio}, len(audio), object_tracks=objects,
+    )
+
+    assert len(objects) == 2
+    assert all(obj.gain == 0.5 for obj in objects)
+    assert all(obj.importance == 7 for obj in objects)
+    assert all(obj.channel_lock for obj in objects)
+    assert all(obj.zone_exclusion == ("ZM1", "ZT") for obj in objects)

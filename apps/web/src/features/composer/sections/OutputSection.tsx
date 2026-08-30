@@ -71,6 +71,8 @@ export function OutputSection({
         }))}
       />
       {(() => {
+        const admBeds = choices?.adm_beds || ["5.1", "7.1", "7.1.2"];
+        const admBedSupported = admBeds.includes(manifest.mixing.channel_layout);
         const binauralBeds = choices?.binaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
         const bedSupported = binauralBeds.includes(manifest.mixing.channel_layout);
         const transauralBeds = choices?.transaural_beds || ["5.1.4", "7.1.2", "7.1.4"];
@@ -96,6 +98,7 @@ export function OutputSection({
                             ? "Stereo audio"
                             : "Multichannel audio",
                   disabled:
+                    (value === "adm-bwf" && !admBedSupported) ||
                     (value === "binaural" && !bedSupported) ||
                     (value === "transaural" && !transauralBedSupported),
                 }))}

@@ -129,7 +129,7 @@ impl StemPlacement {
     }
 }
 
-fn allocentric_position(name: &str, has_rear: bool) -> Option<[f64; 3]> {
+fn allocentric_position(name: &str, has_rear: bool, has_top_rear: bool) -> Option<[f64; 3]> {
     match name {
         "FL" => Some([-1.0, 1.0, 0.0]),
         "FR" => Some([1.0, 1.0, 0.0]),
@@ -138,8 +138,8 @@ fn allocentric_position(name: &str, has_rear: bool) -> Option<[f64; 3]> {
         "SR" => Some([1.0, if has_rear { 0.0 } else { -1.0 }, 0.0]),
         "BL" => Some([-1.0, -1.0, 0.0]),
         "BR" => Some([1.0, -1.0, 0.0]),
-        "TFL" => Some([-1.0, 1.0, 1.0]),
-        "TFR" => Some([1.0, 1.0, 1.0]),
+        "TFL" => Some([-1.0, if has_rear && !has_top_rear { 0.0 } else { 1.0 }, 1.0]),
+        "TFR" => Some([1.0, if has_rear && !has_top_rear { 0.0 } else { 1.0 }, 1.0]),
         "TBL" => Some([-1.0, -1.0, 1.0]),
         "TBR" => Some([1.0, -1.0, 1.0]),
         _ => None,
@@ -152,6 +152,16 @@ fn allocentric_position(name: &str, has_rear: bool) -> Option<[f64; 3]> {
 /// width. Their object size remains linked, while width zero deliberately puts
 /// both at the same point.
 pub fn object_routes(placement: &StemPlacement, speakers: &[&str]) -> [Vec<f64>; 2] {
+    object_routes_with_metadata(placement, speakers, false, &[])
+}
+
+/// BS.2127 object routes with the Dolby-profile channel-lock and zone metadata.
+pub fn object_routes_with_metadata(
+    placement: &StemPlacement,
+    speakers: &[&str],
+    channel_lock: bool,
+    zone_exclusion: &[&str],
+) -> [Vec<f64>; 2] {
     let half_width = placement.width_deg * 0.5;
     [
         object_route(
@@ -159,12 +169,16 @@ pub fn object_routes(placement: &StemPlacement, speakers: &[&str]) -> [Vec<f64>;
             placement.elevation_deg,
             placement.object_size,
             speakers,
+            channel_lock,
+            zone_exclusion,
         ),
         object_route(
             placement.azimuth_deg - half_width,
             placement.elevation_deg,
             placement.object_size,
             speakers,
+            channel_lock,
+            zone_exclusion,
         ),
     ]
 }
@@ -174,14 +188,33 @@ fn object_route(
     elevation_deg: f64,
     object_size: f64,
     speakers: &[&str],
+    channel_lock: bool,
+    zone_exclusion: &[&str],
 ) -> Vec<f64> {
     let has_rear = speakers.iter().any(|name| matches!(*name, "BL" | "BR"));
+    let has_top_rear = speakers.iter().any(|name| matches!(*name, "TBL" | "TBR"));
     let positions: Vec<[f64; 3]> = speakers
         .iter()
-        .filter_map(|name| allocentric_position(name, has_rear))
+        .filter_map(|name| allocentric_position(name, has_rear, has_top_rear))
         .collect();
     let [x, y, z] = direction(azimuth_deg, elevation_deg);
-    let gains = adm_extent::gains(&positions, [x, -z, y], object_size.clamp(0.0, 1.0));
+    let names: Vec<&str> = speakers
+        .iter()
+        .filter(|name| is_positional(name))
+        .copied()
+        .collect();
+    let priorities: Vec<[i64; 4]> = names
+        .iter()
+        .map(|name| channel_lock_priority(name))
+        .collect();
+    let gains = adm_extent::gains_with_metadata(
+        &positions,
+        &priorities,
+        [x, -z, y],
+        object_size,
+        channel_lock,
+        zone_exclusion,
+    );
     let mut next = 0;
     speakers
         .iter()
@@ -195,6 +228,16 @@ fn object_route(
             }
         })
         .collect()
+}
+
+fn channel_lock_priority(name: &str) -> [i64; 4] {
+    let (azimuth, elevation) = speaker_azimuth_elevation(name).unwrap_or((0.0, 0.0));
+    [
+        (elevation.abs() * 1e9).round() as i64,
+        (elevation * 1e9).round() as i64,
+        (azimuth.abs() * 1e9).round() as i64,
+        (azimuth * 1e9).round() as i64,
+    ]
 }
 
 /// Azimuth/elevation of one speaker label, in the geometry convention above.
@@ -512,17 +555,30 @@ impl PannerLayout {
     }
 
     pub fn object_routes(&self, placement: &StemPlacement) -> [Vec<f64>; 2] {
+        self.object_routes_with_metadata(placement, false, &[])
+    }
+
+    pub fn object_routes_with_metadata(
+        &self,
+        placement: &StemPlacement,
+        channel_lock: bool,
+        zone_exclusion: &[&str],
+    ) -> [Vec<f64>; 2] {
         let half_width = placement.width_deg * 0.5;
         [
-            self.exact_object_route(
+            self.exact_object_route_with_metadata(
                 placement.azimuth_deg + half_width,
                 placement.elevation_deg,
                 placement.object_size,
+                channel_lock,
+                zone_exclusion,
             ),
-            self.exact_object_route(
+            self.exact_object_route_with_metadata(
                 placement.azimuth_deg - half_width,
                 placement.elevation_deg,
                 placement.object_size,
+                channel_lock,
+                zone_exclusion,
             ),
         ]
     }
@@ -533,20 +589,43 @@ impl PannerLayout {
         elevation_deg: f64,
         object_size: f64,
     ) -> Vec<f64> {
+        self.exact_object_route_with_metadata(azimuth_deg, elevation_deg, object_size, false, &[])
+    }
+
+    pub fn exact_object_route_with_metadata(
+        &self,
+        azimuth_deg: f64,
+        elevation_deg: f64,
+        object_size: f64,
+        channel_lock: bool,
+        zone_exclusion: &[&str],
+    ) -> Vec<f64> {
         let has_rear = self
             .positional_names
             .iter()
             .any(|name| matches!(name.as_str(), "BL" | "BR"));
+        let has_top_rear = self
+            .positional_names
+            .iter()
+            .any(|name| matches!(name.as_str(), "TBL" | "TBR"));
         let positions: Vec<[f64; 3]> = self
             .positional_names
             .iter()
-            .filter_map(|name| allocentric_position(name, has_rear))
+            .filter_map(|name| allocentric_position(name, has_rear, has_top_rear))
             .collect();
         let [x, y, z] = direction(azimuth_deg, elevation_deg);
-        let gains = adm_extent::gains(
+        let priorities: Vec<[i64; 4]> = self
+            .positional_names
+            .iter()
+            .map(|name| channel_lock_priority(name))
+            .collect();
+        let gains = adm_extent::gains_with_metadata(
             &positions,
+            &priorities,
             [x, -z, y],
-            object_size.clamp(0.0, 1.0),
+            object_size,
+            channel_lock,
+            zone_exclusion,
         );
         let mut route = vec![0.0; self.channels];
         for (&channel, gain) in self.positional_channels.iter().zip(gains) {

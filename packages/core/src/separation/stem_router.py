@@ -341,22 +341,36 @@ class StemRouter:
         mode = (self._config.stem_object_mode or {}).get(
             stem_key, (self._config.stem_object_mode or {}).get(stem_name, "linked-stereo")
         )
+        metadata = self._object_metadata_for(stem_key)
         if mode == "mono":
             labels = [label.value for label in self._fmt.channels if label != ChannelLabel.LFE]
-            mono, _ = upmixer_dsp.object_routes(
+            mono, _ = upmixer_dsp.adm_object_routes(
                 placement.azimuth_deg, placement.elevation_deg, 0.0,
-                placement.object_size, labels,
+                placement.object_size, metadata[2], list(metadata[3]), labels,
             )
             return [{label: gain for label, gain in zip(labels, mono) if gain > 0.0}]
         labels = [label.value for label in self._fmt.channels if label != ChannelLabel.LFE]
-        left, right = upmixer_dsp.object_routes(
+        left, right = upmixer_dsp.adm_object_routes(
             placement.azimuth_deg, placement.elevation_deg, placement.width_deg,
-            placement.object_size, labels,
+            placement.object_size, metadata[2], list(metadata[3]), labels,
         )
         return [
             {label: gain for label, gain in zip(labels, left) if gain > 0.0},
             {label: gain for label, gain in zip(labels, right) if gain > 0.0},
         ]
+
+    def _object_metadata_for(
+        self, stem_key: str,
+    ) -> tuple[float, int, bool, tuple[str, ...]]:
+        stem_name = stem_key.rsplit("@", 1)[0]
+        table = self._config.stem_object_metadata or {}
+        raw = table.get(stem_key, table.get(stem_name, {}))
+        return (
+            float(raw.get("gain", 1.0)),
+            int(raw.get("importance", 10)),
+            bool(raw.get("channel_lock", False)),
+            tuple(raw.get("zone_exclusion", ())),
+        )
 
     def _adm_objects_for(
         self,
@@ -372,6 +386,7 @@ class StemRouter:
         mode = (self._config.stem_object_mode or {}).get(
             stem_key, (self._config.stem_object_mode or {}).get(stem_name, "linked-stereo")
         )
+        metadata = self._object_metadata_for(stem_key)
 
         def position(azimuth_deg: float) -> tuple[float, float, float]:
             x, y, z = upmixer_dsp.direction(azimuth_deg, placement.elevation_deg)
@@ -382,6 +397,8 @@ class StemRouter:
                 AdmObject(
                     stem_key, gain * (left + right) * 0.5,
                     position(placement.azimuth_deg), placement.object_size,
+                    gain=metadata[0], importance=metadata[1],
+                    channel_lock=metadata[2], zone_exclusion=metadata[3],
                 )
             ]
         half_width = placement.width_deg * 0.5
@@ -389,10 +406,14 @@ class StemRouter:
             AdmObject(
                 f"{stem_key} Left", gain * left,
                 position(placement.azimuth_deg + half_width), placement.object_size,
+                gain=metadata[0], importance=metadata[1],
+                channel_lock=metadata[2], zone_exclusion=metadata[3],
             ),
             AdmObject(
                 f"{stem_key} Right", gain * right,
                 position(placement.azimuth_deg - half_width), placement.object_size,
+                gain=metadata[0], importance=metadata[1],
+                channel_lock=metadata[2], zone_exclusion=metadata[3],
             ),
         ]
 

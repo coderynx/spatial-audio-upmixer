@@ -126,8 +126,8 @@ def _normalized_track_layout_block(
     routing.
     """
     block = migrate_manifest(copy.deepcopy(overrides))
-    _validate_track_overrides(project, block)
     normalize_layout_mix(block, layout, list(project.requested_stems))
+    _validate_track_overrides(project, block)
     normalize_job_manifest(_deep_merge(project.manifest, block))
     return block
 

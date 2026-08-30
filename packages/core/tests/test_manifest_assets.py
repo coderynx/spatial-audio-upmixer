@@ -390,7 +390,7 @@ class TestValidateCodecDelivery:
         with pytest.raises(ManifestError, match="WAV container only"):
             validate_manifest(
                 _minimal(
-                    mixing={"channel_layout": "7.1.4"},
+                    mixing={"channel_layout": "7.1.2"},
                     format={"type": "adm-bwf", "codec": "flac"},
                 )
             )
