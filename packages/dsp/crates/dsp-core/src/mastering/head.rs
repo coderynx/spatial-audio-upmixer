@@ -20,7 +20,11 @@ pub struct HeadParams {
 /// The sections one channel runs, by whether it carries LFE.
 pub fn head_sos(sample_rate: u32, p: &HeadParams, is_lfe: bool) -> Vec<[f64; 6]> {
     let nyquist = sample_rate as f64 / 2.0;
-    let (order, hz) = if is_lfe { (1, DC_BLOCK_HZ) } else { (2, p.cutoff_hz) };
+    let (order, hz) = if is_lfe {
+        (1, DC_BLOCK_HZ)
+    } else {
+        (2, p.cutoff_hz)
+    };
     butter_sos(order, (hz / nyquist).clamp(1e-6, 0.999), BandType::High)
 }
 

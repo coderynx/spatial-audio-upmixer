@@ -21,7 +21,10 @@ impl Level {
             sum_sq += v * v;
             peak = peak.max(v.abs());
         }
-        Self { rms: (sum_sq / samples.len() as f64).sqrt(), peak }
+        Self {
+            rms: (sum_sq / samples.len() as f64).sqrt(),
+            peak,
+        }
     }
 
     pub fn measure_f32(samples: &[f32], gain: f64) -> Self {
@@ -35,7 +38,10 @@ impl Level {
             sum_sq += scaled * scaled;
             peak = peak.max(scaled.abs());
         }
-        Self { rms: (sum_sq / samples.len() as f64).sqrt(), peak }
+        Self {
+            rms: (sum_sq / samples.len() as f64).sqrt(),
+            peak,
+        }
     }
 }
 
@@ -67,6 +73,10 @@ pub struct Meters {
     /// `StemSource`'s decode), so the host slices to one bar itself from the
     /// project's own channel count rather than the core tracking mono/stereo.
     pub stems: Vec<[Level; 2]>,
+    /// One linked stem-dynamics reduction value per stem, positive downward.
+    pub stem_dynamics_gr_db: Vec<f64>,
+    /// One linked tame/dynamic-EQ reduction value per stem.
+    pub stem_dynamic_eq_gr_db: Vec<f64>,
     /// Per speaker of the mastered bed.
     pub channels: Vec<Level>,
     /// The collapsed pair, or the first two bed channels for native output.
@@ -76,7 +86,7 @@ pub struct Meters {
 }
 
 impl Meters {
-    /// Flatten to `[rms, peak]` pairs: stems (left, right), then channels,
+    /// Flatten to `[rms, peak]` pairs: stems (left, right), stem reductions, then channels,
     /// then output, then [`MasterMeters`]'s own flat floats.
     pub fn write(&self, out: &mut [f32]) -> usize {
         let mut i = 0;
@@ -90,6 +100,12 @@ impl Meters {
         for pair in &self.stems {
             push(&pair[0], out, &mut i);
             push(&pair[1], out, &mut i);
+        }
+        for value in &self.stem_dynamics_gr_db {
+            if i < out.len() {
+                out[i] = *value as f32;
+            }
+            i += 1;
         }
         for level in &self.channels {
             push(level, out, &mut i);
@@ -110,12 +126,19 @@ impl Meters {
             }
             i += 1;
         }
+        for value in &self.stem_dynamic_eq_gr_db {
+            if i < out.len() { out[i] = *value as f32; }
+            i += 1;
+        }
         i
     }
 
     /// Number of floats [`write`] needs.
     pub fn len(&self) -> usize {
-        2 * (self.stems.len() * 2 + self.channels.len() + 2) + MASTER_METER_FLOATS
+        2 * (self.stems.len() * 2 + self.channels.len() + 2)
+            + self.stem_dynamics_gr_db.len()
+            + self.stem_dynamic_eq_gr_db.len()
+            + MASTER_METER_FLOATS
     }
 
     pub fn is_empty(&self) -> bool {

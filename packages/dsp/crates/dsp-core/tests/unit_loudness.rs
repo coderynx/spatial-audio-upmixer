@@ -21,14 +21,15 @@ mod loudness {
     #[test]
     fn silence_reports_the_absolute_gate() {
         let silence = vec![0.0; 48_000];
-        assert_eq!(measure_integrated_loudness(&[(1.0, &silence)], 48_000), ABS_GATE);
+        assert_eq!(
+            measure_integrated_loudness(&[(1.0, &silence)], 48_000),
+            ABS_GATE
+        );
     }
 
     #[test]
     fn true_peak_never_reads_below_the_sample_peak() {
-        let sine: Vec<f64> = (0..4096)
-            .map(|i| (i as f64 * 0.37).sin())
-            .collect();
+        let sine: Vec<f64> = (0..4096).map(|i| (i as f64 * 0.37).sin()).collect();
         let sample_peak = sine.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
         assert!(true_peak_channel(&sine) >= sample_peak - 1e-12);
     }
@@ -56,9 +57,7 @@ mod loudness {
         let sr = 48_000;
         let tone = |amp: f64, n: usize| -> Vec<f64> {
             (0..n)
-                .map(|i| {
-                    amp * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / sr as f64).sin()
-                })
+                .map(|i| amp * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / sr as f64).sin())
                 .collect()
         };
         let mut programme = tone(0.5, 20 * sr as usize);
@@ -89,7 +88,9 @@ mod loudness {
     #[test]
     fn a_programme_shorter_than_a_short_term_window_has_no_range() {
         let sr = 48_000;
-        let tone: Vec<f64> = (0..sr as usize).map(|i| 0.5 * (i as f64 * 0.1).sin()).collect();
+        let tone: Vec<f64> = (0..sr as usize)
+            .map(|i| 0.5 * (i as f64 * 0.1).sin())
+            .collect();
         let stats = measure_loudness_stats(&[(1.0, &tone)], sr);
         assert_eq!(stats.lra_lu, 0.0);
         assert_eq!(stats.max_short_term_lkfs, ABS_GATE);
@@ -99,8 +100,10 @@ mod loudness {
 
 mod loudness_stream {
     use upmixer_dsp_core::loudness::ABS_GATE;
+    use upmixer_dsp_core::loudness::{
+        measure_integrated_loudness, measure_loudness_stats, measure_true_peak,
+    };
     use upmixer_dsp_core::loudness_stream::*;
-    use upmixer_dsp_core::loudness::{measure_integrated_loudness, measure_loudness_stats, measure_true_peak};
 
     fn programme(n: usize, seed: f64) -> Vec<f64> {
         (0..n)

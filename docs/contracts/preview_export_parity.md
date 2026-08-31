@@ -46,6 +46,7 @@ Every stage below is one function, called from both sides:
 | Stage | Core module | Export entry | Preview entry |
 |---|---|---|---|
 | Per-stem EQ | `spatial`/`kernels::fir_design` | `separation/stem_eq.py` | `stream::routing` |
+| Per-stem Gentle Dynamics | `stem_dynamics`/`mastering::compressor` | `separation/stem_dynamics.py` | `stream::routing` |
 | Stem → authored bed/objects | `stream::routing`, `routing::{sends,decorrelate}` | `separation/stem_router.py` | `stream::engine::{mix,render}` |
 | Routing downmix lock | `spatial::downmix::apply_stereo_downmix_lock` | `separation/stem_router.py` | `stream::engine::render` |
 | Primary/ambient split and height allocation | `routing::ambient` | `separation/stem_router.py` (`upmixer_dsp.ambient_split`) | `stream::routing` |

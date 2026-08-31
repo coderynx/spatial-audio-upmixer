@@ -69,7 +69,12 @@ fn loudness_stats(
             .map(|(w, c)| (*w, c.as_slice()))
             .collect();
         let s = loudness::measure_loudness_stats(&weighted, sample_rate);
-        (s.integrated_lkfs, s.lra_lu, s.max_momentary_lkfs, s.max_short_term_lkfs)
+        (
+            s.integrated_lkfs,
+            s.lra_lu,
+            s.max_momentary_lkfs,
+            s.max_short_term_lkfs,
+        )
     })
 }
 

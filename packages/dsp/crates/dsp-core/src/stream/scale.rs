@@ -190,8 +190,7 @@ impl RouteScalePass {
         let skip = self.skip.min(count);
         {
             let route = self.engine.route(self.stem);
-            self.meters
-                .push_input(0, kept(route.signal(INPUT), skip));
+            self.meters.push_input(0, kept(route.signal(INPUT), skip));
             self.meters
                 .push_input(1, kept(route.signal(INPUT + 1), skip));
         }
@@ -214,10 +213,7 @@ impl RouteScalePass {
         if self.remaining() == 0 {
             let sample_rate = self.engine.sample_rate();
             let speakers = self.engine.params().speakers.len();
-            let meters = std::mem::replace(
-                &mut self.meters,
-                Meters::new(sample_rate, speakers),
-            );
+            let meters = std::mem::replace(&mut self.meters, Meters::new(sample_rate, speakers));
             self.scales.push(scale_from(&meters.finish(), &self.engine));
             self.stem += 1;
             self.cursor = 0;
@@ -253,10 +249,7 @@ impl RouteScalePass {
 /// signal powers: routed loudness matched to the stem's own, K-weighted, with
 /// LFE outside both sums and raw energy as the fallback for material too short
 /// or too quiet to gate.
-fn scale_from(
-    measured: &([f64; 2], [f64; 2], Vec<f64>, Vec<f64>),
-    engine: &PreviewEngine,
-) -> f64 {
+fn scale_from(measured: &([f64; 2], [f64; 2], Vec<f64>, Vec<f64>), engine: &PreviewEngine) -> f64 {
     let (input_powers, input_energies, powers, energies) = measured;
     let params = engine.params();
     let routed_power = params

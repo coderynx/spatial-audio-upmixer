@@ -15,6 +15,7 @@ import type {
 } from "../masteringProfiles";
 import { resolveLfTargets } from "../masteringProfiles";
 import type { DynamicEqBand } from "@/lib/manifest";
+import type { StemDynamicEqSettings, StemDynamicsSettings, StemEqSettings } from "@/lib/manifest";
 
 export type OutputMode = "binaural" | "transaural" | "stereo" | "native";
 
@@ -67,6 +68,9 @@ export type StemMix = {
   enabled?: boolean;
   /** Minimum-phase FIR taps for this stem's EQ profile, if any. */
   eqFir?: Float64Array | number[];
+  eq?: StemEqSettings;
+  dynamics?: StemDynamicsSettings;
+  dynamicEq?: StemDynamicEqSettings;
   /** Whole-stem route-energy normalization, as `StemRouter.route` computes. */
   routeScale?: number;
   /** How much of the stem's ambient half reaches the surrounds, and the
@@ -192,6 +196,9 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
       rebalance_db: stem.rebalanceDb ?? 0,
       enabled: stem.enabled ?? true,
       eq_fir: stem.eqFir ?? [],
+      eq: stem.eq ? { ...stem.eq, mix: stem.eq.mix / 100 } : null,
+      dynamics: stem.dynamics ? { ...stem.dynamics, mix: stem.dynamics.mix / 100 } : null,
+      dynamic_eq: stem.dynamicEq ? { ...stem.dynamicEq, mix: stem.dynamicEq.mix / 100 } : null,
       route_scale: stem.routeScale ?? 1,
       ambient_rear: stem.ambientRear ?? 0,
       ambient_height: stem.ambientHeight ?? 0,

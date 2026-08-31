@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { StemControls, azimuthFromPosition, positionFromAzimuth } from "./StemControls";
+import { StemControls, StemProcessingControls, azimuthFromPosition, positionFromAzimuth } from "./StemControls";
 import type { StemPlacement } from "./wasmEngine/panner";
 
 const FULL = ["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR"];
@@ -13,6 +13,7 @@ const WIDE: StemPlacement = {
 function renderControls(props: Partial<React.ComponentProps<typeof StemControls>> = {}) {
   const onPlacement = vi.fn();
   const onAmbient = vi.fn();
+  const onDynamics = vi.fn();
   render(
     <StemControls
       placement={WIDE}
@@ -26,11 +27,12 @@ function renderControls(props: Partial<React.ComponentProps<typeof StemControls>
       onPlacement={onPlacement}
       onRoute={vi.fn()}
       onEq={vi.fn()}
+      onDynamics={onDynamics}
       onAmbient={onAmbient}
       {...props}
     />,
   );
-  return { onPlacement, onAmbient };
+  return { onPlacement, onAmbient, onDynamics };
 }
 
 /** Radix sliders respond to keyboard stepping in jsdom, where pointer drags
@@ -61,6 +63,82 @@ describe("placement geometry", () => {
 });
 
 describe("StemControls", () => {
+  it("stacks the processing chain and lets each active effect be disabled", () => {
+    const onEq = vi.fn();
+    const onDynamicEq = vi.fn();
+    const onDynamics = vi.fn();
+    render(<StemProcessingControls
+      stemName="Vocals"
+      eq="vocal-presence"
+      onEq={onEq}
+      dynamicEq={{ enabled: true, profile: null, bands: [], mix: 100 }}
+      onDynamicEq={onDynamicEq}
+      dynamics={{ enabled: true, profile: null, threshold_db: -18, ratio: 1.5, attack_ms: 30, release_ms: 250, mix: 100 }}
+      onDynamics={onDynamics}
+    />);
+
+    const eq = screen.getByRole("button", { name: "Open stem EQ" });
+    const tame = screen.getByRole("button", { name: "Open tame dynamic EQ" });
+    const dynamics = screen.getByRole("button", { name: "Open gentle dynamics" });
+    expect(eq).toHaveClass("bg-primary");
+    expect(tame).toHaveClass("bg-primary");
+    expect(dynamics).toHaveClass("bg-primary");
+    expect(eq.compareDocumentPosition(tame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(tame.compareDocumentPosition(dynamics) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Disable EQ" }));
+    fireEvent.click(screen.getByRole("button", { name: "Disable Tame" }));
+    fireEvent.click(screen.getByRole("button", { name: "Disable Dynamics" }));
+    expect(onEq).toHaveBeenLastCalledWith(expect.objectContaining({ bypass: true }));
+    expect(onDynamicEq).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false }));
+    expect(onDynamics).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: false }));
+  });
+
+  it("enables a muted effect from its power button", () => {
+    const onDynamicEq = vi.fn();
+    render(<StemProcessingControls
+      stemName="Vocals"
+      eq=""
+      onEq={vi.fn()}
+      onDynamicEq={onDynamicEq}
+      onDynamics={vi.fn()}
+    />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Enable Tame" }));
+    expect(onDynamicEq).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }));
+  });
+
+  it("writes gentle dynamics through only its selected-stem handler", () => {
+    const { onDynamics } = renderControls();
+    fireEvent.click(screen.getByRole("button", { name: "Open gentle dynamics" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Dynamics enabled" }));
+    expect(onDynamics).toHaveBeenLastCalledWith(expect.objectContaining({ enabled: true }));
+  });
+
+  it("limits every processor's presets to the selected stem", () => {
+    renderControls({
+      stemName: "Lead Vocals",
+      stemEqProfiles: ["vocal-presence", "bass-warmth"],
+      dynamicEqProfiles: { "vocal-sibilance": [], "bass-bloom": [] },
+      dynamicsProfiles: {
+        "vocal-control": { enabled: false, threshold_db: -20, ratio: 1.8, attack_ms: 15, release_ms: 180, mix: 100 },
+        "bass-control": { enabled: false, threshold_db: -20, ratio: 2, attack_ms: 35, release_ms: 300, mix: 100 },
+      },
+      stemProcessingPresets: {
+        eq: { "Lead Vocals": ["vocal-presence"] },
+        dynamic_eq: { "Lead Vocals": ["vocal-sibilance"] },
+        dynamics: { "Lead Vocals": ["vocal-control"] },
+      },
+    });
+
+    for (const [button, toggle, select, preset] of [["Open stem EQ", "EQ enabled", "EQ preset", "vocal-presence"], ["Open tame dynamic EQ", "Tame enabled", "Tame preset", "vocal-sibilance"], ["Open gentle dynamics", "Dynamics enabled", "Dynamics preset", "vocal-control"]] as const) {
+      fireEvent.click(screen.getByRole("button", { name: button }));
+      expect(screen.getByRole("switch", { name: toggle })).toBeInTheDocument();
+      expect(screen.getAllByRole("button", { name: "Reset" })).not.toHaveLength(0);
+      expect(Array.from((screen.getByLabelText(select) as HTMLSelectElement).options, (option) => option.value)).toEqual(["custom", preset]);
+    }
+  });
+
   it("rotates the azimuth when the left/right slider moves", () => {
     const { onPlacement } = renderControls();
 

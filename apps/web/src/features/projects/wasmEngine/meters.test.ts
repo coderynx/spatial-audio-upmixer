@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { decodeMeterFrame } from "./meters";
 
-// One stem (stereo), two bed channels, the output pair, then the master
+// One stem (stereo), its gain reduction, two bed channels, the output pair, then the master
 // block — the layout `Meters::write` produces in the core.
 const FRAME = {
   position: 4096,
   meters: [
     0.1, 0.2, 0.15, 0.25,
+    2.5,
     0.3, 0.4, 0.35, 0.45,
     0.5, 0.6, 0.55, 0.65,
     -13.5, -15.5, 2.5, 1.25, 4,
@@ -24,6 +25,7 @@ describe("decodeMeterFrame", () => {
     });
     expect(decoded.headphoneLevels.left.rms).toBe(0.5);
     expect(decoded.channelLevels.get("FR")?.peak).toBe(0.45);
+    expect(decoded.stemDynamics.get("Vocals")).toBe(2.5);
   });
 
   it("falls back to silence when a frame arrives short", () => {

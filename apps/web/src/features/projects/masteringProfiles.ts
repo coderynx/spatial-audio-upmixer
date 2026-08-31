@@ -10,7 +10,7 @@
 // profile to its precomputed `/eq_fir/<name>.wav`. These are backend-owned and
 // fetched, not hardcoded here — see resolveEngineConstants and
 // docs/contracts/preview_export_parity.md §2.
-import type { DynamicEqBand } from "@/lib/manifest";
+import type { DynamicEqBand, StemDynamicEqBand, StemDynamicsSettings, StemEqSettings } from "@/lib/manifest";
 
 export type EqProfileName =
   | "spatial-transparent"
@@ -313,6 +313,13 @@ export type ServedEngineConstants = {
   height_downmix_coeff: number;
   speaker_directions: Record<string, { azimuth_rad: number; elevation_rad: number }>;
   dyneq_profiles: Record<string, DynamicEqBand[]>;
+  stem_dynamic_eq_profiles: Record<string, StemDynamicEqBand[]>;
+  stem_dynamics_profiles: Record<string, StemDynamicsSettings>;
+  stem_processing_presets: {
+    eq: Record<string, string[]>;
+    dynamic_eq: Record<string, string[]>;
+    dynamics: Record<string, string[]>;
+  };
   reference_match_smooth: { default_oct: number; min_oct: number; max_oct: number };
   comp_profiles: Record<string, CompProfile>;
   bass_profiles: Record<string, BassProfile>;
@@ -338,6 +345,7 @@ export type ServedEngineConstants = {
   transaural_voicing_params: Record<string, ServedVoicingParams>;
   eq_fir_assets: Record<string, string>;
   stem_eq_fir_assets: Record<string, string>;
+  stem_eq_settings: Record<string, StemEqSettings>;
   decode_filter_set: Record<string, string>;
   xtc_filter_set: Record<string, string>;
 };
@@ -362,6 +370,9 @@ export type EngineConstants = {
   /** Named dynamic-EQ band sets, resolved here so the preview runs the same
    * bands the export does — the pattern the compressor and bass presets use. */
   dyneqProfiles: Record<string, DynamicEqBand[]>;
+  stemDynamicEqProfiles: Record<string, StemDynamicEqBand[]>;
+  stemDynamicsProfiles: Record<string, StemDynamicsSettings>;
+  stemProcessingPresets: ServedEngineConstants["stem_processing_presets"];
   /** Smoothing bandwidth the reference-match pot defaults to, and its range.
    * Served so the panel never authors the numbers the realizer applies. */
   referenceMatchSmooth: { defaultOct: number; minOct: number; maxOct: number };
@@ -389,6 +400,7 @@ export type EngineConstants = {
   transauralVoicingParams: Record<TransauralProfile, VoicingParams>;
   eqFirAssets: Record<EqProfileName, string>;
   stemEqFirAssets: Record<StemEqProfileName, string>;
+  stemEqSettings: Record<string, StemEqSettings>;
   decodeFilterSet: Record<SpatialProfile, string>;
   xtcFilterSet: Record<TransauralProfile, string>;
 };
@@ -440,6 +452,9 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     heightDownmixCoeff: s.height_downmix_coeff,
     speakerDirections: s.speaker_directions,
     dyneqProfiles: s.dyneq_profiles,
+    stemDynamicEqProfiles: s.stem_dynamic_eq_profiles,
+    stemDynamicsProfiles: s.stem_dynamics_profiles,
+    stemProcessingPresets: s.stem_processing_presets,
     referenceMatchSmooth: {
       defaultOct: s.reference_match_smooth.default_oct,
       minOct: s.reference_match_smooth.min_oct,
@@ -469,6 +484,7 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
     transauralVoicingParams: mapVoicing<TransauralProfile>(s.transaural_voicing_params),
     eqFirAssets: s.eq_fir_assets as Record<EqProfileName, string>,
     stemEqFirAssets: s.stem_eq_fir_assets as Record<StemEqProfileName, string>,
+    stemEqSettings: s.stem_eq_settings,
     decodeFilterSet: s.decode_filter_set as Record<SpatialProfile, string>,
     xtcFilterSet: s.xtc_filter_set as Record<TransauralProfile, string>,
   };

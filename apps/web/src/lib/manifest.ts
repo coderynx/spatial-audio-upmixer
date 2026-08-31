@@ -8,6 +8,29 @@ export type DynamicEqBand = {
   release_ms: number;
 };
 
+export type StemEqFilter = { enabled: boolean; freq_hz: number };
+export type StemEqBand = StemEqFilter & { gain_db: number; q: number };
+export type StemEqSettings = {
+  preset: string | null; bypass: boolean; highpass: StemEqFilter; low_shelf: StemEqBand;
+  bell_1: StemEqBand; bell_2: StemEqBand; high_shelf: StemEqBand; lowpass: StemEqFilter; mix: number;
+};
+export type StemDynamicsSettings = {
+  enabled: boolean;
+  profile?: string | null;
+  threshold_db: number;
+  ratio: number;
+  attack_ms: number;
+  release_ms: number;
+  mix: number;
+};
+export type StemDynamicEqBand = {
+  enabled: boolean; freq_hz: number; q: number; threshold_db: number; ratio: number;
+  max_cut_db: number; attack_ms: number; release_ms: number;
+};
+export type StemDynamicEqSettings = {
+  enabled: boolean; profile?: string | null; bands: StemDynamicEqBand[]; mix: number;
+};
+
 export type AdmObjectMetadata = {
   gain: number;
   importance: number;
@@ -32,7 +55,9 @@ export type Manifest = {
   mixing: {
     channel_layout: string;
     stem_rebalance: Record<string, number>;
-    stem_eq: Record<string, string>;
+    stem_eq: Record<string, string | StemEqSettings>;
+    stem_dynamic_eq: Record<string, StemDynamicEqSettings>;
+    stem_dynamics: Record<string, StemDynamicsSettings>;
     stem_ambient_rear: Record<string, number>;
     stem_ambient_height: Record<string, number>;
     stem_ambient_height_crossover_hz: Record<string, number>;
@@ -165,6 +190,8 @@ export const defaultManifest: Manifest = {
     channel_layout: "7.1.4",
     stem_rebalance: {},
     stem_eq: {},
+    stem_dynamic_eq: {},
+    stem_dynamics: {},
     stem_ambient_rear: {},
     stem_ambient_height: {},
     stem_ambient_height_crossover_hz: {},
@@ -252,6 +279,8 @@ export function normalizeManifest(source: Record<string, unknown>): Manifest {
         ...value.mixing?.stem_rebalance,
       },
       stem_eq: { ...defaultManifest.mixing.stem_eq, ...value.mixing?.stem_eq },
+      stem_dynamic_eq: { ...defaultManifest.mixing.stem_dynamic_eq, ...value.mixing?.stem_dynamic_eq },
+      stem_dynamics: { ...defaultManifest.mixing.stem_dynamics, ...value.mixing?.stem_dynamics },
       stem_ambient_rear: {
         ...defaultManifest.mixing.stem_ambient_rear,
         ...value.mixing?.stem_ambient_rear,

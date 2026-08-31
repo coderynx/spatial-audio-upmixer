@@ -53,7 +53,7 @@ def test_configuration_serves_engine_constants(web_client):
         "limiter_release_ms", "safety_margin_db", "loudness_max_gain_db", "surround_downmix_coeff",
         "height_downmix_coeff",
         "speaker_directions",
-        "dyneq_profiles", "reference_match_smooth",
+        "dyneq_profiles", "stem_dynamic_eq_profiles", "stem_dynamics_profiles", "stem_processing_presets", "reference_match_smooth",
         "comp_profiles", "bass_profiles", "delivery_targets", "delivery_default",
         "bass_sub_cutoff_hz", "bass_mid_cutoff_hz",
         "bass_excite_blend", "bass_excite_drive", "bass_lf_spreads",
@@ -62,7 +62,7 @@ def test_configuration_serves_engine_constants(web_client):
         "bass_decorr_max_delay_ms", "bass_decorr_fast_ms", "bass_decorr_slow_ms",
         "binaural_loudness_max_gain_db",
         "crosstalk_loudness_max_gain_db", "voicing_params", "transaural_voicing_params",
-        "eq_fir_assets", "stem_eq_fir_assets", "decode_filter_set", "xtc_filter_set",
+        "eq_fir_assets", "stem_eq_fir_assets", "stem_eq_settings", "decode_filter_set", "xtc_filter_set",
     }
     assert set(constants) == expected_keys
 
@@ -89,6 +89,34 @@ def test_configuration_serves_engine_constants(web_client):
     assert constants["delivery_default"] == {
         "target_lkfs": -18.0, "max_tp_dbtp": -1.0, "tolerance_lu": None,
     }
+    assert constants["stem_processing_presets"]["eq"]["Kick"] == ["kick-weight"]
+    assert constants["stem_processing_presets"]["dynamic_eq"]["Kick"] == ["kick-boxiness"]
+    assert constants["stem_processing_presets"]["dynamics"]["Kick"] == ["kick-control"]
+    expected_stems = {
+        "Vocals": ("vocals-balance", "vocals-harshness", "vocals-control"),
+        "Lead Vocals": ("lead-vocals-presence", "lead-vocals-sibilance", "lead-vocals-control"),
+        "Backing Vocals": ("backing-vocals-air", "backing-vocals-sibilance", "backing-vocals-control"),
+        "Vocals Reverb": ("vocals-reverb-cleanup", "vocals-reverb-mud", "vocals-reverb-control"),
+        "Bass": ("bass-foundation", "bass-bloom-control", "bass-foundation-control"),
+        "Drums": ("drums-kit-punch", "drums-kit-ring", "drums-kit-control"),
+        "Kick": ("kick-weight", "kick-boxiness", "kick-control"),
+        "Snare": ("snare-crack", "snare-ring", "snare-control"),
+        "Toms": ("toms-body", "toms-ring", "toms-control"),
+        "Hi-Hat": ("hihat-sheen", "hihat-harshness", "hihat-control"),
+        "Ride": ("ride-clarity", "ride-ping", "ride-control"),
+        "Crash": ("crash-smooth", "crash-harshness", "crash-control"),
+        "Guitar": ("guitar-clarity", "guitar-honk", "guitar-control"),
+        "Piano": ("piano-warmth", "piano-hardness", "piano-control"),
+        "Crowd": ("crowd-clarity", "crowd-harshness", "crowd-control"),
+        "Other": ("other-air", "low-mid-mud", "instrument-control"),
+    }
+    for stem, (eq, dynamic_eq, dynamics) in expected_stems.items():
+        assert constants["stem_processing_presets"]["eq"][stem] == [eq]
+        assert constants["stem_processing_presets"]["dynamic_eq"][stem] == [dynamic_eq]
+        assert constants["stem_processing_presets"]["dynamics"][stem] == [dynamics]
+        assert eq in constants["stem_eq_settings"]
+        assert dynamic_eq in constants["stem_dynamic_eq_profiles"]
+        assert dynamics in constants["stem_dynamics_profiles"]
 
 
 def test_configuration_serves_filter_asset_maps(web_client):

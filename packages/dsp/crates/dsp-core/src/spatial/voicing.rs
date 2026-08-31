@@ -30,7 +30,11 @@ fn shelf(signal: &[f64], sample_rate: u32, freq_hz: f64, gain_db: f64, band: Ban
     let sos = butter_sos(2, freq_hz / nyq, band);
     let filtered = sosfilt(&sos, signal);
     let gain = 10.0_f64.powf(gain_db / 20.0) - 1.0;
-    signal.iter().zip(filtered.iter()).map(|(x, b)| x + b * gain).collect()
+    signal
+        .iter()
+        .zip(filtered.iter())
+        .map(|(x, b)| x + b * gain)
+        .collect()
 }
 
 fn presence(signal: &[f64], sample_rate: u32, freq_hz: f64, gain_db: f64, q: f64) -> Vec<f64> {
@@ -44,7 +48,11 @@ fn presence(signal: &[f64], sample_rate: u32, freq_hz: f64, gain_db: f64, q: f64
     let sos = butter_bandpass_sos(2, low, high);
     let filtered = sosfilt(&sos, signal);
     let gain = 10.0_f64.powf(gain_db / 20.0) - 1.0;
-    signal.iter().zip(filtered.iter()).map(|(x, b)| x + b * gain).collect()
+    signal
+        .iter()
+        .zip(filtered.iter())
+        .map(|(x, b)| x + b * gain)
+        .collect()
 }
 
 pub fn crossfeed(
@@ -96,12 +104,54 @@ pub fn apply_voicing(
     sample_rate: u32,
     p: &VoicingParams,
 ) -> (Vec<f64>, Vec<f64>) {
-    let (mut l, mut r) = crossfeed(left, right, sample_rate, p.crossfeed_amount, p.crossfeed_cutoff_hz);
-    l = shelf(&l, sample_rate, p.bass_shelf_hz, p.bass_shelf_gain_db, BandType::Low);
-    r = shelf(&r, sample_rate, p.bass_shelf_hz, p.bass_shelf_gain_db, BandType::Low);
-    l = shelf(&l, sample_rate, p.air_shelf_hz, p.air_shelf_gain_db, BandType::High);
-    r = shelf(&r, sample_rate, p.air_shelf_hz, p.air_shelf_gain_db, BandType::High);
-    l = presence(&l, sample_rate, p.presence_hz, p.presence_gain_db, p.presence_q);
-    r = presence(&r, sample_rate, p.presence_hz, p.presence_gain_db, p.presence_q);
+    let (mut l, mut r) = crossfeed(
+        left,
+        right,
+        sample_rate,
+        p.crossfeed_amount,
+        p.crossfeed_cutoff_hz,
+    );
+    l = shelf(
+        &l,
+        sample_rate,
+        p.bass_shelf_hz,
+        p.bass_shelf_gain_db,
+        BandType::Low,
+    );
+    r = shelf(
+        &r,
+        sample_rate,
+        p.bass_shelf_hz,
+        p.bass_shelf_gain_db,
+        BandType::Low,
+    );
+    l = shelf(
+        &l,
+        sample_rate,
+        p.air_shelf_hz,
+        p.air_shelf_gain_db,
+        BandType::High,
+    );
+    r = shelf(
+        &r,
+        sample_rate,
+        p.air_shelf_hz,
+        p.air_shelf_gain_db,
+        BandType::High,
+    );
+    l = presence(
+        &l,
+        sample_rate,
+        p.presence_hz,
+        p.presence_gain_db,
+        p.presence_q,
+    );
+    r = presence(
+        &r,
+        sample_rate,
+        p.presence_hz,
+        p.presence_gain_db,
+        p.presence_q,
+    );
     widen(&l, &r, p.stereo_widen)
 }

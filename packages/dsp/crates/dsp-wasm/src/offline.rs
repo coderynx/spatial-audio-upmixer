@@ -33,10 +33,7 @@ pub unsafe extern "C" fn dsp_master_bed(
     };
 
     let flat = std::slice::from_raw_parts_mut(channels, n_channels * n_frames);
-    let mut bed: Vec<Vec<f64>> = flat
-        .chunks_exact(n_frames)
-        .map(|c| c.to_vec())
-        .collect();
+    let mut bed: Vec<Vec<f64>> = flat.chunks_exact(n_frames).map(|c| c.to_vec()).collect();
 
     // Reference match, then EQ — the head of the contracted stage order.
     // The level gain reaches every channel; the correction curve and the
@@ -48,7 +45,9 @@ pub unsafe extern "C" fn dsp_master_bed(
             }
         }
     }
-    let non_lfe: Vec<usize> = (0..n_channels).filter(|i| params.lfe_index != Some(*i)).collect();
+    let non_lfe: Vec<usize> = (0..n_channels)
+        .filter(|i| params.lfe_index != Some(*i))
+        .collect();
     for &i in &non_lfe {
         if !params.reference_fir.is_empty() {
             bed[i] = eq::apply_fir(&bed[i], &params.reference_fir, 1.0);
@@ -62,7 +61,13 @@ pub unsafe extern "C" fn dsp_master_bed(
         compressor::bus_compress(&mut bed, params.lfe_index, sample_rate, &comp);
     }
     if let Some(bass) = params.bass {
-        bass::bass_control(&mut bed, params.lfe_index, &params.lf_targets, sample_rate, &bass);
+        bass::bass_control(
+            &mut bed,
+            params.lfe_index,
+            &params.lf_targets,
+            sample_rate,
+            &bass,
+        );
     }
     let reduction = match params.limiter {
         Some(l) => limiter::lookahead_limit(&mut bed, params.lfe_index, sample_rate, &l).max_gr_db,
@@ -140,7 +145,9 @@ pub unsafe extern "C" fn dsp_render_binaural(
 ) -> u32 {
     use upmixer_dsp_core::kernels::biquad::sosfilt;
     use upmixer_dsp_core::kernels::butter::linkwitz_riley_lowpass_sos;
-    use upmixer_dsp_core::spatial::ambisonics::{decode_to_binaural, DecodeFilterSet, HoaBus, N_ACN_CHANNELS};
+    use upmixer_dsp_core::spatial::ambisonics::{
+        decode_to_binaural, DecodeFilterSet, HoaBus, N_ACN_CHANNELS,
+    };
     use upmixer_dsp_core::spatial::voicing::apply_voicing;
 
     let json = std::slice::from_raw_parts(params_ptr, params_len);
@@ -154,7 +161,11 @@ pub unsafe extern "C" fn dsp_render_binaural(
         if params.lfe_index == Some(i) || i >= n_channels {
             continue;
         }
-        hoa.add_source(&flat[i * n_frames..(i + 1) * n_frames], *azimuth, *elevation);
+        hoa.add_source(
+            &flat[i * n_frames..(i + 1) * n_frames],
+            *azimuth,
+            *elevation,
+        );
     }
 
     let taps = (0..N_ACN_CHANNELS)

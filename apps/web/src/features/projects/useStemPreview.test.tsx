@@ -359,16 +359,18 @@ describe("useStemPreview metering", () => {
     await renderPreview();
     const preview = (globalThis as unknown as Record<string, unknown>).preview as {
       stemLevels: { current: Map<string, { rms: number }[]> };
+      stemDynamics: { current: Map<string, number> };
       channelLevels: { current: Map<string, { rms: number }> };
       headphoneLevels: { current: { left: { rms: number }; right: { rms: number } } };
       stemSpectrum: { current: Map<string, { level: number; centroid: number }> };
     };
 
-    // Two stems (each a left/right pair), six channels, one output pair —
+    // Two stems (each a left/right pair), their reductions, six channels, one output pair —
     // two floats each.
     const meters = [
       0.1, 0.2, 0.15, 0.25,
       0.3, 0.4, 0.35, 0.45,
+      2.5, 1.25,
       1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6,
       0.7, 0.8, 0.9, 1.0,
     ];
@@ -385,6 +387,7 @@ describe("useStemPreview metering", () => {
     const bass = preview.stemLevels.current.get("Bass");
     expect(bass?.[0].rms).toBeCloseTo(0.3, 6);
     expect(bass).toHaveLength(1);
+    expect(preview.stemDynamics.current.get("Vocals")).toBe(2.5);
 
     expect(preview.channelLevels.current.get("FL")?.rms).toBe(1);
     expect(preview.channelLevels.current.get("SR")?.rms).toBe(6);

@@ -57,6 +57,17 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
       { freq_hz: 3500, q: 1.8, threshold_db: -32, ratio: 3, attack_ms: 15, release_ms: 180 },
     ],
   },
+  stem_dynamic_eq_profiles: {
+    "vocal-sibilance": [{ enabled: true, freq_hz: 7500, q: 3, threshold_db: -31, ratio: 4, max_cut_db: 6, attack_ms: 2, release_ms: 80 }],
+  },
+  stem_dynamics_profiles: {
+    "vocal-control": { enabled: false, profile: null, threshold_db: -20, ratio: 1.8, attack_ms: 15, release_ms: 180, mix: 100 },
+  },
+  stem_processing_presets: {
+    eq: { Vocals: ["vocal-presence"] },
+    dynamic_eq: { Vocals: ["vocal-sibilance"] },
+    dynamics: { Vocals: ["vocal-control"] },
+  },
   reference_match_smooth: { default_oct: 1 / 3, min_oct: 1 / 12, max_oct: 1 },
   comp_profiles: {
     transparent: { threshold_db: -22.0, ratio: 1.5, attack_ms: 30.0, release_ms: 300.0, knee_db: 9.0, makeup_db: 0.0, sidechain_hpf_hz: null },
@@ -139,6 +150,9 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
     "drums-punch": "stem_drums-punch",
     "other-air": "stem_other-air",
     flat: "stem_flat",
+  },
+  stem_eq_settings: {
+    flat: { preset: "flat", bypass: false, highpass: { enabled: false, freq_hz: 20 }, low_shelf: { enabled: false, freq_hz: 120, gain_db: 0, q: .707 }, bell_1: { enabled: false, freq_hz: 1000, gain_db: 0, q: 1 }, bell_2: { enabled: false, freq_hz: 4000, gain_db: 0, q: 1 }, high_shelf: { enabled: false, freq_hz: 8000, gain_db: 0, q: .707 }, lowpass: { enabled: false, freq_hz: 20000 }, mix: 100 },
   },
   decode_filter_set: {
     flat: "flat_o3_decode",

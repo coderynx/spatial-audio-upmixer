@@ -149,7 +149,9 @@ def apply_dynamic_eq(
         return channels
     names = list(channels)
     targets = [np.ascontiguousarray(channels[name], dtype=np.float64) for name in names]
-    params = [tuple(float(band[field]) for field in BAND_FIELDS) for band in bands]
+    params = [(*tuple(float(band[field]) for field in BAND_FIELDS[:4]),
+               float(band.get("max_cut_db", float("inf"))),
+               *tuple(float(band[field]) for field in BAND_FIELDS[4:])) for band in bands]
     if detector_channels is None:
         processed, cuts = upmixer_dsp.dynamic_eq(
             targets,

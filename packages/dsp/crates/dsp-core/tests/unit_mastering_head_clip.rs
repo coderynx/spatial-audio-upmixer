@@ -86,8 +86,16 @@ mod head {
         let out = &bed[0][WINDOW];
         // 1 kHz is two decades above the corner and passes untouched; 15 Hz
         // sits below it and comes back at 12 dB/oct.
-        assert!((bin_level(out, 1000.0) - 0.4).abs() < 4e-3, "{}", bin_level(out, 1000.0));
-        assert!(bin_level(out, 15.0) < 0.6 * 0.4, "rumble left: {}", bin_level(out, 15.0));
+        assert!(
+            (bin_level(out, 1000.0) - 0.4).abs() < 4e-3,
+            "{}",
+            bin_level(out, 1000.0)
+        );
+        assert!(
+            bin_level(out, 15.0) < 0.6 * 0.4,
+            "rumble left: {}",
+            bin_level(out, 15.0)
+        );
     }
 
     #[test]
@@ -118,7 +126,12 @@ mod head {
             head_first.max_gr_db,
             unfiltered.max_gr_db
         );
-        assert!(head_first.duty < unfiltered.duty, "duty {} vs {}", head_first.duty, unfiltered.duty);
+        assert!(
+            head_first.duty < unfiltered.duty,
+            "duty {} vs {}",
+            head_first.duty,
+            unfiltered.duty
+        );
         // The headroom is real, not just quieter: the audible tone comes
         // through the head stage at the level it went in.
         assert!(rms(&filtered[0]) > rms(&with_rumble[0]));
@@ -129,7 +142,11 @@ mod clip {
     use super::*;
 
     fn params() -> ClipParams {
-        ClipParams { ceiling_dbtp: -1.0, clip_db: 1.0, knee: 1.0 }
+        ClipParams {
+            ceiling_dbtp: -1.0,
+            clip_db: 1.0,
+            knee: 1.0,
+        }
     }
 
     fn ceiling(p: &ClipParams) -> f64 {
@@ -152,8 +169,14 @@ mod clip {
             let curve = ClipCurve::new(&p);
             for i in 0..400 {
                 let x = i as f64 * 0.05;
-                assert!(curve.shape(x).abs() <= ceiling(&p) + 1e-12, "knee {knee} at {x}");
-                assert!((curve.shape(-x) + curve.shape(x)).abs() < 1e-15, "odd symmetry");
+                assert!(
+                    curve.shape(x).abs() <= ceiling(&p) + 1e-12,
+                    "knee {knee} at {x}"
+                );
+                assert!(
+                    (curve.shape(-x) + curve.shape(x)).abs() < 1e-15,
+                    "odd symmetry"
+                );
             }
         }
     }
@@ -206,16 +229,21 @@ mod clip {
         soft_clip(&mut clipped, None, &params());
         let after_clip = lookahead_limit(&mut clipped, None, SR, &limiter());
 
-        let short_term = |channel: &[f64]| {
-            measure_loudness_stats(&[(1.0, channel)], SR).max_short_term_lkfs
-        };
+        let short_term =
+            |channel: &[f64]| measure_loudness_stats(&[(1.0, channel)], SR).max_short_term_lkfs;
         println!(
             "limiter alone: duty {:.3} GR {:.2} dB  short-term {:.2} LKFS  PSR {:.2} dB",
-            alone.duty, alone.max_gr_db, short_term(&limited[0]), psr(&limited[0])
+            alone.duty,
+            alone.max_gr_db,
+            short_term(&limited[0]),
+            psr(&limited[0])
         );
         println!(
             "clip + limiter: duty {:.3} GR {:.2} dB  short-term {:.2} LKFS  PSR {:.2} dB",
-            after_clip.duty, after_clip.max_gr_db, short_term(&clipped[0]), psr(&clipped[0])
+            after_clip.duty,
+            after_clip.max_gr_db,
+            short_term(&clipped[0]),
+            psr(&clipped[0])
         );
 
         assert!(
@@ -269,9 +297,20 @@ mod clip {
     #[test]
     fn aliasing_from_the_fold_stays_below_the_programme() {
         for drive_db in [0.5, 1.0, 2.0, 3.0, 6.0] {
-            println!("drive +{drive_db} dB over the knee: {:.1} dBc", aliasing_dbc(drive_db));
+            println!(
+                "drive +{drive_db} dB over the knee: {:.1} dBc",
+                aliasing_dbc(drive_db)
+            );
         }
-        assert!(aliasing_dbc(0.5) < -55.0, "at +0.5 dB: {:.1} dBc", aliasing_dbc(0.5));
-        assert!(aliasing_dbc(6.0) < -28.0, "at +6 dB: {:.1} dBc", aliasing_dbc(6.0));
+        assert!(
+            aliasing_dbc(0.5) < -55.0,
+            "at +0.5 dB: {:.1} dBc",
+            aliasing_dbc(0.5)
+        );
+        assert!(
+            aliasing_dbc(6.0) < -28.0,
+            "at +6 dB: {:.1} dBc",
+            aliasing_dbc(6.0)
+        );
     }
 }

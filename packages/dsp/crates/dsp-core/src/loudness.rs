@@ -23,28 +23,65 @@ pub const LRA_HIGH_PERCENTILE: f64 = 0.95;
 
 /// BS.1770-4 Annex 1 Tables 1-2, exact at 48 kHz.
 pub const K_STAGE1_48K: [f64; 6] = [
-    1.53512485958697, -2.69169618940638, 1.19839281085285,
-    1.0, -1.69065929318241, 0.73248077421585,
+    1.53512485958697,
+    -2.69169618940638,
+    1.19839281085285,
+    1.0,
+    -1.69065929318241,
+    0.73248077421585,
 ];
-pub const K_STAGE2_48K: [f64; 6] = [
-    1.0, -2.0, 1.0,
-    1.0, -1.99004745483398, 0.99007225036621,
-];
+pub const K_STAGE2_48K: [f64; 6] = [1.0, -2.0, 1.0, 1.0, -1.99004745483398, 0.99007225036621];
 
 /// BS.1770-5 Annex 2 order-48 four-phase true-peak interpolation FIR.
 pub const TRUE_PEAK_FIR_4X: [f64; 48] = [
-    0.0017089843750, -0.0291748046875, -0.0189208984375, -0.0083007812500,
-    0.0109863281250, 0.0292968750000, 0.0330810546875, 0.0148925781250,
-    -0.0196533203125, -0.0517578125000, -0.0582275390625, -0.0266113281250,
-    0.0332031250000, 0.0891113281250, 0.1015625000000, 0.0476074218750,
-    -0.0594482421875, -0.1665039062500, -0.2003173828125, -0.1022949218750,
-    0.1373291015625, 0.4650878906250, 0.7797851562500, 0.9721679687500,
-    0.9721679687500, 0.7797851562500, 0.4650878906250, 0.1373291015625,
-    -0.1022949218750, -0.2003173828125, -0.1665039062500, -0.0594482421875,
-    0.0476074218750, 0.1015625000000, 0.0891113281250, 0.0332031250000,
-    -0.0266113281250, -0.0582275390625, -0.0517578125000, -0.0196533203125,
-    0.0148925781250, 0.0330810546875, 0.0292968750000, 0.0109863281250,
-    -0.0083007812500, -0.0189208984375, -0.0291748046875, 0.0017089843750,
+    0.0017089843750,
+    -0.0291748046875,
+    -0.0189208984375,
+    -0.0083007812500,
+    0.0109863281250,
+    0.0292968750000,
+    0.0330810546875,
+    0.0148925781250,
+    -0.0196533203125,
+    -0.0517578125000,
+    -0.0582275390625,
+    -0.0266113281250,
+    0.0332031250000,
+    0.0891113281250,
+    0.1015625000000,
+    0.0476074218750,
+    -0.0594482421875,
+    -0.1665039062500,
+    -0.2003173828125,
+    -0.1022949218750,
+    0.1373291015625,
+    0.4650878906250,
+    0.7797851562500,
+    0.9721679687500,
+    0.9721679687500,
+    0.7797851562500,
+    0.4650878906250,
+    0.1373291015625,
+    -0.1022949218750,
+    -0.2003173828125,
+    -0.1665039062500,
+    -0.0594482421875,
+    0.0476074218750,
+    0.1015625000000,
+    0.0891113281250,
+    0.0332031250000,
+    -0.0266113281250,
+    -0.0582275390625,
+    -0.0517578125000,
+    -0.0196533203125,
+    0.0148925781250,
+    0.0330810546875,
+    0.0292968750000,
+    0.0109863281250,
+    -0.0083007812500,
+    -0.0189208984375,
+    -0.0291748046875,
+    0.0017089843750,
 ];
 
 pub const TRUE_PEAK_OVERSAMPLE: usize = 4;
@@ -53,9 +90,8 @@ pub const TRUE_PEAK_OVERSAMPLE: usize = 4;
 /// bilinear transform and re-applying it, matching `_retarget_biquad`.
 pub fn retarget_biquad(section: [f64; 6], sample_rate: u32) -> [f64; 6] {
     let k = 2.0 * 48_000.0;
-    let to_analog = |c0: f64, c1: f64, c2: f64| {
-        [(c0 - c1 + c2) / (k * k), 2.0 * (c0 - c2) / k, c0 + c1 + c2]
-    };
+    let to_analog =
+        |c0: f64, c1: f64, c2: f64| [(c0 - c1 + c2) / (k * k), 2.0 * (c0 - c2) / k, c0 + c1 + c2];
     let b_a = to_analog(section[0], section[1], section[2]);
     let a_a = to_analog(1.0, section[4], section[5]);
 
@@ -70,8 +106,12 @@ pub fn retarget_biquad(section: [f64; 6], sample_rate: u32) -> [f64; 6] {
     let b_z = expand(b_a);
     let a_z = expand(a_a);
     [
-        b_z[0] / a_z[0], b_z[1] / a_z[0], b_z[2] / a_z[0],
-        1.0, a_z[1] / a_z[0], a_z[2] / a_z[0],
+        b_z[0] / a_z[0],
+        b_z[1] / a_z[0],
+        b_z[2] / a_z[0],
+        1.0,
+        a_z[1] / a_z[0],
+        a_z[2] / a_z[0],
     ]
 }
 
@@ -173,15 +213,18 @@ fn weighted_power_blocks(
         if *weight == 0.0 {
             continue;
         }
-        let Some(meansq) = channel_weighted_blocks(audio, *weight, &sos, block_len, hop_len)
-        else {
+        let Some(meansq) = channel_weighted_blocks(audio, *weight, &sos, block_len, hop_len) else {
             continue;
         };
         power_blocks = Some(match power_blocks {
             None => meansq,
             Some(acc) => {
                 let n = acc.len().min(meansq.len());
-                acc[..n].iter().zip(meansq[..n].iter()).map(|(a, b)| a + b).collect()
+                acc[..n]
+                    .iter()
+                    .zip(meansq[..n].iter())
+                    .map(|(a, b)| a + b)
+                    .collect()
             }
         });
     }
@@ -216,7 +259,11 @@ fn gated_indices(power_blocks: &[f64], block_lkfs: &[f64], offset: f64) -> Vec<u
         .copied()
         .filter(|&i| block_lkfs[i] >= ungated + offset)
         .collect();
-    if above_rel.is_empty() { above_abs } else { above_rel }
+    if above_rel.is_empty() {
+        above_abs
+    } else {
+        above_rel
+    }
 }
 
 /// BS.1770-4 integrated loudness with absolute + relative gating.
@@ -266,13 +313,23 @@ fn loudness_range(power_blocks: &[f64], short_term: &[f64]) -> f64 {
 pub fn measure_loudness_stats(channels: &[(f64, &[f64])], sample_rate: u32) -> LoudnessStats {
     let momentary_power = weighted_power_blocks(channels, sample_rate, BLOCK_S);
     let short_power = weighted_power_blocks(channels, sample_rate, SHORT_TERM_S);
-    let momentary = momentary_power.as_deref().map(block_loudness).unwrap_or_default();
-    let short_term = short_power.as_deref().map(block_loudness).unwrap_or_default();
+    let momentary = momentary_power
+        .as_deref()
+        .map(block_loudness)
+        .unwrap_or_default();
+    let short_term = short_power
+        .as_deref()
+        .map(block_loudness)
+        .unwrap_or_default();
 
     let integrated = match &momentary_power {
         Some(blocks) => {
             let gated = gated_indices(blocks, &momentary, REL_GATE_OFFSET);
-            if gated.is_empty() { ABS_GATE } else { mean_loudness(blocks, &gated) }
+            if gated.is_empty() {
+                ABS_GATE
+            } else {
+                mean_loudness(blocks, &gated)
+            }
         }
         None => ABS_GATE,
     };

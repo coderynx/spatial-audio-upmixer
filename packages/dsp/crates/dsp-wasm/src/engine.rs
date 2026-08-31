@@ -20,7 +20,11 @@ pub unsafe extern "C" fn dsp_engine_new(
     let Ok(params) = serde_json::from_slice::<EngineParams>(json) else {
         return std::ptr::null_mut();
     };
-    Box::into_raw(Box::new(PreviewEngine::new(sample_rate, params, Vec::new())))
+    Box::into_raw(Box::new(PreviewEngine::new(
+        sample_rate,
+        params,
+        Vec::new(),
+    )))
 }
 
 /// Copy one stem's decoded PCM into the engine's heap.
@@ -35,7 +39,9 @@ pub unsafe extern "C" fn dsp_engine_add_stem(
     right: *const f32,
     n_frames: usize,
 ) {
-    let Some(engine) = engine.as_mut() else { return };
+    let Some(engine) = engine.as_mut() else {
+        return;
+    };
     engine.push_stem(StemSource {
         left: std::slice::from_raw_parts(left, n_frames).to_vec(),
         right: std::slice::from_raw_parts(right, n_frames).to_vec(),
@@ -59,7 +65,9 @@ pub unsafe extern "C" fn dsp_engine_set_decode_taps(
     taps_ptr: *const f64,
     n_taps: usize,
 ) {
-    let Some(engine) = engine.as_mut() else { return };
+    let Some(engine) = engine.as_mut() else {
+        return;
+    };
     engine.set_decode_taps(std::slice::from_raw_parts(taps_ptr, n_taps).to_vec());
 }
 
@@ -75,7 +83,9 @@ pub unsafe extern "C" fn dsp_engine_set_xtc_taps(
     taps_ptr: *const f64,
     n_taps: usize,
 ) {
-    let Some(engine) = engine.as_mut() else { return };
+    let Some(engine) = engine.as_mut() else {
+        return;
+    };
     engine.set_xtc_taps(std::slice::from_raw_parts(taps_ptr, n_taps).to_vec());
 }
 
@@ -154,7 +164,9 @@ pub unsafe extern "C" fn dsp_engine_render(
     n_channels: usize,
     n_frames: usize,
 ) -> usize {
-    let Some(engine) = engine.as_mut() else { return 0 };
+    let Some(engine) = engine.as_mut() else {
+        return 0;
+    };
     let dst = std::slice::from_raw_parts_mut(out, n_channels * n_frames);
     engine.render_f32(dst, n_frames)
 }
@@ -182,7 +194,9 @@ pub unsafe extern "C" fn dsp_engine_set_params(
     params_ptr: *const u8,
     params_len: usize,
 ) -> u32 {
-    let Some(engine) = engine.as_mut() else { return 0 };
+    let Some(engine) = engine.as_mut() else {
+        return 0;
+    };
     let json = std::slice::from_raw_parts(params_ptr, params_len);
     match serde_json::from_slice::<EngineParams>(json) {
         Ok(params) => {
@@ -265,7 +279,9 @@ pub unsafe extern "C" fn dsp_engine_meters(
     out: *mut f32,
     capacity: usize,
 ) -> usize {
-    let Some(engine) = engine.as_mut() else { return 0 };
+    let Some(engine) = engine.as_mut() else {
+        return 0;
+    };
     let dst = std::slice::from_raw_parts_mut(out, capacity);
     engine.meters().write(dst).min(capacity)
 }
@@ -281,7 +297,9 @@ pub unsafe extern "C" fn dsp_engine_stem_spectrum(
     out: *mut f32,
     capacity: usize,
 ) -> usize {
-    let Some(engine) = engine.as_mut() else { return 0 };
+    let Some(engine) = engine.as_mut() else {
+        return 0;
+    };
     let dst = std::slice::from_raw_parts_mut(out, capacity);
     let mut i = 0;
     for (level, centroid) in engine.stem_spectrum() {

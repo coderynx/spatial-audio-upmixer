@@ -44,7 +44,11 @@ pub struct BandParams {
     pub ratio: f64,
     pub attack_ms: f64,
     pub release_ms: f64,
+    #[serde(default = "unlimited_cut_db")]
+    pub max_cut_db: f64,
 }
+
+fn unlimited_cut_db() -> f64 { f64::INFINITY }
 
 struct Band {
     params: BandParams,
@@ -61,6 +65,7 @@ struct Band {
     /// Gain the bell sections currently realize, so the design is rebuilt
     /// only when the detector actually moves it.
     gain: f64,
+    current_cut_db: f64,
     peak_cut_db: f64,
 }
 
@@ -80,6 +85,7 @@ impl Band {
             alpha: w0.sin() / (2.0 * q),
             cos_w0: w0.cos(),
             gain: 1.0,
+            current_cut_db: 0.0,
             peak_cut_db: 0.0,
             params,
         }
@@ -92,6 +98,7 @@ impl Band {
         self.fast = 0.0;
         self.slow = 0.0;
         self.peak_cut_db = 0.0;
+        self.current_cut_db = 0.0;
     }
 
     /// Detector RMS across the bed for one sample, advancing every band-pass.
@@ -111,8 +118,10 @@ impl Band {
         self.fast += self.attack * (rms - self.fast);
         self.slow += self.release * (rms - self.slow);
         let env_db = 20.0 * self.fast.max(self.slow).max(1e-20).log10();
-        let cut_db = knee_gain_db(env_db, self.params.threshold_db, self.params.ratio, KNEE_DB);
+        let cut_db = knee_gain_db(env_db, self.params.threshold_db, self.params.ratio, KNEE_DB)
+            .max(-self.params.max_cut_db.max(0.0));
         self.peak_cut_db = self.peak_cut_db.max(-cut_db);
+        self.current_cut_db = -cut_db;
         10.0_f64.powf(cut_db / 20.0)
     }
 
@@ -138,6 +147,20 @@ impl Band {
         for (slot, &channel) in channels.iter().enumerate() {
             bed[channel][frame] = self.bell[slot].tick(bed[channel][frame]);
         }
+    }
+
+    fn retune(&mut self, params: BandParams, sample_rate: u32) {
+        let wn = (params.freq_hz / (sample_rate as f64 / 2.0)).clamp(1e-4, 0.999);
+        let q = params.q.max(0.1);
+        let w0 = std::f64::consts::PI * wn;
+        let detect = bandpass_sos(wn, q);
+        for section in &mut self.detect { section.retune(detect); }
+        self.attack = alpha(params.attack_ms, sample_rate);
+        self.release = alpha(params.release_ms, sample_rate);
+        self.alpha = w0.sin() / (2.0 * q);
+        self.cos_w0 = w0.cos();
+        self.params = params;
+        self.gain = f64::NAN;
     }
 }
 
@@ -172,7 +195,7 @@ impl DynamicEq {
         let detector_channels = non_lfe(n_detector, detector_lfe);
         let bands: Vec<Band> = bands
             .iter()
-            .filter(|b| b.ratio > 1.0)
+            .filter(|b| b.ratio > 1.0 && b.max_cut_db > 0.0)
             .map(|b| Band::new(*b, sample_rate, detector_channels.len(), targets.len()))
             .collect();
         (!bands.is_empty() && !targets.is_empty() && !detector_channels.is_empty()).then_some(
@@ -193,13 +216,22 @@ impl DynamicEq {
     /// Whether this stage was built for exactly `bands`, so a live parameter
     /// edit that changed nothing does not restart the detectors.
     pub fn matches(&self, bands: &[BandParams]) -> bool {
-        let active: Vec<&BandParams> = bands.iter().filter(|b| b.ratio > 1.0).collect();
+        let active: Vec<&BandParams> = bands.iter().filter(|b| b.ratio > 1.0 && b.max_cut_db > 0.0).collect();
         self.bands.len() == active.len()
             && self
                 .bands
                 .iter()
                 .zip(active)
                 .all(|(band, p)| band.params == *p)
+    }
+
+    pub fn retune(&mut self, bands: &[BandParams], sample_rate: u32) -> bool {
+        let active: Vec<&BandParams> = bands.iter().filter(|b| b.ratio > 1.0 && b.max_cut_db > 0.0).collect();
+        if self.bands.len() != active.len() { return false; }
+        for (band, params) in self.bands.iter_mut().zip(active) {
+            if band.params != *params { band.retune(*params, sample_rate); }
+        }
+        true
     }
 
     /// Run every band over the whole bed, in place.
@@ -235,9 +267,31 @@ impl DynamicEq {
         }
     }
 
+    pub fn process_stereo_frame(&mut self, left: &mut f64, right: &mut f64) {
+        for band in &mut self.bands {
+            let detected_left = band.detect[0].tick(*left);
+            let detected_right = band.detect[1].tick(*right);
+            let rms = ((detected_left * detected_left + detected_right * detected_right) * 0.5 + 1e-20).sqrt();
+            let gain = band.gain_for(rms);
+            if gain != band.gain {
+                let a = gain.sqrt();
+                let coeffs = [1.0 + band.alpha * a, -2.0 * band.cos_w0, 1.0 - band.alpha * a,
+                    1.0 + band.alpha / a, -2.0 * band.cos_w0, 1.0 - band.alpha / a];
+                for section in &mut band.bell { section.retune(coeffs); }
+                band.gain = gain;
+            }
+            *left = band.bell[0].tick(*left);
+            *right = band.bell[1].tick(*right);
+        }
+    }
+
     /// Deepest cut each band reached, in dB, in the order they were given.
     pub fn peak_cut_db(&self) -> Vec<f64> {
         self.bands.iter().map(|b| b.peak_cut_db).collect()
+    }
+
+    pub fn gain_reduction_db(&self) -> f64 {
+        self.bands.iter().map(|band| band.current_cut_db).fold(0.0, f64::max)
     }
 }
 

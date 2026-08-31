@@ -2,8 +2,8 @@ mod decorrelate {
     use upmixer_dsp_core::kernels::biquad::SosFilter;
     use upmixer_dsp_core::kernels::butter::butter_bandpass_sos;
     use upmixer_dsp_core::kernels::rng::next_unit;
-    use upmixer_dsp_core::mastering::decorrelate::*;
     use upmixer_dsp_core::mastering::bass::BassParams;
+    use upmixer_dsp_core::mastering::decorrelate::*;
 
     fn params() -> BassParams {
         BassParams {
@@ -50,18 +50,27 @@ mod decorrelate {
 
     #[test]
     fn amount_zero_leaves_no_band_to_process() {
-        let p = BassParams { decorrelate: 0.0, ..params() };
+        let p = BassParams {
+            decorrelate: 0.0,
+            ..params()
+        };
         assert!(band_sos(48_000, &p).is_none());
     }
 
     #[test]
     fn the_band_stays_above_the_mono_crossover() {
         // A unify crossover past the top of the band leaves no band at all.
-        let p = BassParams { unify_hz: Some(400.0), ..params() };
+        let p = BassParams {
+            unify_hz: Some(400.0),
+            ..params()
+        };
         assert!(band_sos(48_000, &p).is_none());
 
         // Below it, the band starts at the crossover, never under it.
-        let p = BassParams { unify_hz: Some(120.0), ..params() };
+        let p = BassParams {
+            unify_hz: Some(120.0),
+            ..params()
+        };
         let rows = cascade_rows(0, 48_000, &p);
         assert!(band_sos(48_000, &p).is_some());
         assert_eq!(rows.len(), p.decorr_sections);
@@ -74,7 +83,10 @@ mod decorrelate {
         for row in &rows {
             // a2 = r², and the row must be a true allpass: b reversed == a.
             let r = row[5].sqrt();
-            assert!((POLE_R_MIN..=POLE_R_MAX).contains(&r), "radius {r} out of range");
+            assert!(
+                (POLE_R_MIN..=POLE_R_MAX).contains(&r),
+                "radius {r} out of range"
+            );
             assert!((row[0] - row[5]).abs() < 1e-12);
             assert!((row[1] - row[4]).abs() < 1e-12);
             assert!((row[2] - 1.0).abs() < 1e-12 && (row[3] - 1.0).abs() < 1e-12);
@@ -100,7 +112,11 @@ mod decorrelate {
         // One pole per equal ERB slice, so no gap can exceed two slices.
         let slice = (hi - lo) / rows.len() as f64;
         for pair in rates.windows(2) {
-            assert!(pair[1] - pair[0] < 2.0 * slice, "ERB gap {}", pair[1] - pair[0]);
+            assert!(
+                pair[1] - pair[0] < 2.0 * slice,
+                "ERB gap {}",
+                pair[1] - pair[0]
+            );
         }
     }
 
@@ -158,7 +174,10 @@ mod decorrelate {
         let energy_of = |v: &[f64]| -> f64 { v[settle..].iter().map(|s| s * s).sum() };
 
         for depth in [0.25, 0.5, 0.7, 1.0] {
-            let p = BassParams { decorrelate: depth, ..params() };
+            let p = BassParams {
+                decorrelate: depth,
+                ..params()
+            };
             let out = decorrelate(0, sr, &p, &x);
             let db = 10.0 * (energy_of(&out) / energy_of(&x)).log10();
             assert!(db.abs() < 0.6, "depth {depth} moved the band by {db} dB");
@@ -182,7 +201,10 @@ mod decorrelate {
             .zip(right[settle..].iter())
             .map(|(a, b)| (a - b).powi(2))
             .sum();
-        assert!(diff > energy_of(&x) * 0.1, "channels stayed correlated: {diff}");
+        assert!(
+            diff > energy_of(&x) * 0.1,
+            "channels stayed correlated: {diff}"
+        );
 
         // Each channel on its own holds its level — a speaker level is a
         // speaker level, decorrelation must not become a gain change.
@@ -217,7 +239,11 @@ mod decorrelate {
         let smeared = decorrelate(0, sr, &p, &sustained);
 
         let change = |a: &[f64], b: &[f64]| -> f64 {
-            let num: f64 = a[2400..].iter().zip(b[2400..].iter()).map(|(x, y)| (x - y).powi(2)).sum();
+            let num: f64 = a[2400..]
+                .iter()
+                .zip(b[2400..].iter())
+                .map(|(x, y)| (x - y).powi(2))
+                .sum();
             num / a[2400..].iter().map(|v| v * v).sum::<f64>().max(1e-20)
         };
         assert!(

@@ -136,7 +136,9 @@ fn apply_xtc<'py>(
     let flat = taps.as_array().to_vec();
     let (out_l, out_r) = py.detach(|| {
         let tap = |i: usize| flat[i * n_taps..(i + 1) * n_taps].to_vec();
-        let filters = XtcFilterSet { taps: [[tap(0), tap(1)], [tap(2), tap(3)]] };
+        let filters = XtcFilterSet {
+            taps: [[tap(0), tap(1)], [tap(2), tap(3)]],
+        };
         xtc::apply_xtc(&l, &r, &filters)
     });
     (PyArray1::from_vec(py, out_l), PyArray1::from_vec(py, out_r))
@@ -172,7 +174,11 @@ fn highpass<'py>(
 ) -> Bound<'py, PyArray1<f64>> {
     let input = signal.as_array().to_vec();
     let out = py.detach(|| {
-        let sos = butter_sos(order, cutoff_hz / (sample_rate as f64 / 2.0), BandType::High);
+        let sos = butter_sos(
+            order,
+            cutoff_hz / (sample_rate as f64 / 2.0),
+            BandType::High,
+        );
         sosfilt(&sos, &input)
     });
     PyArray1::from_vec(py, out)

@@ -7,6 +7,9 @@ use upmixer_dsp_core::routing::ambient;
 use upmixer_dsp_core::routing::decorrelate;
 use upmixer_dsp_core::routing::sends;
 use upmixer_dsp_core::spatial::downmix::{self, DownmixRole, FoldTo51};
+use upmixer_dsp_core::stem_dynamics::{self as stem_dynamics_core, StemDynamicsParams};
+use upmixer_dsp_core::stem_dynamic_eq::{self as stem_dynamic_eq_core, StemDynamicEqParams};
+use upmixer_dsp_core::stem_eq::{StemEq, StemEqParams};
 
 use crate::to_bed;
 
@@ -53,7 +56,9 @@ fn apply_stereo_downmix_lock<'py>(
         surround_coeff,
         height_coeff,
     );
-    bed.into_iter().map(|channel| PyArray1::from_vec(py, channel)).collect()
+    bed.into_iter()
+        .map(|channel| PyArray1::from_vec(py, channel))
+        .collect()
 }
 
 #[pyfunction]
@@ -66,7 +71,10 @@ fn itu_downmix_mono<'py>(
 ) -> Bound<'py, PyArray1<f64>> {
     let bed = to_bed(channels);
     let inputs = downmix_inputs(&names, &bed);
-    PyArray1::from_vec(py, downmix::itu_downmix_mono(&inputs, surround_coeff, height_coeff))
+    PyArray1::from_vec(
+        py,
+        downmix::itu_downmix_mono(&inputs, surround_coeff, height_coeff),
+    )
 }
 
 /// The 5.1 re-render delivery specs measure integrated loudness on, as the
@@ -79,12 +87,17 @@ fn fold_to_51<'py>(
     channels: Vec<PyReadonlyArray1<'py, f64>>,
 ) -> Vec<Bound<'py, PyArray1<f64>>> {
     let bed = to_bed(channels);
-    let Some(fold) = FoldTo51::new(&names) else { return Vec::new() };
+    let Some(fold) = FoldTo51::new(&names) else {
+        return Vec::new();
+    };
     let refs: Vec<&[f64]> = bed.iter().map(|c| c.as_slice()).collect();
     let frames = refs.first().map(|c| c.len()).unwrap_or(0);
     let mut folded = Vec::new();
     fold.apply(&refs, frames, &mut folded);
-    folded.into_iter().map(|c| PyArray1::from_vec(py, c)).collect()
+    folded
+        .into_iter()
+        .map(|c| PyArray1::from_vec(py, c))
+        .collect()
 }
 
 #[pyfunction]
@@ -124,7 +137,10 @@ fn velvet_pair_send<'py>(
             )))
         }
     };
-    Ok(PyArray1::from_vec(py, fir.process(signal.as_array().to_vec().as_slice())))
+    Ok(PyArray1::from_vec(
+        py,
+        fir.process(signal.as_array().to_vec().as_slice()),
+    ))
 }
 
 #[pyfunction]
@@ -218,6 +234,68 @@ fn ambient_split<'py>(
     )
 }
 
+#[pyfunction]
+fn stem_eq<'py>(
+    py: Python<'py>,
+    channels: Vec<PyReadonlyArray1<'py, f64>>,
+    sample_rate: u32,
+    params_json: &str,
+) -> PyResult<Vec<Bound<'py, PyArray1<f64>>>> {
+    let params: StemEqParams = serde_json::from_str(params_json).map_err(|err| {
+        pyo3::exceptions::PyValueError::new_err(format!("invalid stem EQ parameters: {err}"))
+    })?;
+    Ok(channels
+        .into_iter()
+        .map(|channel| {
+            let mut output = channel.as_array().to_vec();
+            StemEq::new(sample_rate, params.clone()).process_mono(&mut output);
+            PyArray1::from_vec(py, output)
+        })
+        .collect())
+}
+
+#[pyfunction]
+fn stem_dynamics<'py>(
+    py: Python<'py>,
+    channels: Vec<PyReadonlyArray1<'py, f64>>,
+    sample_rate: u32,
+    params_json: &str,
+) -> PyResult<Vec<Bound<'py, PyArray1<f64>>>> {
+    let params: StemDynamicsParams = serde_json::from_str(params_json).map_err(|err| {
+        pyo3::exceptions::PyValueError::new_err(format!("invalid stem dynamics parameters: {err}"))
+    })?;
+    let mut output: Vec<Vec<f64>> = channels
+        .into_iter()
+        .map(|channel| channel.as_array().to_vec())
+        .collect();
+    stem_dynamics_core::process(sample_rate, params, &mut output);
+    Ok(output
+        .into_iter()
+        .map(|channel| PyArray1::from_vec(py, channel))
+        .collect())
+}
+
+#[pyfunction]
+fn stem_dynamic_eq<'py>(
+    py: Python<'py>,
+    channels: Vec<PyReadonlyArray1<'py, f64>>,
+    sample_rate: u32,
+    params_json: &str,
+) -> PyResult<Vec<Bound<'py, PyArray1<f64>>>> {
+    let params: StemDynamicEqParams = serde_json::from_str(params_json).map_err(|err| {
+        pyo3::exceptions::PyValueError::new_err(format!("invalid stem dynamic EQ parameters: {err}"))
+    })?;
+    let mut output = to_bed(channels);
+    if output.len() == 1 {
+        let mut right = output[0].clone();
+        stem_dynamic_eq_core::process(sample_rate, params, &mut output[0], &mut right);
+    } else if output.len() >= 2 {
+        let (left, right) = output.split_at_mut(1);
+        stem_dynamic_eq_core::process(sample_rate, params, &mut left[0], &mut right[0]);
+    }
+    Ok(output.into_iter().map(|channel| PyArray1::from_vec(py, channel)).collect())
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(itu_downmix_stereo, m)?)?;
     m.add_function(wrap_pyfunction!(apply_stereo_downmix_lock, m)?)?;
@@ -234,6 +312,9 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("VELVET_SEED_HEIGHT", decorrelate::VELVET_SEED_HEIGHT)?;
     m.add("VELVET_WET", decorrelate::VELVET_WET)?;
     m.add_function(wrap_pyfunction!(ambient_split, m)?)?;
+    m.add_function(wrap_pyfunction!(stem_eq, m)?)?;
+    m.add_function(wrap_pyfunction!(stem_dynamics, m)?)?;
+    m.add_function(wrap_pyfunction!(stem_dynamic_eq, m)?)?;
     m.add("AMBIENT_FFT_SIZE", ambient::AMBIENT_FFT_SIZE)?;
     m.add(
         "AMBIENT_HEIGHT_CROSSOVER_HZ",

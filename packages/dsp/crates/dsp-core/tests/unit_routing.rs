@@ -29,7 +29,11 @@ mod sends {
             .map(|(x, l)| x - l * (1.0 - 0.15))
             .collect();
         let high = sosfilt(&butter_sos(2, 3000.0 / nyq, BandType::High), &bass);
-        for (i, (got, (x, hp))) in with_band.iter().zip(bass.iter().zip(high.iter())).enumerate() {
+        for (i, (got, (x, hp))) in with_band
+            .iter()
+            .zip(bass.iter().zip(high.iter()))
+            .enumerate()
+        {
             assert_eq!(*got, x + hp * 0.5, "sample {i}");
         }
     }
@@ -60,7 +64,10 @@ mod sends {
                 let tail = &out[24_000..];
                 let amplitude =
                     (2.0 * tail.iter().map(|v| v * v).sum::<f64>() / tail.len() as f64).sqrt();
-                assert!((amplitude - want).abs() < 1e-9, "{hz} Hz: {amplitude} vs {want}");
+                assert!(
+                    (amplitude - want).abs() < 1e-9,
+                    "{hz} Hz: {amplitude} vs {want}"
+                );
             }
         }
     }
@@ -83,4 +90,3 @@ mod sends {
         }
     }
 }
-

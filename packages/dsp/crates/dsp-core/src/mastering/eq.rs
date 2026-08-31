@@ -16,7 +16,10 @@ pub fn normalize_breakpoints(breakpoints: &[(f64, f64)], sample_rate: u32) -> (V
     assert!(!breakpoints.is_empty(), "EQ needs at least one breakpoint");
     let nyquist = sample_rate as f64 / 2.0;
     let mut freqs: Vec<f64> = breakpoints.iter().map(|(f, _)| f / nyquist).collect();
-    let mut gains: Vec<f64> = breakpoints.iter().map(|(_, g)| 10.0_f64.powf(g / 20.0)).collect();
+    let mut gains: Vec<f64> = breakpoints
+        .iter()
+        .map(|(_, g)| 10.0_f64.powf(g / 20.0))
+        .collect();
 
     if freqs[0] > 0.0 {
         freqs.insert(0, 0.0);

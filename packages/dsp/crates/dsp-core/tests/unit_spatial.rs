@@ -19,10 +19,7 @@ mod xtc {
     #[test]
     fn a_swap_matrix_exchanges_the_ears() {
         let filters = XtcFilterSet {
-            taps: [
-                [vec![0.0], vec![1.0]],
-                [vec![1.0], vec![0.0]],
-            ],
+            taps: [[vec![0.0], vec![1.0]], [vec![1.0], vec![0.0]]],
         };
         let (sl, sr) = apply_xtc(&[1.0, 2.0], &[3.0, 4.0], &filters);
         assert_eq!(sl, vec![3.0, 4.0]);
@@ -37,7 +34,11 @@ mod voicing {
     fn all_zero_params_are_an_exact_bypass() {
         let l: Vec<f64> = (0..512).map(|i| (i as f64 * 0.1).sin()).collect();
         let r: Vec<f64> = (0..512).map(|i| (i as f64 * 0.13).cos()).collect();
-        let p = VoicingParams { crossfeed_cutoff_hz: 700.0, presence_q: 1.0, ..Default::default() };
+        let p = VoicingParams {
+            crossfeed_cutoff_hz: 700.0,
+            presence_q: 1.0,
+            ..Default::default()
+        };
         let (out_l, out_r) = apply_voicing(&l, &r, 48_000, &p);
         assert_eq!(out_l, l);
         assert_eq!(out_r, r);
@@ -63,7 +64,10 @@ mod voicing {
         let silence = vec![0.0; n];
         let (_, out_r) = crossfeed(&tone, &silence, sr, 0.3, 700.0);
         let energy: f64 = out_r[2400..].iter().map(|v| v * v).sum();
-        assert!(energy > 1.0, "expected bleed into the silent channel, got {energy}");
+        assert!(
+            energy > 1.0,
+            "expected bleed into the silent channel, got {energy}"
+        );
     }
 }
 
@@ -213,8 +217,9 @@ mod ambisonics {
     fn a_unit_impulse_decode_returns_the_filter_taps() {
         let mut hoa = HoaBus::new(8);
         hoa.channels[0][0] = 1.0;
-        let mut taps: Vec<[Vec<f64>; 2]> =
-            (0..N_ACN_CHANNELS).map(|_| [vec![0.0; 4], vec![0.0; 4]]).collect();
+        let mut taps: Vec<[Vec<f64>; 2]> = (0..N_ACN_CHANNELS)
+            .map(|_| [vec![0.0; 4], vec![0.0; 4]])
+            .collect();
         taps[0][0] = vec![0.5, 0.25, 0.0, 0.0];
         taps[0][1] = vec![-0.5, 0.0, 0.125, 0.0];
         let (l, r) = decode_to_binaural(&hoa, &DecodeFilterSet { taps });
@@ -229,11 +234,14 @@ mod fold_to_51 {
     const K: f64 = std::f64::consts::FRAC_1_SQRT_2;
 
     fn bed() -> Vec<Vec<f64>> {
-        (0..12).map(|c| (0..8).map(|i| (c * 8 + i) as f64).collect()).collect()
+        (0..12)
+            .map(|c| (0..8).map(|i| (c * 8 + i) as f64).collect())
+            .collect()
     }
 
-    const NAMES: [&str; 12] =
-        ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"];
+    const NAMES: [&str; 12] = [
+        "FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR",
+    ];
 
     #[test]
     fn a_bed_of_five_one_or_narrower_needs_no_fold() {
@@ -247,12 +255,20 @@ mod fold_to_51 {
         let bed = bed();
         let refs: Vec<&[f64]> = bed.iter().map(|c| c.as_slice()).collect();
         let mut folded = Vec::new();
-        FoldTo51::new(&NAMES).expect("7.1.4 folds").apply(&refs, 8, &mut folded);
+        FoldTo51::new(&NAMES)
+            .expect("7.1.4 folds")
+            .apply(&refs, 8, &mut folded);
 
         assert_eq!(folded.len(), FOLD_51_CHANNELS.len());
         for i in 0..8 {
-            assert!((folded[0][i] - (bed[0][i] + K * bed[8][i])).abs() < 1e-12, "FL");
-            assert!((folded[1][i] - (bed[1][i] + K * bed[9][i])).abs() < 1e-12, "FR");
+            assert!(
+                (folded[0][i] - (bed[0][i] + K * bed[8][i])).abs() < 1e-12,
+                "FL"
+            );
+            assert!(
+                (folded[1][i] - (bed[1][i] + K * bed[9][i])).abs() < 1e-12,
+                "FR"
+            );
             assert!((folded[2][i] - bed[2][i]).abs() < 1e-12, "C");
             let sl = bed[4][i] + K * bed[6][i] + K * bed[10][i];
             assert!((folded[3][i] - sl).abs() < 1e-12, "SL");

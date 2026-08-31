@@ -11,7 +11,9 @@ use upmixer_dsp_core::stream::scale::RouteScalePass;
 /// `engine` must come from `dsp_engine_new`.
 #[no_mangle]
 pub unsafe extern "C" fn dsp_engine_wants_route_scale(engine: *const PreviewEngine) -> i32 {
-    let Some(engine) = engine.as_ref() else { return 0 };
+    let Some(engine) = engine.as_ref() else {
+        return 0;
+    };
     i32::from(engine.stem_count() > 0 && !engine.has_route_scales())
 }
 
@@ -22,7 +24,9 @@ pub unsafe extern "C" fn dsp_engine_wants_route_scale(engine: *const PreviewEngi
 /// `engine` must come from `dsp_engine_new`.
 #[no_mangle]
 pub unsafe extern "C" fn dsp_scale_begin(engine: *const PreviewEngine) -> *mut RouteScalePass {
-    let Some(engine) = engine.as_ref() else { return std::ptr::null_mut() };
+    let Some(engine) = engine.as_ref() else {
+        return std::ptr::null_mut();
+    };
     Box::into_raw(Box::new(RouteScalePass::new(engine)))
 }
 
@@ -38,7 +42,9 @@ pub unsafe extern "C" fn dsp_scale_begin_excerpts(
     excerpt_frames: usize,
     preroll_frames: usize,
 ) -> *mut RouteScalePass {
-    let Some(engine) = engine.as_ref() else { return std::ptr::null_mut() };
+    let Some(engine) = engine.as_ref() else {
+        return std::ptr::null_mut();
+    };
     Box::into_raw(Box::new(RouteScalePass::new_excerpts(
         engine,
         count,
@@ -60,7 +66,9 @@ pub unsafe extern "C" fn dsp_scale_advance(
     frames: usize,
 ) -> i32 {
     let Some(pass) = pass.as_mut() else { return 0 };
-    let Some(scales) = pass.advance(frames) else { return 0 };
+    let Some(scales) = pass.advance(frames) else {
+        return 0;
+    };
     if let Some(engine) = engine.as_mut() {
         engine.set_route_scales(scales);
     }

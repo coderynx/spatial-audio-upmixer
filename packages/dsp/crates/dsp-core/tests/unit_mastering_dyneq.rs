@@ -27,6 +27,7 @@ fn band() -> BandParams {
         q: 2.0,
         threshold_db: -30.0,
         ratio: 4.0,
+        max_cut_db: f64::INFINITY,
         attack_ms: 10.0,
         release_ms: 150.0,
     }
@@ -58,7 +59,15 @@ fn a_band_below_its_threshold_returns_the_input_sample_for_sample() {
 fn a_ratio_of_one_leaves_the_stage_absent() {
     let hot = tone(3800.0, SR as usize, 0.5);
     let mut bed = vec![hot.clone()];
-    let cuts = dynamic_eq(&mut bed, None, SR, &[BandParams { ratio: 1.0, ..band() }]);
+    let cuts = dynamic_eq(
+        &mut bed,
+        None,
+        SR,
+        &[BandParams {
+            ratio: 1.0,
+            ..band()
+        }],
+    );
     assert_eq!(bed[0], hot);
     assert!(cuts.is_empty(), "an inert band should not even be built");
 }
@@ -78,7 +87,10 @@ fn a_triggered_band_cuts_its_own_frequency_and_leaves_the_rest() {
     let in_band = db(band_rms(&bed[0], 3800.0, 4.0) / band_rms(&programme, 3800.0, 4.0));
     let out_of_band = db(band_rms(&bed[0], 300.0, 4.0) / band_rms(&programme, 300.0, 4.0));
     println!("in band {in_band:.2} dB, an octave and a half down {out_of_band:.2} dB");
-    assert!(in_band < -3.0, "the band should have been cut: {in_band} dB");
+    assert!(
+        in_band < -3.0,
+        "the band should have been cut: {in_band} dB"
+    );
     assert!(out_of_band.abs() < 0.2, "300 Hz moved {out_of_band} dB");
     assert!(cuts[0] > 3.0, "reported cut {} dB", cuts[0]);
 }
@@ -107,13 +119,24 @@ fn attack_sets_how_fast_the_cut_arrives() {
         .collect();
     let at_onset = |attack_ms: f64| {
         let mut bed = vec![step.clone()];
-        dynamic_eq(&mut bed, None, SR, &[BandParams { attack_ms, ..band() }]);
+        dynamic_eq(
+            &mut bed,
+            None,
+            SR,
+            &[BandParams {
+                attack_ms,
+                ..band()
+            }],
+        );
         let window = n / 2..n / 2 + SR as usize / 200;
         band_rms(&bed[0][window.clone()].to_vec(), 3800.0, 4.0)
     };
     let (fast, slow) = (at_onset(1.0), at_onset(200.0));
     println!("5 ms after the step: fast {:.4}, slow {:.4}", fast, slow);
-    assert!(fast < slow * 0.9, "a 1 ms attack should be ahead of a 200 ms one");
+    assert!(
+        fast < slow * 0.9,
+        "a 1 ms attack should be ahead of a 200 ms one"
+    );
 }
 
 #[test]
@@ -162,7 +185,11 @@ fn crash(n: usize) -> Vec<f64> {
             break;
         }
         // Hotter around the band under test, so the strike actually triggers.
-        let weight = if (2_600.0..5_200.0).contains(&freq) { 1.8 } else { 0.7 };
+        let weight = if (2_600.0..5_200.0).contains(&freq) {
+            1.8
+        } else {
+            0.7
+        };
         let amplitude = weight / (1.0 + freq / 900.0).sqrt();
         let tau = SR as f64 * 1.2 / (1.0 + freq / 400.0);
         let phase = (k as f64 * 2.399_963_2) % (2.0 * PI);
@@ -217,7 +244,11 @@ fn a_decaying_broadband_strike_is_not_retimbred() {
     // dynamic band applied over the band, held constant.
     let average_cut = db(band_rms(&dynamic[0], 3800.0, 2.0) / band_rms(&strike, 3800.0, 2.0));
     let statik = sosfilt(
-        &[peaking_sos(3800.0 / (SR as f64 / 2.0), 2.0, 10.0_f64.powf(average_cut / 20.0))],
+        &[peaking_sos(
+            3800.0 / (SR as f64 / 2.0),
+            2.0,
+            10.0_f64.powf(average_cut / 20.0),
+        )],
         &strike,
     );
 
@@ -240,7 +271,11 @@ fn a_decaying_broadband_strike_is_not_retimbred() {
         cuts[0], average_cut, dynamic_swing, static_swing, out_of_band
     );
 
-    assert!(cuts[0] > 2.0, "the strike should trigger the band: {} dB", cuts[0]);
+    assert!(
+        cuts[0] > 2.0,
+        "the strike should trigger the band: {} dB",
+        cuts[0]
+    );
     // The stage cannot move the timbre by more than the cut it applied.
     assert!(
         dynamic_swing < cuts[0],

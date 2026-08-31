@@ -15,9 +15,7 @@
 use super::panner::StemPlacement;
 
 /// Preset names, in the order they are offered.
-pub const PRESET_NAMES: [&str; 6] = [
-    "balanced", "intimate", "stage", "wide", "immersive", "live",
-];
+pub const PRESET_NAMES: [&str; 6] = ["balanced", "intimate", "stage", "wide", "immersive", "live"];
 
 const BALANCED_PLACEMENTS: [(&str, StemPlacement); 17] = [
     ("Lead Vocals", StemPlacement::new(0.0, 0.0, 22.0, 0.10, 0.0)),
@@ -209,7 +207,10 @@ fn preset_table(preset: &str) -> Option<&'static [(&'static str, StemPlacement)]
 /// applied. `None` when the preset or the stem is unknown.
 pub fn preset_placement(preset: &str, stem: &str) -> Option<StemPlacement> {
     let table = preset_table(preset)?;
-    table.iter().find(|(name, _)| *name == stem).map(|(_, placement)| *placement)
+    table
+        .iter()
+        .find(|(name, _)| *name == stem)
+        .map(|(_, placement)| *placement)
 }
 
 /// Every stem a preset names, in table order.
@@ -258,9 +259,13 @@ const AMBIENT_MAX: f64 = 0.9;
 pub fn preset_ambient(preset: &str, stem: &str) -> Option<(f64, f64)> {
     let (_, rear_scale, height_scale) =
         *AMBIENT_SCALE.iter().find(|(name, _, _)| *name == preset)?;
-    let (_, rear, height, _) =
-        *AMBIENT_DEFAULTS.iter().find(|(name, _, _, _)| *name == stem)?;
-    Some(((rear * rear_scale).min(AMBIENT_MAX), (height * height_scale).min(AMBIENT_MAX)))
+    let (_, rear, height, _) = *AMBIENT_DEFAULTS
+        .iter()
+        .find(|(name, _, _, _)| *name == stem)?;
+    Some((
+        (rear * rear_scale).min(AMBIENT_MAX),
+        (height * height_scale).min(AMBIENT_MAX),
+    ))
 }
 
 /// A preset's default height crossover for one stem, in Hz.

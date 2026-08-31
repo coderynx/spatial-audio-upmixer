@@ -18,7 +18,9 @@ pub unsafe extern "C" fn dsp_measure_begin(
     weights: *const f64,
     n_channels: usize,
 ) -> *mut MeasurementPass {
-    let Some(engine) = engine.as_ref() else { return std::ptr::null_mut() };
+    let Some(engine) = engine.as_ref() else {
+        return std::ptr::null_mut();
+    };
     let w = if weights.is_null() {
         Vec::new()
     } else {
@@ -45,7 +47,9 @@ pub unsafe extern "C" fn dsp_measure_begin_excerpts(
     excerpt_frames: usize,
     preroll_frames: usize,
 ) -> *mut MeasurementPass {
-    let Some(engine) = engine.as_ref() else { return std::ptr::null_mut() };
+    let Some(engine) = engine.as_ref() else {
+        return std::ptr::null_mut();
+    };
     let w = if weights.is_null() {
         Vec::new()
     } else {

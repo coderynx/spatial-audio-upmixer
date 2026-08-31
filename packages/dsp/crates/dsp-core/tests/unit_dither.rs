@@ -83,7 +83,11 @@ fn rounding_alone_carries_no_dc_and_the_ideal_error_power() {
     let step = lsb(16);
     let err = error(&input, &run(&input, 16, DitherMode::Off));
     let ideal = step / 12.0_f64.sqrt();
-    assert!((rms(&err) / ideal - 1.0).abs() < 0.05, "{}", rms(&err) / ideal);
+    assert!(
+        (rms(&err) / ideal - 1.0).abs() < 0.05,
+        "{}",
+        rms(&err) / ideal
+    );
     assert!((mean(&err) / step).abs() < 0.01, "{}", mean(&err) / step);
 }
 
@@ -151,7 +155,10 @@ fn shaping_trades_total_noise_for_a_quieter_low_band() {
 fn full_scale_input_clamps_to_the_top_code_instead_of_wrapping() {
     let mut out = vec![1.0, -1.0, 2.0, -2.0];
     quantize(&mut out, 16, DitherMode::Tpdf, 7);
-    assert_eq!(out, vec![32_767.0 / 32_768.0, -1.0, 32_767.0 / 32_768.0, -1.0]);
+    assert_eq!(
+        out,
+        vec![32_767.0 / 32_768.0, -1.0, 32_767.0 / 32_768.0, -1.0]
+    );
 }
 
 #[test]
@@ -161,7 +168,12 @@ fn the_same_seed_reproduces_the_stream_and_neighbouring_channels_do_not() {
     assert_eq!(first, run(&input, 24, DitherMode::Tpdf));
 
     let mut second = input.clone();
-    quantize(&mut second, 24, DitherMode::Tpdf, channel_seed(20_260_819, 1));
+    quantize(
+        &mut second,
+        24,
+        DitherMode::Tpdf,
+        channel_seed(20_260_819, 1),
+    );
     assert_ne!(first, second);
 }
 

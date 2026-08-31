@@ -140,6 +140,8 @@ export class PreviewAudioEngine {
   readonly stemSpectrum: EngineRef<Map<string, StemSpectrum>> = engineRef(new Map());
   readonly channelLevels: EngineRef<Map<string, MeterLevel>> = engineRef(new Map());
   readonly stemLevels: EngineRef<Map<string, MeterLevel[]>> = engineRef(new Map());
+  readonly stemDynamics: EngineRef<Map<string, number>> = engineRef(new Map());
+  readonly stemDynamicEq: EngineRef<Map<string, number>> = engineRef(new Map());
   readonly headphoneLevels: EngineRef<{ left: MeterLevel; right: MeterLevel }> = engineRef({
     left: SILENT_METER_LEVEL,
     right: SILENT_METER_LEVEL,
@@ -371,8 +373,7 @@ export class PreviewAudioEngine {
   }
 
   private async loadStemEqFirs() {
-    if (!this.context || !this.constants) return;
-    await this.taps.loadStemEq(this.context, this.constants, this.mix?.stem_eq ?? {});
+    this.taps.stemEqTaps = new Map();
   }
 
   private previewableStems(): ProjectStem[] {
@@ -680,6 +681,8 @@ export class PreviewAudioEngine {
     }
     const decoded = decodeMeterFrame(frame, this.stemOrder, this.stemChannelCounts, this.layoutChannels);
     this.stemLevels.current = decoded.stemLevels;
+    this.stemDynamics.current = decoded.stemDynamics;
+    this.stemDynamicEq.current = decoded.stemDynamicEq;
     this.stemSpectrum.current = decoded.stemSpectrum;
     this.channelLevels.current = decoded.channelLevels;
     this.headphoneLevels.current = decoded.headphoneLevels;
@@ -757,6 +760,8 @@ export class PreviewAudioEngine {
     this.context = null;
     this.disarmResumeOnGesture();
     this.stemLevels.current = new Map();
+    this.stemDynamics.current = new Map();
+    this.stemDynamicEq.current = new Map();
     this.channelLevels.current = new Map();
     this.headphoneLevels.current = { left: SILENT_METER_LEVEL, right: SILENT_METER_LEVEL };
   }

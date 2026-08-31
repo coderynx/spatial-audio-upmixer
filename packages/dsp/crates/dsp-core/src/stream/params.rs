@@ -13,6 +13,9 @@ use crate::mastering::{
 };
 use crate::routing::ambient::AMBIENT_HEIGHT_CROSSOVER_HZ;
 use crate::spatial::voicing::VoicingParams;
+use crate::stem_dynamics::StemDynamicsParams;
+use crate::stem_dynamic_eq::StemDynamicEqParams;
+use crate::stem_eq::StemEqParams;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -104,6 +107,12 @@ pub struct StemParams {
     /// Minimum-phase FIR applied before routing; empty means no stem EQ.
     #[serde(default)]
     pub eq_fir: Vec<f64>,
+    #[serde(default)]
+    pub eq: Option<StemEqParams>,
+    #[serde(default)]
+    pub dynamics: Option<StemDynamicsParams>,
+    #[serde(default)]
+    pub dynamic_eq: Option<StemDynamicEqParams>,
     /// Energy normalization across the stem's routed sends, computed against
     /// the whole stem exactly as `StemRouter.route` does.
     #[serde(default = "unit_scale")]

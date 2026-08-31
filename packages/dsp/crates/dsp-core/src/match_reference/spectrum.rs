@@ -22,7 +22,10 @@ fn gate_mask(frame_energy_db: &[f64], gate: &GateParams) -> Vec<bool> {
     if frame_energy_db.is_empty() {
         return Vec::new();
     }
-    let abs_mask: Vec<bool> = frame_energy_db.iter().map(|v| *v >= gate.absolute_db).collect();
+    let abs_mask: Vec<bool> = frame_energy_db
+        .iter()
+        .map(|v| *v >= gate.absolute_db)
+        .collect();
     if !abs_mask.iter().any(|v| *v) {
         return vec![true; frame_energy_db.len()];
     }
@@ -72,7 +75,11 @@ pub fn weighted_power_spectrum(
         .collect();
     let freqs = frame_frequencies(kept[0].0.len(), n_fft, sample_rate);
 
-    let n_frames = per_channel.iter().map(|(p, _)| p.n_frames).min().unwrap_or(0);
+    let n_frames = per_channel
+        .iter()
+        .map(|(p, _)| p.n_frames)
+        .min()
+        .unwrap_or(0);
     if n_frames == 0 {
         return (Vec::new(), Vec::new());
     }
@@ -94,13 +101,17 @@ pub fn weighted_power_spectrum(
         .collect();
     let gate = gate_mask(&gate_db, gate_params);
     let gated: Vec<usize> = (0..n_frames).filter(|i| gate[*i]).collect();
-    let selected = if gated.is_empty() { (0..n_frames).collect() } else { gated };
+    let selected = if gated.is_empty() {
+        (0..n_frames).collect()
+    } else {
+        gated
+    };
 
     let mut summed = vec![0.0; n_freqs];
     for (power, weight) in &per_channel {
         for (freq, out) in summed.iter_mut().enumerate() {
-            let mean: f64 = selected.iter().map(|&f| power.at(freq, f)).sum::<f64>()
-                / selected.len() as f64;
+            let mean: f64 =
+                selected.iter().map(|&f| power.at(freq, f)).sum::<f64>() / selected.len() as f64;
             *out += weight * mean;
         }
     }

@@ -136,7 +136,8 @@ fn object_gain_scales_the_rendered_speakers() {
         let mut engine = engine_at(true, "native", false, 0.0, gain);
         let mut out = vec![0.0; 4 * N];
         engine.render(&mut out, N);
-        out.into_iter().fold(0.0_f64, |max, sample| max.max(sample.abs()))
+        out.into_iter()
+            .fold(0.0_f64, |max, sample| max.max(sample.abs()))
     };
     assert!((peak(0.25) / peak(1.0) - 0.25).abs() < 1e-12);
 }

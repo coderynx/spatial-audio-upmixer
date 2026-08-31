@@ -93,8 +93,8 @@ mod biquad {
 }
 
 mod butter {
-    use upmixer_dsp_core::kernels::butter::*;
     use upmixer_dsp_core::kernels::biquad::Sos;
+    use upmixer_dsp_core::kernels::butter::*;
 
     #[test]
     fn lowpass_passes_dc_at_unity() {
@@ -118,12 +118,19 @@ mod butter {
         let rms = |v: &[f64]| (v.iter().map(|x| x * x).sum::<f64>() / v.len() as f64).sqrt();
 
         for order in [2usize, 4, 8] {
-            let lr = sosfilt(&linkwitz_riley_lowpass_sos(order, cutoff / (sr / 2.0)), &sine);
-            let bw = sosfilt(&butter_sos(order, cutoff / (sr / 2.0), BandType::Low), &sine);
+            let lr = sosfilt(
+                &linkwitz_riley_lowpass_sos(order, cutoff / (sr / 2.0)),
+                &sine,
+            );
+            let bw = sosfilt(
+                &butter_sos(order, cutoff / (sr / 2.0), BandType::Low),
+                &sine,
+            );
             let settled = n / 2;
             assert!((rms(&lr[settled..]) / rms(&sine[settled..]) - 0.5).abs() < 1e-3);
             assert!(
-                (rms(&bw[settled..]) / rms(&sine[settled..]) - std::f64::consts::FRAC_1_SQRT_2).abs()
+                (rms(&bw[settled..]) / rms(&sine[settled..]) - std::f64::consts::FRAC_1_SQRT_2)
+                    .abs()
                     < 1e-3
             );
         }
@@ -140,8 +147,8 @@ mod butter {
 }
 
 mod filtfilt {
-    use upmixer_dsp_core::kernels::filtfilt::*;
     use upmixer_dsp_core::kernels::butter::{butter_sos, BandType};
+    use upmixer_dsp_core::kernels::filtfilt::*;
 
     #[test]
     fn padlen_shrinks_for_first_order_sections() {
@@ -155,8 +162,19 @@ mod filtfilt {
     fn odd_ext_reflects_antisymmetrically() {
         let x = [1.0, 2.0, 4.0, 8.0];
         let e = odd_ext(&x, 2);
-        assert_eq!(e, vec![2.0 * 1.0 - 4.0, 2.0 * 1.0 - 2.0, 1.0, 2.0, 4.0, 8.0,
-                           2.0 * 8.0 - 4.0, 2.0 * 8.0 - 2.0]);
+        assert_eq!(
+            e,
+            vec![
+                2.0 * 1.0 - 4.0,
+                2.0 * 1.0 - 2.0,
+                1.0,
+                2.0,
+                4.0,
+                8.0,
+                2.0 * 8.0 - 4.0,
+                2.0 * 8.0 - 2.0
+            ]
+        );
     }
 
     #[test]
@@ -302,7 +320,9 @@ mod fft {
         // A kernel long enough that the output runs more than one block past
         // the end of the signal — the case that first broke this path.
         let signal: Vec<f64> = (0..20_000).map(|i| (i as f64 * 0.017).sin()).collect();
-        let kernel: Vec<f64> = (0..2049).map(|i| (i as f64 * 0.09).cos() / (1.0 + i as f64)).collect();
+        let kernel: Vec<f64> = (0..2049)
+            .map(|i| (i as f64 * 0.09).cos() / (1.0 + i as f64))
+            .collect();
         let got = fftconvolve(&signal, &kernel);
 
         let out_len = signal.len() + kernel.len() - 1;

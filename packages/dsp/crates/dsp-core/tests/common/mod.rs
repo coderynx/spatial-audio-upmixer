@@ -13,7 +13,11 @@ use std::path::PathBuf;
 /// the `generator_parity` case pins this against the Python original.
 pub fn deterministic_signal(n: usize, sample_rate: u32, seed_phase: f64) -> Vec<f64> {
     const TONES: [(f64, f64); 5] = [
-        (55.0, 0.30), (220.0, 0.22), (1000.0, 0.18), (3500.0, 0.12), (11000.0, 0.07),
+        (55.0, 0.30),
+        (220.0, 0.22),
+        (1000.0, 0.18),
+        (3500.0, 0.12),
+        (11000.0, 0.07),
     ];
     let two_pi = 2.0 * std::f64::consts::PI;
     (0..n)
@@ -45,8 +49,14 @@ impl Case {
             .unwrap_or_else(|e| panic!("missing fixture {}: {e}", path.display()));
         let meta: serde_json::Value =
             serde_json::from_str(&text).expect("fixture metadata is not valid JSON");
-        let tolerance = meta["tolerance"].as_f64().expect("fixture has no tolerance");
-        Self { name: name.to_string(), meta, tolerance }
+        let tolerance = meta["tolerance"]
+            .as_f64()
+            .expect("fixture has no tolerance");
+        Self {
+            name: name.to_string(),
+            meta,
+            tolerance,
+        }
     }
 
     pub fn param_f64(&self, key: &str) -> f64 {
@@ -97,7 +107,12 @@ impl Case {
     }
 
     pub fn assert_close(&self, got: &[f64], want: &[f64], what: &str) {
-        assert_eq!(got.len(), want.len(), "{}: {what} length mismatch", self.name);
+        assert_eq!(
+            got.len(),
+            want.len(),
+            "{}: {what} length mismatch",
+            self.name
+        );
         let mut worst = 0.0_f64;
         let mut worst_at = 0usize;
         for (i, (g, w)) in got.iter().zip(want.iter()).enumerate() {

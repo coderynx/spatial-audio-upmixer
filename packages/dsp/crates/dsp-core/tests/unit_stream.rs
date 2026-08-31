@@ -1,6 +1,6 @@
 mod state {
-    use upmixer_dsp_core::stream::state::*;
     use upmixer_dsp_core::kernels::biquad::lfilter;
+    use upmixer_dsp_core::stream::state::*;
 
     #[test]
     fn one_pole_matches_the_offline_lfilter() {
@@ -16,7 +16,6 @@ mod state {
             assert!((a - b).abs() < 1e-13, "sample {i}: {a} vs {b}");
         }
     }
-
 }
 
 mod meters {
@@ -47,9 +46,32 @@ mod meters {
     #[test]
     fn the_flat_block_is_stems_then_channels_then_output_then_the_master() {
         let meters = Meters {
-            stems: vec![[Level { rms: 0.1, peak: 0.2 }, Level { rms: 0.15, peak: 0.25 }]],
-            channels: vec![Level { rms: 0.3, peak: 0.4 }],
-            output: [Level { rms: 0.5, peak: 0.6 }, Level { rms: 0.7, peak: 0.8 }],
+            stems: vec![[
+                Level {
+                    rms: 0.1,
+                    peak: 0.2,
+                },
+                Level {
+                    rms: 0.15,
+                    peak: 0.25,
+                },
+            ]],
+            stem_dynamics_gr_db: vec![0.0],
+            stem_dynamic_eq_gr_db: vec![0.0],
+            channels: vec![Level {
+                rms: 0.3,
+                peak: 0.4,
+            }],
+            output: [
+                Level {
+                    rms: 0.5,
+                    peak: 0.6,
+                },
+                Level {
+                    rms: 0.7,
+                    peak: 0.8,
+                },
+            ],
             master: MasterMeters {
                 momentary_lkfs: -14.0,
                 short_term_lkfs: -16.0,
@@ -59,20 +81,21 @@ mod meters {
             },
         };
         let mut out = vec![0.0_f32; meters.len()];
-        assert_eq!(meters.write(&mut out), 15);
+        assert_eq!(meters.write(&mut out), 17);
         assert_eq!(
             out,
             vec![
-                0.1, 0.2, 0.15, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, -14.0, -16.0, 2.0, 1.0, 3.0
+                0.1, 0.2, 0.15, 0.25, 0.0, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, -14.0, -16.0, 2.0, 1.0,
+                3.0, 0.0
             ]
         );
     }
 }
 
 mod output {
+    use upmixer_dsp_core::spatial::voicing::apply_voicing;
     use upmixer_dsp_core::spatial::voicing::VoicingParams;
     use upmixer_dsp_core::stream::output::*;
-    use upmixer_dsp_core::spatial::voicing::apply_voicing;
 
     #[test]
     fn streaming_voicing_matches_the_offline_chain() {
@@ -103,11 +126,13 @@ mod output {
 }
 
 mod conv {
-    use upmixer_dsp_core::stream::conv::*;
     use upmixer_dsp_core::kernels::fft::fftconvolve;
+    use upmixer_dsp_core::stream::conv::*;
 
     fn kernel(n: usize) -> Vec<f64> {
-        (0..n).map(|i| (i as f64 * 0.37).sin() / (1.0 + i as f64)).collect()
+        (0..n)
+            .map(|i| (i as f64 * 0.37).sin() / (1.0 + i as f64))
+            .collect()
     }
 
     #[test]
@@ -184,9 +209,9 @@ mod conv {
 }
 
 mod band {
-    use upmixer_dsp_core::stream::band::*;
     use upmixer_dsp_core::kernels::butter::{butter_bandpass_sos, butter_sos, BandType};
     use upmixer_dsp_core::kernels::filtfilt::sosfiltfilt;
+    use upmixer_dsp_core::stream::band::*;
 
     fn signal(n: usize) -> Vec<f64> {
         (0..n)
@@ -200,7 +225,13 @@ mod band {
 
     /// Drive the band the way the engine does: a growing source queue, one
     /// render quantum of output at a time.
-    fn rolled(sections: Vec<[f64; 6]>, ahead: usize, chunk: usize, x: &[f64], block: usize) -> Vec<f64> {
+    fn rolled(
+        sections: Vec<[f64; 6]>,
+        ahead: usize,
+        chunk: usize,
+        x: &[f64],
+        block: usize,
+    ) -> Vec<f64> {
         let total = x.len();
         let mut band = RollingBand::new(sections, ahead, chunk, vec![0], 0);
         let mut out = Vec::with_capacity(total);
@@ -270,6 +301,10 @@ mod band {
             }
             start = end;
         }
-        assert!(worst <= 2 * owed, "a call did {worst} samples of warm-up, budget {}", 2 * owed);
+        assert!(
+            worst <= 2 * owed,
+            "a call did {worst} samples of warm-up, budget {}",
+            2 * owed
+        );
     }
 }

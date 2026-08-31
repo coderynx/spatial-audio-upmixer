@@ -115,7 +115,9 @@ impl IntegratedLoudnessMeter {
             if gate.weight == 0.0 {
                 continue;
             }
-            let Some(slice) = channel_slices.get(index) else { continue };
+            let Some(slice) = channel_slices.get(index) else {
+                continue;
+            };
             self.scratch.clear();
             gate.push(slice, &mut self.scratch);
             for (offset, value) in self.scratch.iter().enumerate() {
@@ -140,8 +142,9 @@ impl IntegratedLoudnessMeter {
             .iter()
             .map(|p| LKFS_OFFSET + 10.0 * p.max(1e-30).log10())
             .collect();
-        let above_abs: Vec<usize> =
-            (0..block_lkfs.len()).filter(|&i| block_lkfs[i] >= ABS_GATE).collect();
+        let above_abs: Vec<usize> = (0..block_lkfs.len())
+            .filter(|&i| block_lkfs[i] >= ABS_GATE)
+            .collect();
         if above_abs.is_empty() {
             return ABS_GATE;
         }
@@ -155,7 +158,11 @@ impl IntegratedLoudnessMeter {
             .copied()
             .filter(|&i| block_lkfs[i] >= ungated + REL_GATE_OFFSET)
             .collect();
-        let gated = if above_rel.is_empty() { &above_abs } else { &above_rel };
+        let gated = if above_rel.is_empty() {
+            &above_abs
+        } else {
+            &above_rel
+        };
         LKFS_OFFSET + 10.0 * mean_of(gated).max(1e-30).log10()
     }
 }
@@ -207,7 +214,9 @@ impl WindowLoudnessMeter {
         if !self.enough_for_a_block {
             return;
         }
-        let Some(frames) = channel_slices.first().map(|s| s.len()) else { return };
+        let Some(frames) = channel_slices.first().map(|s| s.len()) else {
+            return;
+        };
         if channel_slices.iter().any(|s| s.len() != frames) {
             return;
         }
@@ -216,7 +225,9 @@ impl WindowLoudnessMeter {
             if gate.weight == 0.0 {
                 continue;
             }
-            let Some(slice) = channel_slices.get(index) else { continue };
+            let Some(slice) = channel_slices.get(index) else {
+                continue;
+            };
             self.scratch.clear();
             gate.push(slice, &mut self.scratch);
             for (offset, value) in self.scratch.iter().enumerate() {
@@ -266,7 +277,10 @@ pub struct TruePeakMeter {
 impl TruePeakMeter {
     pub fn new() -> Self {
         let reach = TRUE_PEAK_FIR_4X.len().div_ceil(TRUE_PEAK_OVERSAMPLE);
-        Self { history: vec![0.0; reach], peak: 0.0 }
+        Self {
+            history: vec![0.0; reach],
+            peak: 0.0,
+        }
     }
 
     pub fn push(&mut self, samples: &[f64]) {

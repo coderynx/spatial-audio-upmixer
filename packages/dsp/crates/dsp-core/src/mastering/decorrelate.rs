@@ -80,7 +80,9 @@ fn band_edges(sample_rate: u32, p: &BassParams) -> Option<(f64, f64)> {
 /// independent pole set while the whole stage stays reproducible.
 pub fn cascade_rows(channel: usize, sample_rate: u32, p: &BassParams) -> Vec<[f64; 6]> {
     let sections = p.decorr_sections.max(1);
-    let mut rng = (channel as u64).wrapping_add(1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut rng = (channel as u64)
+        .wrapping_add(1)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let budget = p.decorr_max_delay_ms / 1000.0 * sample_rate as f64 / sections as f64;
     // Channels are staggered deterministically across the delay budget rather
     // than each drawing from one distribution. Independent draws converge on
@@ -151,8 +153,7 @@ impl Decorrelator {
             allpass: SosFilter::from_flat(&cascade_rows(channel, sample_rate, p)),
             amount,
             target_amount: amount,
-            amount_alpha: 1.0
-                - (-1.0 / (sample_rate as f64 * AMOUNT_RAMP_MS / 1000.0)).exp(),
+            amount_alpha: 1.0 - (-1.0 / (sample_rate as f64 * AMOUNT_RAMP_MS / 1000.0)).exp(),
             alpha_fast: alpha(p.decorr_fast_ms, sample_rate),
             alpha_slow: alpha(p.decorr_slow_ms, sample_rate),
             fast: 0.0,

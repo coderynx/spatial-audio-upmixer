@@ -20,7 +20,7 @@ pub(crate) fn build_route(
     sends: &SendParams,
     stem: &StemParams,
 ) -> StemRouteState {
-    let mut route = StemRouteState::new(sample_rate, sends, &stem.eq_fir);
+    let mut route = StemRouteState::new(sample_rate, sends, stem.eq.clone(), stem.dynamic_eq.clone(), stem.dynamics);
     route.set_ambient(
         sample_rate,
         sends,
@@ -32,7 +32,7 @@ pub(crate) fn build_route(
 
 /// Whether anything the per-stem routing reads has moved: the signals it
 /// builds, the speakers it sends them to, or the gains on the way.
-fn routing_changed(old: &EngineParams, new: &EngineParams, firs_changed: bool) -> bool {
+fn routing_changed(old: &EngineParams, new: &EngineParams) -> bool {
     if old.stems.len() != new.stems.len()
         || old.shapes != new.shapes
         || old
@@ -55,7 +55,8 @@ fn routing_changed(old: &EngineParams, new: &EngineParams, firs_changed: bool) -
     }
     old.stems.iter().zip(&new.stems).any(|(a, b)| {
         a.routing != b.routing
-            || (firs_changed && a.eq_fir != b.eq_fir)
+            || a.eq != b.eq
+            || a.dynamics != b.dynamics
             || a.ambient_rear != b.ambient_rear
             || a.ambient_height != b.ambient_height
             || a.ambient_height_crossover_hz != b.ambient_height_crossover_hz
@@ -130,9 +131,13 @@ impl PreviewEngine {
             route.retune(
                 self.sample_rate,
                 &self.params.sends,
-                &self.params.stems[index].eq_fir,
+                self.params.stems[index].eq.clone(),
+                self.params.stems[index].dynamic_eq.clone(),
+                self.params.stems[index].dynamics,
                 false,
                 true,
+                false,
+                false,
             );
         }
         self.clear_route_scales();
@@ -205,7 +210,7 @@ impl PreviewEngine {
         // input the routing reads is compared here rather than the whole
         // block, so a fader or a mastering edit — which change neither the
         // routed signals nor their weights — keeps the measurement.
-        let routes_changed = routing_changed(&old, &self.params, firs_changed);
+        let routes_changed = routing_changed(&old, &self.params);
         if sends_changed || routes_changed {
             self.clear_route_scales();
         }
@@ -213,21 +218,26 @@ impl PreviewEngine {
             self.stem_mix_routes = build_stem_mix_routes(&self.params, &self.panner_layout);
         }
         for (i, route) in self.routes.iter_mut().enumerate() {
-            let new_eq = self
-                .params
-                .stems
-                .get(i)
-                .map(|s| s.eq_fir.as_slice())
-                .unwrap_or(&[]);
-            let old_eq = old.stems.get(i).map(|s| s.eq_fir.as_slice()).unwrap_or(&[]);
-            let eq_changed = firs_changed && new_eq != old_eq;
-            if sends_changed || eq_changed {
+            let new_eq = self.params.stems.get(i).and_then(|s| s.eq.clone());
+            let old_eq = old.stems.get(i).and_then(|s| s.eq.clone());
+            let eq_changed = new_eq != old_eq;
+            let new_dynamics = self.params.stems.get(i).and_then(|s| s.dynamics);
+            let old_dynamics = old.stems.get(i).and_then(|s| s.dynamics);
+            let dynamics_changed = new_dynamics != old_dynamics;
+            let new_dynamic_eq = self.params.stems.get(i).and_then(|s| s.dynamic_eq.clone());
+            let old_dynamic_eq = old.stems.get(i).and_then(|s| s.dynamic_eq.clone());
+            let dynamic_eq_changed = new_dynamic_eq != old_dynamic_eq;
+            if sends_changed || eq_changed || dynamic_eq_changed || dynamics_changed {
                 route.retune(
                     self.sample_rate,
                     &self.params.sends,
                     new_eq,
+                    new_dynamic_eq,
+                    new_dynamics,
                     sends_changed,
                     eq_changed,
+                    dynamic_eq_changed,
+                    dynamics_changed,
                 );
             }
             let wants_ambient = self.params.stems.get(i).is_some_and(|s| s.wants_ambient());

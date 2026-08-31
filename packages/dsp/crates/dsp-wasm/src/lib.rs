@@ -7,10 +7,10 @@
 
 mod engine;
 mod measure;
-mod scale;
 mod offline;
 mod panner;
 mod params;
+mod scale;
 
 use std::alloc::{alloc, dealloc, Layout};
 

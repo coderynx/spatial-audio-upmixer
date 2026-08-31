@@ -43,7 +43,13 @@ pub struct RollingBand {
 }
 
 impl RollingBand {
-    pub fn new(sections: Vec<[f64; 6]>, ahead: usize, chunk: usize, channels: Vec<usize>, base: usize) -> Self {
+    pub fn new(
+        sections: Vec<[f64; 6]>,
+        ahead: usize,
+        chunk: usize,
+        channels: Vec<usize>,
+        base: usize,
+    ) -> Self {
         let pad = default_padlen(&sections);
         let chans = channels
             .iter()
@@ -179,7 +185,8 @@ impl RollingBand {
                 let x = &source[channel];
                 let head = x[offset];
                 let chan = &mut self.chans[slot];
-                chan.forward.set_step_state(2.0 * head - x[offset + self.pad]);
+                chan.forward
+                    .set_step_state(2.0 * head - x[offset + self.pad]);
                 for j in (1..=self.pad).rev() {
                     chan.forward.tick(2.0 * head - x[offset + j]);
                 }
@@ -227,7 +234,8 @@ impl RollingBand {
         let len = self.chunk.min(total - start);
         for chan in &mut self.chans {
             chan.backward = SosFilter::from_flat(&self.sections);
-            chan.backward.set_step_state(chan.fwd[hi - 1 - self.fwd_base]);
+            chan.backward
+                .set_step_state(chan.fwd[hi - 1 - self.fwd_base]);
             chan.out = vec![0.0; len];
         }
         self.cursor = Some(hi);
@@ -236,7 +244,9 @@ impl RollingBand {
 
     /// Walk the backward pass down by at most `samples`.
     fn work(&mut self, samples: usize) {
-        let Some(mut cursor) = self.cursor else { return };
+        let Some(mut cursor) = self.cursor else {
+            return;
+        };
         let start = self.chunk_start;
         let stop = cursor.saturating_sub(samples).max(start);
         let kept = start + self.chans[0].out.len();

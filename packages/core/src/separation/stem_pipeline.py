@@ -234,6 +234,18 @@ class StemUpmixPipeline:
             _log.info("  Applying per-stem EQ: %s", cfg.stem_eq_profiles)
             all_stems = StemEQ(cfg.stem_eq_profiles, sep.sep_sr).process(all_stems)
 
+        if cfg.stem_dynamic_eq:
+            from upmixer.separation.stem_dynamic_eq import StemDynamicEq
+            _progress("  Applying per-stem dynamic EQ...", 0.775)
+            _log.info("  Applying per-stem dynamic EQ: %s", cfg.stem_dynamic_eq)
+            all_stems = StemDynamicEq(cfg.stem_dynamic_eq, sep.sep_sr).process(all_stems)
+
+        if cfg.stem_dynamics:
+            from upmixer.separation.stem_dynamics import StemDynamics
+            _progress("  Applying gentle stem dynamics...", 0.78)
+            _log.info("  Applying gentle stem dynamics: %s", cfg.stem_dynamics)
+            all_stems = StemDynamics(cfg.stem_dynamics, sep.sep_sr).process(all_stems)
+
         return all_stems, n_samples
 
     def _write_delivery(

@@ -293,6 +293,8 @@ export function useStemPreview(
     toggleLoop,
     stemSpectrum: engine.stemSpectrum,
     stemLevels: engine.stemLevels,
+    stemDynamics: engine.stemDynamics,
+    stemDynamicEq: engine.stemDynamicEq,
     channelLevels: engine.channelLevels,
     headphoneLevels: engine.headphoneLevels,
     masterMeters: engine.masterMeters,

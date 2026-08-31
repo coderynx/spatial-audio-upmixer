@@ -37,8 +37,8 @@ pub fn hamming(m: usize) -> Vec<f64> {
     }
     (0..m)
         .map(|n| {
-            let fac = -std::f64::consts::PI
-                + 2.0 * std::f64::consts::PI * n as f64 / (m - 1) as f64;
+            let fac =
+                -std::f64::consts::PI + 2.0 * std::f64::consts::PI * n as f64 / (m - 1) as f64;
             0.54 + 0.46 * fac.cos()
         })
         .collect()
@@ -67,11 +67,17 @@ fn tweak_repeats(freq: &[f64], nyq: f64) -> Vec<f64> {
 /// Only the Type I/II linear-phase case is implemented — the pipeline never
 /// designs antisymmetric filters.
 pub fn firwin2(numtaps: usize, freq: &[f64], gain: &[f64]) -> Vec<f64> {
-    assert_eq!(freq.len(), gain.len(), "freq and gain must be the same length");
+    assert_eq!(
+        freq.len(),
+        gain.len(),
+        "freq and gain must be the same length"
+    );
     assert!(numtaps >= 1, "numtaps must be positive");
     let nyq = 1.0;
-    assert!(freq[0] == 0.0 && freq[freq.len() - 1] == nyq,
-            "freq must start at 0 and end at Nyquist");
+    assert!(
+        freq[0] == 0.0 && freq[freq.len() - 1] == nyq,
+        "freq must start at 0 and end at Nyquist"
+    );
 
     let nfreqs = 1 + 2usize.pow((numtaps as f64).log2().ceil() as u32);
     let freq = tweak_repeats(freq, nyq);
@@ -122,7 +128,11 @@ pub fn minimum_phase(h: &[f64]) -> Vec<f64> {
     }
 
     // Real, even half-spectrum -> real, even cepstrum.
-    let cepstrum = fft.irfft(&mag.iter().map(|v| Complex64::new(*v, 0.0)).collect::<Vec<_>>());
+    let cepstrum = fft.irfft(
+        &mag.iter()
+            .map(|v| Complex64::new(*v, 0.0))
+            .collect::<Vec<_>>(),
+    );
 
     // Homomorphic fold: double the causal half, keep DC, halve Nyquist.
     let stop = n_fft / 2;

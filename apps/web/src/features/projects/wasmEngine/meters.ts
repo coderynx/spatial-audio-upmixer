@@ -28,6 +28,8 @@ export const SILENT_MASTER_METERS: MasterMeters = {
 
 export type DecodedMeters = {
   stemLevels: Map<string, MeterLevel[]>;
+  stemDynamics: Map<string, number>;
+  stemDynamicEq: Map<string, number>;
   stemSpectrum: Map<string, StemSpectrum>;
   channelLevels: Map<string, MeterLevel>;
   headphoneLevels: { left: MeterLevel; right: MeterLevel };
@@ -48,6 +50,8 @@ export function decodeMeterFrame(
   const meters = frame.meters;
   const stemCount = stemOrder.length;
   const stemLevels = new Map<string, MeterLevel[]>();
+  const stemDynamics = new Map<string, number>();
+  const stemDynamicEq = new Map<string, number>();
   const stemSpectrum = new Map<string, StemSpectrum>();
   for (let i = 0; i < stemCount; i += 1) {
     const o = i * 4;
@@ -61,16 +65,22 @@ export function decodeMeterFrame(
     });
   }
 
+  const dynamicsBase = stemCount * 4;
+  for (let i = 0; i < stemCount; i += 1) stemDynamics.set(stemOrder[i], meters[dynamicsBase + i] ?? 0);
   const channelLevels = new Map<string, MeterLevel>();
-  const base = stemCount * 4;
+  const base = dynamicsBase + stemCount;
   for (let i = 0; i < channels.length; i += 1) {
     channelLevels.set(channels[i], level(meters[base + i * 2] ?? 0, meters[base + i * 2 + 1] ?? 0));
   }
 
   const outBase = base + channels.length * 2;
   const masterBase = outBase + 4;
+  const dynamicEqBase = masterBase + 5;
+  for (let i = 0; i < stemCount; i += 1) stemDynamicEq.set(stemOrder[i], meters[dynamicEqBase + i] ?? 0);
   return {
     stemLevels,
+    stemDynamics,
+    stemDynamicEq,
     stemSpectrum,
     channelLevels,
     headphoneLevels: {

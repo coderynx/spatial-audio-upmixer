@@ -4,8 +4,11 @@ mod common;
 
 use common::Case;
 use upmixer_dsp_core::kernels::{
-    biquad, butter::{butter_sos, BandType}, filtfilt, fir_design,
-    minfilter::{self, BorderMode}, upfirdn,
+    biquad,
+    butter::{butter_sos, BandType},
+    filtfilt, fir_design,
+    minfilter::{self, BorderMode},
+    upfirdn,
 };
 
 fn band(name: &str) -> BandType {
@@ -35,7 +38,11 @@ fn butter_coefficients_match_scipy() {
         "butter_5_low_0p15",
     ] {
         let c = Case::load(name);
-        let got = butter_sos(c.param_usize("order"), c.param_f64("wn"), band(&c.param_str("btype")));
+        let got = butter_sos(
+            c.param_usize("order"),
+            c.param_f64("wn"),
+            band(&c.param_str("btype")),
+        );
         c.assert_close(&flatten(&got), &c.array("sos"), "sos");
     }
 }
@@ -60,7 +67,11 @@ fn butter_bandpass_coefficients_match_scipy() {
 
 #[test]
 fn sosfilt_matches_scipy() {
-    for name in ["sosfilt_2_low_0p05", "sosfilt_4_low_0p005", "sosfilt_2_high_0p125"] {
+    for name in [
+        "sosfilt_2_low_0p05",
+        "sosfilt_4_low_0p005",
+        "sosfilt_2_high_0p125",
+    ] {
         let c = Case::load(name);
         let got = biquad::sosfilt(&c.sos("sos"), &c.array("input"));
         c.assert_close(&got, &c.array("output"), "filtered signal");
@@ -69,7 +80,11 @@ fn sosfilt_matches_scipy() {
 
 #[test]
 fn sosfilt_zi_matches_scipy() {
-    for name in ["sosfilt_2_low_0p05_zi", "sosfilt_4_low_0p005_zi", "sosfilt_2_high_0p125_zi"] {
+    for name in [
+        "sosfilt_2_low_0p05_zi",
+        "sosfilt_4_low_0p005_zi",
+        "sosfilt_2_high_0p125_zi",
+    ] {
         let c = Case::load(name);
         let got: Vec<f64> = biquad::sosfilt_zi(&c.sos("sos"))
             .iter()
@@ -81,7 +96,11 @@ fn sosfilt_zi_matches_scipy() {
 
 #[test]
 fn sosfiltfilt_matches_scipy() {
-    for name in ["sosfiltfilt_n4096_o2", "sosfiltfilt_n513_o4", "sosfiltfilt_n37_o2"] {
+    for name in [
+        "sosfiltfilt_n4096_o2",
+        "sosfiltfilt_n513_o4",
+        "sosfiltfilt_n37_o2",
+    ] {
         let c = Case::load(name);
         let sos = c.sos("sos");
         let input = c.array("input");
@@ -99,12 +118,20 @@ fn sosfiltfilt_declines_signals_scipy_would_reject() {
     let sos = c.sos("sos");
     let input = c.array("input");
     assert!(filtfilt::sosfiltfilt(&sos, &input).is_none());
-    c.assert_close(&biquad::sosfilt(&sos, &input), &c.array("output"), "forward-only fallback");
+    c.assert_close(
+        &biquad::sosfilt(&sos, &input),
+        &c.array("output"),
+        "forward-only fallback",
+    );
 }
 
 #[test]
 fn lfilter_matches_scipy() {
-    for name in ["lfilter_onepole_0p001", "lfilter_onepole_0p05", "lfilter_onepole_0p5"] {
+    for name in [
+        "lfilter_onepole_0p001",
+        "lfilter_onepole_0p05",
+        "lfilter_onepole_0p5",
+    ] {
         let c = Case::load(name);
         let alpha = c.param_f64("alpha");
         let got = biquad::lfilter(&[alpha], &[1.0, -(1.0 - alpha)], &c.array("input"));

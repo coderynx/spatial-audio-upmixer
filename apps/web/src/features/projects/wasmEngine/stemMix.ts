@@ -2,13 +2,16 @@ import type { ProjectStem, StemScene } from "@/api";
 import type { EngineConstants } from "../masteringProfiles";
 import { estimateRouteScale } from "../masteringProfiles";
 import type { StemMix } from "./engineParams";
+import type { StemDynamicEqSettings, StemDynamicsSettings, StemEqSettings } from "@/lib/manifest";
 
 export type MixPreviewShape = {
   stem_routing?: Record<string, Record<string, number>>;
   stem_rebalance?: Record<string, number>;
   stem_enabled?: Record<string, boolean>;
   stem_solo?: string[];
-  stem_eq?: Record<string, string>;
+  stem_eq?: Record<string, string | StemEqSettings>;
+  stem_dynamic_eq?: Record<string, StemDynamicEqSettings>;
+  stem_dynamics?: Record<string, StemDynamicsSettings>;
   stem_ambient_rear?: Record<string, number>;
   stem_ambient_height?: Record<string, number>;
   stem_ambient_height_crossover_hz?: Record<string, number>;
@@ -74,13 +77,25 @@ export function resolveStemMixes(options: {
     const objectMetadata = mix?.stem_object_metadata?.[stem.stem_key]
       ?? mix?.stem_object_metadata?.[base];
 
+    const storedEq = mix?.stem_eq?.[stem.stem_key] ?? mix?.stem_eq?.[base];
+    const preset = typeof storedEq === "string" ? constants.stemEqSettings[storedEq] : storedEq?.preset ? constants.stemEqSettings[storedEq.preset] : undefined;
+    const eq = storedEq && typeof storedEq === "object" ? {
+      ...preset, ...storedEq,
+      highpass: { ...preset?.highpass, ...storedEq.highpass }, low_shelf: { ...preset?.low_shelf, ...storedEq.low_shelf },
+      bell_1: { ...preset?.bell_1, ...storedEq.bell_1 }, bell_2: { ...preset?.bell_2, ...storedEq.bell_2 },
+      high_shelf: { ...preset?.high_shelf, ...storedEq.high_shelf }, lowpass: { ...preset?.lowpass, ...storedEq.lowpass },
+    } : preset;
+    const dynamics = mix?.stem_dynamics?.[stem.stem_key] ?? mix?.stem_dynamics?.[base];
+    const dynamicEq = mix?.stem_dynamic_eq?.[stem.stem_key] ?? mix?.stem_dynamic_eq?.[base];
     const anchorDb = 20 * Math.log10(Math.max(1 - anchor * frontFraction, 1e-6));
     return {
       id: stem.id,
       routing,
       rebalanceDb: (mix?.stem_rebalance?.[base] || 0) + anchorDb,
       enabled,
-      eqFir: stemEqTaps.get(stem.stem_key),
+      eq,
+      dynamics,
+      dynamicEq,
       routeScale: estimateRouteScale(routing, constants.channelGains),
       ambientRear: send(mix?.stem_ambient_rear),
       ambientHeight: send(mix?.stem_ambient_height),

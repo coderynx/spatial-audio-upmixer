@@ -140,8 +140,12 @@ fn assert_same(a: &[Vec<f64>], b: &[Vec<f64>], tolerance: f64, what: &str) {
 fn routing_output_is_independent_of_block_size() {
     let reference = render_in_blocks(N, false);
     for block in [128usize, 512, 4096] {
-        assert_same(&render_in_blocks(block, false), &reference, 1e-9,
-                    &format!("routing at block {block}"));
+        assert_same(
+            &render_in_blocks(block, false),
+            &reference,
+            1e-9,
+            &format!("routing at block {block}"),
+        );
     }
 }
 
@@ -155,8 +159,12 @@ fn full_chain_output_is_independent_of_block_size() {
     // 128 is the Web Audio render quantum; the others check that nothing in
     // the two look-ahead queues depends on a particular block length.
     for block in [128usize, 333, 4096] {
-        assert_same(&render_in_blocks(block, true), &reference, 1e-8,
-                    &format!("full chain at block {block}"));
+        assert_same(
+            &render_in_blocks(block, true),
+            &reference,
+            1e-8,
+            &format!("full chain at block {block}"),
+        );
     }
 }
 
@@ -179,6 +187,7 @@ fn streaming_mastering_matches_the_offline_chain() {
                 q: 2.0,
                 threshold_db: -34.0,
                 ratio: 4.0,
+                max_cut_db: f64::INFINITY,
                 attack_ms: 10.0,
                 release_ms: 150.0,
             },
@@ -187,12 +196,16 @@ fn streaming_mastering_matches_the_offline_chain() {
                 q: 1.4,
                 threshold_db: -38.0,
                 ratio: 2.5,
+                max_cut_db: f64::INFINITY,
                 attack_ms: 30.0,
                 release_ms: 250.0,
             },
         ],
     );
-    assert!(cuts.iter().all(|c| *c > 0.5), "both bands should engage: {cuts:?}");
+    assert!(
+        cuts.iter().all(|c| *c > 0.5),
+        "both bands should engage: {cuts:?}"
+    );
     bus_compress(
         &mut offline,
         lfe,
@@ -235,7 +248,15 @@ fn streaming_mastering_matches_the_offline_chain() {
             decorr_slow_ms: 300.0,
         },
     );
-    soft_clip(&mut offline, lfe, &ClipParams { ceiling_dbtp: -1.0, clip_db: 1.0, knee: 0.8 });
+    soft_clip(
+        &mut offline,
+        lfe,
+        &ClipParams {
+            ceiling_dbtp: -1.0,
+            clip_db: 1.0,
+            knee: 0.8,
+        },
+    );
     lookahead_limit(
         &mut offline,
         lfe,
@@ -248,16 +269,25 @@ fn streaming_mastering_matches_the_offline_chain() {
         },
     );
 
-    assert_same(&render_in_blocks(128, true), &offline, 1e-6, "streaming vs offline mastering");
+    assert_same(
+        &render_in_blocks(128, true),
+        &offline,
+        1e-6,
+        "streaming vs offline mastering",
+    );
 }
 
 /// Swap the collapse stage in without changing anything else.
 fn params_with_mode(mode: &str) -> String {
-    params_json(true).replace(r#""output_mode": "native""#, &format!(r#""output_mode": "{mode}""#))
+    params_json(true).replace(
+        r#""output_mode": "native""#,
+        &format!(r#""output_mode": "{mode}""#),
+    )
 }
 
 fn render_mode(mode: &str, block: usize) -> Vec<Vec<f64>> {
-    let params: EngineParams = serde_json::from_str(&params_with_mode(mode)).expect("engine params");
+    let params: EngineParams =
+        serde_json::from_str(&params_with_mode(mode)).expect("engine params");
     let bed_channels = params.speakers.len();
     let mut engine = PreviewEngine::new(SR, params, stems());
     let out_channels = engine.output_channels();
@@ -280,8 +310,16 @@ fn render_mode(mode: &str, block: usize) -> Vec<Vec<f64>> {
 fn stereo_collapse_is_two_channels_and_block_size_independent() {
     let reference = render_mode("stereo", N);
     assert_eq!(reference.len(), 2);
-    assert!(reference[0].iter().any(|v| v.abs() > 1e-6), "downmix should carry signal");
-    assert_same(&render_mode("stereo", 128), &reference, 1e-8, "stereo downmix");
+    assert!(
+        reference[0].iter().any(|v| v.abs() > 1e-6),
+        "downmix should carry signal"
+    );
+    assert_same(
+        &render_mode("stereo", 128),
+        &reference,
+        1e-8,
+        "stereo downmix",
+    );
 }
 
 #[test]
@@ -312,14 +350,18 @@ fn binaural_collapse_is_two_channels_and_block_size_independent() {
                 break;
             }
             for channel in 0..2 {
-                out[channel].extend_from_slice(&scratch[channel * block..channel * block + written]);
+                out[channel]
+                    .extend_from_slice(&scratch[channel * block..channel * block + written]);
             }
         }
         out
     };
 
     let reference = render(N);
-    assert!(reference[0].iter().any(|v| v.abs() > 1e-6), "binaural should carry signal");
+    assert!(
+        reference[0].iter().any(|v| v.abs() > 1e-6),
+        "binaural should carry signal"
+    );
     assert_same(&render(128), &reference, 1e-8, "binaural collapse");
 }
 
@@ -343,7 +385,10 @@ fn transaural_collapse_with_decode_and_xtc_is_block_size_independent() {
         r#""output_mode""#,
         &format!(
             r#""decode_taps": [{taps}], "xtc_taps": [{}], "output_mode""#,
-            xtc.iter().map(ToString::to_string).collect::<Vec<_>>().join(","),
+            xtc.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
         ),
     );
     let render = |params_json: &str, block: usize| -> Vec<Vec<f64>> {
@@ -358,7 +403,8 @@ fn transaural_collapse_with_decode_and_xtc_is_block_size_independent() {
                 break;
             }
             for channel in 0..2 {
-                out[channel].extend_from_slice(&scratch[channel * block..channel * block + written]);
+                out[channel]
+                    .extend_from_slice(&scratch[channel * block..channel * block + written]);
             }
         }
         out
@@ -367,12 +413,28 @@ fn transaural_collapse_with_decode_and_xtc_is_block_size_independent() {
     let binaural = render(&binaural_params, N);
     let transaural = render(&transaural_params, N);
     for i in 0..N {
-        let expected_left = if i > 0 { 1.25 * binaural[0][i - 1] } else { 0.0 }
-            + if i > 1 { -0.5 * binaural[1][i - 2] } else { 0.0 };
-        let expected_right = if i > 2 { 0.75 * binaural[0][i - 3] } else { 0.0 }
-            + 1.5 * binaural[1][i];
-        assert!((transaural[0][i] - expected_left).abs() <= 1e-8, "LL/LR at {i}");
-        assert!((transaural[1][i] - expected_right).abs() <= 1e-8, "RL/RR at {i}");
+        let expected_left = if i > 0 {
+            1.25 * binaural[0][i - 1]
+        } else {
+            0.0
+        } + if i > 1 {
+            -0.5 * binaural[1][i - 2]
+        } else {
+            0.0
+        };
+        let expected_right = if i > 2 {
+            0.75 * binaural[0][i - 3]
+        } else {
+            0.0
+        } + 1.5 * binaural[1][i];
+        assert!(
+            (transaural[0][i] - expected_left).abs() <= 1e-8,
+            "LL/LR at {i}"
+        );
+        assert!(
+            (transaural[1][i] - expected_right).abs() <= 1e-8,
+            "RL/RR at {i}"
+        );
     }
     assert_same(
         &render(&transaural_params, 128),
@@ -389,8 +451,14 @@ fn measuring_leaves_the_transport_where_it_found_it() {
     let mut engine = PreviewEngine::new(SR, params, stems());
 
     let (lkfs, dbtp) = engine.measure(&[1.0, 1.0]);
-    assert!(lkfs > -70.0, "the fixture should be measurable, got {lkfs} LKFS");
-    assert!(dbtp > -120.0 && dbtp < 6.0, "implausible true peak {dbtp} dBTP");
+    assert!(
+        lkfs > -70.0,
+        "the fixture should be measurable, got {lkfs} LKFS"
+    );
+    assert!(
+        dbtp > -120.0 && dbtp < 6.0,
+        "implausible true peak {dbtp} dBTP"
+    );
     assert_eq!(engine.position(), 0, "measuring must rewind");
 
     // Measuring twice must agree; a carried filter state would show up here.
@@ -427,7 +495,12 @@ fn seeking_resumes_the_same_audio_the_first_pass_produced() {
     // straight play-through produces there.
     for i in 0..block {
         let diff = (scratch[i] - straight[target + i]).abs();
-        assert!(diff < 1e-6, "sample {i} after seek: {} vs {}", scratch[i], straight[target + i]);
+        assert!(
+            diff < 1e-6,
+            "sample {i} after seek: {} vs {}",
+            scratch[i],
+            straight[target + i]
+        );
     }
 }
 
@@ -441,14 +514,23 @@ fn seeking_to_the_top_silences_the_stale_meters_a_straight_seek_would_leave() {
     let mut engine = PreviewEngine::new(SR, params, stems());
     let mut scratch = vec![0.0; n_channels * 4096];
     engine.render(&mut scratch, 4096);
-    assert!(engine.meters().output[0].peak > 0.0, "should be playing something first");
+    assert!(
+        engine.meters().output[0].peak > 0.0,
+        "should be playing something first"
+    );
 
     engine.seek(0);
 
     let meters = engine.meters();
-    assert!(meters.stems.iter().all(|pair| pair[0].peak == 0.0 && pair[1].peak == 0.0));
+    assert!(meters
+        .stems
+        .iter()
+        .all(|pair| pair[0].peak == 0.0 && pair[1].peak == 0.0));
     assert!(meters.channels.iter().all(|level| level.peak == 0.0));
-    assert!(meters.output.iter().all(|level| level.peak == 0.0 && level.rms == 0.0));
+    assert!(meters
+        .output
+        .iter()
+        .all(|level| level.peak == 0.0 && level.rms == 0.0));
 }
 
 #[test]
@@ -463,7 +545,10 @@ fn stem_spectrum_registers_a_playing_stem_and_silences_a_disabled_one() {
     assert_eq!(spectrum.len(), 2, "one (level, centroid) pair per stem");
     for &(level, centroid) in &spectrum {
         assert!(level > 0.0 && level <= 1.0, "level {level} out of range");
-        assert!((0.0..=1.0).contains(&centroid), "centroid {centroid} out of range");
+        assert!(
+            (0.0..=1.0).contains(&centroid),
+            "centroid {centroid} out of range"
+        );
     }
 
     let muted = params_json(false).replace(
@@ -491,7 +576,10 @@ fn meters_track_the_emitted_block() {
     assert_eq!(meters.stems.len(), 2, "one left/right pair per stem");
     assert_eq!(meters.channels.len(), n_channels);
     assert!(
-        meters.stems.iter().all(|pair| pair[0].peak > 0.0 && pair[1].peak > 0.0),
+        meters
+            .stems
+            .iter()
+            .all(|pair| pair[0].peak > 0.0 && pair[1].peak > 0.0),
         "both channels of every stem should register"
     );
     assert!(meters.channels[0].peak > 0.0, "FL should register");
@@ -518,7 +606,10 @@ fn disabling_a_stem_through_update_params_silences_it_without_a_reload() {
     engine.render(&mut scratch, 512);
     assert_eq!(engine.meters().stems[0][0].peak, 0.0);
     assert_eq!(engine.meters().stems[0][1].peak, 0.0);
-    assert!(engine.meters().stems[1][0].peak > 0.0, "the other stem keeps playing");
+    assert!(
+        engine.meters().stems[1][0].peak > 0.0,
+        "the other stem keeps playing"
+    );
 }
 
 #[test]
@@ -547,9 +638,16 @@ fn update_params_mid_playback_never_starves_the_next_quantum() {
     );
     engine.update_params(serde_json::from_str(&muted).expect("engine params"));
 
-    assert_eq!(engine.position(), position_before, "update_params must not move the playhead");
+    assert_eq!(
+        engine.position(),
+        position_before,
+        "update_params must not move the playhead"
+    );
     let written = engine.render(&mut scratch, 128);
-    assert_eq!(written, 128, "the quantum right after a param update must not come back short");
+    assert_eq!(
+        written, 128,
+        "the quantum right after a param update must not come back short"
+    );
     assert_eq!(engine.position(), position_before + 128);
 }
 
@@ -570,7 +668,10 @@ fn update_params_with_unchanged_params_is_a_true_no_op() {
     let mut scratch_b = vec![0.0; n_channels * 512];
     untouched.render(&mut scratch_a, 512);
     touched.render(&mut scratch_b, 512);
-    assert_eq!(scratch_a, scratch_b, "identical construction should render identically");
+    assert_eq!(
+        scratch_a, scratch_b,
+        "identical construction should render identically"
+    );
 
     touched.update_params(serde_json::from_str(&params_json(true)).expect("engine params"));
 
@@ -578,8 +679,15 @@ fn update_params_with_unchanged_params_is_a_true_no_op() {
         let wa = untouched.render(&mut scratch_a, 512);
         let wb = touched.render(&mut scratch_b, 512);
         assert_eq!(wa, wb);
-        for (i, (a, b)) in scratch_a[..wa * n_channels].iter().zip(&scratch_b[..wb * n_channels]).enumerate() {
-            assert!((a - b).abs() < 1e-12, "sample {i} diverged after a no-op update_params: {a} vs {b}");
+        for (i, (a, b)) in scratch_a[..wa * n_channels]
+            .iter()
+            .zip(&scratch_b[..wb * n_channels])
+            .enumerate()
+        {
+            assert!(
+                (a - b).abs() < 1e-12,
+                "sample {i} diverged after a no-op update_params: {a} vs {b}"
+            );
         }
     }
 }
@@ -595,8 +703,14 @@ fn clearing_the_limiter_through_update_params_actually_removes_it() {
     let hot_params = params_json(true)
         // The clipper caps at a ceiling of its own, which would hold the peak
         // down after the limiter goes; this test is about the limiter.
-        .replace(r#""clip": {"ceiling_dbtp": -1.0, "clip_db": 1.0, "knee": 0.8},"#, "")
-        .replace(r#""rebalance_db": 0.0, "enabled": true"#, r#""rebalance_db": 24.0, "enabled": true"#)
+        .replace(
+            r#""clip": {"ceiling_dbtp": -1.0, "clip_db": 1.0, "knee": 0.8},"#,
+            "",
+        )
+        .replace(
+            r#""rebalance_db": 0.0, "enabled": true"#,
+            r#""rebalance_db": 24.0, "enabled": true"#,
+        )
         .replace(r#""ceiling_dbtp": -1.0"#, r#""ceiling_dbtp": -6.0"#);
     let params: EngineParams = serde_json::from_str(&hot_params).expect("engine params");
     let n_channels = params.speakers.len();
@@ -604,7 +718,9 @@ fn clearing_the_limiter_through_update_params_actually_removes_it() {
     let mut scratch = vec![0.0; n_channels * 4096];
 
     engine.render(&mut scratch, 4096);
-    let limited_peak = engine.meters().output[0].peak.max(engine.meters().output[1].peak);
+    let limited_peak = engine.meters().output[0]
+        .peak
+        .max(engine.meters().output[1].peak);
     assert!(
         limited_peak <= ceiling_linear + 1e-3,
         "limiter should hold the boosted signal at its ceiling, got {limited_peak}"
@@ -622,7 +738,9 @@ fn clearing_the_limiter_through_update_params_actually_removes_it() {
     for _ in 0..6 {
         engine.render(&mut scratch, 4096);
     }
-    let unlimited_peak = engine.meters().output[0].peak.max(engine.meters().output[1].peak);
+    let unlimited_peak = engine.meters().output[0]
+        .peak
+        .max(engine.meters().output[1].peak);
     assert!(
         unlimited_peak > ceiling_linear + 0.05,
         "removing the limiter should free the peak above its old ceiling, got {unlimited_peak}"

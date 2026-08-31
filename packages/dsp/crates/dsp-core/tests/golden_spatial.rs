@@ -15,7 +15,10 @@ fn stereo_pair(c: &Case) -> (Vec<f64>, Vec<f64>) {
     let phases = c.param_f64_list("seed_phases");
     let scale = c.param_f64("scale");
     let make = |phase: f64| -> Vec<f64> {
-        deterministic_signal(n, sr, phase).iter().map(|v| v * scale).collect()
+        deterministic_signal(n, sr, phase)
+            .iter()
+            .map(|v| v * scale)
+            .collect()
     };
     (make(phases[0]), make(phases[1]))
 }
@@ -24,7 +27,10 @@ fn stereo_pair(c: &Case) -> (Vec<f64>, Vec<f64>) {
 fn ambisonic_encode_gains_match_python() {
     let c = Case::load("ambi_encode");
     let mut got = Vec::new();
-    for entry in c.meta["params"]["directions"].as_array().expect("direction list") {
+    for entry in c.meta["params"]["directions"]
+        .as_array()
+        .expect("direction list")
+    {
         let pair = entry.as_array().expect("azimuth/elevation pair");
         got.extend_from_slice(&ambisonics::encode_gains(
             pair[0].as_f64().expect("azimuth"),
@@ -36,8 +42,12 @@ fn ambisonic_encode_gains_match_python() {
 
 #[test]
 fn voicing_matches_python_for_every_profile() {
-    for name in ["voicing_studio", "voicing_listening", "voicing_flat",
-                 "voicing_transaural_stereo"] {
+    for name in [
+        "voicing_studio",
+        "voicing_listening",
+        "voicing_flat",
+        "voicing_transaural_stereo",
+    ] {
         let c = Case::load(name);
         let (left, right) = stereo_pair(&c);
         let p = VoicingParams {
@@ -79,7 +89,10 @@ fn binaural_decode_matches_python() {
     let mut hoa = HoaBus::new(n);
     for (i, channel) in hoa.channels.iter_mut().enumerate() {
         let scale = 0.1 + 0.02 * i as f64;
-        *channel = deterministic_signal(n, sr, i as f64).iter().map(|v| v * scale).collect();
+        *channel = deterministic_signal(n, sr, i as f64)
+            .iter()
+            .map(|v| v * scale)
+            .collect();
     }
     let (got_l, got_r) = ambisonics::decode_to_binaural(&hoa, &DecodeFilterSet { taps });
     c.assert_close(&got_l, &c.array("left"), "decoded left");
@@ -93,7 +106,9 @@ fn crosstalk_matrix_matches_python() {
     let n_taps = c.param_usize("n_taps");
     let flat = c.array("taps");
     let tap = |i: usize| flat[i * n_taps..(i + 1) * n_taps].to_vec();
-    let filters = XtcFilterSet { taps: [[tap(0), tap(1)], [tap(2), tap(3)]] };
+    let filters = XtcFilterSet {
+        taps: [[tap(0), tap(1)], [tap(2), tap(3)]],
+    };
 
     let (got_l, got_r) = apply_xtc(&left, &right, &filters);
     c.assert_close(&got_l, &c.array("left"), "crosstalk left");

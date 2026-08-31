@@ -44,7 +44,9 @@ pub struct HoaBus {
 
 impl HoaBus {
     pub fn new(n_samples: usize) -> Self {
-        Self { channels: vec![vec![0.0; n_samples]; N_ACN_CHANNELS] }
+        Self {
+            channels: vec![vec![0.0; n_samples]; N_ACN_CHANNELS],
+        }
     }
 
     /// Encode one speaker feed at a fixed direction and sum it in.
@@ -71,8 +73,16 @@ pub struct DecodeFilterSet {
 
 /// Convolve the HOA bus to stereo, trimmed to the input length.
 pub fn decode_to_binaural(hoa: &HoaBus, filters: &DecodeFilterSet) -> (Vec<f64>, Vec<f64>) {
-    assert_eq!(hoa.channels.len(), N_ACN_CHANNELS, "unexpected HOA channel count");
-    assert_eq!(filters.taps.len(), N_ACN_CHANNELS, "unexpected decode filter count");
+    assert_eq!(
+        hoa.channels.len(),
+        N_ACN_CHANNELS,
+        "unexpected HOA channel count"
+    );
+    assert_eq!(
+        filters.taps.len(),
+        N_ACN_CHANNELS,
+        "unexpected decode filter count"
+    );
     let n_samples = hoa.channels[0].len();
     let mut left = vec![0.0; n_samples];
     let mut right = vec![0.0; n_samples];

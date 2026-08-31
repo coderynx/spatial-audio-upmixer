@@ -78,7 +78,10 @@ fn gain_curve(
         }
         let upsampled = upfirdn_up(&TRUE_PEAK_FIR_4X, &channel[..length], TRUE_PEAK_OVERSAMPLE);
         let span = length * TRUE_PEAK_OVERSAMPLE;
-        for (dst, src) in envelope[..span].iter_mut().zip(&upsampled[FIR_DELAY..FIR_DELAY + span]) {
+        for (dst, src) in envelope[..span]
+            .iter_mut()
+            .zip(&upsampled[FIR_DELAY..FIR_DELAY + span])
+        {
             *dst = (*dst).max(src.abs());
         }
     }

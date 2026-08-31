@@ -86,7 +86,11 @@ impl MeasurementPass {
         let span = count * excerpt_frames;
 
         let schedule = if span >= total {
-            vec![Excerpt { start: 0, end: total, preroll: 0 }]
+            vec![Excerpt {
+                start: 0,
+                end: total,
+                preroll: 0,
+            }]
         } else {
             let stride = total / count;
             (0..count)
@@ -94,7 +98,11 @@ impl MeasurementPass {
                     let start = i * stride;
                     let end = (start + excerpt_frames).min(total);
                     let preroll = preroll_frames.min(start);
-                    Excerpt { start, end, preroll }
+                    Excerpt {
+                        start,
+                        end,
+                        preroll,
+                    }
                 })
                 .collect()
         };
@@ -110,13 +118,15 @@ impl MeasurementPass {
         }
         let channels = engine.output_channels();
         let sample_rate = engine.sample_rate();
-        let monitor = live.measurement_monitor_stage().map(|output| MonitorMeasurement {
-            output,
-            loudness: IntegratedLoudnessMeter::new(&[1.0, 1.0], sample_rate),
-            peaks: (0..2).map(|_| TruePeakMeter::new()).collect(),
-            bed: vec![Vec::new(); channels],
-            rendered: vec![Vec::new(); 2],
-        });
+        let monitor = live
+            .measurement_monitor_stage()
+            .map(|output| MonitorMeasurement {
+                output,
+                loudness: IntegratedLoudnessMeter::new(&[1.0, 1.0], sample_rate),
+                peaks: (0..2).map(|_| TruePeakMeter::new()).collect(),
+                bed: vec![Vec::new(); channels],
+                rendered: vec![Vec::new(); 2],
+            });
         let fold = engine.measurement_fold();
         let meter_weights: Vec<f64> = match &fold {
             Some(_) => FOLD_51_WEIGHTS.to_vec(),
@@ -147,8 +157,11 @@ impl MeasurementPass {
     /// excerpt, cold, with `skip` armed to the excerpt's preroll so the next
     /// `advance` calls render and discard warm-up before anything is measured.
     fn enter_current_excerpt(&mut self) {
-        let Some(excerpt) = self.schedule.get(self.excerpt_index) else { return };
-        self.engine.jump_to(excerpt.start.saturating_sub(excerpt.preroll));
+        let Some(excerpt) = self.schedule.get(self.excerpt_index) else {
+            return;
+        };
+        self.engine
+            .jump_to(excerpt.start.saturating_sub(excerpt.preroll));
         if let Some(monitor) = &mut self.monitor {
             monitor.output.reset();
         }
@@ -182,7 +195,9 @@ impl MeasurementPass {
             if let Some(monitor) = &mut self.monitor {
                 for (channel, bed) in monitor.bed.iter_mut().enumerate() {
                     bed.clear();
-                    bed.extend_from_slice(&self.scratch[channel * frames..channel * frames + written]);
+                    bed.extend_from_slice(
+                        &self.scratch[channel * frames..channel * frames + written],
+                    );
                 }
                 monitor
                     .output
@@ -206,8 +221,7 @@ impl MeasurementPass {
                 match &self.fold {
                     Some(fold) => {
                         fold.apply(&slices, written - skip, &mut self.folded);
-                        let refs: Vec<&[f64]> =
-                            self.folded.iter().map(|c| c.as_slice()).collect();
+                        let refs: Vec<&[f64]> = self.folded.iter().map(|c| c.as_slice()).collect();
                         self.loudness.push(&refs);
                     }
                     None => self.loudness.push(&slices),
@@ -237,14 +251,15 @@ impl MeasurementPass {
             let peaks: Vec<f64> = self.peaks.iter_mut().map(|m| m.finish()).collect();
             let lkfs = self.loudness.finish();
             let dbtp = true_peak_dbtp(&peaks);
-            let (monitor_lkfs, monitor_dbtp) = self.monitor.as_mut().map_or(
-                (lkfs, dbtp),
-                |monitor| {
-                    let peaks: Vec<f64> =
-                        monitor.peaks.iter_mut().map(|meter| meter.finish()).collect();
+            let (monitor_lkfs, monitor_dbtp) =
+                self.monitor.as_mut().map_or((lkfs, dbtp), |monitor| {
+                    let peaks: Vec<f64> = monitor
+                        .peaks
+                        .iter_mut()
+                        .map(|meter| meter.finish())
+                        .collect();
                     (monitor.loudness.finish(), true_peak_dbtp(&peaks))
-                },
-            );
+                });
             self.result = Some([lkfs, dbtp, monitor_lkfs, monitor_dbtp]);
         }
         self.result

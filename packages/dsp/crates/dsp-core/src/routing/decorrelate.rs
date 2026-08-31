@@ -142,7 +142,10 @@ impl VelvetLine {
         for &(delay, gain) in &self.taps {
             let start = (self.write + capacity - delay) & mask;
             let head = (capacity - start).min(n);
-            for (o, r) in signal[..head].iter_mut().zip(&self.ring[start..start + head]) {
+            for (o, r) in signal[..head]
+                .iter_mut()
+                .zip(&self.ring[start..start + head])
+            {
                 *o += gain * r;
             }
             for (o, r) in signal[head..].iter_mut().zip(&self.ring[..n - head]) {
@@ -167,7 +170,10 @@ pub fn velvet_pair(
     let n = (sample_rate as f64 * length_ms / 1000.0).round() as usize;
     let wet = wet.clamp(0.0, 1.0);
     if n < 2 || taps == 0 || wet == 0.0 {
-        let unit = VelvetFir { taps: vec![(0, 1.0)], span: 0 };
+        let unit = VelvetFir {
+            taps: vec![(0, 1.0)],
+            span: 0,
+        };
         return (unit.clone(), unit);
     }
 

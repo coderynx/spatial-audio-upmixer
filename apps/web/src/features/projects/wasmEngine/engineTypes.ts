@@ -1,4 +1,5 @@
 import { speakerCoordinates } from "@/lib/spatial";
+import type { StemDynamicEqSettings, StemDynamicsSettings, StemEqSettings } from "@/lib/manifest";
 
 export type EngineRef<T> = { current: T };
 
@@ -13,7 +14,9 @@ export const POSITIONAL_CHANNELS = Object.keys(speakerCoordinates);
 export type MixPreview = {
   stem_routing?: Record<string, Record<string, number>>;
   stem_rebalance?: Record<string, number>;
-  stem_eq?: Record<string, string>;
+  stem_eq?: Record<string, string | StemEqSettings>;
+  stem_dynamic_eq?: Record<string, StemDynamicEqSettings>;
+  stem_dynamics?: Record<string, StemDynamicsSettings>;
   stem_ambient_rear?: Record<string, number>;
   stem_ambient_height?: Record<string, number>;
   stem_ambient_height_crossover_hz?: Record<string, number>;

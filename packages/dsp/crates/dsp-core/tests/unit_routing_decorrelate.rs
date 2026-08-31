@@ -1,8 +1,8 @@
 mod decorrelate {
+    use upmixer_dsp_core::kernels::fft::RealFft;
     use upmixer_dsp_core::kernels::rng::next_unit;
     use upmixer_dsp_core::routing::ambient_expander::{ambient_expander_fir, AMBIENT_EXPANDER_714};
     use upmixer_dsp_core::routing::decorrelate::*;
-    use upmixer_dsp_core::kernels::fft::RealFft;
 
     const SR: u32 = 48_000;
     const NFFT: usize = 1 << 16;
@@ -99,7 +99,10 @@ mod decorrelate {
         for side in [&left, &right] {
             assert_eq!(side.taps().len(), VELVET_TAPS_PER_SIDE);
             assert!(side.span() < n, "span {} exceeds {n}", side.span());
-            assert!(side.taps().windows(2).all(|w| w[0].0 < w[1].0), "taps not ascending");
+            assert!(
+                side.taps().windows(2).all(|w| w[0].0 < w[1].0),
+                "taps not ascending"
+            );
         }
         // Both sides reach into the last cell pair, so neither is a short
         // cluster the other has to compensate for.
@@ -114,7 +117,10 @@ mod decorrelate {
             assert!((e - 1.0).abs() < 1e-12, "energy {e}");
         }
         for &(p, _) in left.taps() {
-            assert!(right.taps().iter().all(|(q, _)| *q != p), "shared tap at {p}");
+            assert!(
+                right.taps().iter().all(|(q, _)| *q != p),
+                "shared tap at {p}"
+            );
         }
     }
 
@@ -131,7 +137,10 @@ mod decorrelate {
             .map(|(a, b)| a + b)
             .collect();
         let ratio = 10.0 * (energy(&sum[1440..]) / (2.0 * energy(&x[1440..]))).log10();
-        assert!(ratio.abs() < 0.1, "fold-down lost {ratio} dB against the power sum");
+        assert!(
+            ratio.abs() < 0.1,
+            "fold-down lost {ratio} dB against the power sum"
+        );
     }
 
     #[test]
@@ -165,7 +174,11 @@ mod decorrelate {
         let x = noise(192_000, 3);
         let a = left.process(&x);
         let b = right.process(&x);
-        let cross: f64 = a[1440..].iter().zip(b[1440..].iter()).map(|(p, q)| p * q).sum();
+        let cross: f64 = a[1440..]
+            .iter()
+            .zip(b[1440..].iter())
+            .map(|(p, q)| p * q)
+            .sum();
         let corr = cross / (energy(&a[1440..]) * energy(&b[1440..])).sqrt();
         assert!(corr.abs() < 0.4, "interchannel correlation {corr}");
 
@@ -204,7 +217,10 @@ mod decorrelate {
         let mut line = VelvetLine::new(&left);
         let mut impulse = vec![1.0, 0.0];
         line.process(&mut impulse);
-        assert_eq!(impulse[0], left.taps()[0].1 * f64::from(left.taps()[0].0 == 0));
+        assert_eq!(
+            impulse[0],
+            left.taps()[0].1 * f64::from(left.taps()[0].0 == 0)
+        );
     }
 
     #[test]
@@ -223,13 +239,21 @@ mod decorrelate {
         let x = noise(96_000, 9);
         let mut previous = 0.0;
         for wet in [0.25, 0.5, 0.75] {
-            let (left, right) = velvet_pair(SR, VELVET_LENGTH_MS, VELVET_TAPS_PER_SIDE, VELVET_SEED, wet);
+            let (left, right) =
+                velvet_pair(SR, VELVET_LENGTH_MS, VELVET_TAPS_PER_SIDE, VELVET_SEED, wet);
             let a = left.process(&x);
             let b = right.process(&x);
-            let cross: f64 = a[1440..].iter().zip(b[1440..].iter()).map(|(p, q)| p * q).sum();
+            let cross: f64 = a[1440..]
+                .iter()
+                .zip(b[1440..].iter())
+                .map(|(p, q)| p * q)
+                .sum();
             let corr = cross / (energy(&a[1440..]) * energy(&b[1440..])).sqrt();
             // Correlation is 1 - wet by construction: only the dry taps overlap.
-            assert!((corr - (1.0 - wet)).abs() < 0.05, "wet {wet} gave correlation {corr}");
+            assert!(
+                (corr - (1.0 - wet)).abs() < 0.05,
+                "wet {wet} gave correlation {corr}"
+            );
             assert!(corr < 1.0 - previous + 1e-9);
             previous = wet;
             let e: f64 = left.taps().iter().map(|(_, g)| g * g).sum();

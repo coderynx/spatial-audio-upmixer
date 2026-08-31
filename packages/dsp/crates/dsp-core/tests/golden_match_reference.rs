@@ -6,7 +6,11 @@ use common::{deterministic_signal, Case};
 use upmixer_dsp_core::match_reference::{curve, spectrum};
 
 fn gate() -> spectrum::GateParams {
-    spectrum::GateParams { absolute_db: -70.0, relative_offset_db: -10.0, epsilon: 1e-20 }
+    spectrum::GateParams {
+        absolute_db: -70.0,
+        relative_offset_db: -10.0,
+        epsilon: 1e-20,
+    }
 }
 
 fn curve_params(c: &Case) -> curve::CurveParams {
@@ -46,7 +50,10 @@ fn realize_params(c: &Case) -> curve::RealizeParams {
 fn bed(c: &Case) -> Vec<Vec<f64>> {
     let n = c.param_usize("n");
     let sr = c.param_usize("sample_rate") as u32;
-    let count = c.meta["params"]["channels"].as_array().expect("channels").len();
+    let count = c.meta["params"]["channels"]
+        .as_array()
+        .expect("channels")
+        .len();
     (0..count)
         .map(|i| {
             deterministic_signal(n, sr, i as f64)
@@ -69,8 +76,11 @@ fn log_grid_matches_python() {
 fn smoothing_matches_python() {
     let c = Case::load("mr_smooth");
     let p = curve_params(&c);
-    let got =
-        curve::smooth_log_grid(&c.array("input"), c.param_f64("smooth_sigma_oct"), p.grid_step_oct);
+    let got = curve::smooth_log_grid(
+        &c.array("input"),
+        c.param_f64("smooth_sigma_oct"),
+        p.grid_step_oct,
+    );
     c.assert_close(&got, &c.array("output"), "smoothed curve");
 }
 
@@ -108,7 +118,11 @@ fn soft_clamp_matches_python() {
 fn curve_realization_matches_python() {
     for name in ["mr_realize_fine", "mr_realize_coarse", "mr_realize_mask"] {
         let c = Case::load(name);
-        let got = curve::realize_curve(&c.array("freqs"), &c.array("correction"), &realize_params(&c));
+        let got = curve::realize_curve(
+            &c.array("freqs"),
+            &c.array("correction"),
+            &realize_params(&c),
+        );
         c.assert_close(&got, &c.array("output"), name);
     }
 }
@@ -138,23 +152,44 @@ fn correction_curve_matches_python() {
 
     let target = bed(&c);
     let target_refs: Vec<&[f64]> = target.iter().map(|v| v.as_slice()).collect();
-    let (freqs_t, power_t) =
-        spectrum::weighted_power_spectrum(&target_refs, &c.param_f64_list("target_weights"), sr, n_fft, &gate());
+    let (freqs_t, power_t) = spectrum::weighted_power_spectrum(
+        &target_refs,
+        &c.param_f64_list("target_weights"),
+        sr,
+        n_fft,
+        &gate(),
+    );
 
     let scale = c.param_f64("ref_scale");
     let reference: Vec<Vec<f64>> = c
         .param_f64_list("ref_seed_phases")
         .iter()
-        .map(|phase| deterministic_signal(n, sr, *phase).iter().map(|v| v * scale).collect())
+        .map(|phase| {
+            deterministic_signal(n, sr, *phase)
+                .iter()
+                .map(|v| v * scale)
+                .collect()
+        })
         .collect();
     let ref_refs: Vec<&[f64]> = reference.iter().map(|v| v.as_slice()).collect();
-    let (freqs_r, power_r) =
-        spectrum::weighted_power_spectrum(&ref_refs, &c.param_f64_list("ref_weights"), sr, n_fft, &gate());
+    let (freqs_r, power_r) = spectrum::weighted_power_spectrum(
+        &ref_refs,
+        &c.param_f64_list("ref_weights"),
+        sr,
+        n_fft,
+        &gate(),
+    );
 
-    let got = curve::correction_curve(&freqs_t, &power_t, &freqs_r, &power_r, sr, &curve_params(&c));
+    let got = curve::correction_curve(
+        &freqs_t,
+        &power_t,
+        &freqs_r,
+        &power_r,
+        sr,
+        &curve_params(&c),
+    );
     let got_freqs: Vec<f64> = got.iter().map(|(f, _)| *f).collect();
     let got_gains: Vec<f64> = got.iter().map(|(_, g)| *g).collect();
     c.assert_close(&got_freqs, &c.array("freqs"), "grid frequencies");
     c.assert_close(&got_gains, &c.array("gains_db"), "grid gains");
 }
-

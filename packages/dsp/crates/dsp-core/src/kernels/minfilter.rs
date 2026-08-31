@@ -109,7 +109,11 @@ impl SlidingMin {
         }
         self.deque.push_back((self.pushed, value));
         let cutoff = self.pushed as i64 - self.window as i64 + 1;
-        while self.deque.front().is_some_and(|&(i, _)| (i as i64) < cutoff) {
+        while self
+            .deque
+            .front()
+            .is_some_and(|&(i, _)| (i as i64) < cutoff)
+        {
             self.deque.pop_front();
         }
         self.pushed += 1;

@@ -233,8 +233,14 @@ fn panning_is_deterministic() {
 fn cached_layout_matches_the_one_shot_panner() {
     let placement = StemPlacement::new(33.0, 12.0, 70.0, 55.0, 0.2);
     let cached = PannerLayout::new(&FULL);
-    assert_eq!(cached.placement_route(&placement), placement_route(&placement, &FULL));
-    assert_eq!(cached.object_routes(&placement), object_routes(&placement, &FULL));
+    assert_eq!(
+        cached.placement_route(&placement),
+        placement_route(&placement, &FULL)
+    );
+    assert_eq!(
+        cached.object_routes(&placement),
+        object_routes(&placement, &FULL)
+    );
 }
 
 #[test]

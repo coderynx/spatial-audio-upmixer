@@ -18,7 +18,10 @@ impl OnePole {
     /// `ms` is the time constant; `sample_rate` the rate it applies at.
     pub fn new(ms: f64, sample_rate: f64) -> Self {
         let dt = 1.0 / sample_rate;
-        Self { alpha: 1.0 - (-dt / (ms.max(0.01) / 1000.0)).exp(), state: 0.0 }
+        Self {
+            alpha: 1.0 - (-dt / (ms.max(0.01) / 1000.0)).exp(),
+            state: 0.0,
+        }
     }
 
     /// Start already settled at `initial`, so a caller that never moves the
@@ -92,7 +95,9 @@ fn sidechain_filters(params: &CompParams, sample_rate: u32, n_channels: usize) -
                 (hz / nyq).clamp(1e-4, 0.999),
                 crate::kernels::butter::BandType::High,
             );
-            (0..n_channels).map(|_| SosFilter::from_flat(&sos)).collect()
+            (0..n_channels)
+                .map(|_| SosFilter::from_flat(&sos))
+                .collect()
         }
     }
 }
@@ -151,7 +156,10 @@ impl StreamingCompressor {
         let envelope = self.fast.tick(linked_rms).max(self.slow.tick(linked_rms));
         let env_db = 20.0 * envelope.max(1e-20).log10();
         let gr_db = crate::mastering::compressor::gain_reduction_db(env_db, &self.params);
-        (10.0_f64.powf((gr_db + self.params.makeup_db) / 20.0), -gr_db)
+        (
+            10.0_f64.powf((gr_db + self.params.makeup_db) / 20.0),
+            -gr_db,
+        )
     }
 }
 

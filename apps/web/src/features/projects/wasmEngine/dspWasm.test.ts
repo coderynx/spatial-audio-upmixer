@@ -217,7 +217,7 @@ describe("shared DSP core (wasm)", () => {
     const written = wasm.dsp_engine_meters(engine, meterPtr, 256);
     // One stem (left/right pair), three bed channels, one output pair — two
     // floats each — then the master block's five.
-    expect(written).toBe(2 * (2 + CHANNELS + 2) + 5);
+    expect(written).toBe(2 * (2 + CHANNELS + 2) + 5 + 2);
 
     const meters = new Float32Array(wasm.memory.buffer, meterPtr, written);
     expect(meters[1]).toBeGreaterThan(0);

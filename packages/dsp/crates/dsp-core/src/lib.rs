@@ -11,6 +11,9 @@ pub mod match_reference;
 pub mod routing;
 pub mod spatial;
 pub mod stem_cleanup;
+pub mod stem_dynamics;
+pub mod stem_dynamic_eq;
+pub mod stem_eq;
 pub mod stream;
 
 /// Revision marker both bindings surface so a wheel/wasm mismatch is loud.

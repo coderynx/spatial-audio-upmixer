@@ -118,10 +118,17 @@ pub struct OutputStage {
     work: [Vec<f64>; 4],
 }
 
-fn build_downmix(speakers: &[SpeakerParams], surround_coeff: f64, height_coeff: f64) -> Vec<Option<(f64, f64)>> {
+fn build_downmix(
+    speakers: &[SpeakerParams],
+    surround_coeff: f64,
+    height_coeff: f64,
+) -> Vec<Option<(f64, f64)>> {
     speakers
         .iter()
-        .map(|s| DownmixRole::from_name(&s.name).map(|role| stereo_pair(role, surround_coeff, height_coeff)))
+        .map(|s| {
+            DownmixRole::from_name(&s.name)
+                .map(|role| stereo_pair(role, surround_coeff, height_coeff))
+        })
         .collect()
 }
 
@@ -148,15 +155,19 @@ impl OutputStage {
     /// `PreviewEngine::set_decode_taps`) instead of on every parameter
     /// update, since the bank is large and changes far less often than the
     /// rest of the mix.
-    pub fn new(sample_rate: u32, params: &EngineParams, decode_taps: &[f64], xtc_taps: &[f64]) -> Self {
+    pub fn new(
+        sample_rate: u32,
+        params: &EngineParams,
+        decode_taps: &[f64],
+        xtc_taps: &[f64],
+    ) -> Self {
         let n_channels = params.speakers.len();
         let encoders = params
             .speakers
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                (params.lfe_index != Some(i))
-                    .then(|| encode_gains(s.azimuth_rad, s.elevation_rad))
+                (params.lfe_index != Some(i)).then(|| encode_gains(s.azimuth_rad, s.elevation_rad))
             })
             .collect();
 
@@ -184,8 +195,14 @@ impl OutputStage {
             encoders,
             decode,
             xtc,
-            voicing: params.voicing.map(|v| StreamingVoicing::new(sample_rate, v)),
-            downmix: build_downmix(&params.speakers, params.surround_downmix_coeff, params.height_downmix_coeff),
+            voicing: params
+                .voicing
+                .map(|v| StreamingVoicing::new(sample_rate, v)),
+            downmix: build_downmix(
+                &params.speakers,
+                params.surround_downmix_coeff,
+                params.height_downmix_coeff,
+            ),
             soft_limit_threshold: params.soft_limit_threshold,
             hoa: vec![Vec::new(); N_ACN_CHANNELS],
             stereo: [Vec::new(), Vec::new()],
@@ -208,13 +225,18 @@ impl OutputStage {
             .iter()
             .enumerate()
             .map(|(i, s)| {
-                (params.lfe_index != Some(i))
-                    .then(|| encode_gains(s.azimuth_rad, s.elevation_rad))
+                (params.lfe_index != Some(i)).then(|| encode_gains(s.azimuth_rad, s.elevation_rad))
             })
             .collect();
-        self.downmix = build_downmix(&params.speakers, params.surround_downmix_coeff, params.height_downmix_coeff);
+        self.downmix = build_downmix(
+            &params.speakers,
+            params.surround_downmix_coeff,
+            params.height_downmix_coeff,
+        );
         self.soft_limit_threshold = params.soft_limit_threshold;
-        self.voicing = params.voicing.map(|v| StreamingVoicing::new(sample_rate, v));
+        self.voicing = params
+            .voicing
+            .map(|v| StreamingVoicing::new(sample_rate, v));
     }
 
     pub fn reset(&mut self) {

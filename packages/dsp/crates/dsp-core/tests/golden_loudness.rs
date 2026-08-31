@@ -11,10 +11,17 @@ fn flatten(sos: &[[f64; 6]]) -> Vec<f64> {
 
 #[test]
 fn k_weighting_matches_python_at_every_rate() {
-    for (name, sr) in [("k_weighting_44100", 44100u32), ("k_weighting_48000", 48000),
-                       ("k_weighting_96000", 96000)] {
+    for (name, sr) in [
+        ("k_weighting_44100", 44100u32),
+        ("k_weighting_48000", 48000),
+        ("k_weighting_96000", 96000),
+    ] {
         let c = Case::load(name);
-        c.assert_close(&flatten(&loudness::k_weighting_sos(sr)), &c.array("sos"), "K-weighting SOS");
+        c.assert_close(
+            &flatten(&loudness::k_weighting_sos(sr)),
+            &c.array("sos"),
+            "K-weighting SOS",
+        );
     }
 }
 

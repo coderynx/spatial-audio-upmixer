@@ -5,14 +5,16 @@
 //! counterpart would have accumulated, so the two agree sample for sample.
 
 use crate::kernels::biquad::SosFilter;
-use crate::routing::ambient::AmbientSplit;
 use crate::kernels::butter::{butter_sos, linkwitz_riley_lowpass_sos, BandType};
+use crate::routing::ambient::AmbientSplit;
 use crate::routing::decorrelate::{
     velvet_pair_seeded, VelvetFir, VelvetLine, VELVET_SEED, VELVET_SEED_HEIGHT,
 };
 use crate::routing::sends::directional_band_sos;
+use crate::stem_dynamics::{StemDynamics, StemDynamicsParams};
+use crate::stem_dynamic_eq::{StemDynamicEq, StemDynamicEqParams};
+use crate::stem_eq::{StemEq, StemEqParams};
 
-use super::conv::StreamingConvolver;
 use super::params::{SendParams, SendShape};
 
 /// One shaped send: a filter chain and, for a send fed from the dry stem,
@@ -116,7 +118,9 @@ impl Ahead {
         &mut self,
         stem_left: &[f32],
         stem_right: &[f32],
-        eq: &mut Option<(StreamingConvolver, StreamingConvolver)>,
+        eq: &mut Option<StemEq>,
+        dynamic_eq: &mut Option<StemDynamicEq>,
+        dynamics: &mut Option<StemDynamics>,
         target: usize,
     ) {
         if target <= self.end() {
@@ -128,10 +132,19 @@ impl Ahead {
                 .map(|i| *source.get(i).unwrap_or(&0.0) as f64)
                 .collect()
         };
-        let (left, right) = match eq {
-            Some((eq_l, eq_r)) => (eq_l.process(&take(stem_left)), eq_r.process(&take(stem_right))),
-            None => (take(stem_left), take(stem_right)),
-        };
+        let (mut left, mut right) = (take(stem_left), take(stem_right));
+        if let Some(eq) = eq {
+            eq.process_stereo(&mut left, &mut right);
+        }
+        if let Some(dynamic_eq) = dynamic_eq {
+            dynamic_eq.process_stereo(&mut left, &mut right);
+        }
+        if let Some(dynamics) = dynamics {
+            let mut channels = [left, right];
+            dynamics.process(&mut channels);
+            left = std::mem::take(&mut channels[0]);
+            right = std::mem::take(&mut channels[1]);
+        }
         self.left.extend_from_slice(&left);
         self.right.extend_from_slice(&right);
     }
@@ -165,7 +178,9 @@ pub const SIGNALS: usize = 13;
 /// when the stem asks for it — the primary/ambient split and the four extra
 /// sends its ambient half plays through.
 pub struct StemRouteState {
-    pub eq: Option<(StreamingConvolver, StreamingConvolver)>,
+    pub eq: Option<StemEq>,
+    dynamic_eq: Option<StemDynamicEq>,
+    dynamics: Option<StemDynamics>,
     surround: [Send; 2],
     height: [Send; 2],
     split: Option<AmbientSplit>,
@@ -185,7 +200,13 @@ pub struct StemRouteState {
 }
 
 impl StemRouteState {
-    pub fn new(sample_rate: u32, p: &SendParams, eq_fir: &[f64]) -> Self {
+    pub fn new(
+        sample_rate: u32,
+        p: &SendParams,
+        eq: Option<StemEqParams>,
+        dynamic_eq: Option<StemDynamicEqParams>,
+        dynamics: Option<StemDynamicsParams>,
+    ) -> Self {
         let nyq = sample_rate as f64 / 2.0;
         let surround_hp = butter_sos(2, p.surround_bass_cutoff_hz / nyq, BandType::High);
         let height_lp = butter_sos(1, p.height_low_rolloff_hz / nyq, BandType::Low);
@@ -219,13 +240,13 @@ impl StemRouteState {
         };
 
         Self {
-            eq: (!eq_fir.is_empty()).then(|| {
-                (
-                    StreamingConvolver::new(eq_fir.to_vec()),
-                    StreamingConvolver::new(eq_fir.to_vec()),
-                )
-            }),
-            surround: [surround_send(Some(&surround_l)), surround_send(Some(&surround_r))],
+            eq: eq.map(|params| StemEq::new(sample_rate, params)),
+            dynamic_eq: dynamic_eq.map(|params| StemDynamicEq::new(sample_rate, params)),
+            dynamics: dynamics.map(|params| StemDynamics::new(sample_rate, params)),
+            surround: [
+                surround_send(Some(&surround_l)),
+                surround_send(Some(&surround_r)),
+            ],
             height: [height_send(Some(&height_l)), height_send(Some(&height_r))],
             split: None,
             ahead: Ahead::default(),
@@ -291,16 +312,21 @@ impl StemRouteState {
             // A seek, or the first block: the EQ's history and the split's
             // frame grid both restart where the transport landed.
             self.ahead.clear(start);
-            if let Some((eq_l, eq_r)) = &mut self.eq {
-                eq_l.reset();
-                eq_r.reset();
+            if let Some(eq) = &mut self.eq {
+                eq.reset();
             }
             if let Some(split) = &mut self.split {
                 split.reset();
             }
         }
-        self.ahead
-            .fill(stem_left, stem_right, &mut self.eq, start + count + look_ahead);
+        self.ahead.fill(
+            stem_left,
+            stem_right,
+            &mut self.eq,
+            &mut self.dynamic_eq,
+            &mut self.dynamics,
+            start + count + look_ahead,
+        );
 
         let offset = start - self.ahead.base;
         self.scratch[0].clear();
@@ -353,9 +379,14 @@ impl StemRouteState {
     }
 
     pub fn reset(&mut self) {
-        if let Some((l, r)) = &mut self.eq {
-            l.reset();
-            r.reset();
+        if let Some(eq) = &mut self.eq {
+            eq.reset();
+        }
+        if let Some(dynamics) = &mut self.dynamics {
+            dynamics.reset();
+        }
+        if let Some(dynamic_eq) = &mut self.dynamic_eq {
+            dynamic_eq.reset();
         }
         for s in self
             .surround
@@ -381,9 +412,13 @@ impl StemRouteState {
         &mut self,
         sample_rate: u32,
         sends: &SendParams,
-        eq_fir: &[f64],
+        eq: Option<StemEqParams>,
+        dynamic_eq: Option<StemDynamicEqParams>,
+        dynamics: Option<StemDynamicsParams>,
         sends_changed: bool,
         eq_changed: bool,
+        dynamic_eq_changed: bool,
+        dynamics_changed: bool,
     ) {
         if sends_changed {
             for s in self.surround.iter_mut() {
@@ -394,16 +429,24 @@ impl StemRouteState {
             }
         }
         if eq_changed {
-            if eq_fir.is_empty() {
-                self.eq = None;
-            } else if let Some((l, r)) = &mut self.eq {
-                l.retune_kernel(eq_fir.to_vec());
-                r.retune_kernel(eq_fir.to_vec());
-            } else {
-                self.eq = Some((
-                    StreamingConvolver::new(eq_fir.to_vec()),
-                    StreamingConvolver::new(eq_fir.to_vec()),
-                ));
+            match (self.eq.as_mut(), eq) {
+                (Some(current), Some(next)) => current.retune(sample_rate, next),
+                (None, Some(next)) => self.eq = Some(StemEq::new(sample_rate, next)),
+                (_, None) => self.eq = None,
+            }
+        }
+        if dynamics_changed {
+            match (self.dynamics.as_mut(), dynamics) {
+                (Some(current), Some(next)) => current.retune(sample_rate, next),
+                (None, Some(next)) => self.dynamics = Some(StemDynamics::new(sample_rate, next)),
+                (_, None) => self.dynamics = None,
+            }
+        }
+        if dynamic_eq_changed {
+            match (self.dynamic_eq.as_mut(), dynamic_eq) {
+                (Some(current), Some(next)) => current.retune(sample_rate, next),
+                (None, Some(next)) => self.dynamic_eq = Some(StemDynamicEq::new(sample_rate, next)),
+                (_, None) => self.dynamic_eq = None,
             }
         }
     }
@@ -464,6 +507,16 @@ impl StemRouteState {
     #[inline]
     pub fn signal(&self, index: usize) -> &[f64] {
         &self.shaped[index]
+    }
+
+    pub fn dynamic_eq_gain_reduction_db(&self) -> f64 {
+        self.dynamic_eq.as_ref().map_or(0.0, StemDynamicEq::gain_reduction_db)
+    }
+
+    pub fn dynamics_gain_reduction_db(&self) -> f64 {
+        self.dynamics
+            .as_ref()
+            .map_or(0.0, StemDynamics::gain_reduction_db)
     }
 }
 

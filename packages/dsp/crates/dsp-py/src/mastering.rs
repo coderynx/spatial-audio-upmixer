@@ -203,7 +203,7 @@ fn chain_head<'py>(
     from_bed(py, bed)
 }
 
-/// `bands` is one `(freq_hz, q, threshold_db, ratio, attack_ms, release_ms)`
+/// `bands` is one `(freq_hz, q, threshold_db, ratio, max_cut_db, attack_ms, release_ms)`
 /// tuple per band; returns the bed and each band's deepest cut in dB.
 #[pyfunction]
 #[pyo3(signature = (channels, lfe_index, sample_rate, bands))]
@@ -212,16 +212,17 @@ fn dynamic_eq<'py>(
     channels: Vec<PyReadonlyArray1<'py, f64>>,
     lfe_index: Option<usize>,
     sample_rate: u32,
-    bands: Vec<(f64, f64, f64, f64, f64, f64)>,
+    bands: Vec<(f64, f64, f64, f64, f64, f64, f64)>,
 ) -> (Vec<Bound<'py, PyArray1<f64>>>, Vec<f64>) {
     let bands: Vec<dyneq::BandParams> = bands
         .into_iter()
         .map(
-            |(freq_hz, q, threshold_db, ratio, attack_ms, release_ms)| dyneq::BandParams {
+            |(freq_hz, q, threshold_db, ratio, max_cut_db, attack_ms, release_ms)| dyneq::BandParams {
                 freq_hz,
                 q,
                 threshold_db,
                 ratio,
+                max_cut_db,
                 attack_ms,
                 release_ms,
             },
@@ -241,16 +242,17 @@ fn dynamic_eq_linked<'py>(
     detector_channels: Vec<PyReadonlyArray1<'py, f64>>,
     detector_lfe_index: Option<usize>,
     sample_rate: u32,
-    bands: Vec<(f64, f64, f64, f64, f64, f64)>,
+    bands: Vec<(f64, f64, f64, f64, f64, f64, f64)>,
 ) -> (Vec<Bound<'py, PyArray1<f64>>>, Vec<f64>) {
     let bands: Vec<dyneq::BandParams> = bands
         .into_iter()
         .map(
-            |(freq_hz, q, threshold_db, ratio, attack_ms, release_ms)| dyneq::BandParams {
+            |(freq_hz, q, threshold_db, ratio, max_cut_db, attack_ms, release_ms)| dyneq::BandParams {
                 freq_hz,
                 q,
                 threshold_db,
                 ratio,
+                max_cut_db,
                 attack_ms,
                 release_ms,
             },

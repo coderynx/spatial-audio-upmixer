@@ -95,14 +95,22 @@ pub fn smooth_log_grid(values: &[f64], sigma_oct: f64, step_oct: f64) -> Vec<f64
 
     let padded = reflect_pad(values, half_w);
     (0..values.len())
-        .map(|i| kernel.iter().enumerate().map(|(j, k)| padded[i + j] * k).sum())
+        .map(|i| {
+            kernel
+                .iter()
+                .enumerate()
+                .map(|(j, k)| padded[i + j] * k)
+                .sum()
+        })
         .collect()
 }
 
 /// Fade correction to 0 dB where the reference sits far below its own peak,
 /// so a curve is never extrapolated from near-nothing.
 pub fn confidence_taper(correction_db: &[f64], ref_power_db: &[f64], floor_db: f64) -> Vec<f64> {
-    let peak = ref_power_db.iter().fold(f64::NEG_INFINITY, |m, v| m.max(*v));
+    let peak = ref_power_db
+        .iter()
+        .fold(f64::NEG_INFINITY, |m, v| m.max(*v));
     correction_db
         .iter()
         .zip(ref_power_db.iter())
@@ -124,8 +132,7 @@ pub fn band_edge_taper(correction_db: &[f64], freqs: &[f64], taper: &TaperBand) 
                 gain = ((f - taper.low_start) / (taper.low_end - taper.low_start)).clamp(0.0, 1.0);
             }
             if *f > taper.high_start {
-                gain =
-                    ((taper.high_end - f) / (taper.high_end - taper.high_start)).clamp(0.0, 1.0);
+                gain = ((taper.high_end - f) / (taper.high_end - taper.high_start)).clamp(0.0, 1.0);
             }
             c * gain
         })
@@ -220,8 +227,14 @@ pub fn correction_curve(
 
     let log_t: Vec<f64> = freqs_t.iter().map(|f| f.log2()).collect();
     let log_r: Vec<f64> = freqs_r.iter().map(|f| f.log2()).collect();
-    let power_t_grid: Vec<f64> = log_grid_values.iter().map(|x| interp(*x, &log_t, power_t)).collect();
-    let power_r_grid: Vec<f64> = log_grid_values.iter().map(|x| interp(*x, &log_r, power_r)).collect();
+    let power_t_grid: Vec<f64> = log_grid_values
+        .iter()
+        .map(|x| interp(*x, &log_t, power_t))
+        .collect();
+    let power_r_grid: Vec<f64> = log_grid_values
+        .iter()
+        .map(|x| interp(*x, &log_r, power_r))
+        .collect();
 
     let mut correction_db: Vec<f64> = power_r_grid
         .iter()
@@ -242,7 +255,10 @@ pub fn correction_curve(
         }
     }
 
-    let ref_power_db: Vec<f64> = power_r_grid.iter().map(|v| 10.0 * (v + EPS).log10()).collect();
+    let ref_power_db: Vec<f64> = power_r_grid
+        .iter()
+        .map(|v| 10.0 * (v + EPS).log10())
+        .collect();
     correction_db = confidence_taper(&correction_db, &ref_power_db, p.confidence_floor_db);
     correction_db = band_edge_taper(&correction_db, &grid, &p.taper);
 

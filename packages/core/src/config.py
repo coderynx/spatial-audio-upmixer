@@ -138,6 +138,8 @@ class UpmixConfig:
     stem_rebalance: dict | None = None
 
     stem_eq_profiles: dict | None = None
+    stem_dynamic_eq: dict | None = None
+    stem_dynamics: dict | None = None
 
     # Per-stem ambient sends: how much of the stem's ambient half reaches the
     # surround speakers, and the height speakers.  Keyed like stem_rebalance.

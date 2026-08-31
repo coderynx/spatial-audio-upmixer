@@ -2,14 +2,19 @@ mod spectrum {
     use upmixer_dsp_core::match_reference::spectrum::*;
 
     fn gate() -> GateParams {
-        GateParams { absolute_db: -70.0, relative_offset_db: -10.0, epsilon: 1e-20 }
+        GateParams {
+            absolute_db: -70.0,
+            relative_offset_db: -10.0,
+            epsilon: 1e-20,
+        }
     }
 
     #[test]
     fn zero_weight_channels_are_excluded() {
         let loud: Vec<f64> = (0..4096).map(|i| (i as f64 * 0.3).sin()).collect();
         let quiet: Vec<f64> = loud.iter().map(|v| v * 0.001).collect();
-        let (_, only_loud) = weighted_power_spectrum(&[&loud, &quiet], &[1.0, 0.0], 48_000, 1024, &gate());
+        let (_, only_loud) =
+            weighted_power_spectrum(&[&loud, &quiet], &[1.0, 0.0], 48_000, 1024, &gate());
         let (_, both) = weighted_power_spectrum(&[&loud], &[1.0], 48_000, 1024, &gate());
         for (a, b) in only_loud.iter().zip(both.iter()) {
             assert!((a - b).abs() < 1e-15);
@@ -29,7 +34,12 @@ mod curve {
     use upmixer_dsp_core::match_reference::curve::*;
 
     fn taper() -> TaperBand {
-        TaperBand { low_start: 20.0, low_end: 25.0, high_start: 18000.0, high_end: 20000.0 }
+        TaperBand {
+            low_start: 20.0,
+            low_end: 25.0,
+            high_start: 18000.0,
+            high_end: 20000.0,
+        }
     }
 
     #[test]
@@ -107,7 +117,9 @@ mod curve {
 
     #[test]
     fn range_mask_is_unity_inside_and_eases_to_zero_outside() {
-        let freqs = [75.0, 150.0, 212.13, 300.0, 3000.0, 8000.0, 11_313.7, 16_000.0];
+        let freqs = [
+            75.0, 150.0, 212.13, 300.0, 3000.0, 8000.0, 11_313.7, 16_000.0,
+        ];
         let mask = range_mask(&freqs, 300.0, 8000.0, 0.5);
         assert_eq!(mask[0], 0.0);
         assert_eq!(mask[1], 0.0);

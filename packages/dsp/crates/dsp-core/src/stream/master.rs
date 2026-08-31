@@ -362,13 +362,18 @@ impl LfUnifier {
         self.punch.run(&mut bus, self.sample_rate, &self.params);
 
         for (slot, &i) in self.filter.channels().iter().enumerate() {
-            let Some(out) = window.get_mut(i) else { continue };
+            let Some(out) = window.get_mut(i) else {
+                continue;
+            };
             for (v, l) in out.iter_mut().zip(self.filter.band(slot, start, end)) {
                 *v -= l;
             }
         }
 
-        let harmonics = self.params.excite.then(|| excite_harmonics(&bus, &self.params));
+        let harmonics = self
+            .params
+            .excite
+            .then(|| excite_harmonics(&bus, &self.params));
         for &(i, weight) in &self.lf_targets {
             if i >= window.len() || weight == 0.0 {
                 continue;
@@ -409,7 +414,10 @@ impl StreamingDecorrelator {
         let scale = |ms: f64| (sample_rate as f64 * ms / 1000.0) as usize;
         let bed = non_lfe(n_channels, lfe);
         Some(Self {
-            channels: bed.iter().map(|i| Decorrelator::new(*i, sample_rate, params)).collect(),
+            channels: bed
+                .iter()
+                .map(|i| Decorrelator::new(*i, sample_rate, params))
+                .collect(),
             band: RollingBand::new(
                 sos,
                 scale(DECORR_HORIZON_MS),
@@ -466,7 +474,9 @@ impl StreamingDecorrelator {
         self.band.advance(pre, pre_base, total, start, end);
         for (slot, decorrelator) in self.channels.iter_mut().enumerate() {
             let channel = self.band.channels()[slot];
-            let Some(out) = window.get_mut(channel) else { continue };
+            let Some(out) = window.get_mut(channel) else {
+                continue;
+            };
             decorrelator.run(out, self.band.band(slot, start, end));
         }
     }

@@ -108,11 +108,7 @@ pub fn linkwitz_riley_lowpass_sos(order: usize, wn: f64) -> Vec<[f64; 6]> {
 
 /// `bilinear_zpk` at `fs = 2` followed by `zpk2sos`. The transform sends the
 /// remaining degree to zeros at −1, so every zero stays real.
-fn bilinear_to_sos(
-    poles_a: &[Complex64],
-    zeros_a: &[Complex64],
-    gain_a: f64,
-) -> Vec<[f64; 6]> {
+fn bilinear_to_sos(poles_a: &[Complex64], zeros_a: &[Complex64], gain_a: f64) -> Vec<[f64; 6]> {
     let fs2 = Complex64::new(4.0, 0.0);
     let poles_z: Vec<Complex64> = poles_a.iter().map(|p| (fs2 + p) / (fs2 - p)).collect();
     let mut zeros_z: Vec<Complex64> = zeros_a.iter().map(|z| (fs2 + z) / (fs2 - z)).collect();
@@ -205,8 +201,10 @@ fn zpk2sos_real_zeros(poles: &[Complex64], zeros: &[Complex64], gain: f64) -> Ve
 
         if is_real(&p1) && !p.iter().any(is_real) {
             let z1 = z.remove(nearest_zero_idx(&z, p1, true));
-            sos[si] = single_zpksos(&[z1, Complex64::new(0.0, 0.0)],
-                                    &[p1, Complex64::new(0.0, 0.0)]);
+            sos[si] = single_zpksos(
+                &[z1, Complex64::new(0.0, 0.0)],
+                &[p1, Complex64::new(0.0, 0.0)],
+            );
             continue;
         }
 

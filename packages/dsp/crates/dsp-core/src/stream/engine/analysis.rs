@@ -115,6 +115,16 @@ impl PreviewEngine {
                 ]
             })
             .collect();
+        self.meters.stem_dynamics_gr_db = self
+            .routes
+            .iter()
+            .map(crate::stream::routing::StemRouteState::dynamics_gain_reduction_db)
+            .collect();
+        self.meters.stem_dynamic_eq_gr_db = self
+            .routes
+            .iter()
+            .map(crate::stream::routing::StemRouteState::dynamic_eq_gain_reduction_db)
+            .collect();
         let meter_start = self
             .emitted
             .saturating_sub(METER_WINDOW_FRAMES)

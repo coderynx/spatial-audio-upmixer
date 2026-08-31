@@ -1,0 +1,25 @@
+import { Slider } from "@/components/ui/slider";
+import type { StemEqSettings } from "@/lib/manifest";
+import { getStemColor, getStemIcon } from "@/lib/stems";
+import { FloatingWindow } from "./FloatingWindow";
+import { StemEffectHeader } from "./StemEffectHeader";
+import { StemEffectTrigger } from "./StemEffectTrigger";
+
+const neutral: StemEqSettings = { preset: null, bypass: false, highpass: { enabled: false, freq_hz: 20 }, low_shelf: { enabled: false, freq_hz: 120, gain_db: 0, q: .707 }, bell_1: { enabled: false, freq_hz: 1000, gain_db: 0, q: 1 }, bell_2: { enabled: false, freq_hz: 4000, gain_db: 0, q: 1 }, high_shelf: { enabled: false, freq_hz: 8000, gain_db: 0, q: .707 }, lowpass: { enabled: false, freq_hz: 20000 }, mix: 100 };
+type Name = "highpass" | "low_shelf" | "bell_1" | "bell_2" | "high_shelf" | "lowpass";
+
+export function StemEqWindow({ stemName, eq, profiles, settings: profileSettings, onChange }: {
+  stemName: string; eq: string | StemEqSettings; profiles?: string[]; settings?: Record<string, StemEqSettings>;
+  onChange: (value: string | StemEqSettings | null) => void;
+}) {
+  const preset = typeof eq === "string" ? profileSettings?.[eq] : eq.preset ? profileSettings?.[eq.preset] : undefined;
+  const StemIcon = getStemIcon(stemName);
+  const stemColor = getStemColor(stemName);
+  const value = typeof eq === "string" ? preset ?? neutral : { ...preset, ...eq, highpass: { ...preset?.highpass, ...eq.highpass }, low_shelf: { ...preset?.low_shelf, ...eq.low_shelf }, bell_1: { ...preset?.bell_1, ...eq.bell_1 }, bell_2: { ...preset?.bell_2, ...eq.bell_2 }, high_shelf: { ...preset?.high_shelf, ...eq.high_shelf }, lowpass: { ...preset?.lowpass, ...eq.lowpass } };
+  const edit = (patch: Partial<StemEqSettings>) => onChange({ ...value, ...patch, preset: null });
+  const enabled = Boolean(eq) && !value.bypass;
+  const editBand = (name: Name, patch: Record<string, number | boolean>) => edit({ [name]: { ...value[name], ...patch } } as Partial<StemEqSettings>);
+  const cutoff = (label: string, name: "highpass" | "lowpass", min: number) => <div className="border-t pt-2"><label className="flex items-center gap-1 text-[11px] text-muted-foreground"><input aria-label={`${label} enabled`} type="checkbox" checked={value[name].enabled} onChange={(event) => editBand(name, { enabled: event.target.checked })} />{label}<span className="ml-auto tabular-nums">{Math.round(value[name].freq_hz)} Hz</span></label><Slider aria-label={`${label} frequency`} className="mt-1.5" min={Math.log(min / 20) / Math.log(1000)} max={1} step={.005} value={[Math.log(value[name].freq_hz / 20) / Math.log(1000)]} onValueChange={([position]) => editBand(name, { freq_hz: 20 * 1000 ** position })} /></div>;
+  const band = (label: string, name: "low_shelf" | "bell_1" | "bell_2" | "high_shelf") => <div className="border-t pt-2"><label className="flex items-center gap-1 text-[11px] text-muted-foreground"><input aria-label={`${label} enabled`} type="checkbox" checked={value[name].enabled} onChange={(event) => editBand(name, { enabled: event.target.checked })} />{label}</label><div className="mt-1 grid grid-cols-3 gap-1"><input aria-label={`${label} frequency`} className="h-7 min-w-0 rounded-md border bg-secondary px-1 text-[11px]" type="number" min={20} max={20000} value={Math.round(value[name].freq_hz)} onChange={(event) => editBand(name, { freq_hz: Number(event.target.value) })} /><input aria-label={`${label} gain`} className="h-7 min-w-0 rounded-md border bg-secondary px-1 text-[11px]" type="number" min={-12} max={6} step={.1} value={value[name].gain_db} onChange={(event) => editBand(name, { gain_db: Number(event.target.value) })} /><input aria-label={`${label} Q`} className="h-7 min-w-0 rounded-md border bg-secondary px-1 text-[11px]" type="number" min={.3} max={8} step={.1} value={value[name].q} onChange={(event) => editBand(name, { q: Number(event.target.value) })} /></div></div>;
+  return <FloatingWindow title={`${stemName} EQ`} ariaLabel="Stem EQ" borderColor={stemColor} icon={<StemIcon className="mr-1.5 h-3.5 w-3.5 shrink-0" style={{ color: stemColor }} aria-hidden="true" />} trigger={(open, expanded) => <StemEffectTrigger active={enabled} label="EQ" ariaLabel="Open stem EQ" expanded={expanded} onOpen={open} onToggle={() => edit({ bypass: enabled })} />}><div className="space-y-2"><StemEffectHeader label="EQ" enabled={enabled} onEnabledChange={(next) => edit({ bypass: !next })} preset={value.preset} presets={profiles ?? []} onPresetChange={(name) => onChange(name === "custom" ? value : name)} onReset={() => onChange(null)} />{cutoff("HPF", "highpass", 20)}{band("Low shelf", "low_shelf")}{band("Bell 1", "bell_1")}{band("Bell 2", "bell_2")}{band("High shelf", "high_shelf")}{cutoff("LPF", "lowpass", 1000)}<label className="block text-[11px] text-muted-foreground">Mix <span className="float-right tabular-nums">{Math.round(value.mix)}%</span><Slider aria-label="EQ mix" className="mt-1.5" min={0} max={100} step={1} value={[value.mix]} onValueChange={([mix]) => edit({ mix })} /></label></div></FloatingWindow>;
+}

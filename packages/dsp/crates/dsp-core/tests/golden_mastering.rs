@@ -41,7 +41,11 @@ fn stage_bed(c: &Case) -> (Vec<Vec<f64>>, Vec<String>) {
 
 fn assert_bed(c: &Case, got: &[Vec<f64>], names: &[String]) {
     for (i, name) in names.iter().enumerate() {
-        c.assert_close(&got[i], &c.array(&format!("ch_{name}")), &format!("channel {name}"));
+        c.assert_close(
+            &got[i],
+            &c.array(&format!("ch_{name}")),
+            &format!("channel {name}"),
+        );
     }
 }
 
@@ -58,8 +62,13 @@ fn signal_generator_matches_python() {
 
 #[test]
 fn eq_filter_design_matches_python() {
-    for name in ["eq_fir_spatial_transparent", "eq_fir_spatial_air", "eq_fir_spatial_warm",
-                 "eq_fir_spatial_present", "eq_fir_atmos_streaming"] {
+    for name in [
+        "eq_fir_spatial_transparent",
+        "eq_fir_spatial_air",
+        "eq_fir_spatial_warm",
+        "eq_fir_spatial_present",
+        "eq_fir_atmos_streaming",
+    ] {
         let c = Case::load(name);
         let breakpoints: Vec<(f64, f64)> = c.meta["params"]["breakpoints"]
             .as_array()
@@ -70,8 +79,11 @@ fn eq_filter_design_matches_python() {
                 (pair[0].as_f64().expect("hz"), pair[1].as_f64().expect("db"))
             })
             .collect();
-        let got = build_fir(&breakpoints, c.param_usize("sample_rate") as u32,
-                            c.param_usize("n_taps"));
+        let got = build_fir(
+            &breakpoints,
+            c.param_usize("sample_rate") as u32,
+            c.param_usize("n_taps"),
+        );
         c.assert_close(&got, &c.array("taps"), "minimum-phase taps");
     }
 }
@@ -114,7 +126,12 @@ fn bus_compression_matches_python() {
 #[test]
 fn bass_control_matches_python() {
     for name in [
-        "bass_boost", "bass_cut", "bass_mono", "bass_enhance", "bass_deep", "bass_cinema",
+        "bass_boost",
+        "bass_cut",
+        "bass_mono",
+        "bass_enhance",
+        "bass_deep",
+        "bass_cinema",
         "bass_decorrelate",
     ] {
         let c = Case::load(name);
@@ -157,7 +174,13 @@ fn bass_control_matches_python() {
             decorr_fast_ms: c.param_f64("decorr_fast_ms"),
             decorr_slow_ms: c.param_f64("decorr_slow_ms"),
         };
-        bass_control(&mut bed, lfe, &lf_targets, c.param_usize("sample_rate") as u32, &p);
+        bass_control(
+            &mut bed,
+            lfe,
+            &lf_targets,
+            c.param_usize("sample_rate") as u32,
+            &p,
+        );
         assert_bed(&c, &bed, &names);
     }
 }

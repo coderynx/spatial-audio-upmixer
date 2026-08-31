@@ -22,8 +22,8 @@ import { Button } from "@/components/ui/button";
 import { SliderField, SwitchRow } from "@/components/forms/fields";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { isStereoLayout, outputModeForLayoutSwitch } from "@/lib/layouts";
-import { normalizeManifest, type Manifest } from "@/lib/manifest";
-import { getStemColor, getStemIcon, isBedStem } from "@/lib/stems";
+import { normalizeManifest, type Manifest, type StemDynamicEqSettings, type StemDynamicsSettings, type StemEqSettings } from "@/lib/manifest";
+import { isBedStem } from "@/lib/stems";
 import { AssetsTab } from "./assets/AssetsTab";
 import { KeyCommandsDialog } from "./KeyCommandsDialog";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
@@ -49,7 +49,7 @@ import { usePaneLayout } from "./usePaneLayout";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
 import { resolveEngineConstants } from "./masteringProfiles";
 import { useProjectState } from "./useProjectState";
-import { StemControls } from "./StemControls";
+import { StemControls, StemProcessingControls } from "./StemControls";
 import { ObjectPannerWindow } from "./ObjectPannerWindow";
 import { loadPanner, NEUTRAL_PLACEMENT, type Panner, type StemPlacement } from "./wasmEngine/panner";
 import { useTrackPeaks } from "./useTrackPeaks";
@@ -340,6 +340,48 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     if (!trackManifest || isBedStem(stem)) return null;
     return <ObjectPannerWindow key={`panner-${stem}`} stemName={stem} placement={placementFor(stem)} maxElevationDeg={maxElevationDeg} objectMode={trackManifest.mixing.stem_object_mode[stem] ?? "linked-stereo"} route={routing[stem] || {}} channels={channels} ambientRear={trackManifest.mixing.stem_ambient_rear[stem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[stem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[stem] ?? 2000} ariaLabel={ariaLabel} onPlacement={(next) => updatePlacement(stem, next)} onObjectMode={(mode) => setStemObjectMode(stem, mode)} onRoute={(patch) => updateRoute(stem, patch)} onAmbient={(patch) => updateAmbient(stem, patch)} />;
   };
+  const updateStemEq = (stem: string, eq: string | StemEqSettings | null) => {
+    if (!trackManifest) return;
+    const next = { ...trackManifest.mixing.stem_eq };
+    if (eq) next[stem] = eq;
+    else delete next[stem];
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: next } });
+  };
+  const updateStemDynamicEq = (stem: string, dynamicEq: StemDynamicEqSettings | null) => {
+    if (!trackManifest) return;
+    const next = { ...trackManifest.mixing.stem_dynamic_eq };
+    if (dynamicEq) next[stem] = dynamicEq;
+    else delete next[stem];
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_dynamic_eq: next } });
+  };
+  const updateStemDynamics = (stem: string, dynamics: StemDynamicsSettings | null) => {
+    if (!trackManifest) return;
+    const next = { ...trackManifest.mixing.stem_dynamics };
+    if (dynamics) next[stem] = dynamics;
+    else delete next[stem];
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_dynamics: next } });
+  };
+  const stemProcessingFor = (stem: string) => trackManifest && <StemProcessingControls
+    stemName={stem}
+    eq={trackManifest.mixing.stem_eq[stem] || ""}
+    onEq={(eq) => updateStemEq(stem, eq)}
+    dynamicEq={trackManifest.mixing.stem_dynamic_eq[stem]}
+    onDynamicEq={(dynamicEq) => updateStemDynamicEq(stem, dynamicEq)}
+    dynamics={trackManifest.mixing.stem_dynamics[stem]}
+    onDynamics={(dynamics) => updateStemDynamics(stem, dynamics)}
+    stemEqProfiles={configuration?.choices.stem_eq_profiles}
+    stemEqSettings={engineConstants?.stemEqSettings}
+    dynamicEqProfiles={engineConstants?.stemDynamicEqProfiles}
+    dynamicsProfiles={engineConstants?.stemDynamicsProfiles}
+    stemProcessingPresets={engineConstants?.stemProcessingPresets}
+    dynamicEqMeterSource={() => preview.stemDynamicEq.current.get(stem) ?? 0}
+    dynamicsMeterSource={() => preview.stemDynamics.current.get(stem) ?? 0}
+  />;
+  const stemTopControls = (stem: string, ariaLabel?: string) => {
+    if (!trackManifest) return null;
+    const pannerControl = objectPannerForStem(stem, ariaLabel);
+    return <div className="flex w-full flex-col items-center gap-1.5">{stemProcessingFor(stem)}{pannerControl}</div>;
+  };
   const applyPreset = () => {
     if (!trackManifest || !stemNames.length || !panner) return;
     const table = panner.presetPlacements(preset);
@@ -585,46 +627,45 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         onGain={setStemGain}
         onAnchorStrength={setAnchorStrength}
         onCommitScrub={commitScrub}
-        topControlForStem={(stem) => objectPannerForStem(stem, `Object panner ${stem}`)}
+        topControlForStem={(stem) => stemTopControls(stem, `Object panner ${stem}`)}
       />;
       if (activeTab === "mixing") return <div className="grid min-h-0 flex-1 xl:grid-cols-[auto_minmax(0,1fr)_320px]">
         {trackRail}
         {previewPanel}
-        {trackManifest && <div className="flex min-h-0 flex-col overflow-y-auto border-l bg-card">
-          <InspectorGroup title="Routing preset">
+        {trackManifest && <div className="flex min-h-0 flex-col border-l bg-card">
+          <InspectorGroup title="Routing preset" className="shrink-0">
             <p className="mb-2 truncate text-[11px] text-muted-foreground">{`${selected?.asset.title || selected?.asset.filename} · ${selectedLayout}`}</p>
             <select className="flex h-7 w-full rounded-md border bg-secondary px-2 text-[13px]" value={preset} onChange={(event) => setPreset(event.target.value)}>{(configuration?.choices.stem_routing_presets ?? []).map((name) => <option key={name}>{name}</option>)}</select>
             <Button className="mt-2.5 w-full" variant="outline" size="sm" onClick={() => void applyPreset()}><Wand2 />Apply preset</Button>
           </InspectorGroup>
-          <InspectorGroup title="Stem">
-            <div className="mb-3">
-              <SwitchRow
-                label="Downmix lock"
-                checked={trackManifest.mixing.spatial_downmix_lock}
-                onChange={setSpatialDownmixLock}
-              />
-            </div>
+          <InspectorGroup title="Stem" className="flex min-h-0 flex-1 flex-col">
             {selectedStem ? (() => {
-              const SelectedStemIcon = getStemIcon(selectedStem);
               const stemMuted = trackManifest.mixing.stem_enabled[selectedStem] === false;
               const objectStem = !isBedStem(selectedStem);
-              return <>
-                <p className="mb-3 flex items-center gap-1.5 text-[13px] font-semibold">
-                  <SelectedStemIcon className="h-3.5 w-3.5 shrink-0" style={{ color: getStemColor(selectedStem) }} aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate">{selectedStem}</span>
-                  <span className="text-[11px] font-normal text-muted-foreground">{stemMuted ? "muted" : "enabled"}</span>
-                </p>
-                <StemControls key={`controls-${selectedStem}`} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} ambientRear={trackManifest.mixing.stem_ambient_rear[selectedStem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[selectedStem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[selectedStem] ?? 2000} onAmbient={(patch) => updateAmbient(selectedStem, patch)} onEq={(eq) => updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_eq: (() => { const next = { ...trackManifest.mixing.stem_eq }; if (eq) next[selectedStem] = eq; else delete next[selectedStem]; return next; })() } })}
-                  showPositionControls={!objectStem}
-                  showObjectSends={!objectStem}
-                  stemEqProfiles={configuration?.choices.stem_eq_profiles}
-                />
-                <div className="mt-3 flex justify-center border-t pt-3">
+              return <div className="flex min-h-0 flex-1 flex-col">
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <div className="mb-3">
+                    <SwitchRow
+                      label="Downmix lock"
+                      checked={trackManifest.mixing.spatial_downmix_lock}
+                      onChange={setSpatialDownmixLock}
+                    />
+                  </div>
+                  <StemControls key={`controls-${selectedStem}`} stemName={selectedStem} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} ambientRear={trackManifest.mixing.stem_ambient_rear[selectedStem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[selectedStem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[selectedStem] ?? 2000} onAmbient={(patch) => updateAmbient(selectedStem, patch)} onEq={(eq) => updateStemEq(selectedStem, eq)} onDynamicEq={(dynamicEq) => updateStemDynamicEq(selectedStem, dynamicEq)} dynamicEq={trackManifest.mixing.stem_dynamic_eq[selectedStem]} dynamicEqProfiles={engineConstants?.stemDynamicEqProfiles} dynamicEqMeterSource={() => preview.stemDynamicEq.current.get(selectedStem) ?? 0} onDynamics={(dynamics) => updateStemDynamics(selectedStem, dynamics)} dynamics={trackManifest.mixing.stem_dynamics[selectedStem]} dynamicsMeterSource={() => preview.stemDynamics.current.get(selectedStem) ?? 0}
+                    showPositionControls={!objectStem}
+                    showObjectSends={!objectStem}
+                    showProcessingControls={false}
+                    stemEqProfiles={configuration?.choices.stem_eq_profiles}
+                    stemEqSettings={engineConstants?.stemEqSettings}
+                    dynamicsProfiles={engineConstants?.stemDynamicsProfiles}
+                    stemProcessingPresets={engineConstants?.stemProcessingPresets}
+                  />
+                </div>
+                <div className="mt-3 flex shrink-0 justify-center border-t pt-3">
                   <StemChannelStrip
                     stem={selectedStem}
                     subjectName="Selected stem"
-                    showNameplate={false}
-                    topControl={objectPannerForStem(selectedStem)}
+                    topControl={stemTopControls(selectedStem)}
                     showPeakReadout={false}
                     channels={stemChannelCounts[selectedStem] ?? 1}
                     gain={trackManifest.mixing.stem_rebalance[selectedStem] || 0}
@@ -639,8 +680,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                     disabled={!previewStems.length}
                   />
                 </div>
-              </>;
-            })() : <p className="text-[11px] text-muted-foreground">Select a stem to edit its sends.</p>}
+              </div>;
+            })() : <><div className="mb-3"><SwitchRow label="Downmix lock" checked={trackManifest.mixing.spatial_downmix_lock} onChange={setSpatialDownmixLock} /></div><p className="text-[11px] text-muted-foreground">Select a stem to edit its sends.</p></>}
           </InspectorGroup>
         </div>}
       </div>;

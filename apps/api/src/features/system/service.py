@@ -55,7 +55,19 @@ def engine_constants() -> dict[str, Any]:
         SMOOTH_OCT_MIN,
     )
     from upmixer.mastering.limiter import _SAFETY_MARGIN_DB
-    from upmixer.separation.stem_eq import STEM_EQ_FIR_ASSETS
+    from upmixer.separation.stem_dynamics import (
+        STEM_DYNAMICS_PRESETS_BY_STEM,
+        STEM_DYNAMICS_PROFILES,
+    )
+    from upmixer.separation.stem_dynamic_eq import (
+        STEM_DYNAMIC_EQ_PRESETS_BY_STEM,
+        STEM_DYNAMIC_EQ_PROFILES,
+    )
+    from upmixer.separation.stem_eq import (
+        STEM_EQ_FIR_ASSETS,
+        STEM_EQ_PRESETS_BY_STEM,
+        STEM_EQ_SETTINGS,
+    )
     from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
     cfg = UpmixConfig()
     return {
@@ -92,6 +104,13 @@ def engine_constants() -> dict[str, Any]:
             for label, position in SPEAKER_AZIMUTH_ELEVATION.items()
         },
         "dyneq_profiles": DYNEQ_PROFILES,
+        "stem_dynamic_eq_profiles": STEM_DYNAMIC_EQ_PROFILES,
+        "stem_dynamics_profiles": STEM_DYNAMICS_PROFILES,
+        "stem_processing_presets": {
+            "eq": STEM_EQ_PRESETS_BY_STEM,
+            "dynamic_eq": STEM_DYNAMIC_EQ_PRESETS_BY_STEM,
+            "dynamics": STEM_DYNAMICS_PRESETS_BY_STEM,
+        },
         # Reference-match curve realization: what the smoothing pot defaults
         # to and the range it moves over. The masks default to the full band,
         # which the web spells as null rather than as a number.
@@ -129,6 +148,7 @@ def engine_constants() -> dict[str, Any]:
         "transaural_voicing_params": {p.value: asdict(v) for p, v in TRANSAURAL_VOICING.items()},
         "eq_fir_assets": EQ_FIR_ASSETS,
         "stem_eq_fir_assets": STEM_EQ_FIR_ASSETS,
+        "stem_eq_settings": STEM_EQ_SETTINGS,
         "decode_filter_set": {p.value: name for p, name in DECODE_FILTER_SET.items()},
         "xtc_filter_set": {p.value: name for p, name in XTC_FILTER_SET.items()},
     }
@@ -149,7 +169,8 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
     from upmixer.mastering.delivery import DELIVERY_TARGETS
     from upmixer.mastering.dyneq import DYNEQ_PROFILE_NAMES
     from upmixer.mastering.eq import EQ_PROFILES
-    from upmixer.separation.stem_eq import STEM_EQ_PROFILES
+    from upmixer.separation.stem_eq import STEM_EQ_SETTINGS
+    from upmixer.separation.stem_dynamic_eq import STEM_DYNAMIC_EQ_PROFILE_NAMES
     from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
     from upmixer.separation.stem_placement import STEM_ROUTING_PRESET_NAMES
     from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS
@@ -188,7 +209,8 @@ def configuration_schema(capability: dict[str, Any]) -> dict[str, Any]:
             "delivery_targets": list(DELIVERY_TARGETS),
             "bass_spreads": list(LF_SPREAD_NAMES),
             "bass_lfe_modes": list(LFE_MODES),
-            "stem_eq_profiles": sorted(STEM_EQ_PROFILES),
+            "stem_eq_profiles": sorted(STEM_EQ_SETTINGS),
+            "stem_dynamic_eq_profiles": list(STEM_DYNAMIC_EQ_PROFILE_NAMES),
             "stem_routing_presets": list(STEM_ROUTING_PRESET_NAMES),
             "layout_channels": {
                 name: [label.value for label in fmt.channels]

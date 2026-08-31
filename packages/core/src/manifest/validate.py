@@ -331,6 +331,44 @@ def validate_manifest(data: dict) -> None:
         mixing = blocks.get("mixing")
         if not isinstance(mixing, dict):
             return
+        stem_eq = mixing.get("stem_eq")
+        if stem_eq is not None:
+            if not isinstance(stem_eq, dict):
+                raise ManifestError(f"{location}.mixing.stem_eq must be a mapping.")
+            sample_rate = (blocks.get("format") or {}).get("sample_rate")
+            for stem_key, settings in stem_eq.items():
+                if not _valid_route_stem(stem_key):
+                    raise ManifestError(f"Unknown stem EQ key '{stem_key}'.")
+                try:
+                    from upmixer.separation.stem_eq import resolve_stem_eq
+                    resolve_stem_eq(settings, int(sample_rate) if sample_rate else None)
+                except (KeyError, ValueError) as exc:
+                    raise ManifestError(f"{location}.mixing.stem_eq.{stem_key}: {exc}") from exc
+        stem_dynamics = mixing.get("stem_dynamics")
+        if stem_dynamics is not None:
+            if not isinstance(stem_dynamics, dict):
+                raise ManifestError(f"{location}.mixing.stem_dynamics must be a mapping.")
+            for stem_key, settings in stem_dynamics.items():
+                if not _valid_route_stem(stem_key):
+                    raise ManifestError(f"Unknown stem dynamics key '{stem_key}'.")
+                try:
+                    from upmixer.separation.stem_dynamics import resolve_stem_dynamics
+                    resolve_stem_dynamics(settings)
+                except ValueError as exc:
+                    raise ManifestError(f"{location}.mixing.stem_dynamics.{stem_key}: {exc}") from exc
+        stem_dynamic_eq = mixing.get("stem_dynamic_eq")
+        if stem_dynamic_eq is not None:
+            if not isinstance(stem_dynamic_eq, dict):
+                raise ManifestError(f"{location}.mixing.stem_dynamic_eq must be a mapping.")
+            sample_rate = (blocks.get("format") or {}).get("sample_rate")
+            for stem_key, settings in stem_dynamic_eq.items():
+                if not _valid_route_stem(stem_key):
+                    raise ManifestError(f"Unknown stem dynamic EQ key '{stem_key}'.")
+                try:
+                    from upmixer.separation.stem_dynamic_eq import resolve_stem_dynamic_eq
+                    resolve_stem_dynamic_eq(settings, int(sample_rate) if sample_rate else None)
+                except ValueError as exc:
+                    raise ManifestError(f"{location}.mixing.stem_dynamic_eq.{stem_key}: {exc}") from exc
         enabled = mixing.get("stem_enabled")
         if enabled is not None:
             if not isinstance(enabled, dict):

@@ -176,7 +176,7 @@ export function StemsSection({
             <select
               aria-label={`${stem} EQ`}
               disabled={!active}
-              value={manifest.mixing.stem_eq[stem] || "none"}
+              value={typeof manifest.mixing.stem_eq[stem] === "string" ? manifest.mixing.stem_eq[stem] : manifest.mixing.stem_eq[stem]?.preset || "none"}
               onChange={(event) => updateStemEq(stem, event.target.value)}
               className="flex h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
             >

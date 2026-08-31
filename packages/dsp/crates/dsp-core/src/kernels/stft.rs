@@ -42,7 +42,11 @@ pub fn frame_power(audio: &[f64], n_fft: usize) -> FramePower {
         0
     };
 
-    let mut out = FramePower { n_freqs, n_frames, power: vec![0.0; n_freqs * n_frames] };
+    let mut out = FramePower {
+        n_freqs,
+        n_frames,
+        power: vec![0.0; n_freqs * n_frames],
+    };
     if n_frames == 0 {
         return out;
     }

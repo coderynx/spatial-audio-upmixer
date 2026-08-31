@@ -35,7 +35,14 @@ mod engine {
         let tone: Vec<f32> = (0..4096)
             .map(|i| (0.4 * (2.0 * std::f64::consts::PI * 60.0 * i as f64 / 48_000.0).sin()) as f32)
             .collect();
-        PreviewEngine::new(48_000, params, vec![Arc::new(StemSource { left: tone.clone(), right: tone })])
+        PreviewEngine::new(
+            48_000,
+            params,
+            vec![Arc::new(StemSource {
+                left: tone.clone(),
+                right: tone,
+            })],
+        )
     }
 
     fn probe_engine(mute_fl: bool) -> PreviewEngine {
@@ -79,7 +86,14 @@ mod engine {
         let tone: Vec<f32> = (0..8192)
             .map(|i| (0.4 * (2.0 * std::f64::consts::PI * 80.0 * i as f64 / 48_000.0).sin()) as f32)
             .collect();
-        PreviewEngine::new(48_000, params, vec![Arc::new(StemSource { left: tone.clone(), right: tone })])
+        PreviewEngine::new(
+            48_000,
+            params,
+            vec![Arc::new(StemSource {
+                left: tone.clone(),
+                right: tone,
+            })],
+        )
     }
 
     /// Speaker mute is a monitor control, so it has to be silent *and* inert:
@@ -113,13 +127,19 @@ mod engine {
         let mut out = vec![0.0; 3 * 4096];
         muted.render(&mut out, 4096);
         let lfe = &out[2 * 4096..3 * 4096];
-        assert!(lfe.iter().all(|v| *v == 0.0), "muted LFE bus should be silent");
+        assert!(
+            lfe.iter().all(|v| *v == 0.0),
+            "muted LFE bus should be silent"
+        );
 
         let mut unmuted = engine(false);
         let mut out = vec![0.0; 3 * 4096];
         unmuted.render(&mut out, 4096);
         let lfe = &out[2 * 4096..3 * 4096];
-        assert!(lfe.iter().any(|v| v.abs() > 1e-6), "unmuted LFE bus should carry signal");
+        assert!(
+            lfe.iter().any(|v| v.abs() > 1e-6),
+            "unmuted LFE bus should carry signal"
+        );
     }
 }
 
@@ -176,7 +196,10 @@ mod master_meters {
         PreviewEngine::new(
             48_000,
             params,
-            vec![Arc::new(StemSource { left: tone.clone(), right: tone })],
+            vec![Arc::new(StemSource {
+                left: tone.clone(),
+                right: tone,
+            })],
         )
     }
 
@@ -205,10 +228,8 @@ mod master_meters {
         let mut engine = engine(240_000, 0.2);
         let out = render(&mut engine, 240_000);
         let tail = out[0].len().saturating_sub(3 * 48_000);
-        let want = measure_loudness_stats(
-            &[(1.0, &out[0][tail..]), (1.0, &out[1][tail..])],
-            48_000,
-        );
+        let want =
+            measure_loudness_stats(&[(1.0, &out[0][tail..]), (1.0, &out[1][tail..])], 48_000);
         let got = engine.meters().master.short_term_lkfs;
         assert!(
             (got - want.max_short_term_lkfs).abs() < 0.1,
@@ -224,9 +245,21 @@ mod master_meters {
         let mut hot = engine(96_000, 0.9);
         render(&mut hot, 96_000);
         let master = hot.meters().master;
-        assert!(master.comp_gr_db > 1.0, "compressor GR {}", master.comp_gr_db);
-        assert!(master.limiter_gr_db > 0.0, "limiter GR {}", master.limiter_gr_db);
-        assert!(master.limiter_lfe_gr_db > 0.0, "LFE GR {}", master.limiter_lfe_gr_db);
+        assert!(
+            master.comp_gr_db > 1.0,
+            "compressor GR {}",
+            master.comp_gr_db
+        );
+        assert!(
+            master.limiter_gr_db > 0.0,
+            "limiter GR {}",
+            master.limiter_gr_db
+        );
+        assert!(
+            master.limiter_lfe_gr_db > 0.0,
+            "LFE GR {}",
+            master.limiter_lfe_gr_db
+        );
 
         let mut quiet = engine(96_000, 0.002);
         render(&mut quiet, 96_000);
@@ -234,16 +267,20 @@ mod master_meters {
         assert_eq!(master.comp_gr_db, 0.0);
         assert_eq!(master.limiter_gr_db, 0.0);
         assert_eq!(master.limiter_lfe_gr_db, 0.0);
-        assert!(master.momentary_lkfs < -40.0, "momentary {}", master.momentary_lkfs);
+        assert!(
+            master.momentary_lkfs < -40.0,
+            "momentary {}",
+            master.momentary_lkfs
+        );
     }
 }
 
 mod measure {
-    use upmixer_dsp_core::stream::engine::PreviewEngine;
-    use upmixer_dsp_core::stream::measure::*;
-    use upmixer_dsp_core::stream::engine::StemSource;
-    use upmixer_dsp_core::stream::params::EngineParams;
     use std::sync::Arc;
+    use upmixer_dsp_core::stream::engine::PreviewEngine;
+    use upmixer_dsp_core::stream::engine::StemSource;
+    use upmixer_dsp_core::stream::measure::*;
+    use upmixer_dsp_core::stream::params::EngineParams;
 
     fn engine(frames: usize) -> PreviewEngine {
         let params: EngineParams = serde_json::from_str(
@@ -281,7 +318,10 @@ mod measure {
         PreviewEngine::new(
             48_000,
             params,
-            vec![Arc::new(StemSource { left: tone.clone(), right: tone })],
+            vec![Arc::new(StemSource {
+                left: tone.clone(),
+                right: tone,
+            })],
         )
     }
 
@@ -301,8 +341,14 @@ mod measure {
                 assert!(guard < 100_000, "slice {slice} never finished");
             }
             let [lkfs, dbtp, _, _] = result.expect("measured");
-            assert!((lkfs - want.0).abs() < 1e-9, "slice {slice}: {lkfs} vs {want:?}");
-            assert!((dbtp - want.1).abs() < 1e-9, "slice {slice}: {dbtp} vs {want:?}");
+            assert!(
+                (lkfs - want.0).abs() < 1e-9,
+                "slice {slice}: {lkfs} vs {want:?}"
+            );
+            assert!(
+                (dbtp - want.1).abs() < 1e-9,
+                "slice {slice}: {dbtp} vs {want:?}"
+            );
         }
     }
 
@@ -440,27 +486,42 @@ mod measure {
         PreviewEngine::new(
             48_000,
             params,
-            vec![Arc::new(StemSource { left: tone.clone(), right: tone })],
+            vec![Arc::new(StemSource {
+                left: tone.clone(),
+                right: tone,
+            })],
         )
     }
 
     #[test]
     fn an_immersive_bed_measures_its_five_one_re_render() {
         let mut reference = immersive_engine(120_000);
-        assert!(reference.measurement_fold().is_some(), "a height pair must fold");
+        assert!(
+            reference.measurement_fold().is_some(),
+            "a height pair must fold"
+        );
         let want = reference.measure(&[]);
 
         let live = immersive_engine(120_000);
         let mut pass = MeasurementPass::new(&live, &[]);
         let (lkfs, dbtp) = run(&mut pass, 1024);
-        assert!((lkfs - want.0).abs() < 1e-9, "sliced fold {lkfs} vs blocking {want:?}");
-        assert!((dbtp - want.1).abs() < 1e-9, "sliced peak {dbtp} vs blocking {want:?}");
+        assert!(
+            (lkfs - want.0).abs() < 1e-9,
+            "sliced fold {lkfs} vs blocking {want:?}"
+        );
+        assert!(
+            (dbtp - want.1).abs() < 1e-9,
+            "sliced peak {dbtp} vs blocking {want:?}"
+        );
 
         // The heights sum into the fronts, so the folded programme is louder
         // than the same bed measured as four unity-weighted channels.
         let mut unfolded = engine(120_000);
         let flat = unfolded.measure(&[1.0, 1.0]);
-        assert!(lkfs > -70.0 && (lkfs - flat.0).abs() > 0.1, "fold changed nothing: {lkfs}");
+        assert!(
+            lkfs > -70.0 && (lkfs - flat.0).abs() > 0.1,
+            "fold changed nothing: {lkfs}"
+        );
     }
 
     #[test]
@@ -478,7 +539,9 @@ mod measure {
 
 mod routing {
     use upmixer_dsp_core::kernels::butter::{butter_sos, linkwitz_riley_lowpass_sos, BandType};
-    use upmixer_dsp_core::routing::decorrelate::{velvet_pair_seeded, VELVET_SEED, VELVET_SEED_HEIGHT};
+    use upmixer_dsp_core::routing::decorrelate::{
+        velvet_pair_seeded, VELVET_SEED, VELVET_SEED_HEIGHT,
+    };
     use upmixer_dsp_core::stream::params::SendParams;
     use upmixer_dsp_core::stream::routing::*;
 
@@ -526,17 +589,24 @@ mod routing {
 
         // Blocked in ragged sizes: the shaped sends must not depend on how
         // the render callback happens to chop the stream up.
-        let mut state = StemRouteState::new(sr, &p, &[]);
+        let mut state = StemRouteState::new(sr, &p, None, None, None);
         let got = blocked(&mut state, &signal);
 
-        let hp = butter_sos(2, p.surround_bass_cutoff_hz / (sr as f64 / 2.0), BandType::High);
+        let hp = butter_sos(
+            2,
+            p.surround_bass_cutoff_hz / (sr as f64 / 2.0),
+            BandType::High,
+        );
         let shaped = sosfilt(&hp, &signal);
         let (left, right) = velvet_pair_seeded(sr, VELVET_SEED);
 
         for (index, fir) in [(3, left), (4, right)] {
             let want = fir.process(&shaped);
             for (i, (a, b)) in got[index - 3].iter().zip(want.iter()).enumerate() {
-                assert!((a - b).abs() < 1e-12, "shape {index} sample {i}: {a} vs {b}");
+                assert!(
+                    (a - b).abs() < 1e-12,
+                    "shape {index} sample {i}: {a} vs {b}"
+                );
             }
         }
     }
@@ -550,22 +620,33 @@ mod routing {
 
         // The default skips the band section, a lifted band runs it.
         for band_gain in [1.0, 1.6] {
-            let p = SendParams { height_directional_band_gain: band_gain, ..send_params() };
+            let p = SendParams {
+                height_directional_band_gain: band_gain,
+                ..send_params()
+            };
 
-            let mut state = StemRouteState::new(sr, &p, &[]);
+            let mut state = StemRouteState::new(sr, &p, None, None, None);
             let got = blocked(&mut state, &signal);
 
             let shaped = elevation_eq(
-                &signal, sr, p.height_low_rolloff_hz, p.height_low_rolloff_gain,
-                p.height_crossover_hz, p.height_high_shelf_gain,
-                p.height_directional_band_hz, p.height_directional_band_gain,
+                &signal,
+                sr,
+                p.height_low_rolloff_hz,
+                p.height_low_rolloff_gain,
+                p.height_crossover_hz,
+                p.height_high_shelf_gain,
+                p.height_directional_band_hz,
+                p.height_directional_band_gain,
             );
             let (left, right) = velvet_pair_seeded(sr, VELVET_SEED_HEIGHT);
 
             for (index, fir) in [(5, left), (6, right)] {
                 let want = fir.process(&shaped);
                 for (i, (a, b)) in got[index - 3].iter().zip(want.iter()).enumerate() {
-                    assert!((a - b).abs() < 1e-12, "band {band_gain} shape {index} sample {i}: {a} vs {b}");
+                    assert!(
+                        (a - b).abs() < 1e-12,
+                        "band {band_gain} shape {index} sample {i}: {a} vs {b}"
+                    );
                 }
             }
         }
@@ -592,8 +673,12 @@ mod routing {
         let mut bus = LfeBus::new(sr, &p);
         let got: Vec<f64> = signal.iter().map(|v| bus.tick(*v)).collect();
 
-        let lp = linkwitz_riley_lowpass_sos(p.lfe_filter_order, p.lfe_cutoff_hz / (sr as f64 / 2.0));
-        let want: Vec<f64> = sosfilt(&lp, &signal).iter().map(|v| v * p.lfe_gain).collect();
+        let lp =
+            linkwitz_riley_lowpass_sos(p.lfe_filter_order, p.lfe_cutoff_hz / (sr as f64 / 2.0));
+        let want: Vec<f64> = sosfilt(&lp, &signal)
+            .iter()
+            .map(|v| v * p.lfe_gain)
+            .collect();
 
         for (a, b) in got.iter().zip(want.iter()) {
             assert!((a - b).abs() < 1e-12);
@@ -680,7 +765,11 @@ mod ambient_sends {
     fn a_zero_slider_leaves_the_surrounds_and_heights_silent() {
         let bed = render(0.0, 0.0);
         for channel in 2..CHANNELS {
-            assert_eq!(energy(&bed[channel]), 0.0, "channel {channel} is not silent");
+            assert_eq!(
+                energy(&bed[channel]),
+                0.0,
+                "channel {channel} is not silent"
+            );
         }
     }
 
@@ -688,7 +777,10 @@ mod ambient_sends {
     fn an_ambient_send_reaches_speakers_the_stem_is_not_routed_to() {
         let bed = render(0.8, 0.8);
         for channel in 2..CHANNELS {
-            assert!(energy(&bed[channel]) > 0.0, "channel {channel} got no ambient");
+            assert!(
+                energy(&bed[channel]) > 0.0,
+                "channel {channel} got no ambient"
+            );
         }
     }
 
@@ -710,7 +802,10 @@ mod ambient_sends {
         // Zero crossings stand in for a centroid: the height feed carries the
         // top of the tilt plus its own elevation shelf.
         let crossings = |signal: &[f64]| {
-            signal.windows(2).filter(|w| w[0].signum() != w[1].signum()).count()
+            signal
+                .windows(2)
+                .filter(|w| w[0].signum() != w[1].signum())
+                .count()
         };
         assert!(
             crossings(&bed[4]) > crossings(&bed[2]),
@@ -723,7 +818,10 @@ mod ambient_sends {
         let half = render(0.4, 0.0);
         let full = render(0.8, 0.0);
         let ratio = energy(&full[2]) / energy(&half[2]);
-        assert!((ratio - 4.0).abs() < 0.2, "doubling the slider scaled power by {ratio:.3}");
+        assert!(
+            (ratio - 4.0).abs() < 0.2,
+            "doubling the slider scaled power by {ratio:.3}"
+        );
     }
 
     #[test]
@@ -737,7 +835,10 @@ mod ambient_sends {
             let left = out[i] + 0.7071067811865476 * (out[2 * N + i] + out[4 * N + i]);
             let right = out[N + i] + 0.7071067811865476 * (out[3 * N + i] + out[5 * N + i]);
             assert!((left - source.left[i] as f64).abs() < 1e-9, "left at {i}");
-            assert!((right - source.right[i] as f64).abs() < 1e-9, "right at {i}");
+            assert!(
+                (right - source.right[i] as f64).abs() < 1e-9,
+                "right at {i}"
+            );
         }
     }
 }

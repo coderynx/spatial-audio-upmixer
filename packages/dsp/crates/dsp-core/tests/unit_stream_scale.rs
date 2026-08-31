@@ -86,7 +86,8 @@ fn object_engine() -> PreviewEngine {
     .expect("object engine parameters");
     let mut signal = Vec::with_capacity(FRAMES);
     for i in 0..FRAMES {
-        signal.push((0.3 * (2.0 * std::f64::consts::PI * 220.0 * i as f64 / SR as f64).sin()) as f32);
+        signal
+            .push((0.3 * (2.0 * std::f64::consts::PI * 220.0 * i as f64 / SR as f64).sin()) as f32);
     }
     PreviewEngine::new(
         SR,
@@ -114,7 +115,11 @@ fn estimate(route: &[(&str, f64)]) -> f64 {
     let sum: f64 = route
         .iter()
         .map(|(name, weight)| {
-            let channel_weight = if *name == "SL" || *name == "SR" { 1.41 } else { 1.0 };
+            let channel_weight = if *name == "SL" || *name == "SR" {
+                1.41
+            } else {
+                1.0
+            };
             channel_weight * weight * weight
         })
         .sum();
@@ -146,7 +151,10 @@ fn a_band_limited_send_moves_the_measurement_the_route_weights_cannot_see() {
     let measured = measure(&engine(routing));
 
     let db = 20.0 * (measured / estimate(&route)).log10();
-    assert!(db.abs() > 0.5, "estimate was already within {db} dB of the measurement");
+    assert!(
+        db.abs() > 0.5,
+        "estimate was already within {db} dB of the measurement"
+    );
 }
 
 #[test]

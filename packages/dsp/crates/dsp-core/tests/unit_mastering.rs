@@ -102,7 +102,10 @@ mod compressor {
         let wide = bus_compress(&mut full_band, None, sr, &params());
 
         let mut filtered = vec![signal.clone(), signal.clone()];
-        let p = CompParams { sidechain_hpf_hz: Some(100.0), ..params() };
+        let p = CompParams {
+            sidechain_hpf_hz: Some(100.0),
+            ..params()
+        };
         let narrow = bus_compress(&mut filtered, None, sr, &p);
 
         assert!(
@@ -120,15 +123,18 @@ mod compressor {
     fn unity_ratio_is_a_bypass() {
         let loud = vec![0.9; 128];
         let mut bed = vec![loud.clone()];
-        let p = CompParams { ratio: 1.0, ..params() };
+        let p = CompParams {
+            ratio: 1.0,
+            ..params()
+        };
         bus_compress(&mut bed, None, 48_000, &p);
         assert_eq!(bed[0], loud);
     }
 }
 
 mod limiter {
-    use upmixer_dsp_core::mastering::limiter::*;
     use upmixer_dsp_core::loudness::measure_true_peak;
+    use upmixer_dsp_core::mastering::limiter::*;
 
     fn params() -> LimiterParams {
         LimiterParams {
@@ -141,7 +147,9 @@ mod limiter {
 
     #[test]
     fn forward_window_min_matches_a_brute_force_reference() {
-        let values: Vec<f64> = (0..200).map(|i| ((i * 17) % 13) as f64 * 0.05 + 0.1).collect();
+        let values: Vec<f64> = (0..200)
+            .map(|i| ((i * 17) % 13) as f64 * 0.05 + 0.1)
+            .collect();
         let window = 9;
         let got = forward_window_min(&values, window);
         for i in 0..values.len() {
@@ -150,7 +158,11 @@ mod limiter {
             for v in &values[i..end] {
                 want = want.min(*v);
             }
-            assert!((got[i] - want).abs() < 1e-15, "index {i}: {} vs {want}", got[i]);
+            assert!(
+                (got[i] - want).abs() < 1e-15,
+                "index {i}: {} vs {want}",
+                got[i]
+            );
         }
     }
 
@@ -202,7 +214,10 @@ mod limiter {
         assert!(gr > 0.0, "expected the limiter to engage");
         let refs: Vec<&[f64]> = bed.iter().map(|c| c.as_slice()).collect();
         let dbtp = measure_true_peak(&refs);
-        assert!(dbtp <= -1.0 + 1e-6, "true peak {dbtp} dBTP exceeds the ceiling");
+        assert!(
+            dbtp <= -1.0 + 1e-6,
+            "true peak {dbtp} dBTP exceeds the ceiling"
+        );
     }
 
     /// Mains that never limit on their own, and a `cinema`-shaped LFE swell
@@ -217,7 +232,11 @@ mod limiter {
                 })
                 .collect()
         };
-        vec![tone(997.0, mains_peak), tone(1109.0, mains_peak), tone(40.0, lfe_peak)]
+        vec![
+            tone(997.0, mains_peak),
+            tone(1109.0, mains_peak),
+            tone(40.0, lfe_peak),
+        ]
     }
 
     #[test]
@@ -231,7 +250,10 @@ mod limiter {
         assert_eq!(bed[0], source[0]);
         assert_eq!(bed[1], source[1]);
         let dbtp = measure_true_peak(&[bed[2].as_slice()]);
-        assert!(dbtp <= -1.0 + 1e-6, "LFE true peak {dbtp} dBTP exceeds the ceiling");
+        assert!(
+            dbtp <= -1.0 + 1e-6,
+            "LFE true peak {dbtp} dBTP exceeds the ceiling"
+        );
     }
 
     #[test]
@@ -295,7 +317,8 @@ mod bass {
     fn tone(freq: f64, sample_rate: u32, n: usize, amplitude: f64) -> Vec<f64> {
         (0..n)
             .map(|i| {
-                amplitude * (2.0 * std::f64::consts::PI * freq * i as f64 / sample_rate as f64).sin()
+                amplitude
+                    * (2.0 * std::f64::consts::PI * freq * i as f64 / sample_rate as f64).sin()
             })
             .collect()
     }
@@ -307,7 +330,10 @@ mod bass {
     /// Equal weights over `targets`, the arithmetic `bass.py` performs for a
     /// spread with no LFE send.
     fn even(targets: &[usize]) -> Vec<(usize, f64)> {
-        targets.iter().map(|&i| (i, 1.0 / targets.len() as f64)).collect()
+        targets
+            .iter()
+            .map(|&i| (i, 1.0 / targets.len() as f64))
+            .collect()
     }
 
     #[test]
@@ -328,11 +354,16 @@ mod bass {
         let mut bed = vec![bass.clone(), bass.clone(), vec![0.0; n], vec![0.0; n]];
         let sum_before: Vec<f64> = (0..n).map(|i| bed.iter().map(|c| c[i]).sum()).collect();
 
-        let p = BassParams { unify_hz: Some(90.0), ..params() };
+        let p = BassParams {
+            unify_hz: Some(90.0),
+            ..params()
+        };
         bass_control(&mut bed, None, &even(&[0, 1, 2, 3]), sr, &p);
 
         let sum_after: Vec<f64> = (0..n).map(|i| bed.iter().map(|c| c[i]).sum()).collect();
-        let residual: f64 = (2400..n).map(|i| (sum_after[i] - sum_before[i]).powi(2)).sum();
+        let residual: f64 = (2400..n)
+            .map(|i| (sum_after[i] - sum_before[i]).powi(2))
+            .sum();
         assert!(
             residual < energy(&sum_before) * 1e-6,
             "coherent sum moved: residual {residual} of {}",
@@ -340,8 +371,14 @@ mod bass {
         );
 
         // The surrounds, silent before, now carry the redistributed share.
-        assert!(energy(&bed[2]) > energy(&bass) * 0.01, "surround got no low end");
-        assert!(energy(&bed[0]) < energy(&bass) * 0.5, "front pair kept its low end");
+        assert!(
+            energy(&bed[2]) > energy(&bass) * 0.01,
+            "surround got no low end"
+        );
+        assert!(
+            energy(&bed[0]) < energy(&bass) * 0.5,
+            "front pair kept its low end"
+        );
     }
 
     #[test]
@@ -352,7 +389,10 @@ mod bass {
         let mut mains_only = vec![bass.clone(), bass.clone(), vec![0.0; n]];
         let mut split = mains_only.clone();
 
-        let p = BassParams { unify_hz: Some(90.0), ..params() };
+        let p = BassParams {
+            unify_hz: Some(90.0),
+            ..params()
+        };
         bass_control(&mut mains_only, Some(2), &even(&[0, 1]), sr, &p);
 
         // `split` at 0.5: mains share 0.5, LFE takes 0.5 scaled by the -10 dB
@@ -380,7 +420,10 @@ mod bass {
         let mut without = vec![bass.clone(), bass.clone(), vec![0.0; n]];
         let mut with = without.clone();
 
-        let p = BassParams { unify_hz: Some(90.0), ..params() };
+        let p = BassParams {
+            unify_hz: Some(90.0),
+            ..params()
+        };
         bass_control(&mut without, Some(2), &even(&[0, 1]), sr, &p);
 
         let mut targets = even(&[0, 1]);
@@ -402,12 +445,24 @@ mod bass {
 
         let mut targets = even(&[0, 1]);
         targets.push((2, 0.25));
-        let p = BassParams { unify_hz: Some(90.0), ..params() };
+        let p = BassParams {
+            unify_hz: Some(90.0),
+            ..params()
+        };
         bass_control(&mut plain, Some(2), &targets, sr, &p);
-        bass_control(&mut excited, Some(2), &targets, sr, &BassParams { excite: true, ..p });
+        bass_control(
+            &mut excited,
+            Some(2),
+            &targets,
+            sr,
+            &BassParams { excite: true, ..p },
+        );
 
         assert_eq!(plain[2], excited[2], "harmonics reached the LFE");
-        assert!(energy(&excited[0]) > energy(&plain[0]), "exciter did nothing");
+        assert!(
+            energy(&excited[0]) > energy(&plain[0]),
+            "exciter did nothing"
+        );
     }
 
     #[test]
@@ -416,11 +471,18 @@ mod bass {
         // bed channel; that is what lets bass control ignore them.
         let sr = 48_000;
         let n = 9600;
-        let mut before = vec![tone(40.0, sr, n, 0.5), tone(55.0, sr, n, 0.4), tone(70.0, sr, n, 0.3)];
+        let mut before = vec![
+            tone(40.0, sr, n, 0.5),
+            tone(55.0, sr, n, 0.4),
+            tone(70.0, sr, n, 0.3),
+        ];
         let mut after = before.clone();
         let gain = 1.7;
 
-        let p = BassParams { unify_hz: Some(90.0), ..params() };
+        let p = BassParams {
+            unify_hz: Some(90.0),
+            ..params()
+        };
         for ch in before.iter_mut() {
             for v in ch.iter_mut() {
                 *v *= gain;
@@ -455,11 +517,20 @@ mod bass {
             .collect();
 
         let mut flat = vec![burst.clone()];
-        let p = BassParams { unify_hz: Some(90.0), ..params() };
+        let p = BassParams {
+            unify_hz: Some(90.0),
+            ..params()
+        };
         bass_control(&mut flat, None, &even(&[0]), sr, &p);
 
         let mut shaped = vec![burst.clone()];
-        bass_control(&mut shaped, None, &even(&[0]), sr, &BassParams { punch: 0.5, ..p });
+        bass_control(
+            &mut shaped,
+            None,
+            &even(&[0]),
+            sr,
+            &BassParams { punch: 0.5, ..p },
+        );
 
         let ratio = |ch: &[f64]| {
             let attack: f64 = ch[2400..n / 3].iter().map(|v| v * v).sum();
@@ -474,14 +545,23 @@ mod bass {
         );
 
         let mut bypass = vec![burst.clone()];
-        bass_control(&mut bypass, None, &even(&[0]), sr, &BassParams { punch: 0.0, ..p });
+        bass_control(
+            &mut bypass,
+            None,
+            &even(&[0]),
+            sr,
+            &BassParams { punch: 0.0, ..p },
+        );
         assert_eq!(bypass[0], flat[0]);
     }
 
     #[test]
     fn lfe_trim_only_touches_lfe() {
         let mut bed = vec![vec![0.5; 64], vec![0.5; 64]];
-        let p = BassParams { lfe_gain_db: 6.0, ..params() };
+        let p = BassParams {
+            lfe_gain_db: 6.0,
+            ..params()
+        };
         bass_control(&mut bed, Some(1), &[], 48_000, &p);
         assert!((bed[0][0] - 0.5).abs() < 1e-12);
         assert!((bed[1][0] - 0.5 * 10.0_f64.powf(0.3)).abs() < 1e-12);
@@ -492,7 +572,10 @@ mod bass {
         let sr = 48_000;
         let low = tone(40.0, sr, 4800, 1.0);
         let mut bed = vec![low.clone()];
-        let p = BassParams { sub_gain_db: 6.0, ..params() };
+        let p = BassParams {
+            sub_gain_db: 6.0,
+            ..params()
+        };
         bass_control(&mut bed, None, &[], sr, &p);
         assert!(energy(&bed[0]) > energy(&low) * 3.0);
     }

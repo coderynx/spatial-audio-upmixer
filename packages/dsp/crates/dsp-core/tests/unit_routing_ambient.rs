@@ -52,10 +52,7 @@ mod ambient {
     fn a_perfectly_correlated_pair_stays_direct() {
         let mono = tone(440.0, N);
         let split = split_all(&mono, &mono, 512);
-        let source: f64 = mono[AMBIENT_FFT_SIZE..]
-            .iter()
-            .map(|v| v * v)
-            .sum::<f64>()
+        let source: f64 = mono[AMBIENT_FFT_SIZE..].iter().map(|v| v * v).sum::<f64>()
             / (N - AMBIENT_FFT_SIZE) as f64;
         let ambient = power(&split[0]) + power(&split[2]);
         assert!(
@@ -70,10 +67,7 @@ mod ambient {
         let left = noise(1, N);
         let right = noise(2, N);
         let split = split_all(&left, &right, 512);
-        let source: f64 = left[AMBIENT_FFT_SIZE..]
-            .iter()
-            .map(|v| v * v)
-            .sum::<f64>()
+        let source: f64 = left[AMBIENT_FFT_SIZE..].iter().map(|v| v * v).sum::<f64>()
             / (N - AMBIENT_FFT_SIZE) as f64;
         let ambient = power(&split[0]) + power(&split[2]);
         assert!(
@@ -88,10 +82,7 @@ mod ambient {
         let left = tone(440.0, N);
         let right = vec![0.0; N];
         let split = split_all(&left, &right, 512);
-        let source: f64 = left[AMBIENT_FFT_SIZE..]
-            .iter()
-            .map(|v| v * v)
-            .sum::<f64>()
+        let source: f64 = left[AMBIENT_FFT_SIZE..].iter().map(|v| v * v).sum::<f64>()
             / (N - AMBIENT_FFT_SIZE) as f64;
         let ambient = power(&split[0]) + power(&split[2]);
         assert!(
@@ -108,7 +99,10 @@ mod ambient {
         right[16..].copy_from_slice(&left[..N - 16]);
         let split = split_all(&left, &right, 512);
         let ambient = power(&split[0]) + power(&split[2]);
-        assert!(ambient / power(&left) < 1e-4, "delayed primary leaked {ambient:.5}");
+        assert!(
+            ambient / power(&left) < 1e-4,
+            "delayed primary leaked {ambient:.5}"
+        );
     }
 
     #[test]
@@ -197,8 +191,16 @@ mod ambient {
         let ambient_r: Vec<f64> = split[1].iter().zip(&split[3]).map(|(a, b)| a + b).collect();
 
         let (roughness, movement) = gain_statistics([&left, &right], [&ambient_l, &ambient_r]);
-        assert!(roughness < 2.5, "matrix jumps {:.2} dB between neighbouring bands", roughness);
-        assert!(movement < 2.0, "mask moves {:.2} dB over time, per bin", movement);
+        assert!(
+            roughness < 2.5,
+            "matrix jumps {:.2} dB between neighbouring bands",
+            roughness
+        );
+        assert!(
+            movement < 2.0,
+            "mask moves {:.2} dB over time, per bin",
+            movement
+        );
     }
 
     #[test]
@@ -222,8 +224,16 @@ mod ambient {
             .collect();
 
         let (roughness, movement) = gain_statistics([&left, &right], [&direct_l, &direct_r]);
-        assert!(roughness < 1.5, "direct path jumps {:.2} dB between bins", roughness);
-        assert!(movement < 3.0, "direct path moves {:.2} dB over time", movement);
+        assert!(
+            roughness < 1.5,
+            "direct path jumps {:.2} dB between bins",
+            roughness
+        );
+        assert!(
+            movement < 3.0,
+            "direct path moves {:.2} dB over time",
+            movement
+        );
     }
 
     fn gain_statistics(source: [&[f64]; 2], ambient: [&[f64]; 2]) -> (f64, f64) {
@@ -240,8 +250,7 @@ mod ambient {
         let mut start = n;
         while start + n <= source[0].len() {
             let take = |signal: &[f64]| -> Vec<f64> {
-                let framed: Vec<f64> =
-                    (0..n).map(|i| signal[start + i] * window[i]).collect();
+                let framed: Vec<f64> = (0..n).map(|i| signal[start + i] * window[i]).collect();
                 fft.rfft(&framed).iter().map(|v| v.norm()).collect()
             };
             let source_l = take(source[0]);
@@ -293,10 +302,26 @@ mod ambient {
     fn the_split_matches_the_pinned_samples() {
         const PROBES: [usize; 3] = [2048, 4096, 6144];
         const PINNED: [[f64; 3]; 4] = [
-            [0.008926457540251778, -0.021217232112214296, 0.016040588631082736],
-            [0.012096055793189401, -0.018773859083148825, 0.008036464006738537],
-            [3.659564681994046e-5, 6.466579365577319e-5, -0.00013348541725589322],
-            [-3.397700920671138e-5, 0.00011862880771210135, -0.00011456985329275618],
+            [
+                0.008926457540251778,
+                -0.021217232112214296,
+                0.016040588631082736,
+            ],
+            [
+                0.012096055793189401,
+                -0.018773859083148825,
+                0.008036464006738537,
+            ],
+            [
+                3.659564681994046e-5,
+                6.466579365577319e-5,
+                -0.00013348541725589322,
+            ],
+            [
+                -3.397700920671138e-5,
+                0.00011862880771210135,
+                -0.00011456985329275618,
+            ],
         ];
         let left = common::deterministic_signal(9600, SR, 0.0);
         let right = common::deterministic_signal(9600, SR, 1.0);
@@ -382,7 +407,12 @@ mod ambient {
         }
         assert_ne!(output[0], output[2]);
         assert_ne!(output[4], output[6]);
-        let energy = |signal: &[f64]| signal[1440..].iter().map(|sample| sample * sample).sum::<f64>();
+        let energy = |signal: &[f64]| {
+            signal[1440..]
+                .iter()
+                .map(|sample| sample * sample)
+                .sum::<f64>()
+        };
         let mut correlation = 0.0;
         let mut pairs = 0;
         for left in 0..output.len() {
@@ -392,7 +422,8 @@ mod ambient {
                     .zip(&output[right][1440..])
                     .map(|(a, b)| a * b)
                     .sum::<f64>();
-                correlation += (dot / (energy(&output[left]) * energy(&output[right])).sqrt()).abs();
+                correlation +=
+                    (dot / (energy(&output[left]) * energy(&output[right])).sqrt()).abs();
                 pairs += 1;
             }
         }

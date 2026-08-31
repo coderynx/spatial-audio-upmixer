@@ -150,13 +150,55 @@ pub fn peaking_sos(wn: f64, q: f64, gain: f64) -> [f64; 6] {
     ]
 }
 
+/// RBJ Audio-EQ-Cookbook low shelf. `q` is constrained by the caller so the
+/// resulting section remains comfortably stable during live retunes.
+pub fn low_shelf_sos(wn: f64, q: f64, gain: f64) -> [f64; 6] {
+    let a = gain.sqrt();
+    let w0 = std::f64::consts::PI * wn;
+    let cos_w0 = w0.cos();
+    let alpha = w0.sin() / (2.0 * q);
+    let beta = 2.0 * a.sqrt() * alpha;
+    [
+        a * ((a + 1.0) - (a - 1.0) * cos_w0 + beta),
+        2.0 * a * ((a - 1.0) - (a + 1.0) * cos_w0),
+        a * ((a + 1.0) - (a - 1.0) * cos_w0 - beta),
+        (a + 1.0) + (a - 1.0) * cos_w0 + beta,
+        -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0),
+        (a + 1.0) + (a - 1.0) * cos_w0 - beta,
+    ]
+}
+
+/// RBJ Audio-EQ-Cookbook high shelf. See [`low_shelf_sos`] for `q`.
+pub fn high_shelf_sos(wn: f64, q: f64, gain: f64) -> [f64; 6] {
+    let a = gain.sqrt();
+    let w0 = std::f64::consts::PI * wn;
+    let cos_w0 = w0.cos();
+    let alpha = w0.sin() / (2.0 * q);
+    let beta = 2.0 * a.sqrt() * alpha;
+    [
+        a * ((a + 1.0) + (a - 1.0) * cos_w0 + beta),
+        -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0),
+        a * ((a + 1.0) + (a - 1.0) * cos_w0 - beta),
+        (a + 1.0) - (a - 1.0) * cos_w0 + beta,
+        2.0 * ((a - 1.0) - (a + 1.0) * cos_w0),
+        (a + 1.0) - (a - 1.0) * cos_w0 - beta,
+    ]
+}
+
 /// RBJ Audio-EQ-Cookbook band-pass with constant 0 dB peak gain, one section.
 /// Shares `wn`/`q` with [`peaking_sos`], so a detector built from a bell's own
 /// design hears the band that bell acts on.
 pub fn bandpass_sos(wn: f64, q: f64) -> [f64; 6] {
     let w0 = std::f64::consts::PI * wn;
     let alpha = w0.sin() / (2.0 * q);
-    [alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * w0.cos(), 1.0 - alpha]
+    [
+        alpha,
+        0.0,
+        -alpha,
+        1.0 + alpha,
+        -2.0 * w0.cos(),
+        1.0 - alpha,
+    ]
 }
 
 /// Complex response of one section at `wn` (normalized to Nyquist).

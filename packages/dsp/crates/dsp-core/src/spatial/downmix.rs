@@ -73,8 +73,10 @@ impl FoldTo51 {
     /// `None` when `names` carries no back or height channel, where the fold
     /// would be the identity and the delivered bed is already the programme.
     pub fn new<S: AsRef<str>>(names: &[S]) -> Option<Self> {
-        let roles: Vec<Option<DownmixRole>> =
-            names.iter().map(|n| DownmixRole::from_name(n.as_ref())).collect();
+        let roles: Vec<Option<DownmixRole>> = names
+            .iter()
+            .map(|n| DownmixRole::from_name(n.as_ref()))
+            .collect();
         let wider_than_51 = roles.iter().flatten().any(|r| {
             matches!(
                 r,
@@ -120,7 +122,9 @@ impl FoldTo51 {
             out.clear();
             out.resize(frames, 0.0);
             for (index, gain) in taps {
-                let Some(source) = src.get(*index) else { continue };
+                let Some(source) = src.get(*index) else {
+                    continue;
+                };
                 for (o, s) in out.iter_mut().zip(source[..frames].iter()) {
                     *o += gain * s;
                 }
@@ -269,12 +273,36 @@ pub fn itu_downmix_mono(
     add_scaled(&mut out, pick(channels, DownmixRole::C), 1.0);
     add_scaled(&mut out, pick(channels, DownmixRole::Sl), surround_coeff);
     add_scaled(&mut out, pick(channels, DownmixRole::Sr), surround_coeff);
-    add_scaled(&mut out, pick(channels, DownmixRole::Bl), surround_coeff * ITU_CENTER_COEFF);
-    add_scaled(&mut out, pick(channels, DownmixRole::Br), surround_coeff * ITU_CENTER_COEFF);
-    add_scaled(&mut out, pick(channels, DownmixRole::Tfl), height_coeff * ITU_CENTER_COEFF);
-    add_scaled(&mut out, pick(channels, DownmixRole::Tfr), height_coeff * ITU_CENTER_COEFF);
-    add_scaled(&mut out, pick(channels, DownmixRole::Tbl), height_coeff * surround_coeff);
-    add_scaled(&mut out, pick(channels, DownmixRole::Tbr), height_coeff * surround_coeff);
+    add_scaled(
+        &mut out,
+        pick(channels, DownmixRole::Bl),
+        surround_coeff * ITU_CENTER_COEFF,
+    );
+    add_scaled(
+        &mut out,
+        pick(channels, DownmixRole::Br),
+        surround_coeff * ITU_CENTER_COEFF,
+    );
+    add_scaled(
+        &mut out,
+        pick(channels, DownmixRole::Tfl),
+        height_coeff * ITU_CENTER_COEFF,
+    );
+    add_scaled(
+        &mut out,
+        pick(channels, DownmixRole::Tfr),
+        height_coeff * ITU_CENTER_COEFF,
+    );
+    add_scaled(
+        &mut out,
+        pick(channels, DownmixRole::Tbl),
+        height_coeff * surround_coeff,
+    );
+    add_scaled(
+        &mut out,
+        pick(channels, DownmixRole::Tbr),
+        height_coeff * surround_coeff,
+    );
     out
 }
 

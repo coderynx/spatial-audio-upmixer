@@ -275,7 +275,7 @@ describe("ProjectDetailPage tabs", () => {
     expect(screen.getByRole("slider", { name: "Resize Master strip" })).toBeInTheDocument();
   });
 
-  it("puts an object panner below an object stem title and above its fader", async () => {
+  it("stacks muted effects over an object panner in the mixer and inspector", async () => {
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
@@ -284,14 +284,20 @@ describe("ProjectDetailPage tabs", () => {
     await user.click(screen.getByRole("button", { name: "Vocals" }));
 
     const inspectorFader = screen.getByRole("slider", { name: "Selected stem gain" });
-    const title = screen.getByText("enabled").closest("p")!;
-    const panner = screen.getAllByRole("button", { name: /^Object panner$/ }).at(-1)!;
+    const mixerPanner = screen.getByRole("button", { name: "Object panner Vocals" });
+    const inspectorPanner = screen.getAllByRole("button", { name: /^Object panner$/ }).at(-1)!;
+    const [mixerEq, inspectorEq] = screen.getAllByRole("button", { name: "Open stem EQ" });
 
-    expect(title.textContent).toContain("Vocals");
-    expect(panner).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Object panner Vocals" })).not.toHaveLength(0);
-    expect(title.compareDocumentPosition(panner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(panner.compareDocumentPosition(inspectorFader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(inspectorPanner).toBeInTheDocument();
+    expect(mixerEq).toHaveClass("bg-muted");
+    expect(inspectorEq).toHaveClass("bg-muted");
+    expect(screen.getAllByRole("button", { name: "Enable EQ" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Enable EQ" })[0]).not.toBeDisabled();
+    expect(mixerEq.compareDocumentPosition(mixerPanner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(inspectorEq.compareDocumentPosition(inspectorPanner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(inspectorPanner.compareDocumentPosition(inspectorFader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const inspectorNameplate = screen.getAllByTitle("Vocals — stereo").at(-1)!;
+    expect(inspectorFader.compareDocumentPosition(inspectorNameplate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("writes mastering edits to the selected track's selected layout", async () => {
