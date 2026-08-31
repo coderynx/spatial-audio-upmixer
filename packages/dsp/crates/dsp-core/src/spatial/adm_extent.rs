@@ -7,6 +7,10 @@ pub fn gains(channel_positions: &[[f64; 3]], position: [f64; 3], size: f64) -> V
     if channel_positions.is_empty() {
         return Vec::new();
     }
+    let size = size.clamp(0.0, 1.0);
+    if size == 0.0 {
+        return point(channel_positions, position);
+    }
     let nx = NUM_VIRTUAL_SOURCES;
     let ny = NUM_VIRTUAL_SOURCES;
     let has_three_planes = unique(channel_positions, 2).len() >= 3;
@@ -26,7 +30,7 @@ pub fn gains(channel_positions: &[[f64; 3]], position: [f64; 3], size: f64) -> V
     if !has_three_planes {
         zo = zo.max(0.0);
     }
-    let scaled = scale_size(size.clamp(0.0, 1.0));
+    let scaled = scale_size(size);
     let sx = scaled.max(2.0 / (nx - 1) as f64);
     let sy = scaled.max(2.0 / (ny - 1) as f64);
     let sz = scaled.max(2.0 / (nz - 1) as f64);
@@ -199,24 +203,7 @@ pub fn gains_with_metadata(
         .enumerate()
         .filter_map(|(index, point)| (!excluded[index]).then_some(*point))
         .collect();
-    let mut active_gains = gains(&active, position, size.clamp(0.0, 1.0));
-    if size == 0.0 {
-        for gain in &mut active_gains {
-            if *gain < 1e-6 {
-                *gain = 0.0;
-            }
-        }
-        let norm = active_gains
-            .iter()
-            .map(|gain| gain * gain)
-            .sum::<f64>()
-            .sqrt();
-        if norm > 0.0 {
-            for gain in &mut active_gains {
-                *gain /= norm;
-            }
-        }
-    }
+    let active_gains = gains(&active, position, size.clamp(0.0, 1.0));
     let mut next = 0;
     excluded
         .into_iter()

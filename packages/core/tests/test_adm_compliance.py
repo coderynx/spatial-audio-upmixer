@@ -3,13 +3,20 @@ from __future__ import annotations
 
 import struct
 import xml.etree.ElementTree as ET
+from fractions import Fraction
 
 import numpy as np
 import pytest
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, validate_delivery
-from upmixer.io.adm_writer import AdmBwfWriter, AdmObject, _DOLBY_ENGINE_ALLOWED_FORMATS
+from upmixer.io.adm_chunks import _fmt_time
+from upmixer.io.adm_writer import (
+    AdmBwfWriter,
+    AdmObject,
+    _DOLBY_ENGINE_ALLOWED_FORMATS,
+    _wave_header,
+)
 from upmixer.separation.stem_router import StemRouter
 
 
@@ -87,6 +94,33 @@ def test_required_chunks_and_default_dbmd(adm_712):
     assert chunks[b"dbmd"] == struct.pack("<IHH", 1, 1, 0)
 
 
+def test_bw64_header_carries_64_bit_sizes_and_sample_count():
+    riff_size = 0x1_0000_0100
+    data_size = 0x1_0000_0000
+    header, data_size_field = _wave_header(riff_size, data_size, 123_456)
+
+    assert header[:12] == b"BW64\xff\xff\xff\xffWAVE"
+    assert header[12:16] == b"ds64"
+    assert struct.unpack_from("<I", header, 16)[0] == 28
+    assert struct.unpack_from("<QQQI", header, 20) == (
+        riff_size + 36, data_size, 123_456, 0,
+    )
+    assert data_size_field == 0xFFFFFFFF
+
+
+@pytest.mark.parametrize("sample_rate", [48_000, 96_000])
+@pytest.mark.parametrize("sample_count", [1, 6, 23, 48_001])
+def test_adm_times_resolve_to_the_exact_sample_boundary(sample_rate, sample_count):
+    text = _fmt_time(sample_count, sample_rate)
+    hours, minutes, seconds = text.split(":")
+    represented = (
+        int(hours) * 3600 + int(minutes) * 60 + Fraction(seconds)
+    ) * sample_rate
+
+    assert sample_count - 1 < represented <= sample_count
+    assert len(text.rsplit(".", 1)[1]) == 6
+
+
 def test_xml_uses_dolby_bs2076_0_profile(adm_712):
     root, _ = adm_712
     assert "version" not in root.attrib
@@ -150,20 +184,39 @@ def test_writes_one_bed_and_a_direct_object(tmp_path):
     assert obj_channel.findtext("audioBlockFormat/jumpPosition") == "1"
 
 
-def test_writes_object_extent_and_diffuse(tmp_path):
+def test_writes_object_extent(tmp_path):
     config = UpmixConfig(output_format="5.1")
     channels = {label.value: np.zeros(32) for label in FORMAT_MAP["5.1"].channels}
     output = tmp_path / "out.wav"
     AdmBwfWriter(str(output), 48_000, config).write(
         channels,
-        objects=[AdmObject("Crowd", np.ones(32) * 0.1, (0.0, -1.0, 0.0), 0.5, True)],
+        objects=[AdmObject("Crowd", np.ones(32) * 0.1, (0.0, -1.0, 0.0), 0.5)],
     )
 
     root = _audio_format_extended(_chunks(output.read_bytes())[b"axml"])
     block = root.findall("audioChannelFormat")[-1].find("audioBlockFormat")
     assert block is not None
     assert [block.findtext(tag) for tag in ("width", "height", "depth")] == ["0.5"] * 3
-    assert block.findtext("diffuse") == "1"
+    assert block.find("diffuse") is None
+
+
+@pytest.mark.parametrize("diffuse", [True, 1])
+def test_rejects_diffuse_objects_until_the_audio_engine_can_render_them(diffuse):
+    with pytest.raises(ValueError, match="diffuse"):
+        AdmObject("Crowd", np.ones(32), (0.0, -1.0, 0.0), diffuse=diffuse)
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [np.zeros((32, 1)), np.full(32, np.nan), np.ones(32, dtype=np.complex128)],
+)
+def test_rejects_invalid_audio_arrays(tmp_path, invalid):
+    config = UpmixConfig(output_format="5.1")
+    channels = {label.value: np.zeros(32) for label in FORMAT_MAP["5.1"].channels}
+    channels["FL"] = invalid
+
+    with pytest.raises(ValueError, match="ADM-BWF channel 'FL'"):
+        AdmBwfWriter(str(tmp_path / "out.wav"), 48_000, config).write(channels)
 
 
 def test_adm_lead_vocal_stereo_objects_are_panned_left_and_right(tmp_path):

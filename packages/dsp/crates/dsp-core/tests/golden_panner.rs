@@ -56,6 +56,60 @@ fn point_objects_keep_their_direction() {
 }
 
 #[test]
+fn point_objects_match_bs2127_reference_in_dolby_layouts() {
+    let placement = StemPlacement::new(52.0, 23.0, 0.0, 0.0, 0.0);
+    let cases: &[(&[&str], &[f64])] = &[
+        (
+            &["FL", "FR", "C", "SL", "SR"],
+            &[
+                0.8562937996270786,
+                0.0,
+                0.39415727909660503,
+                0.3260336788387672,
+                0.07143534362093623,
+            ],
+        ),
+        (
+            &["FL", "FR", "C", "SL", "SR", "BL", "BR"],
+            &[
+                0.7059949450262826,
+                0.0,
+                0.3249737960367183,
+                0.6146747566644035,
+                0.13467781185621472,
+                0.0,
+                0.0,
+            ],
+        ),
+        (
+            &["FL", "FR", "C", "SL", "SR", "BL", "BR", "TFL", "TFR"],
+            &[
+                0.5771429681618441,
+                0.0,
+                0.2656624421191444,
+                0.5024897359601441,
+                0.11009760427866028,
+                0.0,
+                0.0,
+                0.5625985418130784,
+                0.12326769522154092,
+            ],
+        ),
+    ];
+
+    for (speakers, expected) in cases {
+        let [route, _] = upmixer_dsp_core::spatial::panner::object_routes(&placement, speakers);
+        assert!(
+            route
+                .iter()
+                .zip(*expected)
+                .all(|(actual, expected)| (actual - expected).abs() < 1e-12),
+            "{speakers:?}: {route:?}",
+        );
+    }
+}
+
+#[test]
 fn placement_projection_matches_python() {
     let channels = [
         "FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR",

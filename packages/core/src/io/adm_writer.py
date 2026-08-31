@@ -40,6 +40,8 @@ _DOLBY_BASIC_ZONES = frozenset({
     "ZM1", "ZM2L", "ZM2R", "ZM3L", "ZM3Lss", "ZM3R", "ZM3Rss", "ZM4", "ZM5",
 })
 _DOLBY_HEIGHT_ZONES = frozenset({"ZB", "ZT"})
+_UINT32_MAX = 0xFFFFFFFF
+_DS64_DATA_SIZE = 28
 
 
 def _valid_zone_exclusion(zones: tuple[str, ...]) -> bool:
@@ -64,6 +66,37 @@ class AdmObject:
     importance: int = 10
     channel_lock: bool = False
     zone_exclusion: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.diffuse, bool):
+            raise ValueError("Dolby ADM object diffuse must be a boolean")
+        if self.diffuse:
+            raise ValueError("Dolby ADM diffuse objects are not supported by the audio engine")
+
+
+def _wave_header(
+    riff_size: int, data_size: int, sample_count: int,
+) -> tuple[bytes, int]:
+    if riff_size <= _UINT32_MAX:
+        return b"RIFF" + struct.pack("<I", riff_size) + b"WAVE", data_size
+
+    riff_size += _chunk_size(_DS64_DATA_SIZE)
+    ds64 = struct.pack("<QQQI", riff_size, data_size, sample_count, 0)
+    header = b"BW64" + struct.pack("<I", _UINT32_MAX) + b"WAVE"
+    return header + b"ds64" + struct.pack("<I", len(ds64)) + ds64, _UINT32_MAX
+
+
+def _validated_audio(name: str, audio: np.ndarray) -> np.ndarray:
+    array = np.asarray(audio)
+    if array.ndim != 1:
+        raise ValueError(f"ADM-BWF channel '{name}' must be a 1D array")
+    if (
+        not np.issubdtype(array.dtype, np.number)
+        or np.issubdtype(array.dtype, np.complexfloating)
+        or not np.all(np.isfinite(array))
+    ):
+        raise ValueError(f"ADM-BWF channel '{name}' must contain finite real samples")
+    return array
 
 
 def render_adm_programme(
@@ -144,7 +177,7 @@ class AdmBwfWriter:
             key = label.value
             if key not in channels:
                 raise ValueError(f"Missing channel '{key}' for {fmt.name} output")
-            ordered.append(channels[key])
+            ordered.append(_validated_audio(key, channels[key]))
         for obj in objects:
             if not obj.name or len(obj.name) > 64:
                 raise ValueError("ADM object names must be 1 to 64 characters")
@@ -152,8 +185,6 @@ class AdmBwfWriter:
                 raise ValueError(f"ADM object '{obj.name}' has an invalid position")
             if not 0.0 <= obj.object_size <= 1.0:
                 raise ValueError(f"ADM object '{obj.name}' has an invalid object size")
-            if not isinstance(obj.diffuse, bool):
-                raise ValueError(f"ADM object '{obj.name}' diffuse must be a boolean")
             if (
                 isinstance(obj.gain, bool)
                 or not isinstance(obj.gain, (int, float))
@@ -173,7 +204,7 @@ class AdmBwfWriter:
                 raise ValueError(f"ADM object '{obj.name}' channel lock must be a boolean")
             if not _valid_zone_exclusion(obj.zone_exclusion):
                 raise ValueError(f"ADM object '{obj.name}' has an invalid zone exclusion")
-            ordered.append(obj.audio)
+            ordered.append(_validated_audio(obj.name, obj.audio))
 
         n_samples = len(ordered[0])
         if any(len(channel) != n_samples for channel in ordered):
@@ -184,8 +215,6 @@ class AdmBwfWriter:
             self._config.output_dither,
             self._config.output_dither_seed,
         )
-        duration_s = n_samples / sr
-
         metadata_objects = tuple(
             (
                 obj.name, obj.position, obj.object_size, obj.diffuse, obj.gain,
@@ -197,7 +226,7 @@ class AdmBwfWriter:
         bext_bytes = _bext_chunk(loudness_lkfs=measured_lkfs, tp_dbtp=measured_tp_dbtp)
         chna_bytes = _chna_chunk(fmt, len(objects))
         axml_bytes = _axml_chunk(
-            fmt, duration_s, sr, bit_depth, objects=metadata_objects,
+            fmt, n_samples, sr, bit_depth, objects=metadata_objects,
         )
         dbmd_bytes = _dbmd_chunk()
         data_size = n_samples * len(ordered) * (bit_depth // 8)
@@ -206,15 +235,14 @@ class AdmBwfWriter:
             _chunk_size(data_size), _chunk_size(len(axml_bytes)),
             _chunk_size(len(chna_bytes)), _chunk_size(len(dbmd_bytes)),
         ))
-        if riff_size > 0xFFFFFFFF:
-            raise ValueError("ADM-BWF exceeds RIFF 4 GiB limit; BW64 output is required")
+        header, data_size_field = _wave_header(riff_size, data_size, n_samples)
 
         with atomic_output_path(self._path) as temporary:
             with temporary.open("wb") as handle:
-                handle.write(b"RIFF" + struct.pack("<I", riff_size) + b"WAVE")
+                handle.write(header)
                 _write_chunk(handle, b"fmt ", fmt_bytes)
                 _write_chunk(handle, b"bext", bext_bytes)
-                handle.write(b"data" + struct.pack("<I", data_size))
+                handle.write(b"data" + struct.pack("<I", data_size_field))
                 block_size = 262_144
                 for start in range(0, n_samples, block_size):
                     block = np.column_stack([channel[start:start + block_size] for channel in ordered])

@@ -207,9 +207,10 @@ Required sub-elements:
 
 ADM-BWF keeps each linked-stereo stem as two mono objects at the endpoints of
 `azimuth_deg ± width_deg / 2`. The direct normalized `object_size` is written
-unchanged as equal ADM `width`, `height`, and `depth` values. `diffuse` is
-only written for an object explicitly marked diffuse; the application's
-ambient sends remain rendered audio in the DirectSpeakers bed.
+unchanged as equal ADM `width`, `height`, and `depth` values. Diffuse objects
+are rejected until the shared audio engine can reproduce the Dolby direct and
+diffuse render; the application's ambient sends remain rendered audio in the
+DirectSpeakers bed.
 
 `mixing.stem_object_metadata` authors `gain`, `importance`, `channelLock`,
 and the named Dolby `zoneExclusion` sets. The shared Rust renderer applies
@@ -336,8 +337,12 @@ ADM-BWF boundary.
 | `<chna>` | Mandatory | Track UID / Track Format ID mapping |
 | `<axml>` | Mandatory | Contains ADM XML |
 | `<dbmd>` | Mandatory | Dolby metadata (EBU Tech 3285 Supplement 6) |
+| `<ds64>` | BW64 only | 64-bit RIFF, data, and sample counts |
 
 > `<dbmd>` is commonly omitted by non-Dolby implementations — its absence causes rejection by Dolby validation tools.
+
+The writer uses RIFF while all 32-bit chunk sizes fit and switches to BW64
+with a leading `<ds64>` chunk for longer masters.
 
 ---
 
@@ -370,6 +375,7 @@ Profile targets BS.2076-0. Known divergences in existing files:
 - [ ] audioContent.dialogue = 2, mixedContentKind = 0
 - [ ] `<dbmd>` chunk present in BWF file
 - [ ] `<chna>` chunk present in BWF file
+- [ ] BW64 files use `0xFFFFFFFF` size sentinels and a leading `<ds64>` chunk
 - [ ] No unlisted XML attributes or sub-elements anywhere in the ADM tree
 - [ ] Channel configuration matches one of the 8 allowed sets (Table 2-21)
 - [ ] DirectSpeakers speakerLabel values from RC_* set only (Table 2-14)

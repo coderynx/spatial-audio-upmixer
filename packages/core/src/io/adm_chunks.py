@@ -113,13 +113,17 @@ def _pad_field(s: str, n: int) -> bytes:
     return b + b"\x00" * (n - len(b))
 
 
-def _fmt_time(seconds: float) -> str:
-    """Format as HH:MM:SS.SSSSS (ADM timestamp per BS.2076-2)."""
-    seconds = max(0.0, seconds)
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = seconds % 60
-    return f"{h:02d}:{m:02d}:{s:08.5f}"
+def _fmt_time(sample_count: int, sample_rate: int) -> str:
+    """Format a Dolby-profile decimal time from an integer sample position."""
+    if sample_count < 0 or sample_rate <= 0:
+        raise ValueError("ADM sample count must be non-negative and sample rate positive")
+    # Dolby v1.1 predates fractional sample times; microsecond flooring keeps
+    # the decimal boundary within one sample without extending past the essence.
+    microseconds = sample_count * 1_000_000 // sample_rate
+    seconds, fraction = divmod(microseconds, 1_000_000)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{fraction:06d}"
 
 
 def _pos_str(v: float) -> str:
@@ -231,7 +235,7 @@ def _chna_chunk(fmt: OutputFormat, object_count: int = 0) -> bytes:
 
 def _axml_chunk(
     fmt: OutputFormat,
-    duration_s: float,
+    sample_count: int,
     sample_rate: int,
     bit_depth: int,
     objects: tuple[
@@ -240,7 +244,7 @@ def _axml_chunk(
     ] = (),
 ) -> bytes:
     """Generate Dolby Atmos Master ADM Profile v1.1 compliant XML."""
-    dur = _fmt_time(duration_s)
+    dur = _fmt_time(sample_count, sample_rate)
     zero = "00:00:00.00000"
     n = len(fmt.channels)
     pack_id = "AP_00011001"
