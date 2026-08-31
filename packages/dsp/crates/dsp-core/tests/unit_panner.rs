@@ -9,6 +9,7 @@ const FULL: [&str; 12] = [
     "FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR",
 ];
 const BED_51: [&str; 6] = ["FL", "FR", "C", "LFE", "SL", "SR"];
+const BED_712: [&str; 10] = ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR"];
 
 fn point(azimuth: f64, elevation: f64) -> StemPlacement {
     StemPlacement::new(azimuth, elevation, 0.0, 0.0, 0.0)
@@ -46,6 +47,18 @@ fn a_point_placement_lands_on_the_speaker_it_names() {
             "{channel} should be silent"
         );
     }
+}
+
+#[test]
+fn direct_speaker_positions_follow_the_selected_layout() {
+    assert!(gain(&placement_route(&point(90.0, 0.0), &FULL), &FULL, "SL") > 0.99);
+    assert!(
+        gain(
+            &placement_route(&point(90.0, 30.0), &BED_712),
+            &BED_712,
+            "TFL"
+        ) > 0.99
+    );
 }
 
 #[test]

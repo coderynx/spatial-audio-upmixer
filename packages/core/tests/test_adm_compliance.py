@@ -188,7 +188,7 @@ def test_adm_lead_vocal_stereo_objects_are_panned_left_and_right(tmp_path):
 
     assert positions["Lead Vocals Left"]["X"] < 0.0
     assert positions["Lead Vocals Right"]["X"] > 0.0
-    assert all(obj.object_size == 0.0 for obj in objects)
+    assert all(obj.object_size == 0.1 for obj in objects)
 
 
 def test_writes_object_gain_importance_channel_lock_and_zones(tmp_path):

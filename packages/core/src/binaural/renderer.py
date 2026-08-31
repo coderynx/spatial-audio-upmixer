@@ -13,7 +13,7 @@ import numpy as np
 import upmixer_dsp
 
 from upmixer.binaural.decoder import load_decode_filter_set
-from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION, positional_labels
+from upmixer.binaural.geometry import speaker_azimuth_elevation
 from upmixer.binaural.profiles import DECODE_FILTER_SET, VOICING_PARAMS, resolve_profile
 from upmixer.binaural.voicing import apply_voicing
 from upmixer.formats import BINAURAL, ChannelLabel, OutputFormat
@@ -57,7 +57,8 @@ def render_binaural(
         (left, right) float64 arrays of the same length as the bed channels.
     """
     resolved = resolve_profile(profile)
-    labels = positional_labels(list(bed_fmt.channels))
+    speaker_positions = speaker_azimuth_elevation(bed_fmt)
+    labels = list(speaker_positions)
     n_samples = next((len(channels[label.value]) for label in labels if label.value in channels), 0)
 
     feeds: list[np.ndarray] = []
@@ -66,7 +67,7 @@ def render_binaural(
         signal = channels.get(label.value)
         if signal is None:
             continue
-        position = SPEAKER_AZIMUTH_ELEVATION[label]
+        position = speaker_positions[label]
         feeds.append(np.ascontiguousarray(signal[:n_samples], dtype=np.float64))
         directions.append((position.azimuth_rad, position.elevation_rad))
 

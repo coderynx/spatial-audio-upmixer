@@ -22,9 +22,8 @@ import soundfile as sf
 from scipy.signal import butter, sosfilt
 
 from upmixer.binaural.ambisonics import N_ACN_CHANNELS, encoding_matrix
-from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
 from upmixer.binaural.head_model import synth_hrir
-from upmixer.formats import ChannelLabel
+from upmixer.direct_speakers import DIRECT_SPEAKER_LAYOUTS
 
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLE_RATE = 48_000
@@ -40,46 +39,32 @@ DIRECT_TAPS = 128
 # directly, so its tail is unaffected by the normalization.
 REF_TAIL_LP_HZ = 3500.0
 
-# The pinv decode matrix (`build_filter_set`) and per-direction BRIRs are fit
-# to exactly this direction set — not to arbitrary points on the sphere. That
-# set should therefore be exactly the directions the renderer ever actually
-# encodes from: the 11 fixed virtual-loudspeaker positions (even the
-# nearest-3-speaker routing fallback only ever weights these same 11 fixed
-# encoder directions, never a novel one). An earlier revision instead fit a
-# generic 32-point Fibonacci-sphere lattice, which has no sample point at
-# azimuth 0 (closest points sit at +-5 degrees) — reconstructing a direction
-# the fit set doesn't cover leaves residual error, and that error happened to
-# fall on dead center, i.e. exactly where `C` (and therefore vocals, which
-# are almost always routed there) sits. Fitting the real 11 directions
-# instead makes the decode an exact left-inverse for all of them
-# (`decode @ encode == I_11` to double-precision) — zero reconstruction
-# residual, so no direction is disproportionately "roomier" than another.
-#
-# Grouped in mirror pairs (mirror symmetry is required for L/R-equal decode
-# of a centered signal — see `synth_hrir`/`build_filter_set`'s near/far
-# comments) with `C` last, since it has no mirror partner.
-REAL_SPEAKER_ORDER: tuple[ChannelLabel, ...] = (
-    ChannelLabel.FL, ChannelLabel.FR,
-    ChannelLabel.SL, ChannelLabel.SR,
-    ChannelLabel.BL, ChannelLabel.BR,
-    ChannelLabel.TFL, ChannelLabel.TFR,
-    ChannelLabel.TBL, ChannelLabel.TBR,
-    ChannelLabel.C,
-)
-N_VIRTUAL_SPEAKERS = len(REAL_SPEAKER_ORDER)
+# Fit every nominal direction used by a supported layout, grouped into mirror
+# pairs with the unpaired centre last so the generated filters stay symmetric.
+def real_speaker_directions() -> list[tuple[float, float]]:
+    """Return all supported bed-speaker directions, in radians."""
+    pairs = sorted({
+        (abs(speaker.azimuth_deg), speaker.elevation_deg)
+        for layout in DIRECT_SPEAKER_LAYOUTS.values()
+        for speaker in layout
+        if speaker.azimuth_deg not in (None, 0.0)
+        and speaker.elevation_deg is not None
+    })
+    directions = [
+        (math.radians(signed_azimuth), math.radians(elevation))
+        for azimuth, elevation in pairs
+        for signed_azimuth in (azimuth, -azimuth)
+    ]
+    return directions + [(0.0, 0.0)]
+
+
+REAL_SPEAKER_DIRECTIONS = real_speaker_directions()
+N_VIRTUAL_SPEAKERS = len(REAL_SPEAKER_DIRECTIONS)
 # Room-tail pair id per speaker index: mirror pairs share id `i // 2`; `C`
 # (last, unpaired) gets its own id — see `build_filter_set`'s room-tail loop.
 PAIR_ID: tuple[int, ...] = tuple(i // 2 for i in range(N_VIRTUAL_SPEAKERS - 1)) + (
     (N_VIRTUAL_SPEAKERS - 1) // 2,
 )
-
-
-def real_speaker_directions() -> list[tuple[float, float]]:
-    """Return the 11 fixed virtual-loudspeaker (azimuth, elevation) directions, in radians."""
-    return [
-        (SPEAKER_AZIMUTH_ELEVATION[label].azimuth_rad, SPEAKER_AZIMUTH_ELEVATION[label].elevation_rad)
-        for label in REAL_SPEAKER_ORDER
-    ]
 
 
 def synth_room_tail(sr: int, rt60_s: float, pre_delay_s: float, seed: int, lp_hz: float = 3500.0) -> np.ndarray:
@@ -158,7 +143,7 @@ def build_filter_set(
        8 dB step (1) alone would have needed) doesn't leave the room-tail
        profiles measurably louder overall than `flat` for the same input.
     """
-    directions = real_speaker_directions()
+    directions = REAL_SPEAKER_DIRECTIONS
     encode = encoding_matrix(directions)  # (16, M)
     decode = np.linalg.pinv(encode)  # (M, 16): decode @ encode ~= I_16
 
@@ -203,7 +188,7 @@ def build_filter_set(
         if room_rt60_s else None
     )
     if room_rt60_s is not None:
-        center_pair = PAIR_ID[REAL_SPEAKER_ORDER.index(ChannelLabel.C)]
+        center_pair = PAIR_ID[-1]
         room_far_by_pair[center_pair] = room_near_by_pair[center_pair]
 
     out = np.zeros((n_taps, 2 * N_ACN_CHANNELS), dtype=np.float64)

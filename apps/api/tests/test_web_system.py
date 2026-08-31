@@ -89,6 +89,13 @@ def test_configuration_serves_engine_constants(web_client):
     assert constants["delivery_default"] == {
         "target_lkfs": -18.0, "max_tp_dbtp": -1.0, "tolerance_lu": None,
     }
+    assert constants["speaker_directions"]["5.1"]["SL"]["azimuth_rad"] == pytest.approx(
+        110.0 * 3.141592653589793 / 180.0
+    )
+    assert constants["speaker_directions"]["7.1.2"]["TFL"] == {
+        "azimuth_rad": pytest.approx(3.141592653589793 / 2.0),
+        "elevation_rad": pytest.approx(3.141592653589793 / 6.0),
+    }
     assert constants["stem_processing_presets"]["eq"]["Kick"] == ["kick-weight"]
     assert constants["stem_processing_presets"]["dynamic_eq"]["Kick"] == ["kick-boxiness"]
     assert constants["stem_processing_presets"]["dynamics"]["Kick"] == ["kick-control"]

@@ -166,6 +166,11 @@ Cartesian position values per channel (Table 2-14):
 | Ls | RC_Ls | −1.0 | −1.0 | 0.0 |
 | Rs | RC_Rs | 1.0 | −1.0 | 0.0 |
 
+The export maps the standard layout metadata in
+`packages/core/src/direct_speakers.py` to these mandatory room-centric labels
+and coordinates. The renderer uses the corresponding BS.2051/BS.2094 nominal
+angles; the ADM block stays restricted to this Dolby-permitted subset.
+
 ---
 
 ## audioBlockFormat — Objects

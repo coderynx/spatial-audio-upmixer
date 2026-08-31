@@ -84,33 +84,23 @@ fold headphone-specific correction into content also delivered to speakers.
 
 ## 2. Virtual-loudspeaker geometry
 
-Unit-sphere positions, listener at the origin facing −Z. `x` = left(−)/right(+),
-`y` = floor(0)/height(+), `z` = front(−)/back(+). LFE has no position.
+The renderer uses the BS.2051/BS.2094 nominal DirectSpeakers positions for
+the selected layout. Positive azimuth is left; LFE has no spatial position.
 
-| Channel | x | y | z |
-|---|---|---|---|
-| FL | −0.5 | 0 | −0.87 |
-| FR | 0.5 | 0 | −0.87 |
-| C | 0 | 0 | −1 |
-| SL | −0.94 | 0 | 0.34 |
-| SR | 0.94 | 0 | 0.34 |
-| BL | −0.7 | 0 | 0.7 |
-| BR | 0.7 | 0 | 0.7 |
-| TFL | −0.5 | 0.6 | −0.7 |
-| TFR | 0.5 | 0.6 | −0.7 |
-| TBL | −0.6 | 0.6 | 0.6 |
-| TBR | 0.6 | 0.6 | 0.6 |
+| Layout | SL/SR | BL/BR | TFL/TFR | TBL/TBR |
+|---|---|---|---|---|
+| stereo | — | — | — | — |
+| 5.1 | ±110°, 0° | — | — | — |
+| 7.1 | ±90°, 0° | ±135°, 0° | — | — |
+| 5.1.2 | ±110°, 0° | — | ±30°, +30° | — |
+| 5.1.4 | ±110°, 0° | — | ±30°, +30° | ±110°, +30° |
+| 7.1.2 | ±90°, 0° | ±135°, 0° | ±90°, +30° | — |
+| 7.1.4 | ±90°, 0° | ±135°, 0° | ±45°, +30° | ±135°, +30° |
 
-Azimuth/elevation conversion (positive azimuth = left):
-
-```
-azimuth  = atan2(-x, -z)             (degrees, 0 = front)
-elevation = asin(y / |position|)     (degrees, 0 = horizon)
-```
-
-Source of truth: `packages/core/src/binaural/geometry.py` (core) and
-`apps/web/src/lib/spatial.ts` `speakerCoordinates` / `positionToAzimuthElevation`
-(web). These two files must stay numerically identical.
+FL/FR are always ±30° at 0° elevation and C is 0°. Source of truth:
+`packages/core/src/direct_speakers.py`; the API serves its layout-specific
+directions to the browser preview, and the Rust panner is pinned to the same
+positions by its unit tests.
 
 ---
 
@@ -207,10 +197,9 @@ from:
    high-frequency rolloff — `studio` keeps a bright 3500 Hz tail, `listening`
    darkens it to 2500 Hz so the same decay reads as a warmer, larger cinema
    room rather than a near-field monitor room.
-3. A pseudo-inverse (mode-matching) ambisonic decode matrix from the 11 fixed
-   virtual-loudspeaker directions the renderer encodes, folded through the
-   per-direction BRIRs into the 16×{L,R} FIR bank above. This makes the decode
-   an exact left-inverse for every fixed speaker direction.
+3. A pseudo-inverse (mode-matching) ambisonic decode matrix fitted across
+   every nominal speaker direction used by the supported layouts, folded
+   through the per-direction BRIRs into the 16×{L,R} FIR bank above.
 
 This is a documented approximation, not a perceptually validated HRTF
 measurement. Swapping in a measured dataset later only requires regenerating

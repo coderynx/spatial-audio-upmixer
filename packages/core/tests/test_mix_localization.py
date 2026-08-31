@@ -25,7 +25,7 @@ import math
 import numpy as np
 import pytest
 
-from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
+from upmixer.binaural.geometry import speaker_azimuth_elevation
 from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
 from upmixer.separation.stem_placement import (
     SCENE_OBJECT_SIZE,
@@ -61,12 +61,6 @@ def _unit(azimuth_deg: float, elevation_deg: float) -> np.ndarray:
     )
 
 
-_SPEAKER_UNIT: dict[str, np.ndarray] = {
-    label.value: _unit(position.azimuth_deg, position.elevation_deg)
-    for label, position in SPEAKER_AZIMUTH_ELEVATION.items()
-}
-
-
 def _powers(route: dict[str, float]) -> dict[str, float]:
     return {
         channel: gain * gain
@@ -89,17 +83,21 @@ def _concentration(placement: StemPlacement, output_format: OutputFormat) -> tup
 def _angular_spread_deg(placement: StemPlacement, output_format: OutputFormat) -> float:
     """Power-weighted angular deviation from the routed energy centroid."""
     powers = _powers(placement_route(placement, output_format))
+    speaker_units = {
+        label.value: _unit(position.azimuth_deg, position.elevation_deg)
+        for label, position in speaker_azimuth_elevation(output_format).items()
+    }
     total = sum(powers.values())
     if total <= 0.0:
         return 0.0
-    centroid = sum(power * _SPEAKER_UNIT[channel] for channel, power in powers.items())
+    centroid = sum(power * speaker_units[channel] for channel, power in powers.items())
     norm = float(np.linalg.norm(centroid))
     if norm <= 0.0:
         return 180.0
     centroid = centroid / norm
     variance = 0.0
     for channel, power in powers.items():
-        cosine = float(np.clip(np.dot(_SPEAKER_UNIT[channel], centroid), -1.0, 1.0))
+        cosine = float(np.clip(np.dot(speaker_units[channel], centroid), -1.0, 1.0))
         variance += power * math.degrees(math.acos(cosine)) ** 2
     return math.sqrt(variance / total)
 

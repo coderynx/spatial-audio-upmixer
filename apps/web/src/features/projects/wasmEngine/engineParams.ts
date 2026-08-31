@@ -146,6 +146,11 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
   const speakers = layoutChannels.filter(
     (channel) => channel === "LFE" || CHANNEL_SHAPE[channel] !== undefined,
   );
+  const positionalCount = speakers.length - Number(speakers.includes("LFE"));
+  const directions = Object.values(c.speakerDirections).find(
+    (layout) => Object.keys(layout).length === positionalCount
+      && speakers.every((name) => name === "LFE" || layout[name]),
+  ) ?? {};
   const index = new Map(speakers.map((name, i) => [name, i]));
   const lfeIndex = index.get("LFE");
 
@@ -160,7 +165,7 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
 
   return {
     speakers: speakers.map((name) => {
-      const direction = c.speakerDirections[name] ?? { azimuth_rad: 0, elevation_rad: 0 };
+      const direction = directions[name] ?? { azimuth_rad: 0, elevation_rad: 0 };
       return {
         name,
         azimuth_rad: direction.azimuth_rad,

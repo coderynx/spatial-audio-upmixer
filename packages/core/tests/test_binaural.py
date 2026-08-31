@@ -5,7 +5,7 @@ import pytest
 
 from upmixer.binaural.ambisonics import N_ACN_CHANNELS, encode_gains
 from upmixer.binaural.decoder import decode_to_binaural, load_decode_filter_set
-from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION, SPEAKER_COORDINATES
+from upmixer.binaural.geometry import speaker_azimuth_elevation
 from upmixer.binaural.head_model import synth_hrir
 from upmixer.binaural.profiles import BINAURAL_PROFILES, VOICING_PARAMS, BinauralProfile, resolve_profile
 from upmixer.binaural.renderer import (
@@ -109,21 +109,25 @@ def test_listening_voicing_params_exact():
     assert params.loudness_target_lkfs is None
 
 
-def test_geometry_matches_web_contract_coordinates():
-    assert SPEAKER_COORDINATES[ChannelLabel.FL].x == pytest.approx(-0.5)
-    assert SPEAKER_COORDINATES[ChannelLabel.C].z == pytest.approx(-1.0)
-    assert SPEAKER_COORDINATES[ChannelLabel.TFL].y == pytest.approx(0.6)
-    assert ChannelLabel.LFE not in SPEAKER_COORDINATES
+def test_geometry_is_layout_specific():
+    five_one = speaker_azimuth_elevation(FORMAT_MAP["5.1"])
+    seven_one_two = speaker_azimuth_elevation(FORMAT_MAP["7.1.2"])
+
+    assert five_one[ChannelLabel.SL].azimuth_deg == 110.0
+    assert seven_one_two[ChannelLabel.SL].azimuth_deg == 90.0
+    assert seven_one_two[ChannelLabel.TFL].azimuth_deg == 90.0
+    assert seven_one_two[ChannelLabel.TFL].elevation_deg == 30.0
+    assert ChannelLabel.LFE not in seven_one_two
 
 
 def test_azimuth_elevation_front_center_is_zero():
-    pos = SPEAKER_AZIMUTH_ELEVATION[ChannelLabel.C]
+    pos = speaker_azimuth_elevation(FORMAT_MAP["5.1"])[ChannelLabel.C]
     assert pos.azimuth_deg == pytest.approx(0.0, abs=1e-6)
     assert pos.elevation_deg == pytest.approx(0.0, abs=1e-6)
 
 
 def test_azimuth_left_speaker_is_positive():
-    pos = SPEAKER_AZIMUTH_ELEVATION[ChannelLabel.FL]
+    pos = speaker_azimuth_elevation(FORMAT_MAP["5.1"])[ChannelLabel.FL]
     assert pos.azimuth_deg > 0
 
 

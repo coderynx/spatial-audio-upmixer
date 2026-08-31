@@ -184,7 +184,14 @@ class TestProfiles:
                 [np.ascontiguousarray(c) for c in bed],
                 None,
                 SR,
-                [tuple(float(b[f]) for f in BAND_FIELDS) for b in bands],
+                [
+                    (
+                        *tuple(float(b[f]) for f in BAND_FIELDS[:4]),
+                        float("inf"),
+                        *tuple(float(b[f]) for f in BAND_FIELDS[4:]),
+                    )
+                    for b in bands
+                ],
             )
             for band, cut in zip(bands, cuts):
                 assert 0.5 < cut < 12.0, (

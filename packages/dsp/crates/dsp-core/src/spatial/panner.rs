@@ -71,29 +71,13 @@ pub const HEIGHT_FLATTEN_WIDTH_FACTOR: f64 = 2.0;
 
 const SINGULAR_BASIS: f64 = 1e-6;
 const FACET_EPS: f64 = 1e-9;
+const TOP_FACE_INSET_DEG: f64 = 1e-6;
 
 /// Two-channel output resolves against the full layout and is folded
 /// afterwards, so a stereo mix keeps the same relative image the immersive
 /// layouts get. Channel order matches the 7.1.4 output format.
 pub const STEREO_PLACEMENT_CHANNELS: [&str; 12] = [
     "FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR",
-];
-
-/// Unit-sphere anchor points per channel, listener at the origin facing -Z.
-/// Mirrors `binaural/geometry.py`'s `SPEAKER_COORDINATES` and
-/// `apps/web/src/lib/spatial.ts`'s `speakerCoordinates`.
-const SPEAKER_COORDINATES: [(&str, [f64; 3]); 11] = [
-    ("FL", [-0.5, 0.0, -0.87]),
-    ("FR", [0.5, 0.0, -0.87]),
-    ("C", [0.0, 0.0, -1.0]),
-    ("SL", [-0.94, 0.0, 0.34]),
-    ("SR", [0.94, 0.0, 0.34]),
-    ("BL", [-0.7, 0.0, 0.7]),
-    ("BR", [0.7, 0.0, 0.7]),
-    ("TFL", [-0.5, 0.6, -0.7]),
-    ("TFR", [0.5, 0.6, -0.7]),
-    ("TBL", [-0.6, 0.6, 0.6]),
-    ("TBR", [0.6, 0.6, 0.6]),
 ];
 
 /// Where one stem sits, before any layout is applied.
@@ -205,7 +189,7 @@ fn object_route(
         .collect();
     let priorities: Vec<[i64; 4]> = names
         .iter()
-        .map(|name| channel_lock_priority(name))
+        .map(|name| channel_lock_priority(name, has_rear, has_top_rear))
         .collect();
     let gains = adm_extent::gains_with_metadata(
         &positions,
@@ -230,8 +214,9 @@ fn object_route(
         .collect()
 }
 
-fn channel_lock_priority(name: &str) -> [i64; 4] {
-    let (azimuth, elevation) = speaker_azimuth_elevation(name).unwrap_or((0.0, 0.0));
+fn channel_lock_priority(name: &str, has_rear: bool, has_top_rear: bool) -> [i64; 4] {
+    let (azimuth, elevation) =
+        speaker_azimuth_elevation(name, has_rear, has_top_rear).unwrap_or((0.0, 0.0));
     [
         (elevation.abs() * 1e9).round() as i64,
         (elevation * 1e9).round() as i64,
@@ -240,24 +225,43 @@ fn channel_lock_priority(name: &str) -> [i64; 4] {
     ]
 }
 
-/// Azimuth/elevation of one speaker label, in the geometry convention above.
-///
-/// Derived from the Cartesian table rather than tabulated directly, so this
-/// stays the same round trip `binaural/geometry.py` performs: the anchor
-/// points are not unit length, and the conversion is what normalizes them.
-fn speaker_azimuth_elevation(name: &str) -> Option<(f64, f64)> {
-    let position = SPEAKER_COORDINATES
-        .iter()
-        .find(|(label, _)| *label == name)?
-        .1;
-    let [x, y, z] = position;
-    let radius = (x * x + y * y + z * z).sqrt();
-    if radius == 0.0 {
-        return Some((0.0, 0.0));
-    }
-    let elevation = (y / radius).clamp(-1.0, 1.0).asin().to_degrees();
-    let azimuth = (-x).atan2(-z).to_degrees();
-    Some((azimuth, elevation))
+fn speaker_azimuth_elevation(name: &str, has_rear: bool, has_top_rear: bool) -> Option<(f64, f64)> {
+    Some(match name {
+        "FL" => (30.0, 0.0),
+        "FR" => (-30.0, 0.0),
+        "C" => (0.0, 0.0),
+        "SL" => (if has_rear { 90.0 } else { 110.0 }, 0.0),
+        "SR" => (if has_rear { -90.0 } else { -110.0 }, 0.0),
+        "BL" => (135.0, 0.0),
+        "BR" => (-135.0, 0.0),
+        "TFL" => (
+            if has_rear {
+                if has_top_rear {
+                    45.0
+                } else {
+                    90.0
+                }
+            } else {
+                30.0
+            },
+            30.0,
+        ),
+        "TFR" => (
+            if has_rear {
+                if has_top_rear {
+                    -45.0
+                } else {
+                    -90.0
+                }
+            } else {
+                -30.0
+            },
+            30.0,
+        ),
+        "TBL" => (if has_rear { 135.0 } else { 110.0 }, 30.0),
+        "TBR" => (if has_rear { -135.0 } else { -110.0 }, 30.0),
+        _ => return None,
+    })
 }
 
 /// Unit vector for a direction, listener facing -Z, positive azimuth = left.
@@ -350,9 +354,13 @@ fn combinations(count: usize, dim: usize) -> Vec<Vec<usize>> {
 
 impl Layout {
     fn new(names: &[&str]) -> Self {
+        let has_rear = names.iter().any(|name| matches!(*name, "BL" | "BR"));
+        let has_top_rear = names.iter().any(|name| matches!(*name, "TBL" | "TBR"));
         let positions: Vec<(f64, f64)> = names
             .iter()
-            .map(|name| speaker_azimuth_elevation(name).unwrap_or((0.0, 0.0)))
+            .map(|name| {
+                speaker_azimuth_elevation(name, has_rear, has_top_rear).unwrap_or((0.0, 0.0))
+            })
             .collect();
         let vectors: Vec<[f64; 3]> = positions
             .iter()
@@ -413,9 +421,23 @@ impl Layout {
     }
 
     /// VBAP gains for one direction, one entry per speaker.
-    fn pan(&self, source: [f64; 3]) -> Vec<f64> {
+    fn pan(&self, mut source: [f64; 3]) -> Vec<f64> {
         let dim = self.axes.len();
         let speakers = self.coordinates.len();
+        if let Some(index) = self.coordinates.iter().position(|speaker| {
+            self.axes
+                .iter()
+                .enumerate()
+                .all(|(axis, source_axis)| (speaker[axis] - source[*source_axis]).abs() < FACET_EPS)
+        }) {
+            let mut panned = vec![0.0; speakers];
+            panned[index] = 1.0;
+            return panned;
+        }
+        if dim == 3 && source[1].asin().to_degrees() >= self.max_elevation_deg - FACET_EPS {
+            let azimuth = (-source[0]).atan2(-source[2]).to_degrees();
+            source = direction(azimuth, self.max_elevation_deg - TOP_FACE_INSET_DEG);
+        }
         let mut point: Vec<f64> = self.axes.iter().map(|axis| source[*axis]).collect();
         let norm = point.iter().map(|value| value * value).sum::<f64>().sqrt();
         let divisor = if norm > 0.0 { norm } else { 1.0 };
@@ -617,7 +639,7 @@ impl PannerLayout {
         let priorities: Vec<[i64; 4]> = self
             .positional_names
             .iter()
-            .map(|name| channel_lock_priority(name))
+            .map(|name| channel_lock_priority(name, has_rear, has_top_rear))
             .collect();
         let gains = adm_extent::gains_with_metadata(
             &positions,
@@ -676,17 +698,20 @@ pub fn panning_gains(placement: &StemPlacement, speakers: &[&str]) -> Vec<f64> {
 /// True when a channel name carries a virtual-loudspeaker position — i.e.
 /// everything except LFE.
 pub fn is_positional(channel: &str) -> bool {
-    SPEAKER_COORDINATES
-        .iter()
-        .any(|(label, _)| *label == channel)
+    matches!(
+        channel,
+        "FL" | "FR" | "C" | "SL" | "SR" | "BL" | "BR" | "TFL" | "TFR" | "TBL" | "TBR"
+    )
 }
 
 /// The highest elevation a channel set can reproduce, in degrees. Placements
 /// above this are clamped to it by the panner.
 pub fn max_elevation_deg(channels: &[&str]) -> f64 {
+    let has_rear = channels.iter().any(|name| matches!(*name, "BL" | "BR"));
+    let has_top_rear = channels.iter().any(|name| matches!(*name, "TBL" | "TBR"));
     channels
         .iter()
-        .filter_map(|name| speaker_azimuth_elevation(name))
+        .filter_map(|name| speaker_azimuth_elevation(name, has_rear, has_top_rear))
         .map(|(_, elevation)| elevation)
         .fold(0.0, f64::max)
 }

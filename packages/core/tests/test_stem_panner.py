@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 import upmixer_dsp
 
-from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
+from upmixer.binaural.geometry import speaker_azimuth_elevation
 from upmixer.formats import FORMAT_MAP, ChannelLabel
 from upmixer.separation.stem_placement import MINIMUM_SEND, StemPlacement, placement_route
 
@@ -28,11 +28,12 @@ def test_point_placement_stays_on_one_simplex() -> None:
 
 def test_placement_on_a_speaker_resolves_to_that_speaker() -> None:
     output_format = FORMAT_MAP["7.1.4"]
+    positions = speaker_azimuth_elevation(output_format)
 
     for label in output_format.channels:
-        if label not in SPEAKER_AZIMUTH_ELEVATION:
+        if label not in positions:
             continue
-        position = SPEAKER_AZIMUTH_ELEVATION[label]
+        position = positions[label]
         route = placement_route(
             StemPlacement(position.azimuth_deg, position.elevation_deg, 0.0, 0.0), output_format
         )
@@ -74,10 +75,11 @@ def test_azimuth_sweep_has_no_gain_jumps(layout: str) -> None:
 
 def test_elevation_outside_the_layout_is_clamped_onto_it() -> None:
     output_format = FORMAT_MAP["7.1.4"]
+    positions = speaker_azimuth_elevation(output_format)
     highest = max(
-        SPEAKER_AZIMUTH_ELEVATION[label].elevation_deg
+        positions[label].elevation_deg
         for label in output_format.channels
-        if label in SPEAKER_AZIMUTH_ELEVATION
+        if label in positions
     )
 
     overhead = placement_route(StemPlacement(0.0, 90.0, 0.0, 0.0), output_format)

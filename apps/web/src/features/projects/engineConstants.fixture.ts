@@ -20,6 +20,11 @@ const neutral: ServedVoicingParams = {
   loudness_target_lkfs: null,
 };
 
+const direction = (azimuth: number, elevation: number) => ({
+  azimuth_rad: azimuth * Math.PI / 180,
+  elevation_rad: elevation * Math.PI / 180,
+});
+
 export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
   channel_group_gains: { center: 0.85, surround: 0.6, back: 0.55, height: 0.55 },
   lfe_gain: 0.31622776601683794,
@@ -40,17 +45,40 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
   surround_downmix_coeff: 0.7071,
   height_downmix_coeff: 0.7071,
   speaker_directions: {
-    FL: { azimuth_rad: 0.5216182970963865, elevation_rad: 0.0 },
-    FR: { azimuth_rad: -0.5216182970963865, elevation_rad: 0.0 },
-    C: { azimuth_rad: -0.0, elevation_rad: 0.0 },
-    SL: { azimuth_rad: 1.9178579303343872, elevation_rad: 0.0 },
-    SR: { azimuth_rad: -1.9178579303343872, elevation_rad: 0.0 },
-    BL: { azimuth_rad: 2.356194490192345, elevation_rad: 0.0 },
-    BR: { azimuth_rad: -2.356194490192345, elevation_rad: 0.0 },
-    TFL: { azimuth_rad: 0.6202494859828215, elevation_rad: 0.6090366098458619 },
-    TFR: { azimuth_rad: -0.6202494859828215, elevation_rad: 0.6090366098458619 },
-    TBL: { azimuth_rad: 2.356194490192345, elevation_rad: 0.6154797086703874 },
-    TBR: { azimuth_rad: -2.356194490192345, elevation_rad: 0.6154797086703874 },
+    stereo: { FL: direction(30, 0), FR: direction(-30, 0) },
+    "5.1": {
+      FL: direction(30, 0), FR: direction(-30, 0), C: direction(0, 0),
+      SL: direction(110, 0), SR: direction(-110, 0),
+    },
+    "7.1": {
+      FL: direction(30, 0), FR: direction(-30, 0), C: direction(0, 0),
+      SL: direction(90, 0), SR: direction(-90, 0),
+      BL: direction(135, 0), BR: direction(-135, 0),
+    },
+    "5.1.2": {
+      FL: direction(30, 0), FR: direction(-30, 0), C: direction(0, 0),
+      SL: direction(110, 0), SR: direction(-110, 0),
+      TFL: direction(30, 30), TFR: direction(-30, 30),
+    },
+    "5.1.4": {
+      FL: direction(30, 0), FR: direction(-30, 0), C: direction(0, 0),
+      SL: direction(110, 0), SR: direction(-110, 0),
+      TFL: direction(30, 30), TFR: direction(-30, 30),
+      TBL: direction(110, 30), TBR: direction(-110, 30),
+    },
+    "7.1.2": {
+      FL: direction(30, 0), FR: direction(-30, 0), C: direction(0, 0),
+      SL: direction(90, 0), SR: direction(-90, 0),
+      BL: direction(135, 0), BR: direction(-135, 0),
+      TFL: direction(90, 30), TFR: direction(-90, 30),
+    },
+    "7.1.4": {
+      FL: direction(30, 0), FR: direction(-30, 0), C: direction(0, 0),
+      SL: direction(90, 0), SR: direction(-90, 0),
+      BL: direction(135, 0), BR: direction(-135, 0),
+      TFL: direction(45, 30), TFR: direction(-45, 30),
+      TBL: direction(135, 30), TBR: direction(-135, 30),
+    },
   },
   dyneq_profiles: {
     "tame-harshness": [

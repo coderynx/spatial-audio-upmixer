@@ -51,7 +51,18 @@ describe("buildEngineParams", () => {
     const params = buildEngineParams(input());
     const speakers = params.speakers as { name: string; azimuth_rad: number }[];
     const fl = speakers.find((s) => s.name === "FL");
-    expect(fl?.azimuth_rad).toBe(TEST_SERVED_CONSTANTS.speaker_directions.FL.azimuth_rad);
+    expect(fl?.azimuth_rad).toBe(TEST_SERVED_CONSTANTS.speaker_directions["5.1.4"].FL.azimuth_rad);
+  });
+
+  it("uses the selected layout's DirectSpeakers directions", () => {
+    const params = buildEngineParams(input({
+      layoutChannels: ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR"],
+    }));
+    const speakers = params.speakers as { name: string; azimuth_rad: number }[];
+    const by = (name: string) => speakers.find((speaker) => speaker.name === name)!;
+
+    expect(by("SL").azimuth_rad).toBeCloseTo(Math.PI / 2, 12);
+    expect(by("TFL").azimuth_rad).toBeCloseTo(Math.PI / 2, 12);
   });
 
   it("carries a speaker mute as its own flag, leaving the group gain alone", () => {

@@ -19,52 +19,22 @@ from xml.sax.saxutils import escape
 
 import numpy as np
 
+from upmixer.direct_speakers import direct_speakers
 from upmixer.formats import ChannelLabel, OutputFormat
 
-_DOLBY_CH_NAME: dict[ChannelLabel, str] = {
-    ChannelLabel.FL:  "RoomCentricLeft",
-    ChannelLabel.FR:  "RoomCentricRight",
-    ChannelLabel.C:   "RoomCentricCenter",
-    ChannelLabel.LFE: "RoomCentricLFE",
-    ChannelLabel.SL:  "RoomCentricLeftSideSurround",
-    ChannelLabel.SR:  "RoomCentricRightSideSurround",
-    ChannelLabel.BL:  "RoomCentricLeftRearSurround",
-    ChannelLabel.BR:  "RoomCentricRightRearSurround",
-    ChannelLabel.TFL: "RoomCentricLeftTopSurround",
-    ChannelLabel.TFR: "RoomCentricRightTopSurround",
-    ChannelLabel.TBL: "RoomCentricLeftTopRearSurround",
-    ChannelLabel.TBR: "RoomCentricRightTopRearSurround",
-}
-
-_DOLBY_SPEAKER_LABEL: dict[ChannelLabel, str] = {
-    ChannelLabel.FL:  "RC_L",
-    ChannelLabel.FR:  "RC_R",
-    ChannelLabel.C:   "RC_C",
-    ChannelLabel.LFE: "RC_LFE",
-    ChannelLabel.SL:  "RC_Lss",
-    ChannelLabel.SR:  "RC_Rss",
-    ChannelLabel.BL:  "RC_Lrs",
-    ChannelLabel.BR:  "RC_Rrs",
-    ChannelLabel.TFL: "RC_Lts",
-    ChannelLabel.TFR: "RC_Rts",
-    ChannelLabel.TBL: "RC_Ltrs",
-    ChannelLabel.TBR: "RC_Rtrs",
-}
-
-
-_DOLBY_POSITION: dict[ChannelLabel, tuple[float, float, float]] = {
-    ChannelLabel.FL:  (-1.0,  1.0,  0.0),
-    ChannelLabel.FR:  ( 1.0,  1.0,  0.0),
-    ChannelLabel.C:   ( 0.0,  1.0,  0.0),
-    ChannelLabel.LFE: (-1.0,  1.0, -1.0),
-    ChannelLabel.SL:  (-1.0,  0.0,  0.0),
-    ChannelLabel.SR:  ( 1.0,  0.0,  0.0),
-    ChannelLabel.BL:  (-1.0, -1.0,  0.0),
-    ChannelLabel.BR:  ( 1.0, -1.0,  0.0),
-    ChannelLabel.TFL: (-1.0,  0.0,  1.0),
-    ChannelLabel.TFR: ( 1.0,  0.0,  1.0),
-    ChannelLabel.TBL: (-1.0, -1.0,  1.0),
-    ChannelLabel.TBR: ( 1.0, -1.0,  1.0),
+_DOLBY_CHANNEL: dict[str, tuple[str, str]] = {
+    "M+030": ("RoomCentricLeft", "RC_L"),
+    "M-030": ("RoomCentricRight", "RC_R"),
+    "M+000": ("RoomCentricCenter", "RC_C"),
+    "LFE1": ("RoomCentricLFE", "RC_LFE"),
+    "M+110": ("RoomCentricLeftSurround", "RC_Ls"),
+    "M-110": ("RoomCentricRightSurround", "RC_Rs"),
+    "M+090": ("RoomCentricLeftSideSurround", "RC_Lss"),
+    "M-090": ("RoomCentricRightSideSurround", "RC_Rss"),
+    "M+135": ("RoomCentricLeftRearSurround", "RC_Lrs"),
+    "M-135": ("RoomCentricRightRearSurround", "RC_Rrs"),
+    "U+090": ("RoomCentricLeftTopSurround", "RC_Lts"),
+    "U-090": ("RoomCentricRightTopSurround", "RC_Rts"),
 }
 
 _DOLBY_ZONE: dict[str, dict[str, float]] = {
@@ -118,11 +88,9 @@ _DOLBY_ZONE: dict[str, dict[str, float]] = {
 def _dolby_channel(
     fmt: OutputFormat, label: ChannelLabel,
 ) -> tuple[str, str, tuple[float, float, float]]:
-    if not fmt.has_back and label == ChannelLabel.SL:
-        return "RoomCentricLeftSurround", "RC_Ls", (-1.0, -1.0, 0.0)
-    if not fmt.has_back and label == ChannelLabel.SR:
-        return "RoomCentricRightSurround", "RC_Rs", (1.0, -1.0, 0.0)
-    return _DOLBY_CH_NAME[label], _DOLBY_SPEAKER_LABEL[label], _DOLBY_POSITION[label]
+    speaker = next(item for item in direct_speakers(fmt) if item.channel == label)
+    name, dolby_label = _DOLBY_CHANNEL[speaker.speaker_label]
+    return name, dolby_label, speaker.cartesian_position
 
 
 def _chunk_size(data_size: int) -> int:

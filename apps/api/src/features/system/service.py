@@ -68,7 +68,8 @@ def engine_constants() -> dict[str, Any]:
         STEM_EQ_PRESETS_BY_STEM,
         STEM_EQ_SETTINGS,
     )
-    from upmixer.binaural.geometry import SPEAKER_AZIMUTH_ELEVATION
+    from upmixer.binaural.geometry import speaker_azimuth_elevation
+    from upmixer.formats import FORMAT_MAP
     cfg = UpmixConfig()
     return {
         "channel_group_gains": {
@@ -97,11 +98,14 @@ def engine_constants() -> dict[str, Any]:
         # The shared DSP core encodes the ambisonic bus, so the browser must
         # not re-derive these angles from its own coordinate table.
         "speaker_directions": {
-            label.value: {
-                "azimuth_rad": position.azimuth_rad,
-                "elevation_rad": position.elevation_rad,
+            name: {
+                label.value: {
+                    "azimuth_rad": position.azimuth_rad,
+                    "elevation_rad": position.elevation_rad,
+                }
+                for label, position in speaker_azimuth_elevation(fmt).items()
             }
-            for label, position in SPEAKER_AZIMUTH_ELEVATION.items()
+            for name, fmt in FORMAT_MAP.items()
         },
         "dyneq_profiles": DYNEQ_PROFILES,
         "stem_dynamic_eq_profiles": STEM_DYNAMIC_EQ_PROFILES,

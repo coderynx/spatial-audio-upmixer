@@ -311,7 +311,7 @@ export type ServedEngineConstants = {
   loudness_max_gain_db: number;
   surround_downmix_coeff: number;
   height_downmix_coeff: number;
-  speaker_directions: Record<string, { azimuth_rad: number; elevation_rad: number }>;
+  speaker_directions: Record<string, Record<string, { azimuth_rad: number; elevation_rad: number }>>;
   dyneq_profiles: Record<string, DynamicEqBand[]>;
   stem_dynamic_eq_profiles: Record<string, StemDynamicEqBand[]>;
   stem_dynamics_profiles: Record<string, StemDynamicsSettings>;
@@ -366,7 +366,7 @@ export type EngineConstants = {
   surroundDownmixCoeff: number;
   heightDownmixCoeff: number;
   /** Ambisonic encode angles, served so the browser never re-derives them. */
-  speakerDirections: Record<string, { azimuth_rad: number; elevation_rad: number }>;
+  speakerDirections: Record<string, Record<string, { azimuth_rad: number; elevation_rad: number }>>;
   /** Named dynamic-EQ band sets, resolved here so the preview runs the same
    * bands the export does — the pattern the compressor and bass presets use. */
   dyneqProfiles: Record<string, DynamicEqBand[]>;

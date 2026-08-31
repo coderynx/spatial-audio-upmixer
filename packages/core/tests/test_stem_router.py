@@ -114,7 +114,7 @@ def test_routing_preset_is_explicit_and_layout_aware():
     balanced = build_stem_routing(["Other"], fmt)
     wide = build_stem_routing(["Other"], fmt, "wide")
 
-    assert wide["Other"]["SL"] > balanced["Other"]["SL"]
+    assert wide["Other"]["FL"] < balanced["Other"]["FL"]
     assert wide["Other"]["TFL"] > balanced["Other"]["TFL"]
     assert "TFL" not in build_stem_routing(["Other"], FORMAT_MAP["5.1"])["Other"]
     assert set(build_stem_routing(["Other"], FORMAT_MAP["stereo"])["Other"]) == {"FL", "FR"}
