@@ -7,6 +7,7 @@ import { isBedStem } from "@/lib/stems";
 
 export type MixPreviewShape = {
   stem_routing?: Record<string, Record<string, number>>;
+  bed_trim_db?: number;
   stem_rebalance?: Record<string, number>;
   stem_enabled?: Record<string, boolean>;
   stem_solo?: string[];
@@ -92,7 +93,9 @@ export function resolveStemMixes(options: {
     return {
       id: stem.id,
       routing,
-      rebalanceDb: (mix?.stem_rebalance?.[base] || 0) + anchorDb,
+      rebalanceDb: (mix?.stem_rebalance?.[base] || 0)
+        + (isBedStem(stem.stem_key) ? mix?.bed_trim_db || 0 : 0)
+        + anchorDb,
       enabled,
       eq,
       dynamics,

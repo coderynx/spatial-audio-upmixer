@@ -86,6 +86,8 @@ export type PreviewPanelProps = {
   onToggleSolo: (stem: string) => void;
   onGain: (stem: string, gain: number) => void;
   onAnchorStrength: (value: number) => void;
+  bedTrim: number;
+  onBedTrim: (value: number) => void;
   onCommitScrub: (value: number) => void;
   topControlForStem?: (stem: string) => React.ReactNode;
 };
@@ -135,7 +137,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
     channels, routing, objectStems, outputMode, stereoLayout, stemChannelCounts, selectedStem, onSelectStem,
     onHazeIntensity, onElevationIntensity, onSpatialViewChange, orderedStems, silentStems, previewStemCount,
     peaks, peaksLoading, peaksDuration, draggedStem, onDragStart, onDragEnd, onDropOn,
-    onToggleMute, onToggleSolo, onGain, onAnchorStrength, onCommitScrub, topControlForStem,
+    onToggleMute, onToggleSolo, onGain, onAnchorStrength, bedTrim, onBedTrim, onCommitScrub, topControlForStem,
   } = props;
   const {
     paneView, paneHeight, changePane, commitPaneHeight,
@@ -283,6 +285,8 @@ export function PreviewPanel(props: PreviewPanelProps) {
         stemLevels={preview.stemLevels}
         anchorStrength={trackManifest.mixing.stem_source_anchor_strength}
         onAnchorStrength={onAnchorStrength}
+        bedTrim={bedTrim}
+        onBedTrim={onBedTrim}
         headphoneLevels={preview.headphoneLevels}
         volume={preview.volume}
         onVolume={preview.setVolume}

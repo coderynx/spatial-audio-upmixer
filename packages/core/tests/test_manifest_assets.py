@@ -224,6 +224,18 @@ class TestParseAndApplyIntegration:
         apply_asset_job(cfg, jobs[0])
         assert cfg.stem_rebalance == {"Vocals": 2.0, "Drums": -1.0}
 
+    def test_mixing_bed_trim(self):
+        data = _minimal(mixing={"bed_trim_db": 3.5})
+        _, jobs = parse_manifest(data)
+        cfg = UpmixConfig()
+        apply_asset_job(cfg, jobs[0])
+        assert cfg.bed_trim_db == pytest.approx(3.5)
+
+    def test_mixing_bed_trim_bounds(self):
+        for value in (-0.1, 6.1):
+            with pytest.raises(ManifestError, match="mixing.bed_trim_db"):
+                validate_manifest(_minimal(mixing={"bed_trim_db": value}))
+
     def test_mixing_stem_source_anchor_strength(self):
         data = _minimal(mixing={"stem_source_anchor_strength": 0.35})
         _, jobs = parse_manifest(data)

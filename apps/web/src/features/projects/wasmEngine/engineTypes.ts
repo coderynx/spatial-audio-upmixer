@@ -13,6 +13,7 @@ export const POSITIONAL_CHANNELS = Object.keys(speakerCoordinates);
 
 export type MixPreview = {
   stem_routing?: Record<string, Record<string, number>>;
+  bed_trim_db?: number;
   stem_rebalance?: Record<string, number>;
   stem_eq?: Record<string, string | StemEqSettings>;
   stem_dynamic_eq?: Record<string, StemDynamicEqSettings>;

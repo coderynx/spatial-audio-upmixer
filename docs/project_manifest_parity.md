@@ -72,7 +72,8 @@ The full, current list of canonical processing paths is whatever
 source of truth, so it is not re-enumerated here. Representative paths per
 group: `engine.stems`/`engine.stem_silence_skip` (stem separation),
 `format.type`/`format.codec`/`format.binaural.profile`/`format.transaural.profile`
-(delivery), `mixing.channel_layout`/`mixing.stem_routing` (spatial mix),
+(delivery), `mixing.channel_layout`/`mixing.bed_trim_db`/`mixing.stem_routing`
+(spatial mix),
 `routing.center_gain`/`routing.lfe_gain` (channel-group gains),
 `processing.preview`/`processing.fft_size` (analysis), and
 `mastering.loudness.target`/`mastering.compressor.profile`/
@@ -85,7 +86,7 @@ group: `engine.stems`/`engine.stem_silence_skip` (stem separation),
 | `engine.mode` | Derived stem-only project | Always `stem` | Low | Project behavior |
 | `engine.stems` | Create/expand targets; track Advanced subset | Canonical requested/prepared stems | Medium | Unified |
 | Separation tuning | Advanced JSON; rebuild on change | Rebuilds the project's stem store before export | High before change | Manifest behavior |
-| `mixing.stem_*` | Stem controls and Advanced JSON | Direct manifest mapping | None | Manifest behavior |
+| `mixing.bed_trim_db` / `mixing.stem_*` | Reversible shared bed trim, stem controls, and Advanced JSON | Direct manifest mapping | None | Manifest behavior |
 | `mixing.spatial` / `routing.content_mix_strength` | Derived explicit-routing profile | Forced deterministic project values | Medium | Project behavior |
 | `mixing.channel_layout` | Per track, several per track: the layout set is chosen in the Prepare tab and per-asset staging, and selected in the tracks panel tree; drives the routing graph, spatial views, meters and the preview engine | `FORMAT_MAP` name; `stereo` (System A) is a delivery target like any bed, but restricts `format.type` to `multichannel` | None | Unified |
 | `mixing.stem_routing` | Position sliders, per-stem LFE send slider, presets, Advanced matrix; a single Left→Right pan slider replaces all three on a `stereo` layout | Exact speaker matrix, per layout, stored already folded to FL/FR for a `stereo` layout | None | Project behavior for UX |

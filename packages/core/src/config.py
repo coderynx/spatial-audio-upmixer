@@ -135,6 +135,7 @@ class UpmixConfig:
     mastering_match_ref_low_hz: float | None = None
     mastering_match_ref_high_hz: float | None = None
 
+    bed_trim_db: float = 0.0
     stem_rebalance: dict | None = None
 
     stem_eq_profiles: dict | None = None

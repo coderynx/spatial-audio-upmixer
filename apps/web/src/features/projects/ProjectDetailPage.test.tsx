@@ -192,6 +192,23 @@ describe("ProjectDetailPage tabs", () => {
     expect(saved.mixing.stem_rebalance.Vocals).toBeCloseTo(-0.1);
   });
 
+  it("persists bed trim without changing stem faders", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Mixer" }));
+    fireEvent.keyDown(screen.getByRole("slider", { name: "Bed trim" }), { key: "ArrowUp" });
+
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());
+    const [, , , payload] = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)!;
+    const saved = payload.manifest_overrides as unknown as {
+      mixing: { bed_trim_db: number; stem_rebalance: Record<string, number> };
+    };
+    expect(saved.mixing.bed_trim_db).toBeCloseTo(0.1);
+    expect(saved.mixing.stem_rebalance).toEqual({});
+  });
+
   it("keeps the selected stem's fader in the inspector, distinct from the mixer's copy of the same control", async () => {
     const user = userEvent.setup();
     renderPage();

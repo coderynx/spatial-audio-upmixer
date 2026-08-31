@@ -54,6 +54,7 @@ export type Manifest = {
   };
   mixing: {
     channel_layout: string;
+    bed_trim_db: number;
     stem_rebalance: Record<string, number>;
     stem_eq: Record<string, string | StemEqSettings>;
     stem_dynamic_eq: Record<string, StemDynamicEqSettings>;
@@ -188,6 +189,7 @@ export const defaultManifest: Manifest = {
   },
   mixing: {
     channel_layout: "7.1.4",
+    bed_trim_db: 0,
     stem_rebalance: {},
     stem_eq: {},
     stem_dynamic_eq: {},

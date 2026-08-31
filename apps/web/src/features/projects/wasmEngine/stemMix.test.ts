@@ -13,6 +13,8 @@ describe("resolveStemMixes", () => {
       ],
       scene: { stems: {} },
       mix: {
+        bed_trim_db: 3,
+        stem_rebalance: { Vocals: 1, Bass: 2 },
         stem_routing: { Vocals: { C: 1 }, Bass: { C: 1 } },
         stem_object_mode: { Vocals: "linked-stereo" },
         stem_placement: {
@@ -24,9 +26,11 @@ describe("resolveStemMixes", () => {
     });
 
     expect(stems[0].routeScale).toBe(1);
+    expect(stems[0].rebalanceDb).toBe(1);
     expect(stems[1].routeScale).toBeCloseTo(
       1 / TEST_ENGINE_CONSTANTS.channelGains.center,
       12,
     );
+    expect(stems[1].rebalanceDb).toBe(5);
   });
 });

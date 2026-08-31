@@ -74,6 +74,18 @@ def test_main_bed_routing_is_constant_power():
     np.testing.assert_allclose(bed_energy, input_energy, rtol=0.02)
 
 
+def test_bed_trim_changes_beds_without_changing_objects():
+    audio = _audio()
+    gain = 10.0 ** (6.0 / 20.0)
+
+    for stem in ("Bass", "Vocals"):
+        plain = _router().route({stem: audio}, len(audio))
+        trimmed = _router(bed_trim_db=6.0).route({stem: audio}, len(audio))
+        expected_gain = gain if stem == "Bass" else 1.0
+        for channel in plain:
+            np.testing.assert_allclose(trimmed[channel], expected_gain * plain[channel])
+
+
 def test_custom_routing_overrides_zone_table():
     stems = {"Other@front": _audio()}
     router = StemRouter(

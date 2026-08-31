@@ -5,11 +5,12 @@ describe("normalizeManifest", () => {
   it("fills missing nested defaults without losing supplied values", () => {
     const manifest = normalizeManifest({
       engine: { mode: "stem" },
-      mixing: { stem_source_anchor_strength: 0.35 },
+      mixing: { bed_trim_db: 2.5, stem_source_anchor_strength: 0.35 },
     });
     expect(manifest.engine.mode).toBe("stem");
     expect(manifest.engine.stems).toEqual(defaultManifest.engine.stems);
     expect(manifest.mixing.stem_source_anchor_strength).toBe(0.35);
+    expect(manifest.mixing.bed_trim_db).toBe(2.5);
     expect(manifest.mixing.stem_routing).toEqual(defaultManifest.mixing.stem_routing);
   });
 });

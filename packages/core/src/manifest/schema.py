@@ -108,6 +108,7 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
 
     "mixing": {
         "channel_layout": ("config", "format"),
+        "bed_trim_db":   ("config", "bed_trim_db"),
         "stem_rebalance": ("config", "stem_rebalance"),
         "stem_eq":        ("config", "stem_eq_profiles"),
         "stem_dynamic_eq": ("config", "stem_dynamic_eq"),
@@ -246,6 +247,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "mastering_match_ref_smooth_oct": ("mastering_match_ref_smooth_oct", float),
     "mastering_match_ref_low_hz":   ("mastering_match_ref_low_hz",    float),
     "mastering_match_ref_high_hz":  ("mastering_match_ref_high_hz",   float),
+    "bed_trim_db":                ("bed_trim_db",       float),
     "stem_rebalance":              ("stem_rebalance",   dict),
     "stem_eq_profiles":            ("stem_eq_profiles", dict),
     "stem_dynamic_eq":             ("stem_dynamic_eq", dict),

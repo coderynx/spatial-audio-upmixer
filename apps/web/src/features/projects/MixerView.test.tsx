@@ -32,6 +32,8 @@ function renderMixer(overrides: Partial<React.ComponentProps<typeof MixerView>> 
       stemLevels={stemLevels}
       anchorStrength={0}
       onAnchorStrength={vi.fn()}
+      bedTrim={0}
+      onBedTrim={vi.fn()}
       headphoneLevels={headphoneLevels}
       volume={1}
       onVolume={vi.fn()}
@@ -68,12 +70,34 @@ describe("MixerView channel strips", () => {
     expect(screen.getByTitle("Bed — stereo")).toBeInTheDocument();
   });
 
-  it("gives every stem a fader plus the master monitor fader", () => {
+  it("gives every stem a fader plus bed trim and the master monitor fader", () => {
     renderMixer();
 
     expect(screen.getByRole("slider", { name: "Vocals gain" })).toBeInTheDocument();
     expect(screen.getByRole("slider", { name: "Bass gain" })).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Bed trim" })).toBeInTheDocument();
     expect(screen.getByRole("slider", { name: "Monitor level" })).toBeInTheDocument();
+  });
+
+  it("places bed trim immediately before the monitor fader", () => {
+    renderMixer();
+
+    expect(screen.getAllByRole("slider").slice(-2).map((fader) => fader.getAttribute("aria-label"))).toEqual([
+      "Bed trim",
+      "Monitor level",
+    ]);
+  });
+
+  it("writes bed trim in decibels and resets it to zero", () => {
+    const onBedTrim = vi.fn();
+    renderMixer({ bedTrim: 2, onBedTrim });
+
+    const fader = screen.getByRole("slider", { name: "Bed trim" });
+    fireEvent.keyDown(fader, { key: "ArrowUp" });
+    fireEvent.doubleClick(fader);
+
+    expect(onBedTrim).toHaveBeenNthCalledWith(1, 2.1);
+    expect(onBedTrim).toHaveBeenNthCalledWith(2, 0);
   });
 
   it("places stem-specific controls above the matching fader", () => {

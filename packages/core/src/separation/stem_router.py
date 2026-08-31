@@ -315,6 +315,7 @@ class StemRouter:
         self._stem_solo = set(config.stem_solo or [])
         self._sr = sample_rate
         self._lfe_gain = config.lfe_gain
+        self._bed_trim = 10.0 ** (config.bed_trim_db / 20.0)
 
     def _object_placement_for(self, stem_key: str) -> StemPlacement | None:
         stem_name = stem_key.rsplit("@", 1)[0]
@@ -589,6 +590,9 @@ class StemRouter:
             n = min(len(audio), n_samples)
             stem_L = audio[:n, 0].astype(np.float64, copy=False)
             stem_R = audio[:n, 1].astype(np.float64, copy=False) if audio.shape[1] > 1 else stem_L
+            if stem_name in _BED_STEM_NAMES and self._bed_trim != 1.0:
+                stem_L = self._bed_trim * stem_L
+                stem_R = self._bed_trim * stem_R
             rear_amount, height_amount = self._ambient_for(stem_key)
             rear_share = self._class_share(_SURROUND_CHANNELS)
             height_share = self._class_share(_HEIGHT_CHANNELS)

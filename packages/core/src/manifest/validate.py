@@ -117,6 +117,7 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
         if not math.isfinite(float(value)):
             raise ManifestError(f"{path} must be finite.")
         minimums = {
+            "mixing.bed_trim_db": 0.0,
             "mixing.stem_source_anchor_strength": 0.0,
             "engine.stem_batch_size": 1.0,
             "engine.stem_segment_size": 1.0,
@@ -144,6 +145,7 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
             "mastering.compressor.knee_db": 0.0,
         }
         maximums = {
+            "mixing.bed_trim_db": 6.0,
             "mixing.stem_source_anchor_strength": 1.0,
             "mastering.eq.strength": 1.0,
             "mastering.highpass.cutoff_hz": 30.0,

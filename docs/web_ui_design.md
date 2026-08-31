@@ -491,6 +491,10 @@ give one idea two homes with no viewport justification.
   same state rather than a different one. Any future special-purpose strip
   needs a colour not already spoken for elsewhere in the same rack; check
   what the rack already means by a hue before picking one.
+- **Bed trim gets its own group strip immediately before Monitor.** It is a
+  0–6 dB rendered-mix adjustment, so it uses the same vertical fader, dB
+  readout, and zero detent as the stem strips, but has no meter or M/S because
+  it is not an independently audible channel.
 - **Every strip resizes independently**, from its own trailing border — the
   line already separating it from its neighbour (`StripResizeHandle`,
   `ChannelStrip.tsx`) — the way dragging a column border in a spreadsheet
@@ -505,7 +509,7 @@ give one idea two homes with no viewport justification.
   double-click-to-reset — the same interaction contract as `Fader` and
   `Pot`, just on the horizontal axis; it stops click/pointerdown
   propagation so a resize never also selects the strip beneath it. Widths
-  for every strip kind (stem, anchor, master) persist under one
+  for every strip kind (stem, anchor, bed trim, master) persist under one
   `localStorage` map keyed by strip id, written on drag-end/key-commit, not
   on every drag-move frame.
 - **The whole strip is the select target**, not just its nameplate — a

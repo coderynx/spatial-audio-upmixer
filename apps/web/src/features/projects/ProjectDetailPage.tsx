@@ -427,6 +427,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     if (!trackManifest) return;
     updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_rebalance: { ...trackManifest.mixing.stem_rebalance, [stem]: gain } } }, true);
   }, [trackManifest, updateTrackManifest]);
+  const setBedTrim = React.useCallback((bed_trim_db: number) => {
+    if (!trackManifest) return;
+    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, bed_trim_db } }, true);
+  }, [trackManifest, updateTrackManifest]);
   const setAnchorStrength = React.useCallback((stem_source_anchor_strength: number) => {
     if (!trackManifest) return;
     updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_source_anchor_strength } }, true);
@@ -633,6 +637,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         onToggleSolo={toggleSolo}
         onGain={setStemGain}
         onAnchorStrength={setAnchorStrength}
+        bedTrim={trackManifest?.mixing.bed_trim_db ?? 0}
+        onBedTrim={setBedTrim}
         onCommitScrub={commitScrub}
         topControlForStem={(stem) => stemTopControls(stem, `${isBedStem(stem) ? "Bed" : "Object"} panner ${stem}`)}
       />;

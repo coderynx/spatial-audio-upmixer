@@ -22,6 +22,7 @@ import type { PanelImperativeHandle } from "react-resizable-panels";
 
 const MONITOR_TICKS = [0, -6, -12, -18, -24, -36, -48, -60];
 const ANCHOR_TICKS = [100, 75, 50, 25, 0];
+const BED_TRIM_TICKS = [6, 3, 0];
 
 const STRIP_WIDTHS_KEY = "upmixer.mixer.stripWidths";
 const STRIP_EXTRA_MIN = 0;
@@ -110,6 +111,49 @@ function AnchorStrip({
   );
 }
 
+function BedTrimStrip({
+  trim,
+  onChange,
+  disabled,
+}: {
+  trim: number;
+  onChange: (trim: number) => void;
+  disabled: boolean;
+}) {
+  const value = `${trim > 0 ? "+" : ""}${trim.toFixed(1)}`;
+  return (
+    <div
+      className="relative flex shrink-0 flex-col items-center justify-end gap-1.5 border-x bg-muted/40 px-1.5 py-1.5"
+      style={{ width: "100%" }}
+    >
+      <StripReadouts value={value} peakDb={0} showPeak={false} />
+      <div className="flex items-stretch" style={{ height: FADER_TRAVEL }}>
+        <Fader
+          label="Bed trim"
+          value={trim}
+          min={0}
+          max={6}
+          step={0.1}
+          detent={0}
+          ticks={BED_TRIM_TICKS}
+          valueText={`${value} dB`}
+          onChange={onChange}
+          onReset={() => onChange(0)}
+          disabled={disabled}
+          style={{ width: FADER_WIDTH }}
+        />
+      </div>
+      <div className="h-6 w-full" aria-hidden="true" />
+      <span
+        className="w-full truncate rounded-[5px] px-1 py-1 text-center text-[11px] font-semibold"
+        style={{ backgroundColor: canvasTheme.stripWell }}
+      >
+        Bed trim
+      </span>
+    </div>
+  );
+}
+
 function MasterStrip({
   volume,
   onVolume,
@@ -184,6 +228,8 @@ function MixerViewImpl({
   stemLevels,
   anchorStrength,
   onAnchorStrength,
+  bedTrim,
+  onBedTrim,
   headphoneLevels,
   volume,
   onVolume,
@@ -203,6 +249,7 @@ function MixerViewImpl({
   const stripBases = Object.fromEntries([
     ...stems.map((stem) => [`stem:${stem}`, stripWidth(Math.min(2, Math.max(1, stemChannels[stem] ?? 1)))]),
     ["anchor", FADER_WIDTH + 36],
+    ["bed-trim", FADER_WIDTH + 36],
     ["master", stripWidth(2)],
   ]);
   const persistWidths = (_: Record<string, number>, meta: { isUserInteraction: boolean }) => {
@@ -257,6 +304,12 @@ function MixerViewImpl({
           disabled={disabled}
         />)}
 
+        {panel("bed-trim", "Resize Bed trim strip", <BedTrimStrip
+          trim={bedTrim}
+          onChange={onBedTrim}
+          disabled={disabled}
+        />)}
+
         {panel("master", "Resize Master strip", <MasterStrip
           volume={volume}
           onVolume={onVolume}
@@ -288,6 +341,9 @@ export type MixerViewProps = {
   /** 0..1, written to `mixing.stem_source_anchor_strength`. */
   anchorStrength: number;
   onAnchorStrength: (strength: number) => void;
+  /** 0..6 dB, written to `mixing.bed_trim_db`. */
+  bedTrim: number;
+  onBedTrim: (trim: number) => void;
   headphoneLevels: React.MutableRefObject<{ left: MeterLevel; right: MeterLevel }>;
   /** Monitor fader position, 0..1 — the same value the Transport volume
    * control drives. MONITOR domain: never reaches the exported render. */
