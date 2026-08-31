@@ -97,7 +97,7 @@ export function resolveStemMixes(options: {
       eq,
       dynamics,
       dynamicEq,
-      routeScale: estimateRouteScale(routing, constants.channelGains),
+      routeScale: objectMode ? 1 : estimateRouteScale(routing, constants.channelGains),
       ambientRear: send(mix?.stem_ambient_rear),
       ambientHeight: send(mix?.stem_ambient_height),
       ambientHeightCrossoverHz: Math.min(4000, Math.max(500, crossover)),

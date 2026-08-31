@@ -683,7 +683,9 @@ class StemRouter:
                     for label in self._fmt.channels:
                         if label.value in skip or label == ChannelLabel.LFE:
                             continue
-                        gain = route.get(label.value, 0.0) * self._channel_gain(label)
+                        gain = route.get(label.value, 0.0)
+                        if object_tracks is None:
+                            gain *= self._channel_gain(label)
                         if gain > 0.0:
                             direct_items.append((label, gain, signal))
 

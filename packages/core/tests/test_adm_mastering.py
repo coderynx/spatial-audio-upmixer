@@ -1,6 +1,7 @@
 """Renderer-aware mastering checks for one-bed-plus-objects ADM exports."""
 from __future__ import annotations
 
+import math
 import struct
 from dataclasses import replace
 from unittest.mock import patch
@@ -15,6 +16,7 @@ from upmixer.io.adm_writer import AdmObject, render_adm_programme
 from upmixer.loudness import measure_integrated_loudness, measure_true_peak
 from upmixer.mastering import MasteringChain
 from upmixer.separation.stem_pipeline import StemUpmixPipeline
+from upmixer.separation.stem_router import StemRouter
 
 _SR = 48_000
 _FMT = FORMAT_MAP["5.1"]
@@ -22,6 +24,119 @@ _FMT = FORMAT_MAP["5.1"]
 
 def _bed(n_samples: int) -> dict[str, np.ndarray]:
     return {label.value: np.zeros(n_samples) for label in _FMT.channels}
+
+
+def _stereo_programme() -> np.ndarray:
+    n_samples = 4 * _SR
+    time = np.arange(n_samples) / _SR
+    rng = np.random.default_rng(20260831)
+    left = 0.12 * np.sin(2.0 * np.pi * 317.0 * time)
+    right = 0.10 * np.sin(2.0 * np.pi * 701.0 * time)
+    return np.column_stack((
+        left + 0.04 * rng.standard_normal(n_samples),
+        right + 0.04 * rng.standard_normal(n_samples),
+    ))
+
+
+def _routed_object(
+    audio: np.ndarray,
+    azimuth_deg: float,
+    elevation_deg: float,
+    metadata_gain: float = 1.0,
+) -> tuple[dict[str, np.ndarray], list[AdmObject]]:
+    fmt = FORMAT_MAP["7.1.4"]
+    config = UpmixConfig(
+        output_format="7.1.4",
+        stem_placement={"Vocals": {
+            "azimuth_deg": azimuth_deg,
+            "elevation_deg": elevation_deg,
+            "width_deg": 40.0,
+            "object_size": 0.0,
+        }},
+        stem_object_metadata={"Vocals": {"gain": metadata_gain}},
+    )
+    objects: list[AdmObject] = []
+    bed = StemRouter(config, fmt, _SR).route(
+        {"Vocals": audio}, len(audio), object_tracks=objects,
+    )
+    return render_adm_programme(bed, fmt, objects), objects
+
+
+@pytest.mark.parametrize("azimuth_deg,elevation_deg", [
+    (0.0, 0.0),
+    (90.0, 0.0),
+    (135.0, 0.0),
+    (45.0, 30.0),
+])
+def test_authored_object_route_matches_dry_stereo_loudness(
+    azimuth_deg: float,
+    elevation_deg: float,
+):
+    audio = _stereo_programme()
+    dry = measure_integrated_loudness(
+        {"FL": audio[:, 0], "FR": audio[:, 1]}, _SR, FORMAT_MAP["stereo"]
+    )
+    rendered, _ = _routed_object(audio, azimuth_deg, elevation_deg)
+
+    assert measure_integrated_loudness(
+        rendered, _SR, FORMAT_MAP["7.1.4"]
+    ) == pytest.approx(dry, abs=0.05)
+
+
+def test_object_metadata_gain_remains_after_automatic_route_normalization():
+    audio = _stereo_programme()
+    unity, unity_objects = _routed_object(audio, 90.0, 0.0)
+    quiet, quiet_objects = _routed_object(audio, 90.0, 0.0, metadata_gain=0.25)
+
+    for plain, reduced in zip(unity_objects, quiet_objects):
+        np.testing.assert_array_equal(plain.audio, reduced.audio)
+    unity_lkfs = measure_integrated_loudness(unity, _SR, FORMAT_MAP["7.1.4"])
+    quiet_lkfs = measure_integrated_loudness(quiet, _SR, FORMAT_MAP["7.1.4"])
+    expected = 20.0 * math.log10(0.25)
+    assert quiet_lkfs - unity_lkfs == pytest.approx(expected, abs=0.05)
+
+
+@pytest.mark.parametrize("stem", ["Other", "Crowd"])
+def test_bed_route_matches_dry_stereo_loudness(stem: str):
+    audio = _stereo_programme()
+    dry = measure_integrated_loudness(
+        {"FL": audio[:, 0], "FR": audio[:, 1]}, _SR, FORMAT_MAP["stereo"]
+    )
+    fmt = FORMAT_MAP["7.1.4"]
+    rendered = StemRouter(UpmixConfig(output_format="7.1.4"), fmt, _SR).route(
+        {stem: audio}, len(audio)
+    )
+
+    assert measure_integrated_loudness(
+        rendered, _SR, fmt
+    ) == pytest.approx(dry, abs=0.05)
+
+
+def test_flattened_object_route_keeps_channel_group_gains():
+    audio = _stereo_programme()
+    placement = {"Vocals": {
+        "azimuth_deg": 45.0,
+        "elevation_deg": 15.0,
+        "width_deg": 0.0,
+        "object_size": 0.0,
+    }}
+    default_config = UpmixConfig(
+        output_format="7.1.4",
+        stem_object_mode={"Vocals": "mono"},
+        stem_placement=placement,
+    )
+    unity_config = replace(default_config, height_gain=1.0)
+    fmt = FORMAT_MAP["7.1.4"]
+    default = StemRouter(default_config, fmt, _SR).route(
+        {"Vocals": audio}, len(audio)
+    )
+    unity = StemRouter(unity_config, fmt, _SR).route(
+        {"Vocals": audio}, len(audio)
+    )
+    default_ratio = np.max(np.abs(default["TFL"])) / np.max(np.abs(default["FL"]))
+    unity_ratio = np.max(np.abs(unity["TFL"])) / np.max(np.abs(unity["FL"]))
+
+    assert default_ratio / unity_ratio == pytest.approx(default_config.height_gain)
 
 
 def test_adm_reference_render_uses_object_size():

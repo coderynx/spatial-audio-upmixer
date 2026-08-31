@@ -175,9 +175,8 @@ impl PreviewEngine {
             for object in objects {
                 let signal = route.signal(object.signal);
                 for &(channel, weight) in &object.speakers {
-                    let gain = weight * self.params.speakers[channel].group_gain;
                     for (output, sample) in speakers[channel].iter_mut().zip(signal) {
-                        *output += gain * sample;
+                        *output += weight * sample;
                     }
                 }
             }
