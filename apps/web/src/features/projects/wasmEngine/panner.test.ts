@@ -68,11 +68,11 @@ describe("wasm panner", () => {
     expect(instance.presets).toEqual(["balanced", "intimate", "stage", "wide", "immersive", "live"]);
     const balanced = instance.presetPlacements("balanced");
     expect(balanced["Lead Vocals"]).toEqual({
-      azimuth_deg: 0, elevation_deg: 0, width_deg: 60, object_size: 0.1, diversity: 0, center_level_db: 0,
+      azimuth_deg: 0, elevation_deg: 0, width_deg: 60, object_size: 0.1, diversity: 0, center_level_db: 1.5,
     });
-    expect(balanced.Crowd).toMatchObject({ diversity: 0, center_level_db: 0 });
+    expect(balanced.Crowd).toMatchObject({ diversity: 0.5, center_level_db: -3 });
     // The `stage` preset is the one that places instruments off-centre.
-    expect(instance.presetPlacements("stage").Guitar.azimuth_deg).toBe(48);
+    expect(instance.presetPlacements("stage").Guitar.azimuth_deg).toBe(50);
     expect(instance.presetPlacements("no-such-preset")).toEqual({});
   });
 
@@ -80,7 +80,7 @@ describe("wasm panner", () => {
     const instance = panner();
     const balanced = instance.presetSends("balanced");
 
-    expect(balanced.Kick.lfe).toBeCloseTo(0.85, 9);
+    expect(balanced.Kick.lfe).toBeCloseTo(0.82, 9);
     expect(balanced["Lead Vocals"]).toEqual({
       lfe: 0, rear: 0, height: 0, heightCrossoverHz: 4000,
     });

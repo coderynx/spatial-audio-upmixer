@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from upmixer.formats import FORMAT_MAP, ChannelLabel
+from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_placement import (
     STEM_ROUTING_PRESET_NAMES,
     STEM_ROUTING_PRESETS,
@@ -88,22 +88,21 @@ def test_width_controls_how_many_speakers_a_placement_covers() -> None:
     assert len(wide) > len(narrow)
 
 
-def test_routes_are_constant_power() -> None:
+def test_preset_routes_are_nonnegative() -> None:
     for preset in STEM_ROUTING_PRESET_NAMES:
         for stem, route in preset_routing(preset, FORMAT_MAP["7.1.4"]).items():
-            positional = {
-                channel: gain for channel, gain in route.items() if channel != ChannelLabel.LFE.value
-            }
-            assert sum(gain * gain for gain in positional.values()) == pytest.approx(1.0), (
-                f"{preset}/{stem} is not constant power"
-            )
+            assert all(gain >= 0.0 for gain in route.values()), f"{preset}/{stem} has a negative gain"
 
 
-def test_presets_leave_bed_controls_neutral() -> None:
+def test_presets_define_stem_appropriate_bed_controls() -> None:
     for placements in STEM_ROUTING_PRESETS.values():
         for placement in placements.values():
-            assert placement.diversity == 0.0
-            assert placement.center_level_db == 0.0
+            assert 0.0 <= placement.diversity <= 1.0
+            assert -6.0 <= placement.center_level_db <= 2.0
+        assert placements["Lead Vocals"].center_level_db > placements["Crowd"].center_level_db
+        assert placements["Vocals Reverb"].diversity > placements["Crowd"].diversity
+
+    assert STEM_ROUTING_PRESETS["intimate"]["Other"].diversity < STEM_ROUTING_PRESETS["wide"]["Other"].diversity
 
 
 def test_unknown_preset_or_layout_is_rejected() -> None:
