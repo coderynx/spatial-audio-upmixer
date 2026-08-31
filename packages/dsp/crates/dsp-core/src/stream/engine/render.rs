@@ -319,8 +319,12 @@ impl PreviewEngine {
         // Clipped on the way into `post`, not at the emit point: the limiter
         // detects a whole look-ahead past what it emits, and that window has
         // to be clipped too (parity contract §1).
-        let source_gain = if self.params.output_mode == OutputMode::Native
-            || self.authored_channels > self.params.speakers.len()
+        let apply_source_gain = !self.params.bypass_mastering
+            || self.params.output_mode == OutputMode::Native
+            || self.authored_channels > self.params.speakers.len();
+        let source_gain = if apply_source_gain
+            && (self.params.master.output_gain != 1.0
+                || !self.master_gain.is_settled(1.0))
         {
             Some(
                 (0..end - start)
@@ -442,19 +446,16 @@ impl PreviewEngine {
                 }
             })
             .collect();
-        // Block-quantized rather than per-sample smoothing: output_gain is a
-        // scalar loudness/true-peak correction that changes rarely (mostly
-        // from the measurement pass, not a live user gesture), so ramping it
-        // once per render call is enough to hide the step without threading
-        // a per-sample gain array through the collapse stage.
         let gain = if self.params.output_mode == OutputMode::Native {
             1.0
         } else if self.authored_channels > self.params.speakers.len() {
             self.monitor_gain
                 .advance(self.params.master.monitor_output_gain, emit)
-        } else {
+        } else if self.params.bypass_mastering {
             self.master_gain
                 .advance(self.params.master.output_gain, emit)
+        } else {
+            1.0
         };
         self.output
             .process(&window, emit, gain, &mut self.collapsed);

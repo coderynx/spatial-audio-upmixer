@@ -147,7 +147,7 @@ mod master_meters {
     use std::sync::Arc;
     use upmixer_dsp_core::loudness::measure_loudness_stats;
     use upmixer_dsp_core::stream::engine::*;
-    use upmixer_dsp_core::stream::params::EngineParams;
+    use upmixer_dsp_core::stream::params::{EngineParams, OutputMode};
 
     /// A hot stereo programme through a compressor and a limiter, so both
     /// gain-reduction taps have something to report.
@@ -272,6 +272,20 @@ mod master_meters {
             "momentary {}",
             master.momentary_lkfs
         );
+    }
+
+    #[test]
+    fn output_gain_reaches_the_limiter_before_stereo_collapse() {
+        let mut preview = engine(96_000, 0.9);
+        let mut params = preview.params().clone();
+        params.output_mode = OutputMode::Stereo;
+        params.master.output_gain = 0.25;
+        preview.update_params(params);
+
+        let mut out = vec![0.0; 2 * 128];
+        while preview.render(&mut out, 128) > 0 {}
+
+        assert!(preview.meters().master.limiter_gr_db.abs() < 1e-12);
     }
 }
 
