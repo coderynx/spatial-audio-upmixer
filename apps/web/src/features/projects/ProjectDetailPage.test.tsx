@@ -152,7 +152,7 @@ describe("ProjectDetailPage tabs", () => {
     await user.click(screen.getByRole("button", { name: "Elevation" }));
 
     expect(screen.getByRole("button", { name: "Elevation" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("slider", { name: "Resize spatial view" })).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "Resize spatial view" })).toBeInTheDocument();
     await waitFor(() => expect(api.saveProjectViewState).toHaveBeenLastCalledWith("project-1", expect.objectContaining({ spatial_view: "elevation" })));
 
     await user.click(screen.getByRole("button", { name: "Scene" }));
@@ -246,22 +246,7 @@ describe("ProjectDetailPage tabs", () => {
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
 
     await user.click(screen.getByRole("button", { name: "Mixer" }));
-    const vocalsHandle = screen.getByRole("slider", { name: "Resize Vocals strip" });
-    // The M button and the fader's meter have no inline width of their own,
-    // so `closest` walks past them straight to the strip's root — unlike the
-    // fader itself, which does carry an inline width and would match itself.
-    const muteButton = screen.getByRole("button", { name: "Mute Vocals" });
-    const anchorFader = screen.getByRole("slider", { name: "Source anchor blend" });
-    const widthOf = (node: Element) => Number.parseFloat((node.closest("[style*='width']") as HTMLElement).style.width);
-
-    const vocalsBefore = widthOf(muteButton);
-    const anchorBefore = widthOf(anchorFader);
-
-    fireEvent.keyDown(vocalsHandle, { key: "ArrowRight" });
-
-    expect(widthOf(muteButton)).toBeGreaterThan(vocalsBefore);
-    // Untouched — each strip's handle only resizes that one strip.
-    expect(widthOf(anchorFader)).toBe(anchorBefore);
+    expect(screen.getByRole("separator", { name: "Resize Vocals strip" })).toHaveAttribute("aria-orientation", "vertical");
   });
 
   it("gives the anchor and master strips their own resize handles too", async () => {
@@ -271,8 +256,8 @@ describe("ProjectDetailPage tabs", () => {
 
     await user.click(screen.getByRole("button", { name: "Mixer" }));
 
-    expect(screen.getByRole("slider", { name: "Resize Anchor strip" })).toBeInTheDocument();
-    expect(screen.getByRole("slider", { name: "Resize Master strip" })).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "Resize Anchor strip" })).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "Resize Master strip" })).toBeInTheDocument();
   });
 
   it("stacks muted effects over an object panner in the mixer and inspector", async () => {

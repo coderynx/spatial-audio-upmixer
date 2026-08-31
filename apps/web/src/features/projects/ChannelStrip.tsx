@@ -41,89 +41,6 @@ export function stripWidth(channels: number) {
   return FADER_WIDTH + stripMeterWidth(channels) + 20;
 }
 
-export const STRIP_EXTRA_MIN = 0;
-export const STRIP_EXTRA_MAX = 96;
-
-/** The drag target on a strip's trailing border — the line already
- * separating it from its neighbour — that widens or narrows *that one
- * strip*. Each strip in the rack resizes independently, the way dragging a
- * column border in a spreadsheet only moves that column. No separate grip
- * is drawn; the shared border itself is the handle, highlighted on
- * hover/focus so it's discoverable without adding a floating element.
- * Shared by every strip kind (stem, anchor, master) so the drag math can't
- * drift between them — and reused as-is for the project page's Haze/
- * Elevation column resize (`ProjectDetailPage.tsx`), which is why `min`/
- * `max` are props rather than the module's own `STRIP_EXTRA_MIN`/`_MAX`
- * constants: those stay the *default*, for every existing strip call site,
- * while a caller with a different natural range (a spatial display isn't a
- * fader-width strip) supplies its own.
- *
- * `onChange` fires continuously while dragging, for the live width; `onCommit`
- * fires once at the end of the gesture, for the caller to persist. Requires a
- * `position: relative` ancestor to anchor against — every strip's root
- * carries `relative` for exactly this. Stops click/pointerdown propagation so
- * a resize drag never also selects the strip underneath it. */
-export function StripResizeHandle({
-  label, value, onChange, onCommit, min = STRIP_EXTRA_MIN, max = STRIP_EXTRA_MAX,
-}: {
-  label: string;
-  value: number;
-  onChange: (px: number) => void;
-  onCommit: (px: number) => void;
-  min?: number;
-  max?: number;
-}) {
-  const drag = React.useRef<{ startX: number; startValue: number } | null>(null);
-  const commit = (px: number) => Math.round(Math.min(max, Math.max(min, px)));
-
-  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.stopPropagation();
-    if (event.button !== 0) return;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    drag.current = { startX: event.clientX, startValue: value };
-  };
-  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const state = drag.current;
-    if (!state) return;
-    onChange(commit(state.startValue + (event.clientX - state.startX)));
-  };
-  const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!drag.current) return;
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
-    drag.current = null;
-    onCommit(value);
-  };
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    const moves: Record<string, number> = { ArrowRight: 8, ArrowLeft: -8, PageUp: 24, PageDown: -24 };
-    if (!(event.key in moves)) return;
-    event.preventDefault();
-    const next = commit(value + moves[event.key]);
-    onChange(next);
-    onCommit(next);
-  };
-
-  return (
-    <div
-      role="slider"
-      aria-label={label}
-      aria-orientation="horizontal"
-      aria-valuemin={min}
-      aria-valuemax={max}
-      aria-valuenow={value}
-      tabIndex={0}
-      title="Drag this border to resize the strip"
-      onClick={(event) => event.stopPropagation()}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
-      onKeyDown={handleKeyDown}
-      onDoubleClick={(event) => { event.stopPropagation(); onChange(0); onCommit(0); }}
-      className="absolute inset-y-0 right-[-4px] z-10 w-2 shrink-0 cursor-col-resize touch-none outline-none"
-    />
-  );
-}
-
 /** The two numeric readouts Logic prints above a strip's fader: the fader's
  * own value, and the meter's held peak in warning yellow. */
 export function StripReadouts({ value, peakDb, showPeak = true }: { value: string; peakDb: number; showPeak?: boolean }) {
@@ -208,15 +125,6 @@ export type StemChannelStripProps = {
   showNameplate?: boolean;
   topControl?: React.ReactNode;
   showPeakReadout?: boolean;
-  /** Extra pixels added on top of the computed minimum width — this strip's
-   * own independent resize state, dragged via `StripResizeHandle`. */
-  extraWidth?: number;
-  /** Omit both to render without a resize handle at all — the inspector's
-   * lone, centered copy of the selected stem has no row of neighbours to
-   * widen at their expense, so resizing it buys nothing a container width
-   * doesn't already give it. */
-  onExtraWidthChange?: (px: number) => void;
-  onExtraWidthCommit?: (px: number) => void;
   className?: string;
   style?: React.CSSProperties;
 };
@@ -240,9 +148,6 @@ export function StemChannelStrip({
   showNameplate = true,
   topControl,
   showPeakReadout = true,
-  extraWidth = 0,
-  onExtraWidthChange,
-  onExtraWidthCommit,
   className,
   style,
 }: StemChannelStripProps) {
@@ -277,17 +182,9 @@ export function StemChannelStrip({
         onSelect && !selected && "cursor-pointer",
         className,
       )}
-      style={{ width: stripWidth(meterChannels) + extraWidth, ...style }}
+      style={{ width: stripWidth(meterChannels), ...style }}
       onClick={onSelect}
     >
-      {onExtraWidthChange && onExtraWidthCommit && (
-        <StripResizeHandle
-          label={`Resize ${subjectName} strip`}
-          value={extraWidth}
-          onChange={onExtraWidthChange}
-          onCommit={onExtraWidthCommit}
-        />
-      )}
       {topControl}
       <StripReadouts value={gain > 0 ? `+${gain.toFixed(1)}` : gain.toFixed(1)} peakDb={peakDb} showPeak={showPeakReadout} />
 

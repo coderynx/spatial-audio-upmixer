@@ -4,11 +4,11 @@ import type { Project, StemRouting } from "@/api";
 import { SegmentedControl } from "@/app/SegmentedControl";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import type { Manifest } from "@/lib/manifest";
 import { stemColors } from "@/lib/stems";
 import { cn } from "@/lib/utils";
 import ChannelMeters from "./ChannelMeters";
-import { StripResizeHandle } from "./ChannelStrip";
 import ElevationView from "./ElevationView";
 import HazeView from "./HazeView";
 import SceneView from "./SceneView";
@@ -18,16 +18,25 @@ import StereoPanoramaView from "./StereoPanoramaView";
 import { TimelineView } from "./TimelineView";
 import {
   LOUDNESS_DEFAULT_WIDTH,
+  LOUDNESS_MAX_WIDTH,
+  LOUDNESS_MIN_WIDTH,
+  METERS_MAX_WIDTH,
   METERS_GROUP_DEFAULT_SHARE,
+  METERS_GROUP_MAX_WIDTH,
   METERS_GROUP_MIN_WIDTH,
+  METERS_MIN_WIDTH,
   PANE_DEFAULT_HEIGHT,
+  PANE_HEADROOM,
+  PANE_MAX_HEIGHT,
   PANE_MIN_HEIGHT,
+  ROW_GAP,
 } from "./projectDetailLayout";
 import type { useColumnLayout } from "./useColumnLayout";
 import type { usePaneLayout } from "./usePaneLayout";
 import type { useStemPreview, OutputMode } from "./useStemPreview";
 import type { useTrackPeaks } from "./useTrackPeaks";
 import type { ProjectViewState, SpatialView } from "./projectViewState";
+import type { PanelImperativeHandle } from "react-resizable-panels";
 
 const PANE_SEGMENTS = [
   { value: "timeline" as const, label: "Timeline", icon: AudioWaveform },
@@ -39,6 +48,8 @@ const SPATIAL_VIEW_SEGMENTS = [
   { value: "elevation" as const, label: "Elevation" },
   { value: "scene" as const, label: "Scene" },
 ];
+const PANE_CHROME_HEIGHT = 40;
+const PANE_TOP_MIN_HEIGHT = PANE_HEADROOM - PANE_CHROME_HEIGHT - 8;
 
 type Preview = ReturnType<typeof useStemPreview>;
 
@@ -108,6 +119,16 @@ function PreviewStatus({ preview, project, previewStemCount }: Pick<PreviewPanel
   </>;
 }
 
+function BottomPaneHeader({ paneView, changePane }: Pick<ReturnType<typeof usePaneLayout>, "paneView" | "changePane">) {
+  return <div className={cn("relative flex h-8 shrink-0 items-center gap-2 bg-card px-2", !paneView && "border-t")}>
+    <SegmentedControl aria-label="Bottom pane" size="sm" segments={PANE_SEGMENTS} value={(paneView ?? "") as "timeline" | "mixer"} onChange={changePane} />
+    <div className="min-w-0 flex-1" />
+    <Button variant="ghost" size="icon" className="h-6 w-6" aria-label={paneView ? "Collapse bottom pane" : "Show bottom pane"} aria-expanded={Boolean(paneView)} onClick={() => changePane(paneView ? null : "timeline")}>
+      {paneView ? <ChevronDown /> : <ChevronUp />}
+    </Button>
+  </div>;
+}
+
 export function PreviewPanel(props: PreviewPanelProps) {
   const {
     containerRef, preview, pane, columns, project, trackManifest, viewState,
@@ -117,21 +138,43 @@ export function PreviewPanel(props: PreviewPanelProps) {
     onToggleMute, onToggleSolo, onGain, onAnchorStrength, onCommitScrub, topControlForStem,
   } = props;
   const {
-    paneView, paneHeight, changePane, resizePaneTo,
-    beginPaneResize, movePaneResize, endPaneResize, paneResizeKeys,
+    paneView, paneHeight, changePane, commitPaneHeight,
   } = pane;
   const {
-    rowRef, elevationExtra, setElevationExtra, loudnessExtra, setLoudnessExtra, commitColumnExtra,
-    groupMaxWidth, groupWidth, loudnessFloor, loudnessCeil, loudnessWidth,
+    elevationExtra, setElevationExtra, loudnessExtra, setLoudnessExtra, commitColumnExtra,
   } = columns;
   const showLoudness = preview.supported && previewStemCount > 0;
-  const paneStyle = React.useMemo(() => ({ height: paneHeight }), [paneHeight]);
+  const groupWidth = Math.min(METERS_GROUP_MAX_WIDTH, Math.max(METERS_GROUP_MIN_WIDTH, METERS_GROUP_DEFAULT_SHARE - elevationExtra));
+  const loudnessFloor = Math.max(LOUDNESS_MIN_WIDTH, groupWidth - ROW_GAP - METERS_MAX_WIDTH);
+  const loudnessCeil = Math.min(LOUDNESS_MAX_WIDTH, groupWidth - ROW_GAP - METERS_MIN_WIDTH);
+  const loudnessWidth = Math.min(loudnessCeil, Math.max(loudnessFloor, LOUDNESS_DEFAULT_WIDTH - loudnessExtra));
+  const paneRef = React.useRef<PanelImperativeHandle>(null);
+  const columnsRef = React.useRef<PanelImperativeHandle>(null);
+  const loudnessPanelRef = React.useRef<PanelImperativeHandle>(null);
 
   return <section ref={containerRef} className="flex min-h-0 flex-col">
+    <ResizablePanelGroup orientation="vertical" className="min-h-0 flex-1" onLayoutChanged={(_, meta) => {
+      if (!meta.isUserInteraction) return;
+      const height = paneRef.current?.getSize().inPixels;
+      if (height !== undefined) commitPaneHeight(height - PANE_CHROME_HEIGHT);
+    }}>
+    <ResizablePanel minSize={paneView ? PANE_TOP_MIN_HEIGHT : undefined} className="flex min-h-0 flex-1 flex-col">
     <div className="flex min-h-0 flex-1 flex-col gap-2 p-2">
       <PreviewStatus preview={preview} project={project} previewStemCount={previewStemCount} />
-      <div ref={rowRef} className={cn("flex min-h-0 gap-2", paneView ? "min-h-[180px] flex-1" : "flex-[3]")}>
-        <div className="relative min-h-0 min-w-0 flex-1">
+      <ResizablePanelGroup
+        orientation="horizontal"
+        className={cn("min-h-0", paneView ? "min-h-[180px] flex-1" : "flex-[3]")}
+        onLayoutChanged={(_, meta) => {
+          if (!meta.isUserInteraction) return;
+          const width = columnsRef.current?.getSize().inPixels;
+          if (width === undefined) return;
+          const extra = METERS_GROUP_DEFAULT_SHARE - width;
+          setElevationExtra(extra);
+          commitColumnExtra("elevation", extra);
+        }}
+      >
+        <ResizablePanel minSize={160} className="min-h-0 min-w-0">
+        <div className="relative h-full">
           {stereoLayout
             ? <StereoPanoramaView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} speakerSolo={preview.speakerSolo} onToggleSpeaker={preview.toggleSpeaker} onSoloSpeaker={preview.soloSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={onHazeIntensity} className="h-full w-full" />
             : <div className="relative h-full">
@@ -142,31 +185,36 @@ export function PreviewPanel(props: PreviewPanelProps) {
                   : <HazeView channels={channels} routing={routing} selectedStem={selectedStem} colors={stemColors} channelCounts={stemChannelCounts} stemSpectrum={preview.stemSpectrum} speakerEnabled={preview.speakerEnabled} speakerSolo={preview.speakerSolo} onToggleSpeaker={preview.toggleSpeaker} onSoloSpeaker={preview.soloSpeaker} active={preview.playing} intensity={viewState.hazeIntensity} onIntensity={onHazeIntensity} className="h-full w-full" />}
               <SegmentedControl aria-label="Spatial view" size="sm" segments={SPATIAL_VIEW_SEGMENTS} value={viewState.spatialView} onChange={onSpatialViewChange} className="absolute left-1/2 top-2 z-10 -translate-x-1/2 border border-white/10 bg-white/5 backdrop-blur-sm [&_button]:text-white/70 [&_button:hover]:text-white" activeClassName="bg-white/10 shadow-sm" activeTextClassName="text-white" slideIndicator />
             </div>}
-          <StripResizeHandle
-            label="Resize spatial view"
-            value={elevationExtra}
-            onChange={setElevationExtra}
-            onCommit={(px) => { setElevationExtra(px); commitColumnExtra("elevation", px); }}
-            min={METERS_GROUP_DEFAULT_SHARE - groupMaxWidth}
-            max={METERS_GROUP_DEFAULT_SHARE - METERS_GROUP_MIN_WIDTH}
-          />
         </div>
-        <div className="flex min-h-0 shrink-0 gap-2" style={{ width: groupWidth }}>
-          <div className="relative min-h-0 min-w-0 flex-1">
+        </ResizablePanel>
+        <ResizableHandle aria-label="Resize spatial view" className="w-2 bg-transparent after:w-2 after:bg-transparent" />
+        <ResizablePanel
+          minSize={METERS_GROUP_MIN_WIDTH}
+          maxSize={METERS_GROUP_MAX_WIDTH}
+          defaultSize={groupWidth}
+          panelRef={columnsRef}
+          groupResizeBehavior="preserve-pixel-size"
+          className="min-h-0"
+        >
+          {showLoudness ? <ResizablePanelGroup
+            orientation="horizontal"
+            className="min-h-0"
+            onLayoutChanged={(_, meta) => {
+              if (!meta.isUserInteraction) return;
+              const width = loudnessPanelRef.current?.getSize().inPixels;
+              if (width === undefined) return;
+              const extra = LOUDNESS_DEFAULT_WIDTH - width;
+              setLoudnessExtra(extra);
+              commitColumnExtra("loudness", extra);
+            }}
+          >
+          <ResizablePanel minSize={METERS_MIN_WIDTH} maxSize={METERS_MAX_WIDTH} defaultSize={groupWidth - loudnessWidth - 8} className="min-h-0 min-w-0">
+          <div className="relative h-full">
             <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} speakerSolo={preview.speakerSolo} onToggleSpeaker={preview.toggleSpeaker} onSoloSpeaker={preview.soloSpeaker} outputMode={outputMode} active={preview.playing} className="h-full w-full" />
-            {showLoudness && (
-              <StripResizeHandle
-                label="Resize Loudness meter"
-                value={loudnessExtra}
-                onChange={setLoudnessExtra}
-                onCommit={(px) => { setLoudnessExtra(px); commitColumnExtra("loudness", px); }}
-                min={LOUDNESS_DEFAULT_WIDTH - loudnessCeil}
-                max={LOUDNESS_DEFAULT_WIDTH - loudnessFloor}
-              />
-            )}
           </div>
-          {showLoudness && (
-            <div className="min-h-0 shrink-0" style={{ width: loudnessWidth }}>
+          </ResizablePanel>
+          <ResizableHandle aria-label="Resize Loudness meter" className="w-2 bg-transparent after:w-2 after:bg-transparent" />
+          <ResizablePanel minSize={loudnessFloor} maxSize={loudnessCeil} defaultSize={loudnessWidth} panelRef={loudnessPanelRef} groupResizeBehavior="preserve-pixel-size" className="min-h-0">
               <LoudnessMeterPanel
                 loudness={preview.loudness}
                 masterMeters={preview.masterMeters}
@@ -177,55 +225,20 @@ export function PreviewPanel(props: PreviewPanelProps) {
                 channelCount={channels.length}
                 className="h-full w-full"
               />
-            </div>
-          )}
-        </div>
-      </div>
+          </ResizablePanel>
+          </ResizablePanelGroup> : <ChannelMeters channels={channels} channelLevels={preview.channelLevels} headphoneLevels={preview.headphoneLevels} speakerEnabled={preview.speakerEnabled} speakerSolo={preview.speakerSolo} onToggleSpeaker={preview.toggleSpeaker} onSoloSpeaker={preview.soloSpeaker} outputMode={outputMode} active={preview.playing} className="h-full w-full" />}
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
-    {paneView && (
-      <div
-        role="separator"
-        aria-label="Resize bottom pane"
-        aria-orientation="horizontal"
-        aria-valuenow={paneHeight}
-        aria-valuemin={PANE_MIN_HEIGHT}
-        tabIndex={0}
-        onPointerDown={beginPaneResize}
-        onPointerMove={movePaneResize}
-        onPointerUp={endPaneResize}
-        onPointerCancel={endPaneResize}
-        onKeyDown={paneResizeKeys}
-        onDoubleClick={() => resizePaneTo(PANE_DEFAULT_HEIGHT)}
-        className="group flex h-2 shrink-0 cursor-row-resize touch-none items-center justify-center border-t bg-muted/40 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60"
-      >
-        <span className="h-0.5 w-8 rounded-full bg-border transition-colors group-hover:bg-muted-foreground" aria-hidden="true" />
-      </div>
-    )}
-    <div className={cn("flex h-8 shrink-0 items-center gap-2 bg-card px-2", !paneView && "border-t")}>
-      <SegmentedControl
-        aria-label="Bottom pane"
-        size="sm"
-        segments={PANE_SEGMENTS}
-        value={(paneView ?? "") as "timeline" | "mixer"}
-        onChange={changePane}
-      />
-      <div className="min-w-0 flex-1" />
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-6 w-6"
-        aria-label={paneView ? "Collapse bottom pane" : "Show bottom pane"}
-        aria-expanded={Boolean(paneView)}
-        onClick={() => changePane(paneView ? null : "timeline")}
-      >
-        {paneView ? <ChevronDown /> : <ChevronUp />}
-      </Button>
-    </div>
-    {paneView && <div className="h-2 shrink-0 bg-muted/40" aria-hidden="true" />}
+    {!paneView && <BottomPaneHeader paneView={paneView} changePane={changePane} />}
+    </ResizablePanel>
+    {paneView && <ResizableHandle aria-label="Resize bottom pane" disableDoubleClick onDoubleClick={() => paneRef.current?.resize(PANE_DEFAULT_HEIGHT + PANE_CHROME_HEIGHT)} className="!h-2 !w-full cursor-row-resize border-t bg-muted/40 before:absolute before:h-0.5 before:w-8 before:rounded-full before:bg-border" />}
+    {paneView && <ResizablePanel minSize={PANE_MIN_HEIGHT + PANE_CHROME_HEIGHT} maxSize={PANE_MAX_HEIGHT + PANE_CHROME_HEIGHT} defaultSize={paneHeight + PANE_CHROME_HEIGHT} panelRef={paneRef} groupResizeBehavior="preserve-pixel-size" className="flex min-h-0 flex-col">
+    <BottomPaneHeader paneView={paneView} changePane={changePane} />
+    <div className="h-2 shrink-0 bg-muted/40" aria-hidden="true" />
     {paneView === "timeline" && (
       <TimelineView
-        className="shrink-0 border-t"
-        style={paneStyle}
+        className="min-h-0 flex-1 border-t"
         stems={orderedStems}
         peaks={peaks}
         loading={peaksLoading}
@@ -256,8 +269,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
     )}
     {paneView === "mixer" && trackManifest && (
       <MixerView
-        className="shrink-0 border-t"
-        style={paneStyle}
+        className="min-h-0 flex-1 border-t"
         stems={orderedStems}
         stemChannels={stemChannelCounts}
         selectedStem={selectedStem}
@@ -281,5 +293,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
         topControlForStem={topControlForStem}
       />
     )}
+    </ResizablePanel>}
+    </ResizablePanelGroup>
   </section>;
 }

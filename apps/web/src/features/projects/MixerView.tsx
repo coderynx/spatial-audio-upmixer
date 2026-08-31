@@ -1,23 +1,22 @@
 import { Link2 } from "lucide-react";
 import * as React from "react";
 import { Fader } from "@/components/ui/fader";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { canvasTheme } from "@/lib/canvasTheme";
 import { FADER_MIN_DB, dbToFaderPosition, faderPositionToDb, formatFaderDb } from "@/lib/fader";
 import { cn } from "@/lib/utils";
 import {
   FADER_TRAVEL,
   FADER_WIDTH,
-  STRIP_EXTRA_MAX,
-  STRIP_EXTRA_MIN,
   StemChannelStrip,
   StripReadouts,
-  StripResizeHandle,
   StripToggle,
   stripWidth,
 } from "./ChannelStrip";
 import { StripMeter } from "./StripMeter";
 import { useStripMeterLoop } from "./useStripMeterLoop";
 import type { MeterLevel } from "./useStemPreview";
+import type { PanelImperativeHandle } from "react-resizable-panels";
 
 // Rack layout, strip anatomy and resize behavior: docs/web_ui_design.md §6.4.
 
@@ -25,6 +24,8 @@ const MONITOR_TICKS = [0, -6, -12, -18, -24, -36, -48, -60];
 const ANCHOR_TICKS = [100, 75, 50, 25, 0];
 
 const STRIP_WIDTHS_KEY = "upmixer.mixer.stripWidths";
+const STRIP_EXTRA_MIN = 0;
+const STRIP_EXTRA_MAX = 96;
 
 function readStoredStripWidths(): Record<string, number> {
   try {
@@ -62,29 +63,17 @@ function AnchorStrip({
   strength,
   onChange,
   disabled,
-  extraWidth,
-  onExtraWidthChange,
-  onExtraWidthCommit,
 }: {
   strength: number;
   onChange: (strength: number) => void;
   disabled: boolean;
-  extraWidth: number;
-  onExtraWidthChange: (px: number) => void;
-  onExtraWidthCommit: (px: number) => void;
 }) {
   const percent = Math.round(strength * 100);
   return (
     <div
       className="relative flex shrink-0 flex-col items-center justify-end gap-1.5 border-x border-success/30 bg-success/5 px-1.5 py-1.5"
-      style={{ width: FADER_WIDTH + 28 + extraWidth }}
+      style={{ width: "100%" }}
     >
-      <StripResizeHandle
-        label="Resize Anchor strip"
-        value={extraWidth}
-        onChange={onExtraWidthChange}
-        onCommit={onExtraWidthCommit}
-      />
       <span
         className="w-full rounded-[3px] py-px text-center text-[10px] font-semibold tabular-nums text-success"
         style={{ backgroundColor: canvasTheme.stripWell }}
@@ -128,9 +117,6 @@ function MasterStrip({
   onToggleMasterMute,
   headphoneLevels,
   active,
-  extraWidth,
-  onExtraWidthChange,
-  onExtraWidthCommit,
 }: {
   volume: number;
   onVolume: (value: number) => void;
@@ -138,9 +124,6 @@ function MasterStrip({
   onToggleMasterMute: () => void;
   headphoneLevels: React.MutableRefObject<{ left: MeterLevel; right: MeterLevel }>;
   active: boolean;
-  extraWidth: number;
-  onExtraWidthChange: (px: number) => void;
-  onExtraWidthCommit: (px: number) => void;
 }) {
   const source = React.useCallback(
     () => [headphoneLevels.current.left, headphoneLevels.current.right],
@@ -152,14 +135,8 @@ function MasterStrip({
   return (
     <div
       className="relative flex shrink-0 flex-col items-center justify-end gap-1.5 border-l-2 bg-muted/40 px-1.5 py-1.5"
-      style={{ width: stripWidth(2) + extraWidth }}
+      style={{ width: "100%" }}
     >
-      <StripResizeHandle
-        label="Resize Master strip"
-        value={extraWidth}
-        onChange={onExtraWidthChange}
-        onCommit={onExtraWidthCommit}
-      />
       <StripReadouts value={formatFaderDb(volume).replace(" dB", "")} peakDb={peakDb} />
       <div className="flex items-stretch gap-1" style={{ height: FADER_TRAVEL }}>
         <Fader
@@ -221,81 +198,75 @@ function MixerViewImpl({
   const soloed = new Set(solo);
   const silent = (stem: string) => enabled[stem] === false || (soloed.size > 0 && !soloed.has(stem));
 
-  // Per-strip width overrides, keyed by strip id ("stem:<name>" | "anchor" |
-  // "master"). `onChange` (live, during drag) only touches React state;
-  // `onCommit` (drag end) is the one write to localStorage, same split as
-  // the bottom pane's own resize handle uses for its height.
-  const [stripWidths, setStripWidths] = React.useState<Record<string, number>>(readStoredStripWidths);
-  const setLiveWidth = React.useCallback((key: string, px: number) => {
-    setStripWidths((current) => (current[key] === px ? current : { ...current, [key]: px }));
-  }, []);
-  const commitWidth = React.useCallback((key: string, px: number) => {
-    setStripWidths((current) => {
-      const next = { ...current, [key]: px };
-      try {
-        window.localStorage.setItem(STRIP_WIDTHS_KEY, JSON.stringify(next));
-      } catch {
-        // Storage being unavailable only costs the preference, not the resize.
-      }
-      return next;
-    });
-  }, []);
+  const stripWidths = React.useRef(readStoredStripWidths()).current;
+  const panelRefs = React.useRef<Record<string, PanelImperativeHandle | null>>({});
+  const stripBases = Object.fromEntries([
+    ...stems.map((stem) => [`stem:${stem}`, stripWidth(Math.min(2, Math.max(1, stemChannels[stem] ?? 1)))]),
+    ["anchor", FADER_WIDTH + 36],
+    ["master", stripWidth(2)],
+  ]);
+  const persistWidths = (_: Record<string, number>, meta: { isUserInteraction: boolean }) => {
+    if (!meta.isUserInteraction) return;
+    const widths = Object.fromEntries(Object.entries(panelRefs.current).flatMap(([key, panel]) => {
+      const base = stripBases[key];
+      return panel && base ? [[key, Math.round(Math.min(STRIP_EXTRA_MAX, Math.max(STRIP_EXTRA_MIN, panel.getSize().inPixels - base)))]] : [];
+    }));
+    try { window.localStorage.setItem(STRIP_WIDTHS_KEY, JSON.stringify(widths)); } catch { /* preference only */ }
+  };
+  const panel = (key: string, label: string, children: React.ReactNode, last = false) => {
+    const base = stripBases[key];
+    return [
+      <ResizablePanel key={`${key}:panel`} id={key} defaultSize={base + (stripWidths[key] ?? 0)} minSize={base} maxSize={base + STRIP_EXTRA_MAX} panelRef={(node) => { panelRefs.current[key] = node }} groupResizeBehavior="preserve-pixel-size" className="flex h-full w-full min-h-0 overflow-hidden">
+        {children}
+      </ResizablePanel>,
+      !last && <ResizableHandle key={`${key}:handle`} aria-label={label} disableDoubleClick onDoubleClick={() => panelRefs.current[key]?.resize(base)} className="-mx-1 z-10 w-2 bg-transparent after:w-2 after:bg-transparent" />,
+    ];
+  };
 
   return (
-    <div
-      className={cn("flex min-h-0 overflow-x-auto overflow-y-hidden bg-card", className)}
-      style={style}
-      role="group"
-      aria-label="Mixer"
-    >
-      {stems.map((stem) => {
-        const widthKey = `stem:${stem}`;
-        return (
-          <StemChannelStrip
-            key={stem}
-            className={cn("border-r px-1.5 py-1.5", selectedStem === stem && "bg-primary/10")}
-            stem={stem}
-            channels={stemChannels[stem] ?? 1}
-            gain={gains[stem] ?? 0}
-            onGain={(value) => onGain(stem, value)}
-            muted={enabled[stem] === false}
-            soloed={soloed.has(stem)}
-            silent={silent(stem)}
-            onToggleMute={() => onToggleMute(stem)}
-            onToggleSolo={() => onToggleSolo(stem)}
-            meterSource={() => stemLevels.current.get(stem) ?? []}
-            active={active}
-            selected={selectedStem === stem}
-            onSelect={() => onSelectStem(stem)}
-            disabled={disabled}
-            topControl={topControlForStem?.(stem)}
-            extraWidth={stripWidths[widthKey] ?? 0}
-            onExtraWidthChange={(px) => setLiveWidth(widthKey, px)}
-            onExtraWidthCommit={(px) => commitWidth(widthKey, px)}
-          />
-        );
-      })}
+    <div className={cn("flex min-h-0 overflow-x-auto overflow-y-hidden bg-card", className)} style={style}>
+      <ResizablePanelGroup orientation="horizontal" className="min-w-full w-max" role="group" aria-label="Mixer" onLayoutChanged={persistWidths}>
+        {stems.flatMap((stem) => {
+          const widthKey = `stem:${stem}`;
+          return panel(widthKey, `Resize ${stem} strip`, (
+            <StemChannelStrip
+              className={cn("border-r px-1.5 py-1.5", selectedStem === stem && "bg-primary/10")}
+              stem={stem}
+              channels={stemChannels[stem] ?? 1}
+              gain={gains[stem] ?? 0}
+              onGain={(value) => onGain(stem, value)}
+              muted={enabled[stem] === false}
+              soloed={soloed.has(stem)}
+              silent={silent(stem)}
+              onToggleMute={() => onToggleMute(stem)}
+              onToggleSolo={() => onToggleSolo(stem)}
+              meterSource={() => stemLevels.current.get(stem) ?? []}
+              active={active}
+              selected={selectedStem === stem}
+              onSelect={() => onSelectStem(stem)}
+              disabled={disabled}
+              topControl={topControlForStem?.(stem)}
+              style={{ width: "100%" }}
+            />
+          ), false);
+        })}
 
-      <AnchorStrip
-        strength={anchorStrength}
-        onChange={onAnchorStrength}
-        disabled={disabled}
-        extraWidth={stripWidths.anchor ?? 0}
-        onExtraWidthChange={(px) => setLiveWidth("anchor", px)}
-        onExtraWidthCommit={(px) => commitWidth("anchor", px)}
-      />
+        {panel("anchor", "Resize Anchor strip", <AnchorStrip
+          strength={anchorStrength}
+          onChange={onAnchorStrength}
+          disabled={disabled}
+        />)}
 
-      <MasterStrip
-        volume={volume}
-        onVolume={onVolume}
-        muted={muted}
-        onToggleMasterMute={onToggleMasterMute}
-        headphoneLevels={headphoneLevels}
-        active={active}
-        extraWidth={stripWidths.master ?? 0}
-        onExtraWidthChange={(px) => setLiveWidth("master", px)}
-        onExtraWidthCommit={(px) => commitWidth("master", px)}
-      />
+        {panel("master", "Resize Master strip", <MasterStrip
+          volume={volume}
+          onVolume={onVolume}
+          muted={muted}
+          onToggleMasterMute={onToggleMasterMute}
+          headphoneLevels={headphoneLevels}
+          active={active}
+        />)}
+        <ResizablePanel id="tail" minSize={0} className="min-h-0" />
+      </ResizablePanelGroup>
     </div>
   );
 }
