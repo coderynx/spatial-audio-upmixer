@@ -32,6 +32,9 @@ in `packages/core/src/separation/stem_placement.py`, resolved for the selected
 speaker layout and panned into that layout's speakers — so the same preset name
 serializes a different matrix on `7.1.4` than on `5.1`. Applying one writes only
 the (track, layout) pair on screen; a track's other layouts keep their own.
+Bed placement overrides may additionally carry `diversity` (0–1) and
+`center_level_db` (−83 for mute, otherwise −82 to +6 dB); the shared panner
+applies both before serializing the speaker matrix.
 
 ### Speaker layout is per track, and a track has several
 

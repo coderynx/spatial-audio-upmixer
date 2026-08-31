@@ -65,7 +65,7 @@ export type Manifest = {
     stem_object_mode: Record<string, "linked-stereo" | "mono">;
     stem_object_metadata: Record<string, AdmObjectMetadata>;
     stem_routing: Record<string, Record<string, number>>;
-    stem_placement: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; object_size: number }>;
+    stem_placement: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; object_size: number; diversity?: number; center_level_db?: number }>;
     stem_enabled: Record<string, boolean>;
     stem_solo: string[];
     stem_source_anchor_strength: number;

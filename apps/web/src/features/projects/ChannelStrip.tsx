@@ -21,9 +21,9 @@ export const FADER_WIDTH = 34;
  * Distinct from the master strip's monitor taper (`lib/fader.ts`), which
  * spans -60 dB to unity and never reaches the export. */
 export const STEM_GAIN_MIN_DB = -12;
-export const STEM_GAIN_MAX_DB = 6;
+export const STEM_GAIN_MAX_DB = 12;
 export const STEM_GAIN_STEP_DB = 0.1;
-export const STEM_GAIN_TICKS = [6, 3, 0, -3, -6, -9, -12];
+export const STEM_GAIN_TICKS = [12, 9, 6, 3, 0, -3, -6, -9, -12];
 
 /** Tints a stem's accent hex for the nameplate's resting plate — full
  * saturation would fight the dark chrome and fail contrast for the paler

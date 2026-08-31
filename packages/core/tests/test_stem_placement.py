@@ -6,6 +6,7 @@ import pytest
 from upmixer.formats import FORMAT_MAP, ChannelLabel
 from upmixer.separation.stem_placement import (
     STEM_ROUTING_PRESET_NAMES,
+    STEM_ROUTING_PRESETS,
     StemPlacement,
     placement_route,
     preset_routing,
@@ -96,6 +97,13 @@ def test_routes_are_constant_power() -> None:
             assert sum(gain * gain for gain in positional.values()) == pytest.approx(1.0), (
                 f"{preset}/{stem} is not constant power"
             )
+
+
+def test_presets_leave_bed_controls_neutral() -> None:
+    for placements in STEM_ROUTING_PRESETS.values():
+        for placement in placements.values():
+            assert placement.diversity == 0.0
+            assert placement.center_level_db == 0.0
 
 
 def test_unknown_preset_or_layout_is_rejected() -> None:

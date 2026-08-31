@@ -59,7 +59,7 @@ export function StemProcessingControls({
 
 export const StemControls = React.memo(function StemControls({
   stemName = "Stem", placement, route, channels, eq, maxElevationDeg, ambientRear, ambientHeight, ambientHeightCrossoverHz,
-  onPlacement, onRoute, onEq, onDynamicEq = () => undefined, onDynamics, onAmbient, stemEqProfiles, stemEqSettings, dynamicEq, dynamicEqProfiles, dynamicsProfiles, stemProcessingPresets, dynamics, dynamicsMeterSource, dynamicEqMeterSource, showPositionControls = true, showObjectSends = true, showProcessingControls = true,
+  onPlacement, onRoute, onEq, onDynamicEq = () => undefined, onDynamics, onAmbient, stemEqProfiles, stemEqSettings, dynamicEq, dynamicEqProfiles, dynamicsProfiles, stemProcessingPresets, dynamics, dynamicsMeterSource, dynamicEqMeterSource, showPositionControls = true, showObjectSends = true, showLfeSend = true, showProcessingControls = true,
 }: {
   stemName?: string;
   placement: StemPlacement;
@@ -92,6 +92,7 @@ export const StemControls = React.memo(function StemControls({
   dynamicEqMeterSource?: () => number;
   showPositionControls?: boolean;
   showObjectSends?: boolean;
+  showLfeSend?: boolean;
   showProcessingControls?: boolean;
 }) {
   // The sliders are the Cartesian face of a direction, so a round trip through
@@ -195,7 +196,7 @@ export const StemControls = React.memo(function StemControls({
           </label>
         </>
       )}
-      {showObjectSends && hasLfe && (
+      {showLfeSend && hasLfe && (
         <label className="block text-[11px] text-muted-foreground">
           <span className="flex items-center gap-1"><Waves className="h-3 w-3" />LFE send</span>
           <Slider aria-label="LFE send" className="mt-1.5" min={0} max={1} step={0.01}

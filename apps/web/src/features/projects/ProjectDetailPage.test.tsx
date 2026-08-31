@@ -300,6 +300,47 @@ describe("ProjectDetailPage tabs", () => {
     expect(inspectorFader.compareDocumentPosition(inspectorNameplate) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("opens a bed panner above the bed fader", async () => {
+    const bedProject: Project = {
+      ...project,
+      requested_stems: ["Bass"],
+      prepared_stems: ["Bass"],
+      tracks: [{
+        ...project.tracks[0],
+        stems: [{ id: "stem-bass", stem_key: "Bass", sample_rate: 48000, channels: 2, size_bytes: 1, audio_url: "/bass.wav", preview_url: null }],
+      }],
+    };
+    vi.mocked(api.getProject).mockResolvedValue(bedProject);
+    const config = {
+      choices: { layout_channels: { "7.1.4": ["FL", "FR", "C", "LFE", "SL", "SR", "TFL", "TFR"] } },
+    } as unknown as Configuration;
+    const user = userEvent.setup();
+    renderPage(config);
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Mixer" }));
+    const panner = screen.getByRole("button", { name: "Bed panner Bass" });
+    const fader = screen.getByRole("slider", { name: "Bass gain" });
+    expect(panner.compareDocumentPosition(fader) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await user.click(panner);
+    expect(screen.getByRole("dialog", { name: "Bed panner Bass" })).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Diversity" })).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "LFE level" })).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Ambience to rear" })).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Ambience to height" })).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Height crossover" })).toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: "LFE send" })).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole("slider", { name: "Ambience to height" }), { key: "ArrowUp" });
+    await waitFor(() => expect(api.saveProjectTrackLayout).toHaveBeenCalled());
+    const [, , , payload] = vi.mocked(api.saveProjectTrackLayout).mock.calls.at(-1)!;
+    const saved = payload.manifest_overrides as unknown as {
+      mixing: { stem_ambient_height: Record<string, number> };
+    };
+    expect(saved.mixing.stem_ambient_height.Bass).toBeCloseTo(0.01);
+    vi.mocked(api.getProject).mockResolvedValue(project);
+  });
+
   it("writes mastering edits to the selected track's selected layout", async () => {
     const user = userEvent.setup();
     renderPage();

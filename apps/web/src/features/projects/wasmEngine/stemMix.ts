@@ -3,6 +3,7 @@ import type { EngineConstants } from "../masteringProfiles";
 import { estimateRouteScale } from "../masteringProfiles";
 import type { StemMix } from "./engineParams";
 import type { StemDynamicEqSettings, StemDynamicsSettings, StemEqSettings } from "@/lib/manifest";
+import { isBedStem } from "@/lib/stems";
 
 export type MixPreviewShape = {
   stem_routing?: Record<string, Record<string, number>>;
@@ -18,7 +19,7 @@ export type MixPreviewShape = {
   spatial_downmix_lock?: boolean;
   stem_object_mode?: Record<string, "linked-stereo" | "mono">;
   stem_object_metadata?: Record<string, { gain?: number; importance?: number; channel_lock?: boolean; zone_exclusion?: string[] }>;
-  stem_placement?: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; object_size: number }>;
+  stem_placement?: Record<string, { azimuth_deg: number; elevation_deg: number; width_deg: number; object_size: number; diversity?: number; center_level_db?: number }>;
   stem_source_anchor_strength?: number;
 };
 
@@ -30,7 +31,7 @@ export function resolveStemMixes(options: {
   stemEqTaps: Map<string, Float64Array>;
   constants: EngineConstants;
 }): StemMix[] {
-  const { stems, scene: sceneRoot, mix, stemEqTaps, constants } = options;
+  const { stems, scene: sceneRoot, mix, constants } = options;
   const anchor = mix?.stem_source_anchor_strength || 0;
   return stems.map((stem) => {
     const base = stem.stem_key.split("@", 1)[0];
@@ -71,7 +72,7 @@ export function resolveStemMixes(options: {
         width_deg: 0,
         object_size: 0,
       } : undefined);
-    const objectMode = placement
+    const objectMode = placement && !isBedStem(stem.stem_key)
       ? mix?.stem_object_mode?.[stem.stem_key] ?? mix?.stem_object_mode?.[base] ?? "linked-stereo"
       : undefined;
     const objectMetadata = mix?.stem_object_metadata?.[stem.stem_key]

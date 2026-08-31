@@ -26,6 +26,20 @@ def test_point_placement_stays_on_one_simplex() -> None:
     assert _power(route) == pytest.approx(1.0)
 
 
+def test_bed_diversity_and_center_level_reach_the_shared_panner() -> None:
+    output_format = FORMAT_MAP["7.1.4"]
+    diverse = placement_route(
+        StemPlacement(0.0, 0.0, 0.0, 0.0, diversity=1.0), output_format
+    )
+    assert len(_positional(diverse)) == output_format.n_channels - 1
+    assert len({round(gain, 12) for gain in _positional(diverse).values()}) == 1
+
+    centered = placement_route(
+        StemPlacement(0.0, 0.0, 0.0, 0.0, center_level_db=-6.0), output_format
+    )
+    assert centered["C"] == pytest.approx(10 ** (-6 / 20))
+
+
 def test_placement_on_a_speaker_resolves_to_that_speaker() -> None:
     output_format = FORMAT_MAP["7.1.4"]
     positions = speaker_azimuth_elevation(output_format)

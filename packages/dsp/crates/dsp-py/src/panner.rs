@@ -10,6 +10,7 @@ use upmixer_dsp_core::spatial::panner::{self, StemPlacement};
 use upmixer_dsp_core::spatial::presets;
 
 type PlacementTuple = (f64, f64, f64, f64, f64);
+type PresetPlacementTuple = (f64, f64, f64, f64, f64, f64, f64);
 
 fn placement(values: PlacementTuple) -> StemPlacement {
     StemPlacement::new(values.0, values.1, values.2, values.3, values.4)
@@ -22,6 +23,18 @@ fn unpack(value: &StemPlacement) -> PlacementTuple {
         value.width_deg,
         value.object_size,
         value.lfe,
+    )
+}
+
+fn unpack_preset(value: &StemPlacement) -> PresetPlacementTuple {
+    (
+        value.azimuth_deg,
+        value.elevation_deg,
+        value.width_deg,
+        value.object_size,
+        value.lfe,
+        value.diversity,
+        value.center_level_db,
     )
 }
 
@@ -47,7 +60,10 @@ fn panning_gains(
     panner::panning_gains(&value, &as_refs(&speakers))
 }
 
-#[pyfunction]
+#[pyfunction(signature = (
+    azimuth_deg, elevation_deg, width_deg, object_size, lfe, channels,
+    diversity = 0.0, center_level_db = 0.0
+))]
 fn placement_route(
     azimuth_deg: f64,
     elevation_deg: f64,
@@ -55,8 +71,11 @@ fn placement_route(
     object_size: f64,
     lfe: f64,
     channels: Vec<String>,
+    diversity: f64,
+    center_level_db: f64,
 ) -> Vec<f64> {
-    let value = placement((azimuth_deg, elevation_deg, width_deg, object_size, lfe));
+    let value = StemPlacement::new(azimuth_deg, elevation_deg, width_deg, object_size, lfe)
+        .with_bed_controls(diversity, center_level_db);
     panner::placement_route(&value, &as_refs(&channels))
 }
 
@@ -123,10 +142,10 @@ fn preset_names() -> Vec<&'static str> {
 }
 
 #[pyfunction]
-fn preset_placements(preset: &str) -> Vec<(String, PlacementTuple)> {
+fn preset_placements(preset: &str) -> Vec<(String, PresetPlacementTuple)> {
     presets::preset_stems(preset)
         .iter()
-        .map(|(stem, value)| (stem.to_string(), unpack(value)))
+        .map(|(stem, value)| (stem.to_string(), unpack_preset(value)))
         .collect()
 }
 

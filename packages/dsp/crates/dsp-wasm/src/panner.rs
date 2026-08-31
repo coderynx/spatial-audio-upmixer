@@ -83,11 +83,11 @@ pub extern "C" fn dsp_preset_stem_name_ptr(preset: usize, stem: usize) -> *const
     preset_stem(preset, stem).map_or(std::ptr::null(), |(name, _)| name.as_ptr())
 }
 
-/// Write one preset placement as `[azimuth, elevation, width, spread, lfe]`.
+/// Write one preset placement as `[azimuth, elevation, width, spread, lfe, diversity, center_level_db]`.
 /// Returns 0 on success, -1 when the preset or stem is unknown.
 ///
 /// # Safety
-/// `out` must address 5 writable f64 values.
+/// `out` must address 7 writable f64 values.
 #[no_mangle]
 pub unsafe extern "C" fn dsp_preset_placement(preset: usize, stem: usize, out: *mut f64) -> i32 {
     let Some((_, placement)) = preset_stem(preset, stem) else {
@@ -102,6 +102,8 @@ pub unsafe extern "C" fn dsp_preset_placement(preset: usize, stem: usize, out: *
         placement.width_deg,
         placement.object_size,
         placement.lfe,
+        placement.diversity,
+        placement.center_level_db,
     ];
     std::slice::from_raw_parts_mut(out, fields.len()).copy_from_slice(&fields);
     0
@@ -145,6 +147,8 @@ pub unsafe extern "C" fn dsp_placement_route(
     elevation_deg: f64,
     width_deg: f64,
     object_size: f64,
+    diversity: f64,
+    center_level_db: f64,
     lfe: f64,
     channels: *const u32,
     n_channels: usize,
@@ -157,7 +161,8 @@ pub unsafe extern "C" fn dsp_placement_route(
         return -1;
     }
     let placement = StemPlacement::new(azimuth_deg, elevation_deg, width_deg, object_size, lfe);
-    let route = panner::placement_route(&placement, &names);
+    let route =
+        panner::placement_route_with_controls(&placement, &names, diversity, center_level_db);
     std::slice::from_raw_parts_mut(out, n_channels).copy_from_slice(&route);
     0
 }

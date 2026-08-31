@@ -7,6 +7,8 @@ export type StemPlacement = {
   elevation_deg: number;
   width_deg: number;
   object_size: number;
+  diversity?: number;
+  center_level_db?: number;
 };
 
 /** Where a stem sits when neither the manifest nor the preset names it: front
@@ -39,7 +41,8 @@ type PannerExports = {
   dsp_preset_placement(preset: number, stem: number, out: number): number;
   dsp_preset_ambient(preset: number, stem: number, out: number): number;
   dsp_placement_route(
-    azimuth: number, elevation: number, width: number, spread: number, lfe: number,
+    azimuth: number, elevation: number, width: number, spread: number,
+    diversity: number, centerLevelDb: number, lfe: number,
     channels: number, nChannels: number, out: number,
   ): number;
   dsp_object_routes(
@@ -124,7 +127,7 @@ export class Panner {
     const index = this.presetNames.indexOf(preset);
     if (index < 0) return {};
     const out: Record<string, StemPlacement> = {};
-    const bytes = 5 * 8;
+    const bytes = 7 * 8;
     const ptr = this.exports.dsp_alloc(bytes);
     try {
       for (let stem = 0; stem < this.exports.dsp_preset_stem_count(index); stem += 1) {
@@ -133,8 +136,8 @@ export class Panner {
           this.exports.dsp_preset_stem_name_len(index, stem),
         );
         if (this.exports.dsp_preset_placement(index, stem, ptr) !== 0) continue;
-        const [azimuth_deg, elevation_deg, width_deg, object_size] = this.read(ptr, 5);
-        out[name] = { azimuth_deg, elevation_deg, width_deg, object_size };
+        const [azimuth_deg, elevation_deg, width_deg, object_size, , diversity, center_level_db] = this.read(ptr, 7);
+        out[name] = { azimuth_deg, elevation_deg, width_deg, object_size, diversity, center_level_db };
       }
     } finally {
       this.exports.dsp_free(ptr, bytes);
@@ -148,7 +151,7 @@ export class Panner {
     const index = this.presetNames.indexOf(preset);
     if (index < 0) return {};
     const out: Record<string, PresetSends> = {};
-    const bytes = 5 * 8;
+    const bytes = 7 * 8;
     const ptr = this.exports.dsp_alloc(bytes);
     try {
       for (let stem = 0; stem < this.exports.dsp_preset_stem_count(index); stem += 1) {
@@ -177,7 +180,8 @@ export class Panner {
     const gains = this.withBuffers(channels, channels.length, (channelPtr, outPtr) => {
       const status = this.exports.dsp_placement_route(
         placement.azimuth_deg, placement.elevation_deg, placement.width_deg,
-        placement.object_size, lfe, channelPtr, channels.length, outPtr,
+        placement.object_size, placement.diversity ?? 0, placement.center_level_db ?? 0,
+        lfe, channelPtr, channels.length, outPtr,
       );
       if (status !== 0) throw new Error("placement_route rejected the channel set");
       return this.read(outPtr, channels.length);

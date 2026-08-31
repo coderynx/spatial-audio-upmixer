@@ -1,8 +1,8 @@
 //! MDAP panner invariants: hull behaviour, symmetry, and constant power.
 
 use upmixer_dsp_core::spatial::panner::{
-    build_stem_routing, fold_route_to_stereo, has_height, object_routes, placement_route, project,
-    PannerLayout, StemPlacement,
+    build_stem_routing, fold_route_to_stereo, has_height, object_routes, placement_route,
+    placement_route_with_controls, project, PannerLayout, StemPlacement,
 };
 
 const FULL: [&str; 12] = [
@@ -72,6 +72,26 @@ fn panning_is_constant_power_across_a_rotation() {
             "power at {azimuth}° was {power}, expected unity",
         );
     }
+}
+
+#[test]
+fn bed_controls_spread_to_all_speakers_and_offset_center() {
+    let placement = point(0.0, 0.0);
+    let diverse = placement_route_with_controls(&placement, &FULL, 1.0, 0.0);
+    let positional: Vec<f64> = diverse
+        .iter()
+        .zip(FULL)
+        .filter_map(|(gain, channel)| (channel != "LFE").then_some(*gain))
+        .collect();
+    assert!(positional
+        .windows(2)
+        .all(|pair| (pair[0] - pair[1]).abs() < 1e-12));
+    assert!((power(&diverse, &FULL) - 1.0).abs() < 1e-12);
+
+    let quiet_center = placement_route_with_controls(&placement, &FULL, 0.0, -6.0);
+    assert!((gain(&quiet_center, &FULL, "C") - 10.0_f64.powf(-6.0 / 20.0)).abs() < 1e-12);
+    let muted_center = placement_route_with_controls(&placement, &FULL, 0.0, -83.0);
+    assert_eq!(gain(&muted_center, &FULL, "C"), 0.0);
 }
 
 #[test]
@@ -180,6 +200,18 @@ fn linked_object_endpoints_follow_width_and_co_locate_at_zero() {
     );
     assert_ne!(left, right);
     assert!(gain(&left, &FULL, "FL") > gain(&right, &FULL, "FL"));
+}
+
+#[test]
+fn lead_vocals_are_stereo_wide_in_every_preset() {
+    use upmixer_dsp_core::spatial::presets::{preset_placement, PRESET_NAMES};
+
+    for preset in PRESET_NAMES {
+        assert!(
+            preset_placement(preset, "Lead Vocals").unwrap().width_deg >= 60.0,
+            "{preset} narrows Lead Vocals"
+        );
+    }
 }
 
 #[test]

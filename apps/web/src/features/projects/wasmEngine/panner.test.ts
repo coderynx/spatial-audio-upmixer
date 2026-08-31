@@ -48,14 +48,29 @@ describe("wasm panner", () => {
     }
   });
 
+  it("applies bed diversity and center level in the shared core", () => {
+    const instance = panner();
+    const placement = {
+      azimuth_deg: 0, elevation_deg: 0, width_deg: 0, object_size: 0,
+      diversity: 1, center_level_db: -6,
+    };
+    const route = instance.placementRoute(placement, FULL);
+    const gains = FULL.filter((channel) => channel !== "LFE" && channel !== "C")
+      .map((channel) => route[channel]);
+
+    expect(new Set(gains.map((gain) => gain.toFixed(12))).size).toBe(1);
+    expect(route.C / gains[0]).toBeCloseTo(10 ** (-6 / 20), 12);
+  });
+
   it("serves the preset tables the export pipeline uses", () => {
     const instance = panner();
 
     expect(instance.presets).toEqual(["balanced", "intimate", "stage", "wide", "immersive", "live"]);
     const balanced = instance.presetPlacements("balanced");
     expect(balanced["Lead Vocals"]).toEqual({
-      azimuth_deg: 0, elevation_deg: 0, width_deg: 22, object_size: 0.1,
+      azimuth_deg: 0, elevation_deg: 0, width_deg: 60, object_size: 0.1, diversity: 0, center_level_db: 0,
     });
+    expect(balanced.Crowd).toMatchObject({ diversity: 0, center_level_db: 0 });
     // The `stage` preset is the one that places instruments off-centre.
     expect(instance.presetPlacements("stage").Guitar.azimuth_deg).toBe(48);
     expect(instance.presetPlacements("no-such-preset")).toEqual({});

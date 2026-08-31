@@ -198,8 +198,11 @@ _ASSET_NON_BLOCK_KEYS: frozenset[str] = frozenset({
 })
 
 
-_PLACEMENT_FIELDS = frozenset({"azimuth_deg", "elevation_deg", "width_deg", "object_size"})
-_PLACEMENT_NON_NEGATIVE = frozenset({"width_deg", "object_size"})
+_PLACEMENT_FIELDS = frozenset({
+    "azimuth_deg", "elevation_deg", "width_deg", "object_size",
+    "diversity", "center_level_db",
+})
+_PLACEMENT_NON_NEGATIVE = frozenset({"width_deg", "object_size", "diversity"})
 _ADM_ZONE_SETS = frozenset({
     "ZM1", "ZM2L", "ZM2R", "ZM3L", "ZM3Lss", "ZM3R", "ZM3Rss",
     "ZM4", "ZM5", "ZB", "ZT",
@@ -485,6 +488,14 @@ def validate_manifest(data: dict) -> None:
                     if field == "object_size" and float(value) > 1.0:
                         raise ManifestError(
                             f"Placement '{stem_key}.object_size' must not exceed 1."
+                        )
+                    if field == "diversity" and float(value) > 1.0:
+                        raise ManifestError(
+                            f"Placement '{stem_key}.diversity' must not exceed 1."
+                        )
+                    if field == "center_level_db" and not -83.0 <= float(value) <= 6.0:
+                        raise ManifestError(
+                            f"Placement '{stem_key}.center_level_db' must be in -83..6."
                         )
         for field in ("stem_ambient_rear", "stem_ambient_height"):
             sends = mixing.get(field)

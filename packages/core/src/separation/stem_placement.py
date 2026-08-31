@@ -55,9 +55,11 @@ class StemPlacement:
     width_deg: float
     object_size: float
     lfe: float = 0.0
+    diversity: float = 0.0
+    center_level_db: float = 0.0
 
 
-def _placement(values: tuple[float, float, float, float, float]) -> StemPlacement:
+def _placement(values: tuple[float, float, float, float, float, float, float]) -> StemPlacement:
     return StemPlacement(*values)
 
 
@@ -88,15 +90,17 @@ def resolve_placements(preset: str, layout: str) -> dict[str, StemPlacement]:
     output_format = FORMAT_MAP[layout if layout != "stereo" else STEREO_PLACEMENT_LAYOUT]
     channels = _channel_names(output_format)
     return {
-        stem: _placement(
-            upmixer_dsp.project_placement(
+        stem: StemPlacement(
+            *upmixer_dsp.project_placement(
                 placement.azimuth_deg,
                 placement.elevation_deg,
                 placement.width_deg,
                 placement.object_size,
                 placement.lfe,
                 channels,
-            )
+            ),
+            diversity=placement.diversity,
+            center_level_db=placement.center_level_db,
         )
         for stem, placement in STEM_ROUTING_PRESETS[preset].items()
     }
@@ -117,6 +121,8 @@ def placement_route(placement: StemPlacement, output_format: OutputFormat) -> di
         placement.object_size,
         placement.lfe,
         channels,
+        placement.diversity,
+        placement.center_level_db,
     )
     return {channel: gain for channel, gain in zip(channels, gains) if gain > 0.0}
 

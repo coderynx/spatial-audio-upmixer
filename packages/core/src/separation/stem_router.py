@@ -330,6 +330,8 @@ class StemRouter:
             float(raw.get("elevation_deg", default.elevation_deg if default else 0.0)),
             float(raw.get("width_deg", default.width_deg if default else 0.0)),
             float(raw.get("object_size", default.object_size if default else 0.0)),
+            diversity=float(raw.get("diversity", 0.0)),
+            center_level_db=float(raw.get("center_level_db", 0.0)),
         )
         return placement
 

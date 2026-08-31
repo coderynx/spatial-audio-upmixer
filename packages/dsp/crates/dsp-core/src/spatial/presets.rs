@@ -18,7 +18,7 @@ use super::panner::StemPlacement;
 pub const PRESET_NAMES: [&str; 6] = ["balanced", "intimate", "stage", "wide", "immersive", "live"];
 
 const BALANCED_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 22.0, 0.10, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 60.0, 0.10, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 3.0, 22.0, 0.13, 0.0)),
     (
         "Backing Vocals",
@@ -47,7 +47,7 @@ const BALANCED_PLACEMENTS: [(&str, StemPlacement); 17] = [
 ];
 
 const INTIMATE_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 16.0, 0.06, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 60.0, 0.06, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 0.0, 16.0, 0.08, 0.0)),
     (
         "Backing Vocals",
@@ -76,7 +76,7 @@ const INTIMATE_PLACEMENTS: [(&str, StemPlacement); 17] = [
 ];
 
 const STAGE_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 22.0, 0.10, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 60.0, 0.10, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 3.0, 22.0, 0.13, 0.0)),
     (
         "Backing Vocals",
@@ -105,7 +105,7 @@ const STAGE_PLACEMENTS: [(&str, StemPlacement); 17] = [
 ];
 
 const WIDE_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 24.0, 0.12, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 60.0, 0.12, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 0.0, 40.0, 0.18, 0.0)),
     (
         "Backing Vocals",
@@ -134,7 +134,7 @@ const WIDE_PLACEMENTS: [(&str, StemPlacement); 17] = [
 ];
 
 const IMMERSIVE_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 22.0, 0.10, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 60.0, 0.10, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 3.0, 22.0, 0.13, 0.0)),
     (
         "Backing Vocals",
@@ -163,7 +163,7 @@ const IMMERSIVE_PLACEMENTS: [(&str, StemPlacement); 17] = [
 ];
 
 const LIVE_PLACEMENTS: [(&str, StemPlacement); 17] = [
-    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 30.0, 0.12, 0.0)),
+    ("Lead Vocals", StemPlacement::new(0.0, 0.0, 60.0, 0.12, 0.0)),
     ("Vocals", StemPlacement::new(0.0, 0.0, 30.0, 0.16, 0.0)),
     (
         "Backing Vocals",

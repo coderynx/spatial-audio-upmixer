@@ -110,6 +110,8 @@ def test_stem_placement_survives_the_settings_round_trip(tmp_path, monkeypatch):
         "elevation_deg": 12.0,
         "width_deg": 128.0,
         "object_size": 0.5,
+        "diversity": 0.25,
+        "center_level_db": -3.0,
     }
     with TestClient(create_app(settings)) as client:
         created = client.post("/api/v1/projects", json={

@@ -19,7 +19,7 @@ import { InspectorGroup } from "@/app/InspectorRow";
 import { SegmentedControl } from "@/app/SegmentedControl";
 import { StatusBar, StatusCell, StatusSeparator, StatusSpacer } from "@/app/StatusBar";
 import { Button } from "@/components/ui/button";
-import { SliderField, SwitchRow } from "@/components/forms/fields";
+import { SwitchRow } from "@/components/forms/fields";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { isStereoLayout, outputModeForLayoutSwitch } from "@/lib/layouts";
 import { normalizeManifest, type Manifest, type StemDynamicEqSettings, type StemDynamicsSettings, type StemEqSettings } from "@/lib/manifest";
@@ -50,6 +50,7 @@ import { useStemPreview, type OutputMode } from "./useStemPreview";
 import { resolveEngineConstants } from "./masteringProfiles";
 import { useProjectState } from "./useProjectState";
 import { StemControls, StemProcessingControls } from "./StemControls";
+import { BedPannerWindow } from "./BedPannerWindow";
 import { ObjectPannerWindow } from "./ObjectPannerWindow";
 import { loadPanner, NEUTRAL_PLACEMENT, type Panner, type StemPlacement } from "./wasmEngine/panner";
 import { useTrackPeaks } from "./useTrackPeaks";
@@ -340,6 +341,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     if (!trackManifest || isBedStem(stem)) return null;
     return <ObjectPannerWindow key={`panner-${stem}`} stemName={stem} placement={placementFor(stem)} maxElevationDeg={maxElevationDeg} objectMode={trackManifest.mixing.stem_object_mode[stem] ?? "linked-stereo"} route={routing[stem] || {}} channels={channels} ambientRear={trackManifest.mixing.stem_ambient_rear[stem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[stem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[stem] ?? 2000} ariaLabel={ariaLabel} onPlacement={(next) => updatePlacement(stem, next)} onObjectMode={(mode) => setStemObjectMode(stem, mode)} onRoute={(patch) => updateRoute(stem, patch)} onAmbient={(patch) => updateAmbient(stem, patch)} />;
   };
+  const bedPannerForStem = (stem: string, ariaLabel = "Bed panner") => {
+    if (!trackManifest || !isBedStem(stem)) return null;
+    return <BedPannerWindow key={`bed-panner-${stem}`} stemName={stem} placement={placementFor(stem)} route={routing[stem] || {}} channels={channels} inputChannels={stemChannelCounts[stem] ?? 1} maxElevationDeg={maxElevationDeg} ambientRear={trackManifest.mixing.stem_ambient_rear[stem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[stem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[stem] ?? 2000} ariaLabel={ariaLabel} onPlacement={(next) => updatePlacement(stem, next)} onRoute={(patch) => updateRoute(stem, patch)} onAmbient={(patch) => updateAmbient(stem, patch)} />;
+  };
   const updateStemEq = (stem: string, eq: string | StemEqSettings | null) => {
     if (!trackManifest) return;
     const next = { ...trackManifest.mixing.stem_eq };
@@ -379,7 +384,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   />;
   const stemTopControls = (stem: string, ariaLabel?: string) => {
     if (!trackManifest) return null;
-    const pannerControl = objectPannerForStem(stem, ariaLabel);
+    const pannerControl = isBedStem(stem)
+      ? bedPannerForStem(stem, ariaLabel)
+      : objectPannerForStem(stem, ariaLabel);
     return <div className="flex w-full flex-col items-center gap-1.5">{stemProcessingFor(stem)}{pannerControl}</div>;
   };
   const applyPreset = () => {
@@ -627,7 +634,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         onGain={setStemGain}
         onAnchorStrength={setAnchorStrength}
         onCommitScrub={commitScrub}
-        topControlForStem={(stem) => stemTopControls(stem, `Object panner ${stem}`)}
+        topControlForStem={(stem) => stemTopControls(stem, `${isBedStem(stem) ? "Bed" : "Object"} panner ${stem}`)}
       />;
       if (activeTab === "mixing") return <div className="grid min-h-0 flex-1 xl:grid-cols-[auto_minmax(0,1fr)_320px]">
         {trackRail}
@@ -641,7 +648,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           <InspectorGroup title="Stem" className="flex min-h-0 flex-1 flex-col">
             {selectedStem ? (() => {
               const stemMuted = trackManifest.mixing.stem_enabled[selectedStem] === false;
-              const objectStem = !isBedStem(selectedStem);
               return <div className="flex min-h-0 flex-1 flex-col">
                 <div className="min-h-0 flex-1 overflow-y-auto">
                   <div className="mb-3">
@@ -652,8 +658,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
                     />
                   </div>
                   <StemControls key={`controls-${selectedStem}`} stemName={selectedStem} placement={placementFor(selectedStem)} maxElevationDeg={maxElevationDeg} onPlacement={(next) => updatePlacement(selectedStem, next)} route={routing[selectedStem] || {}} channels={channels} eq={trackManifest.mixing.stem_eq[selectedStem] || ""} onRoute={(patch) => updateRoute(selectedStem, patch)} ambientRear={trackManifest.mixing.stem_ambient_rear[selectedStem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[selectedStem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[selectedStem] ?? 2000} onAmbient={(patch) => updateAmbient(selectedStem, patch)} onEq={(eq) => updateStemEq(selectedStem, eq)} onDynamicEq={(dynamicEq) => updateStemDynamicEq(selectedStem, dynamicEq)} dynamicEq={trackManifest.mixing.stem_dynamic_eq[selectedStem]} dynamicEqProfiles={engineConstants?.stemDynamicEqProfiles} dynamicEqMeterSource={() => preview.stemDynamicEq.current.get(selectedStem) ?? 0} onDynamics={(dynamics) => updateStemDynamics(selectedStem, dynamics)} dynamics={trackManifest.mixing.stem_dynamics[selectedStem]} dynamicsMeterSource={() => preview.stemDynamics.current.get(selectedStem) ?? 0}
-                    showPositionControls={!objectStem}
-                    showObjectSends={!objectStem}
+                    showPositionControls={false}
+                    showObjectSends={false}
+                    showLfeSend={false}
                     showProcessingControls={false}
                     stemEqProfiles={configuration?.choices.stem_eq_profiles}
                     stemEqSettings={engineConstants?.stemEqSettings}

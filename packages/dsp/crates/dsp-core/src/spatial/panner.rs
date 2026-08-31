@@ -93,6 +93,8 @@ pub struct StemPlacement {
     pub width_deg: f64,
     pub object_size: f64,
     pub lfe: f64,
+    pub diversity: f64,
+    pub center_level_db: f64,
 }
 
 impl StemPlacement {
@@ -109,7 +111,15 @@ impl StemPlacement {
             width_deg,
             object_size,
             lfe,
+            diversity: 0.0,
+            center_level_db: 0.0,
         }
+    }
+
+    pub const fn with_bed_controls(mut self, diversity: f64, center_level_db: f64) -> Self {
+        self.diversity = diversity;
+        self.center_level_db = center_level_db;
+        self
     }
 }
 
@@ -552,7 +562,18 @@ impl PannerLayout {
     }
 
     pub fn placement_route(&self, placement: &StemPlacement) -> Vec<f64> {
-        let gains = self.layout_gains(placement);
+        let mut gains = self.layout_gains(placement);
+        let diversity = placement.diversity.clamp(0.0, 1.0);
+        if diversity > 0.0 && !gains.is_empty() {
+            let uniform = 1.0 / (gains.len() as f64).sqrt();
+            for gain in &mut gains {
+                *gain = *gain * (1.0 - diversity) + uniform * diversity;
+            }
+            let norm = gains.iter().map(|gain| gain * gain).sum::<f64>().sqrt();
+            for gain in &mut gains {
+                *gain /= norm;
+            }
+        }
         let norm = gains
             .iter()
             .filter(|gain| **gain > MINIMUM_SEND)
@@ -567,6 +588,18 @@ impl PannerLayout {
             if gain > MINIMUM_SEND {
                 route[channel] = gain / norm;
             }
+        }
+        if let Some(index) = self
+            .positional_channels
+            .iter()
+            .zip(&self.positional_names)
+            .find_map(|(&index, name)| (name == "C").then_some(index))
+        {
+            route[index] *= if placement.center_level_db <= -83.0 {
+                0.0
+            } else {
+                10.0_f64.powf(placement.center_level_db.clamp(-82.0, 6.0) / 20.0)
+            };
         }
         if placement.lfe > 0.0 {
             if let Some(index) = self.lfe_index {
@@ -729,12 +762,38 @@ pub fn has_height(channels: &[&str]) -> bool {
 /// and renormalizes so dropping the floored sends does not cost the map its
 /// constant power. Channels the image does not reach read back as zero.
 pub fn placement_route(placement: &StemPlacement, channels: &[&str]) -> Vec<f64> {
+    placement_route_with_controls(
+        placement,
+        channels,
+        placement.diversity,
+        placement.center_level_db,
+    )
+}
+
+/// Pan a bed placement with Logic-style diversity and center-channel offset.
+pub fn placement_route_with_controls(
+    placement: &StemPlacement,
+    channels: &[&str],
+    diversity: f64,
+    center_level_db: f64,
+) -> Vec<f64> {
     let speakers: Vec<&str> = channels
         .iter()
         .copied()
         .filter(|name| is_positional(name))
         .collect();
-    let gains = panning_gains(placement, &speakers);
+    let mut gains = panning_gains(placement, &speakers);
+    let diversity = diversity.clamp(0.0, 1.0);
+    if diversity > 0.0 && !gains.is_empty() {
+        let uniform = 1.0 / (gains.len() as f64).sqrt();
+        for gain in &mut gains {
+            *gain = *gain * (1.0 - diversity) + uniform * diversity;
+        }
+        let norm = gains.iter().map(|gain| gain * gain).sum::<f64>().sqrt();
+        for gain in &mut gains {
+            *gain /= norm;
+        }
+    }
     let norm = gains
         .iter()
         .filter(|gain| **gain > MINIMUM_SEND)
@@ -756,6 +815,13 @@ pub fn placement_route(placement: &StemPlacement, channels: &[&str]) -> Vec<f64>
         if gain > MINIMUM_SEND {
             route[index] = gain / norm;
         }
+    }
+    if let Some(index) = channels.iter().position(|name| *name == "C") {
+        route[index] *= if center_level_db <= -83.0 {
+            0.0
+        } else {
+            10.0_f64.powf(center_level_db.clamp(-82.0, 6.0) / 20.0)
+        };
     }
     if placement.lfe > 0.0 {
         if let Some(index) = channels.iter().position(|name| *name == "LFE") {

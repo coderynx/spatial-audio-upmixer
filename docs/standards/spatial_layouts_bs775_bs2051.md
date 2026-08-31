@@ -626,15 +626,16 @@ Routing presets are not per-layout gain tables. Each preset in
 `packages/core/src/separation/stem_placement.py` holds one canonical
 `StemPlacement` per stem — image centre `azimuth_deg`/`elevation_deg` in the
 geometry convention above (0° = front, positive azimuth = left, positive
-elevation = up), an image `width_deg`, a normalized ADM `object_size`, and an
-LFE send. `preset_routing` realizes that table on one `FORMAT_MAP` layout.
+elevation = up), an image `width_deg`, a normalized ADM `object_size`, an LFE
+send, and optional bed `diversity`/`center_level_db` controls. `preset_routing`
+realizes that table on one `FORMAT_MAP` layout.
 
 ### Realization rules
 
 | stage | rule |
 |---|---|
 | projection | A layout with no height pair cannot carry an elevated placement. Zeroing the elevation alone would pull the stem *inward* onto the front wall, so the lost elevation is spent on image width instead (`HEIGHT_FLATTEN_WIDTH_FACTOR`) and overhead content wraps to the sides and rear. Azimuth is never clamped — the panner already projects a direction the layout does not span onto its hull edge. |
-| bed panning | MDAP (`stem_panner.py`). The image renders as virtual sources every `VIRTUAL_SOURCE_STEP_DEG` across `azimuth ± width/2` (one when `width` is 0). Every source is panned by VBAP onto a facet of the speakers' convex hull; the gain vectors sum and the map is L2-normalized (constant power). Sends below `MINIMUM_SEND` are dropped and the rest renormalized. |
+| bed panning | MDAP (`stem_panner.py`). The image renders as virtual sources every `VIRTUAL_SOURCE_STEP_DEG` across `azimuth ± width/2` (one when `width` is 0). Every source is panned by VBAP onto a facet of the speakers' convex hull; the gain vectors sum and the map is L2-normalized. `diversity` blends that image toward equal energy in every positional speaker before normalization; `center_level_db` then trims C independently. Sends below `MINIMUM_SEND` are dropped and the rest renormalized. |
 | object panning | Each linked-stereo endpoint uses the Cartesian object-size renderer from ITU-R BS.2127. `object_size` is passed through unchanged in its normalized 0–1 range. |
 | out of hull | Elevation is clamped to what the layout spans — nothing below the horizontal plane, nothing above the height layer. A direction no facet holds takes the facet with the least negative gain, negatives clamped to zero, which projects it onto the nearest hull edge; a two-speaker bed's rear half, which has no such edge, falls back to cosine-similarity weighting so the placement stays audible and symmetric. |
 | flat facets | A rear wall or height layer of four coplanar speakers admits both diagonals as hull facets. Every facet holding the direction contributes, averaged — each reproduces the direction exactly, so the mean does too, and the gains stay continuous where the choice would otherwise flip. |
