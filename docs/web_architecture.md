@@ -55,7 +55,7 @@ routing, mastering, and the selected monitor renderer. In a browser,
 owns decoding and output. In Tauri, `src-tauri` runs the core as native Rust,
 decodes and resamples stems to 48 kHz, and streams the finished bed to the
 native output bridge. Multichannel Apple Spatial Audio uses
-`AVSampleBufferAudioRenderer`, while direct output and stereo use PHASE. Apple
+`AVSampleBufferAudioRenderer`, while direct output and stereo use `AVAudioEngine`. Apple
 Spatial Audio is desktop-only; the other monitor modes remain available in both
 hosts. Native startup failures are visible and fall back to the WASM engine
 without changing the saved project mix.

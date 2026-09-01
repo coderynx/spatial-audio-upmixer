@@ -15,8 +15,8 @@ use upmixer_dsp_core::stream::scale::RouteScalePass;
 
 pub use crate::assets::NativeAssets;
 use crate::assets::{checked_url, load_assets};
+use crate::audio::AudioHost;
 use crate::decode::{decode, stereo_48k};
-use crate::phase::PhaseHost;
 
 const SAMPLE_RATE: usize = 48_000;
 const QUANTUM: usize = 512;
@@ -123,7 +123,7 @@ pub fn run(
 
 struct Session {
     engine: PreviewEngine,
-    phase: PhaseHost,
+    audio: AudioHost,
     resource_dir: PathBuf,
     server_base: Url,
     client: Client,
@@ -211,9 +211,9 @@ impl Session {
             &request.assets,
             &mut engine,
         )?;
-        let layout = phase_layout(engine.params(), request.renderer)?;
-        let phase = PhaseHost::new(layout, request.renderer == NativeRenderer::AppleSpatial)?;
-        phase.pause();
+        let layout = output_layout(engine.params(), request.renderer)?;
+        let audio = AudioHost::new(layout, request.renderer == NativeRenderer::AppleSpatial)?;
+        audio.pause();
         let _ = events.send(NativeEvent::Ready {
             core_version: upmixer_dsp_core::version().to_string(),
             total_frames: engine.total_frames(),
@@ -225,7 +225,7 @@ impl Session {
         });
         Ok(Self {
             engine,
-            phase,
+            audio,
             resource_dir,
             server_base,
             client,
@@ -273,7 +273,7 @@ impl Session {
                 renderer,
             } => {
                 let params = parse_params(params)?;
-                let old_layout = phase_layout(self.engine.params(), self.renderer)?.to_string();
+                let old_layout = output_layout(self.engine.params(), self.renderer)?.to_string();
                 self.engine.update_params(params);
                 if assets != self.assets {
                     load_assets(
@@ -285,14 +285,14 @@ impl Session {
                     )?;
                     self.assets = assets;
                 }
-                let new_layout = phase_layout(self.engine.params(), renderer)?;
+                let new_layout = output_layout(self.engine.params(), renderer)?;
                 if renderer != self.renderer || old_layout != new_layout {
-                    self.phase =
-                        PhaseHost::new(new_layout, renderer == NativeRenderer::AppleSpatial)?;
+                    self.audio =
+                        AudioHost::new(new_layout, renderer == NativeRenderer::AppleSpatial)?;
                     if self.playing {
-                        self.phase.resume();
+                        self.audio.resume();
                     } else {
-                        self.phase.pause();
+                        self.audio.pause();
                     }
                 }
                 self.renderer = renderer;
@@ -322,9 +322,9 @@ impl Session {
                 if let Some(playing) = playing {
                     self.playing = playing;
                     if playing {
-                        self.phase.resume();
+                        self.audio.resume();
                     } else {
-                        self.phase.pause();
+                        self.audio.pause();
                     }
                 }
             }
@@ -357,12 +357,12 @@ impl Session {
 
     fn seek(&mut self, frame: usize) -> Result<(), String> {
         self.engine.seek(frame);
-        let layout = phase_layout(self.engine.params(), self.renderer)?;
-        self.phase = PhaseHost::new(layout, self.renderer == NativeRenderer::AppleSpatial)?;
+        let layout = output_layout(self.engine.params(), self.renderer)?;
+        self.audio = AudioHost::new(layout, self.renderer == NativeRenderer::AppleSpatial)?;
         if self.playing {
-            self.phase.resume();
+            self.audio.resume();
         } else {
-            self.phase.pause();
+            self.audio.pause();
         }
         Ok(())
     }
@@ -378,7 +378,7 @@ impl Session {
                 return Ok(());
             }
             self.playing = false;
-            self.phase.pause();
+            self.audio.pause();
             let _ = self.events.send(NativeEvent::Ended);
             return Ok(());
         }
@@ -393,7 +393,7 @@ impl Session {
             }
         }
         self.current_gain = target_gain;
-        self.phase.schedule(&self.channels, written)?;
+        self.audio.schedule(&self.channels, written)?;
         self.report_blocks += 1;
         if self.report_blocks >= REPORT_BLOCKS {
             self.report_blocks = 0;
@@ -475,7 +475,7 @@ fn parse_params(value: Value) -> Result<EngineParams, String> {
     serde_json::from_value(value).map_err(|error| format!("Engine parameters rejected: {error}"))
 }
 
-fn phase_layout(params: &EngineParams, renderer: NativeRenderer) -> Result<&'static str, String> {
+fn output_layout(params: &EngineParams, renderer: NativeRenderer) -> Result<&'static str, String> {
     if renderer == NativeRenderer::Direct && params.output_mode != OutputMode::Native {
         return Ok("stereo");
     }
@@ -484,10 +484,10 @@ fn phase_layout(params: &EngineParams, renderer: NativeRenderer) -> Result<&'sta
         .iter()
         .map(|speaker| speaker.name.as_str())
         .collect::<Vec<_>>();
-    phase_layout_for_names(&names)
+    output_layout_for_names(&names)
 }
 
-fn phase_layout_for_names(names: &[&str]) -> Result<&'static str, String> {
+fn output_layout_for_names(names: &[&str]) -> Result<&'static str, String> {
     match names {
         ["FL", "FR"] => Ok("stereo"),
         ["FL", "FR", "C", "LFE", "SL", "SR"] => Ok("5.1"),
@@ -497,7 +497,7 @@ fn phase_layout_for_names(names: &[&str]) -> Result<&'static str, String> {
         ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR"] => Ok("7.1.2"),
         ["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR"] => Ok("7.1.4"),
         _ => Err(format!(
-            "PHASE does not support this {}-channel layout",
+            "Native audio output does not support this {}-channel layout",
             names.len()
         )),
     }
@@ -531,7 +531,7 @@ mod tests {
                 "7.1.4",
             ),
         ] {
-            assert_eq!(phase_layout_for_names(names).unwrap(), layout);
+            assert_eq!(output_layout_for_names(names).unwrap(), layout);
         }
     }
 }

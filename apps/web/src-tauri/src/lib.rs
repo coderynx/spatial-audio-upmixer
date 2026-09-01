@@ -1,6 +1,6 @@
 mod assets;
+mod audio;
 mod decode;
-mod phase;
 mod preview;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -79,7 +79,7 @@ fn native_capabilities() -> NativeCapabilities {
     NativeCapabilities {
         native_dsp: true,
         apple_spatial: true,
-        max_channels: phase::max_output_channels().max(2),
+        max_channels: audio::max_output_channels().max(2),
         error: None,
     }
 }
