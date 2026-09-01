@@ -214,8 +214,7 @@ static bool schedule_media_buffer(UpmixerAudio *host, const float *const *channe
         [host.mediaRenderer enqueueSampleBuffer:sample];
         CFRelease(sample);
         host.nextFrame += frames;
-        if (host.mediaPlaying && !host.mediaStarted &&
-            host.mediaRenderer.hasSufficientMediaDataForReliablePlaybackStart) {
+        if (host.mediaPlaying && !host.mediaStarted) {
             host.mediaStarted = YES;
             [host.mediaSynchronizer setRate:1.0f time:CMTimeMake(host.startFrame, 48000)];
         }
