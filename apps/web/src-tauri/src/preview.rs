@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::thread;
@@ -136,6 +137,8 @@ struct Session {
     volume: f32,
     muted: bool,
     report_blocks: usize,
+    scheduled_frame: usize,
+    pending_frames: VecDeque<PendingFrame>,
     measurement: Option<MeasurementState>,
     route_scale: Option<ScaleState>,
     background_turn: bool,
@@ -154,6 +157,26 @@ struct MeasurementState {
 struct ScaleState {
     pass: RouteScalePass,
     exact: bool,
+}
+
+struct PendingFrame {
+    presented_at: usize,
+    meters: Vec<f32>,
+    spectrum: Vec<f32>,
+}
+
+fn take_presented_frame(
+    frames: &mut VecDeque<PendingFrame>,
+    presented_at: usize,
+) -> Option<PendingFrame> {
+    let mut latest = None;
+    while frames
+        .front()
+        .is_some_and(|frame| frame.presented_at <= presented_at)
+    {
+        latest = frames.pop_front();
+    }
+    latest
 }
 
 impl Session {
@@ -212,7 +235,11 @@ impl Session {
             &mut engine,
         )?;
         let layout = output_layout(engine.params(), request.renderer)?;
-        let audio = AudioHost::new(layout, request.renderer == NativeRenderer::AppleSpatial)?;
+        let audio = AudioHost::new(
+            layout,
+            request.renderer == NativeRenderer::AppleSpatial,
+            engine.position(),
+        )?;
         audio.pause();
         let _ = events.send(NativeEvent::Ready {
             core_version: upmixer_dsp_core::version().to_string(),
@@ -223,6 +250,7 @@ impl Session {
             pass: RouteScalePass::new_excerpts(&engine, 5, SAMPLE_RATE * 3, SAMPLE_RATE / 2),
             exact: false,
         });
+        let scheduled_frame = engine.position();
         Ok(Self {
             engine,
             audio,
@@ -238,6 +266,8 @@ impl Session {
             volume: 1.0,
             muted: false,
             report_blocks: 0,
+            scheduled_frame,
+            pending_frames: VecDeque::new(),
             measurement: None,
             route_scale,
             background_turn: true,
@@ -287,8 +317,13 @@ impl Session {
                 }
                 let new_layout = output_layout(self.engine.params(), renderer)?;
                 if renderer != self.renderer || old_layout != new_layout {
-                    self.audio =
-                        AudioHost::new(new_layout, renderer == NativeRenderer::AppleSpatial)?;
+                    self.audio = AudioHost::new(
+                        new_layout,
+                        renderer == NativeRenderer::AppleSpatial,
+                        self.engine.position(),
+                    )?;
+                    self.scheduled_frame = self.engine.position();
+                    self.pending_frames.clear();
                     if self.playing {
                         self.audio.resume();
                     } else {
@@ -358,7 +393,13 @@ impl Session {
     fn seek(&mut self, frame: usize) -> Result<(), String> {
         self.engine.seek(frame);
         let layout = output_layout(self.engine.params(), self.renderer)?;
-        self.audio = AudioHost::new(layout, self.renderer == NativeRenderer::AppleSpatial)?;
+        self.audio = AudioHost::new(
+            layout,
+            self.renderer == NativeRenderer::AppleSpatial,
+            self.engine.position(),
+        )?;
+        self.scheduled_frame = self.engine.position();
+        self.pending_frames.clear();
         if self.playing {
             self.audio.resume();
         } else {
@@ -394,6 +435,7 @@ impl Session {
         }
         self.current_gain = target_gain;
         self.audio.schedule(&self.channels, written)?;
+        self.scheduled_frame += written;
         self.report_blocks += 1;
         if self.report_blocks >= REPORT_BLOCKS {
             self.report_blocks = 0;
@@ -409,12 +451,35 @@ impl Session {
                 .into_iter()
                 .flat_map(|(level, centroid)| [level as f32, centroid as f32])
                 .collect();
-            let _ = self.events.send(NativeEvent::Frame {
-                position: self.engine.position(),
-                meters,
-                spectrum,
-                underruns: 0,
-            });
+            if self.audio.playback_frame().is_some() {
+                self.pending_frames.push_back(PendingFrame {
+                    presented_at: self.scheduled_frame,
+                    meters,
+                    spectrum,
+                });
+            } else {
+                let _ = self.events.send(NativeEvent::Frame {
+                    position: self.engine.position(),
+                    meters,
+                    spectrum,
+                    underruns: 0,
+                });
+            }
+        }
+        if let Some(presented_at) = self.audio.playback_frame() {
+            if let Some(frame) = take_presented_frame(&mut self.pending_frames, presented_at) {
+                let position = if self.looping && self.engine.total_frames() > 0 {
+                    presented_at % self.engine.total_frames()
+                } else {
+                    presented_at.min(self.engine.total_frames())
+                };
+                let _ = self.events.send(NativeEvent::Frame {
+                    position,
+                    meters: frame.meters,
+                    spectrum: frame.spectrum,
+                    underruns: 0,
+                });
+            }
         }
         Ok(())
     }
@@ -506,6 +571,32 @@ fn output_layout_for_names(names: &[&str]) -> Result<&'static str, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visuals_wait_for_the_latest_presented_audio_frame() {
+        let mut frames = VecDeque::from([
+            PendingFrame {
+                presented_at: 100,
+                meters: vec![1.0],
+                spectrum: vec![],
+            },
+            PendingFrame {
+                presented_at: 200,
+                meters: vec![2.0],
+                spectrum: vec![],
+            },
+            PendingFrame {
+                presented_at: 300,
+                meters: vec![3.0],
+                spectrum: vec![],
+            },
+        ]);
+
+        let frame = take_presented_frame(&mut frames, 250).unwrap();
+
+        assert_eq!(frame.meters, vec![2.0]);
+        assert_eq!(frames.front().unwrap().presented_at, 300);
+    }
 
     #[test]
     fn recognizes_every_supported_layout() {

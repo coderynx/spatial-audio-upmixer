@@ -21,6 +21,7 @@ static const NSUInteger BUFFER_COUNT = 4;
 @property(nonatomic) BOOL mediaPipeline;
 @property(nonatomic) BOOL mediaPlaying;
 @property(nonatomic) BOOL mediaStarted;
+@property(nonatomic) int64_t startFrame;
 @property(nonatomic) int64_t nextFrame;
 @property(nonatomic) BOOL upmixer714;
 @end
@@ -64,7 +65,8 @@ bool upmixer_audio_uses_media_pipeline(const char *layout_name, bool spatial) {
     }
 }
 
-UpmixerAudioHost upmixer_audio_create(const char *layout_name, bool spatial, char **error) {
+UpmixerAudioHost upmixer_audio_create(const char *layout_name, bool spatial, int64_t start_frame,
+                                      char **error) {
     @autoreleasepool {
         NSString *layoutName = [NSString stringWithUTF8String:layout_name ?: "stereo"];
         AVAudioChannelLayout *layout = [[AVAudioChannelLayout alloc] initWithLayoutTag:layout_tag(layoutName)];
@@ -76,6 +78,8 @@ UpmixerAudioHost upmixer_audio_create(const char *layout_name, bool spatial, cha
         UpmixerAudio *host = [UpmixerAudio new];
         host.upmixer714 = [layoutName isEqualToString:@"7.1.4"];
         host.mediaPipeline = upmixer_audio_uses_media_pipeline(layout_name, spatial);
+        host.startFrame = start_frame;
+        host.nextFrame = start_frame;
         if (host.mediaPipeline) {
             host.format = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
                                                           sampleRate:48000
@@ -88,6 +92,7 @@ UpmixerAudioHost upmixer_audio_create(const char *layout_name, bool spatial, cha
             host.mediaRenderer = [AVSampleBufferAudioRenderer new];
             host.mediaRenderer.allowedAudioSpatializationFormats = AVAudioSpatializationFormatMultichannel;
             host.mediaSynchronizer = [AVSampleBufferRenderSynchronizer new];
+            host.mediaSynchronizer.delaysRateChangeUntilHasSufficientMediaData = NO;
             [host.mediaSynchronizer addRenderer:host.mediaRenderer];
             return (__bridge_retained void *)host;
         }
@@ -192,9 +197,10 @@ static bool schedule_media_buffer(UpmixerAudio *host, const float *const *channe
             }
         }
 
+        CMTime startTime = CMTimeMake(host.nextFrame, 48000);
         CMSampleTimingInfo timing = {
             .duration = CMTimeMake(1, 48000),
-            .presentationTimeStamp = CMTimeMake(host.nextFrame, 48000),
+            .presentationTimeStamp = startTime,
             .decodeTimeStamp = kCMTimeInvalid,
         };
         size_t sampleSize = channelCount * sizeof(float);
@@ -208,9 +214,10 @@ static bool schedule_media_buffer(UpmixerAudio *host, const float *const *channe
         [host.mediaRenderer enqueueSampleBuffer:sample];
         CFRelease(sample);
         host.nextFrame += frames;
-        if (host.mediaPlaying && !host.mediaStarted) {
+        if (host.mediaPlaying && !host.mediaStarted &&
+            host.mediaRenderer.hasSufficientMediaDataForReliablePlaybackStart) {
             host.mediaStarted = YES;
-            [host.mediaSynchronizer setRate:1.0f time:kCMTimeZero];
+            [host.mediaSynchronizer setRate:1.0f time:CMTimeMake(host.startFrame, 48000)];
         }
         return !media_renderer_failed(host, error);
     }
@@ -247,6 +254,15 @@ bool upmixer_audio_schedule(UpmixerAudioHost opaque, const float *const *channel
         dispatch_semaphore_signal(host.semaphore);
     }];
     return true;
+}
+
+int64_t upmixer_audio_playback_frame(UpmixerAudioHost opaque) {
+    UpmixerAudio *host = (__bridge UpmixerAudio *)opaque;
+    if (!host.mediaPipeline) return -1;
+    if (!host.mediaStarted) return host.startFrame;
+    CMTime time = host.mediaSynchronizer.currentTime;
+    if (!CMTIME_IS_NUMERIC(time)) return -1;
+    return CMTimeConvertScale(time, 48000, kCMTimeRoundingMethod_Default).value;
 }
 
 void upmixer_audio_destroy(UpmixerAudioHost opaque) {

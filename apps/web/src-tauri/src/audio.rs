@@ -8,6 +8,7 @@ extern "C" {
     fn upmixer_audio_create(
         layout: *const c_char,
         spatial: bool,
+        start_frame: i64,
         error: *mut *mut c_char,
     ) -> *mut c_void;
     fn upmixer_audio_start(host: *mut c_void, error: *mut *mut c_char) -> bool;
@@ -20,6 +21,7 @@ extern "C" {
         frames: u32,
         error: *mut *mut c_char,
     ) -> bool;
+    fn upmixer_audio_playback_frame(host: *mut c_void) -> i64;
     fn upmixer_audio_destroy(host: *mut c_void);
     fn upmixer_audio_free_error(error: *mut c_char);
     fn upmixer_audio_max_output_channels() -> u32;
@@ -32,10 +34,17 @@ pub fn max_output_channels() -> usize {
 pub struct AudioHost(*mut c_void);
 
 impl AudioHost {
-    pub fn new(layout: &str, spatial: bool) -> Result<Self, String> {
+    pub fn new(layout: &str, spatial: bool, start_frame: usize) -> Result<Self, String> {
         let layout = CString::new(layout).map_err(|_| "Invalid channel layout".to_string())?;
         let mut error = ptr::null_mut();
-        let host = unsafe { upmixer_audio_create(layout.as_ptr(), spatial, &mut error) };
+        let host = unsafe {
+            upmixer_audio_create(
+                layout.as_ptr(),
+                spatial,
+                i64::try_from(start_frame).unwrap_or(i64::MAX),
+                &mut error,
+            )
+        };
         if host.is_null() {
             return Err(take_error(error, "Could not create native audio output"));
         }
@@ -74,6 +83,10 @@ impl AudioHost {
         } else {
             Err(take_error(error, "Could not schedule native audio"))
         }
+    }
+
+    pub fn playback_frame(&self) -> Option<usize> {
+        usize::try_from(unsafe { upmixer_audio_playback_frame(self.0) }).ok()
     }
 }
 
