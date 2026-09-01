@@ -1,9 +1,20 @@
 import * as React from "react";
 import type { StemRouting } from "@/api";
-import { MIN_ALPHA_SCALE, SETTLE_FRAMES, canvasTheme, hexToRgb, lerp } from "@/lib/canvasTheme";
+import {
+  MIN_ALPHA_SCALE,
+  SETTLE_FRAMES,
+  canvasTheme,
+  hexToRgb,
+  lerp,
+} from "@/lib/canvasTheme";
 import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
-import { speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo } from "@/lib/spatial";
+import {
+  speakerCoordinates,
+  speakerDisplayLabel,
+  stemPosition,
+  stemPositionStereo,
+} from "@/lib/spatial";
 import { cn } from "@/lib/utils";
 import type { StemSpectrum } from "./audioEngine";
 
@@ -13,9 +24,21 @@ import type { StemSpectrum } from "./audioEngine";
 // unlike the radar, this uses actual routed coordinates for placement, not
 // spectral centroid, matching NUGEN Halo Upmix's height panel.
 
-type Voice = { key: string; stem: string; base: string; x: number; y: number; sizeScale: number };
+type Voice = {
+  key: string;
+  stem: string;
+  base: string;
+  x: number;
+  y: number;
+  sizeScale: number;
+};
 type SmoothedVoice = { x: number; y: number; level: number };
-type SpeakerHitTarget = { channel: string; x: number; y: number; radius: number };
+type SpeakerHitTarget = {
+  channel: string;
+  x: number;
+  y: number;
+  radius: number;
+};
 
 const MAX_HEIGHT = 0.6;
 
@@ -68,8 +91,26 @@ function ElevationViewImpl({
   const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
   const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
-  const propsRef = React.useRef({ channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity });
-  propsRef.current = { channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity };
+  const propsRef = React.useRef({
+    channels,
+    routing,
+    selectedStem,
+    colors,
+    channelCounts,
+    speakerEnabled,
+    speakerSolo,
+    intensity,
+  });
+  propsRef.current = {
+    channels,
+    routing,
+    selectedStem,
+    colors,
+    channelCounts,
+    speakerEnabled,
+    speakerSolo,
+    intensity,
+  };
   const activeRef = React.useRef(active);
   activeRef.current = active;
   const idleFrames = React.useRef(0);
@@ -81,11 +122,13 @@ function ElevationViewImpl({
     if (!canvas || !container) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    if (!blobCanvasRef.current) blobCanvasRef.current = document.createElement("canvas");
+    if (!blobCanvasRef.current)
+      blobCanvasRef.current = document.createElement("canvas");
     const blobCanvas = blobCanvasRef.current;
     const blobCtx = blobCanvas.getContext("2d");
     if (!blobCtx) return;
-    if (!blurCanvasRef.current) blurCanvasRef.current = document.createElement("canvas");
+    if (!blurCanvasRef.current)
+      blurCanvasRef.current = document.createElement("canvas");
     const blurCanvas = blurCanvasRef.current;
     const blurCtx = blurCanvas.getContext("2d");
     if (!blurCtx) return;
@@ -108,11 +151,14 @@ function ElevationViewImpl({
       initializedSize.current = false;
     };
     resize();
-    // Repaints synchronously rather than scheduling a frame: a resize clears the
-    // canvas, and scheduling would paint the cleared buffer during an animated resize.
+    let resizeFrame: number | null = null;
     const observer = new ResizeObserver(() => {
-      resize();
-      wakeRef.current();
+      if (resizeFrame !== null) return;
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = null;
+        resize();
+        wakeRef.current();
+      });
     });
     observer.observe(container);
 
@@ -120,7 +166,16 @@ function ElevationViewImpl({
     const draw = (time: number) => {
       const delta = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
-      const { channels: currentChannels, routing: currentRouting, selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts, speakerEnabled: currentSpeakerEnabled, speakerSolo: currentSolo, intensity: currentIntensity } = propsRef.current;
+      const {
+        channels: currentChannels,
+        routing: currentRouting,
+        selectedStem: currentSelected,
+        colors: currentColors,
+        channelCounts: currentCounts,
+        speakerEnabled: currentSpeakerEnabled,
+        speakerSolo: currentSolo,
+        intensity: currentIntensity,
+      } = propsRef.current;
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
       // padTop solves (padTop - 8) - chipBottom = pad, so the gap above the
@@ -137,7 +192,8 @@ function ElevationViewImpl({
       const plotHeight = Math.max(1, height - padTop - padBottom);
       const floorY = height - padBottom;
       const toX = (x: number) => padX + ((x + 1) / 2) * plotWidth;
-      const toY = (y: number) => floorY - Math.min(1, y / MAX_HEIGHT) * plotHeight;
+      const toY = (y: number) =>
+        floorY - Math.min(1, y / MAX_HEIGHT) * plotHeight;
 
       // Full-bleed gradients, not clamped to the padded plot rect: a clamped
       // gradient leaves flat bands and hard edges at the rect boundary.
@@ -194,8 +250,18 @@ function ElevationViewImpl({
 
       // Speaker labels: floor channels along the bottom edge, height
       // channels along the top edge, both positioned by real left/right x.
-      const floorChannels = currentChannels.filter((channel) => channel !== "LFE" && speakerCoordinates[channel] && speakerCoordinates[channel].y === 0);
-      const topChannels = currentChannels.filter((channel) => channel !== "LFE" && speakerCoordinates[channel] && speakerCoordinates[channel].y > 0);
+      const floorChannels = currentChannels.filter(
+        (channel) =>
+          channel !== "LFE" &&
+          speakerCoordinates[channel] &&
+          speakerCoordinates[channel].y === 0,
+      );
+      const topChannels = currentChannels.filter(
+        (channel) =>
+          channel !== "LFE" &&
+          speakerCoordinates[channel] &&
+          speakerCoordinates[channel].y > 0,
+      );
       const nextSpeakerHits: SpeakerHitTarget[] = [];
       ctx.font = "500 10px system-ui, sans-serif";
       ctx.textAlign = "center";
@@ -204,8 +270,18 @@ function ElevationViewImpl({
         const muted = currentSpeakerEnabled[channel] === false;
         const soloed = currentSolo.has(channel);
         const silent = !muted && currentSolo.size > 0 && !soloed;
-        ctx.fillStyle = muted ? canvasTheme.muteLabel : soloed ? canvasTheme.meterWarn : silent ? canvasTheme.label : canvasTheme.labelStrong;
-        ctx.fillText(speakerDisplayLabel(channel, currentChannels), x, floorY + 15);
+        ctx.fillStyle = muted
+          ? canvasTheme.muteLabel
+          : soloed
+            ? canvasTheme.meterWarn
+            : silent
+              ? canvasTheme.label
+              : canvasTheme.labelStrong;
+        ctx.fillText(
+          speakerDisplayLabel(channel, currentChannels),
+          x,
+          floorY + 15,
+        );
         drawSpeakerPoint(ctx, x, floorY, 3.5, muted, soloed, silent);
         nextSpeakerHits.push({ channel, x, y: floorY, radius: 12 });
       }
@@ -215,8 +291,16 @@ function ElevationViewImpl({
         const muted = currentSpeakerEnabled[channel] === false;
         const soloed = currentSolo.has(channel);
         const silent = !muted && currentSolo.size > 0 && !soloed;
-        ctx.fillStyle = muted ? canvasTheme.muteLabel : soloed ? canvasTheme.meterWarn : canvasTheme.label;
-        ctx.fillText(speakerDisplayLabel(channel, currentChannels), x, padTop - 8);
+        ctx.fillStyle = muted
+          ? canvasTheme.muteLabel
+          : soloed
+            ? canvasTheme.meterWarn
+            : canvasTheme.label;
+        ctx.fillText(
+          speakerDisplayLabel(channel, currentChannels),
+          x,
+          padTop - 8,
+        );
         drawSpeakerPoint(ctx, x, padTop, 3.5, muted, soloed, silent);
         nextSpeakerHits.push({ channel, x, y: padTop, radius: 11 });
       }
@@ -230,12 +314,29 @@ function ElevationViewImpl({
         const lfeSoloed = currentSolo.has("LFE");
         const lfeSilent = !lfeMuted && currentSolo.size > 0 && !lfeSoloed;
         const lfePoint = { x: width - padX / 2, y: floorY };
-        drawSpeakerPoint(ctx, lfePoint.x, lfePoint.y, 3.5, lfeMuted, lfeSoloed, lfeSilent);
+        drawSpeakerPoint(
+          ctx,
+          lfePoint.x,
+          lfePoint.y,
+          3.5,
+          lfeMuted,
+          lfeSoloed,
+          lfeSilent,
+        );
         ctx.font = "500 9px system-ui, sans-serif";
-        ctx.fillStyle = lfeMuted ? canvasTheme.muteLabel : lfeSoloed ? canvasTheme.meterWarn : canvasTheme.label;
+        ctx.fillStyle = lfeMuted
+          ? canvasTheme.muteLabel
+          : lfeSoloed
+            ? canvasTheme.meterWarn
+            : canvasTheme.label;
         ctx.textAlign = "center";
         ctx.fillText("LFE", lfePoint.x, floorY + 15);
-        nextSpeakerHits.push({ channel: "LFE", x: lfePoint.x, y: lfePoint.y, radius: 12 });
+        nextSpeakerHits.push({
+          channel: "LFE",
+          x: lfePoint.x,
+          y: lfePoint.y,
+          radius: 12,
+        });
       }
       speakerHitTargets.current = nextSpeakerHits;
 
@@ -247,11 +348,32 @@ function ElevationViewImpl({
         const stereo = (currentCounts?.[stem] ?? 2) >= 2;
         if (stereo) {
           const { left, right } = stemPositionStereo(route);
-          voices.push({ key: `${stem}:L`, stem, base, x: left.x, y: left.y, sizeScale: 0.8 });
-          voices.push({ key: `${stem}:R`, stem, base, x: right.x, y: right.y, sizeScale: 0.8 });
+          voices.push({
+            key: `${stem}:L`,
+            stem,
+            base,
+            x: left.x,
+            y: left.y,
+            sizeScale: 0.8,
+          });
+          voices.push({
+            key: `${stem}:R`,
+            stem,
+            base,
+            x: right.x,
+            y: right.y,
+            sizeScale: 0.8,
+          });
         } else {
           const pos = stemPosition(route);
-          voices.push({ key: stem, stem, base, x: pos.x, y: pos.y, sizeScale: 1 });
+          voices.push({
+            key: stem,
+            stem,
+            base,
+            x: pos.x,
+            y: pos.y,
+            sizeScale: 1,
+          });
         }
       }
 
@@ -260,7 +382,16 @@ function ElevationViewImpl({
       // screen-composite that buffer onto the main canvas so overlapping
       // stems merge into one continuous field instead of separate circular
       // halos — no tendrils here either, same reasoning as Haze.
-      type Resolved = { voice: Voice; point: { x: number; y: number }; blobRadius: number; emphasis: number; level: number; r: number; g: number; b: number };
+      type Resolved = {
+        voice: Voice;
+        point: { x: number; y: number };
+        blobRadius: number;
+        emphasis: number;
+        level: number;
+        r: number;
+        g: number;
+        b: number;
+      };
       const resolved: Resolved[] = [];
       for (const voice of voices) {
         const spectrum = stemSpectrum.current.get(voice.base);
@@ -269,10 +400,12 @@ function ElevationViewImpl({
         const previous = smoothed.current.get(voice.key);
         const next: SmoothedVoice = previous
           ? {
-            x: previous.x + (voice.x - previous.x) * Math.min(1, delta * 6),
-            y: previous.y + (voice.y - previous.y) * Math.min(1, delta * 6),
-            level: previous.level + (level - previous.level) * Math.min(1, delta * 8),
-          }
+              x: previous.x + (voice.x - previous.x) * Math.min(1, delta * 6),
+              y: previous.y + (voice.y - previous.y) * Math.min(1, delta * 6),
+              level:
+                previous.level +
+                (level - previous.level) * Math.min(1, delta * 8),
+            }
           : { x: voice.x, y: voice.y, level };
         smoothed.current.set(voice.key, next);
 
@@ -283,12 +416,26 @@ function ElevationViewImpl({
 
         const color = currentColors[voice.stem] || canvasTheme.stemFallback;
         const [r, g, b] = hexToRgb(color);
-        const dimmed = Boolean(currentSelected) && currentSelected !== voice.stem;
-        const emphasis = (currentSelected === voice.stem ? 1 : dimmed ? 0.35 : 0.8) * audible;
+        const dimmed =
+          Boolean(currentSelected) && currentSelected !== voice.stem;
+        const emphasis =
+          (currentSelected === voice.stem ? 1 : dimmed ? 0.35 : 0.8) * audible;
         const point = { x: toX(next.x), y: toY(next.y) };
-        const blobRadius = (28 + next.level * 50) * voice.sizeScale * (currentSelected === voice.stem ? 1.15 : 1);
+        const blobRadius =
+          (28 + next.level * 50) *
+          voice.sizeScale *
+          (currentSelected === voice.stem ? 1.15 : 1);
 
-        resolved.push({ voice, point, blobRadius, emphasis, level: next.level, r, g, b });
+        resolved.push({
+          voice,
+          point,
+          blobRadius,
+          emphasis,
+          level: next.level,
+          r,
+          g,
+          b,
+        });
       }
 
       blobCtx.clearRect(0, 0, width, height);
@@ -302,10 +449,26 @@ function ElevationViewImpl({
       const alphaScale = lerp(MIN_ALPHA_SCALE, 1, currentIntensity);
       for (const { point, blobRadius, emphasis, level, r, g, b } of resolved) {
         const meltRadius = blobRadius * 3.6;
-        const gradient = blobCtx.createRadialGradient(point.x, point.y, 0, point.x, point.y, meltRadius);
-        gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.45 + level * 0.35) * emphasis * alphaScale})`);
-        gradient.addColorStop(0.3, `rgba(${r}, ${g}, ${b}, ${(0.22 + level * 0.15) * emphasis * alphaScale})`);
-        gradient.addColorStop(0.65, `rgba(${r}, ${g}, ${b}, ${0.09 * emphasis * alphaScale})`);
+        const gradient = blobCtx.createRadialGradient(
+          point.x,
+          point.y,
+          0,
+          point.x,
+          point.y,
+          meltRadius,
+        );
+        gradient.addColorStop(
+          0,
+          `rgba(${r}, ${g}, ${b}, ${(0.45 + level * 0.35) * emphasis * alphaScale})`,
+        );
+        gradient.addColorStop(
+          0.3,
+          `rgba(${r}, ${g}, ${b}, ${(0.22 + level * 0.15) * emphasis * alphaScale})`,
+        );
+        gradient.addColorStop(
+          0.65,
+          `rgba(${r}, ${g}, ${b}, ${0.09 * emphasis * alphaScale})`,
+        );
         gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
         blobCtx.fillStyle = gradient;
         blobCtx.beginPath();
@@ -317,7 +480,10 @@ function ElevationViewImpl({
       // Wider, softer blur than the halos alone suggest — boosted further
       // than Haze's own factor for the same wide-spread reason above. Fixed
       // regardless of intensity — only opacity responds to the slider.
-      const blurPx = Math.max(12, Math.min(42, Math.min(plotWidth, plotHeight) * 0.16));
+      const blurPx = Math.max(
+        12,
+        Math.min(42, Math.min(plotWidth, plotHeight) * 0.16),
+      );
       if (time - lastBlurTime >= 1000 / 30) {
         blurCtx.clearRect(0, 0, width, height);
         blurCtx.save();
@@ -331,7 +497,10 @@ function ElevationViewImpl({
       ctx.drawImage(blurCanvas, 0, 0, width, height);
       ctx.restore();
 
-      idleFrames.current = !activeRef.current && resolved.length === 0 ? idleFrames.current + 1 : 0;
+      idleFrames.current =
+        !activeRef.current && resolved.length === 0
+          ? idleFrames.current + 1
+          : 0;
       if (activeRef.current || idleFrames.current < SETTLE_FRAMES) {
         frame.current = window.requestAnimationFrame(draw);
       } else {
@@ -348,13 +517,24 @@ function ElevationViewImpl({
 
     return () => {
       observer.disconnect();
+      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
       if (frame.current !== null) window.cancelAnimationFrame(frame.current);
     };
   }, [stemSpectrum]);
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, channels, routing, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity]);
+  }, [
+    active,
+    channels,
+    routing,
+    selectedStem,
+    colors,
+    channelCounts,
+    speakerEnabled,
+    speakerSolo,
+    intensity,
+  ]);
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -363,7 +543,10 @@ function ElevationViewImpl({
     let closestSpeaker: { channel: string; distance: number } | null = null;
     for (const hit of speakerHitTargets.current) {
       const distance = Math.hypot(hit.x - x, hit.y - y);
-      if (distance <= hit.radius && (!closestSpeaker || distance < closestSpeaker.distance)) {
+      if (
+        distance <= hit.radius &&
+        (!closestSpeaker || distance < closestSpeaker.distance)
+      ) {
         closestSpeaker = { channel: hit.channel, distance };
       }
     }
@@ -373,20 +556,29 @@ function ElevationViewImpl({
     }
   };
 
-  return <div
-    className={cn("relative flex flex-col overflow-hidden rounded-lg border", className)}
-    style={{ backgroundColor: canvasTheme.plotField }}
-  >
-    <div ref={containerRef} className="min-h-0 flex-1">
-      <canvas ref={canvasRef} className="h-full w-full cursor-pointer" onPointerDown={handlePointerDown} />
+  return (
+    <div
+      className={cn(
+        "relative flex flex-col overflow-hidden rounded-lg border",
+        className,
+      )}
+      style={{ backgroundColor: canvasTheme.plotField }}
+    >
+      <div ref={containerRef} className="min-h-0 flex-1">
+        <canvas
+          ref={canvasRef}
+          className="h-full w-full cursor-pointer"
+          onPointerDown={handlePointerDown}
+        />
+      </div>
+      <IntensitySlider
+        value={intensity}
+        onChange={onIntensity}
+        label="Elevation intensity"
+        className="absolute left-2 top-2 z-10"
+      />
     </div>
-    <IntensitySlider
-      value={intensity}
-      onChange={onIntensity}
-      label="Elevation intensity"
-      className="absolute left-2 top-2 z-10"
-    />
-  </div>;
+  );
 }
 
 export default React.memo(ElevationViewImpl);

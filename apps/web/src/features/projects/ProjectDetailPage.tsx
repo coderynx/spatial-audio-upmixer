@@ -770,8 +770,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           : "Speakers"
         }
       />
-      <StatusSeparator />
-      <StatusCell label="Engine" value={preview.engineKind === "native" ? "Native DSP" : preview.fallbackReason ? "WASM fallback" : "WASM"} />
       <StatusSpacer />
       <StatusCell label="Transport" value={preview.playing ? "Playing" : preview.ready ? "Ready" : "Loading"} />
       <StatusSeparator />

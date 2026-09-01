@@ -40,7 +40,7 @@ stem identity hues.
 | `ring` | Focus indicator |
 
 When adding a token, update `:root`, `.dark`, and `tailwind.config.ts`.
-`--radius` is 10px and `--topbar-h` is 44px; reference the variables rather
+`--radius` is 10px and `--topbar-h` is 56px; reference the variables rather
 than their resolved values. Keep numeric displays `tabular-nums`.
 
 Type scale: `11px` uppercase only for section headers; `12px` for secondary
@@ -52,7 +52,7 @@ titles and metric values. Labels use sentence case.
 Every routed page composes `Workspace`:
 
 ```
-top bar (44px)
+top bar (56px)
 optional toolbar (44px)
 rail (240px) | fluid canvas | inspector (320px)
 status bar (32px)

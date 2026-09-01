@@ -31,7 +31,7 @@
     --input: 240 2% 82%;
     --ring: 211 100% 50%;
     --radius: 0.625rem;
-    --topbar-h: 2.75rem;
+    --topbar-h: 3.5rem;
   }
   .dark {
     /* #131316 — a charcoal in the same 240 hue family as the rest of the dark

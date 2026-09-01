@@ -82,7 +82,7 @@ function AppShellLayout({
     <div className="flex h-screen w-full overflow-hidden bg-background">
       <aside
         className={cn(
-          "hidden shrink-0 flex-col bg-card transition-[width] duration-150 lg:flex",
+          "z-10 hidden shrink-0 flex-col bg-card transition-[width] duration-150 lg:flex",
           !isTauriRuntime && "border-r",
           collapsed ? "w-12" : "w-56",
         )}
@@ -90,7 +90,7 @@ function AppShellLayout({
         <div
           onMouseDown={isTauriRuntime ? dragWindow : undefined}
           className={cn(
-            "flex h-[var(--topbar-h)] shrink-0 items-center gap-2.5 border-b",
+            "flex h-[var(--topbar-h)] shrink-0 items-center gap-2.5",
             collapsed ? "justify-center px-1" : "px-3",
             isTauriRuntime && !collapsed && "pl-[88px]",
           )}
@@ -157,7 +157,7 @@ function AppShellLayout({
       <div className="flex min-w-0 flex-1 flex-col">
         <header
           onMouseDown={isTauriRuntime ? dragWindow : undefined}
-          className="flex h-[var(--topbar-h)] shrink-0 items-center justify-between gap-3 border-b bg-card px-3"
+          className="flex h-[var(--topbar-h)] shrink-0 items-center justify-between gap-3 border-b bg-card px-3 py-2"
         >
           <div className={cn("flex min-w-0 flex-1 items-center gap-2.5", isTauriRuntime && collapsed && "pl-7")}>
             <div className={cn("lg:hidden", isTauriRuntime && "hidden")}>

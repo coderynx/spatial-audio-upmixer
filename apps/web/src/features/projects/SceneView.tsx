@@ -1,16 +1,32 @@
 import * as React from "react";
 import type { StemRouting } from "@/api";
-import { MIN_ALPHA_SCALE, SETTLE_FRAMES, canvasTheme, hexToRgb, lerp } from "@/lib/canvasTheme";
+import {
+  MIN_ALPHA_SCALE,
+  SETTLE_FRAMES,
+  canvasTheme,
+  hexToRgb,
+  lerp,
+} from "@/lib/canvasTheme";
 import { isBedStem } from "@/lib/stems";
-import { speakerCoordinates, speakerDisplayLabel, stemPosition, stemPositionStereo, type Vec3 } from "@/lib/spatial";
+import {
+  speakerCoordinates,
+  speakerDisplayLabel,
+  stemPosition,
+  stemPositionStereo,
+  type Vec3,
+} from "@/lib/spatial";
 import { cn } from "@/lib/utils";
 import type { MeterLevel, StemSpectrum } from "./audioEngine";
 import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
 
-const DEFAULT_CAMERA = { yaw: 35 * Math.PI / 180, pitch: 22 * Math.PI / 180, distance: 4 };
-const MIN_PITCH = 10 * Math.PI / 180;
-const MAX_PITCH = 65 * Math.PI / 180;
+const DEFAULT_CAMERA = {
+  yaw: (35 * Math.PI) / 180,
+  pitch: (22 * Math.PI) / 180,
+  distance: 4,
+};
+const MIN_PITCH = (10 * Math.PI) / 180;
+const MAX_PITCH = (65 * Math.PI) / 180;
 const MIN_DISTANCE = 2;
 const MAX_DISTANCE = 7;
 const MAX_HEIGHT = 0.6;
@@ -28,13 +44,26 @@ type Voice = {
   position: Vec3;
   lobes?: { channel: string; position: Vec3; weight: number }[];
 };
-type SpeakerHitTarget = { channel: string; x: number; y: number; radius: number };
+type SpeakerHitTarget = {
+  channel: string;
+  x: number;
+  y: number;
+  radius: number;
+};
 
-export function bedLobeIntensity(level: number, weight: number, muted: boolean) {
+export function bedLobeIntensity(
+  level: number,
+  weight: number,
+  muted: boolean,
+) {
   return muted ? 0 : Math.min(1, level * 8) * (0.45 + weight * 0.55);
 }
 
-export function smoothSceneLevel(previous: number, target: number, delta: number) {
+export function smoothSceneLevel(
+  previous: number,
+  target: number,
+  delta: number,
+) {
   const response = target > previous ? COLOR_RESPONSE : RELEASE_RESPONSE;
   return previous + (target - previous) * Math.min(1, delta * response);
 }
@@ -50,7 +79,13 @@ export function isSceneObjectAudible(level: number) {
 export function zoomSceneCamera(camera: Camera, delta: number): Camera {
   return {
     ...camera,
-    distance: Math.min(MAX_DISTANCE, Math.max(MIN_DISTANCE, (camera.distance ?? DEFAULT_CAMERA.distance) * Math.exp(delta * 0.001))),
+    distance: Math.min(
+      MAX_DISTANCE,
+      Math.max(
+        MIN_DISTANCE,
+        (camera.distance ?? DEFAULT_CAMERA.distance) * Math.exp(delta * 0.001),
+      ),
+    ),
   };
 }
 
@@ -71,7 +106,12 @@ function normalize(vector: Vec3): Vec3 {
   return { x: vector.x / length, y: vector.y / length, z: vector.z / length };
 }
 
-export function projectScenePoint(point: Vec3, width: number, height: number, camera: Camera): ProjectedPoint {
+export function projectScenePoint(
+  point: Vec3,
+  width: number,
+  height: number,
+  camera: Camera,
+): ProjectedPoint {
   const target = { x: 0, y: 0.5, z: 0 };
   const distance = camera.distance ?? DEFAULT_CAMERA.distance;
   const cameraPosition = {
@@ -111,7 +151,10 @@ function scenePosition(position: Vec3): Vec3 {
 }
 
 export function isObjectStem(stem: string, objectStems: ReadonlySet<string>) {
-  return !isBedStem(stem) && (objectStems.has(stem) || objectStems.has(stem.split("@", 1)[0]));
+  return (
+    !isBedStem(stem) &&
+    (objectStems.has(stem) || objectStems.has(stem.split("@", 1)[0]))
+  );
 }
 
 export function sceneSpeakerPosition(channel: string): Vec3 | undefined {
@@ -165,12 +208,30 @@ function SceneViewImpl({
   const frame = React.useRef<number | null>(null);
   const idleFrames = React.useRef(0);
   const wakeRef = React.useRef<() => void>(() => {});
-  const drag = React.useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const drag = React.useRef<{ x: number; y: number; moved: boolean } | null>(
+    null,
+  );
   const propsRef = React.useRef({
-    channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity,
+    channels,
+    routing,
+    objectStems,
+    selectedStem,
+    colors,
+    channelCounts,
+    speakerEnabled,
+    speakerSolo,
+    intensity,
   });
   propsRef.current = {
-    channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity,
+    channels,
+    routing,
+    objectStems,
+    selectedStem,
+    colors,
+    channelCounts,
+    speakerEnabled,
+    speakerSolo,
+    intensity,
   };
   const activeRef = React.useRef(active);
   activeRef.current = active;
@@ -181,11 +242,13 @@ function SceneViewImpl({
     if (!canvas || !container) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    if (!blobCanvasRef.current) blobCanvasRef.current = document.createElement("canvas");
+    if (!blobCanvasRef.current)
+      blobCanvasRef.current = document.createElement("canvas");
     const blobCanvas = blobCanvasRef.current;
     const blobCtx = blobCanvas.getContext("2d");
     if (!blobCtx) return;
-    if (!blurCanvasRef.current) blurCanvasRef.current = document.createElement("canvas");
+    if (!blurCanvasRef.current)
+      blurCanvasRef.current = document.createElement("canvas");
     const blurCanvas = blurCanvasRef.current;
     const blurCtx = blurCanvas.getContext("2d");
     if (!blurCtx) return;
@@ -205,9 +268,14 @@ function SceneViewImpl({
       lastBlurTime = -Infinity;
     };
     resize();
+    let resizeFrame: number | null = null;
     const observer = new ResizeObserver(() => {
-      resize();
-      wakeRef.current();
+      if (resizeFrame !== null) return;
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = null;
+        resize();
+        wakeRef.current();
+      });
     });
     observer.observe(container);
 
@@ -226,9 +294,15 @@ function SceneViewImpl({
       const width = canvas.width / (window.devicePixelRatio || 1);
       const height = canvas.height / (window.devicePixelRatio || 1);
       const {
-        channels: currentChannels, routing: currentRouting, objectStems: currentObjectStems,
-        selectedStem: currentSelected, colors: currentColors, channelCounts: currentCounts,
-        speakerEnabled: currentSpeakerEnabled, speakerSolo: currentSolo, intensity: currentIntensity,
+        channels: currentChannels,
+        routing: currentRouting,
+        objectStems: currentObjectStems,
+        selectedStem: currentSelected,
+        colors: currentColors,
+        channelCounts: currentCounts,
+        speakerEnabled: currentSpeakerEnabled,
+        speakerSolo: currentSolo,
+        intensity: currentIntensity,
       } = propsRef.current;
 
       const field = ctx.createLinearGradient(0, 0, 0, height);
@@ -238,10 +312,20 @@ function SceneViewImpl({
       ctx.fillRect(0, 0, width, height);
 
       const corners: Vec3[] = [
-        { x: -1, y: 0, z: -1 }, { x: 1, y: 0, z: -1 }, { x: 1, y: 0, z: 1 }, { x: -1, y: 0, z: 1 },
-        { x: -1, y: 1, z: -1 }, { x: 1, y: 1, z: -1 }, { x: 1, y: 1, z: 1 }, { x: -1, y: 1, z: 1 },
+        { x: -1, y: 0, z: -1 },
+        { x: 1, y: 0, z: -1 },
+        { x: 1, y: 0, z: 1 },
+        { x: -1, y: 0, z: 1 },
+        { x: -1, y: 1, z: -1 },
+        { x: 1, y: 1, z: -1 },
+        { x: 1, y: 1, z: 1 },
+        { x: -1, y: 1, z: 1 },
       ];
-      const floor = corners.slice(0, 4).map((point) => projectScenePoint(point, width, height, camera.current));
+      const floor = corners
+        .slice(0, 4)
+        .map((point) =>
+          projectScenePoint(point, width, height, camera.current),
+        );
       ctx.save();
       ctx.globalAlpha = 0.8;
       ctx.fillStyle = canvasTheme.plotShadeStrong;
@@ -255,62 +339,150 @@ function SceneViewImpl({
       ctx.lineWidth = 1;
       ctx.strokeStyle = canvasTheme.gridSoft;
       for (let step = -0.75; step < 1; step += 0.5) {
-        drawLine({ x: step, y: 0, z: -1 }, { x: step, y: 0, z: 1 }, width, height);
-        drawLine({ x: -1, y: 0, z: step }, { x: 1, y: 0, z: step }, width, height);
+        drawLine(
+          { x: step, y: 0, z: -1 },
+          { x: step, y: 0, z: 1 },
+          width,
+          height,
+        );
+        drawLine(
+          { x: -1, y: 0, z: step },
+          { x: 1, y: 0, z: step },
+          width,
+          height,
+        );
       }
       ctx.strokeStyle = canvasTheme.grid;
       const edges = [
-        [0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7],
+        [0, 1],
+        [1, 2],
+        [2, 3],
+        [3, 0],
+        [4, 5],
+        [5, 6],
+        [6, 7],
+        [7, 4],
+        [0, 4],
+        [1, 5],
+        [2, 6],
+        [3, 7],
       ];
-      for (const [from, to] of edges) drawLine(corners[from], corners[to], width, height);
+      for (const [from, to] of edges)
+        drawLine(corners[from], corners[to], width, height);
 
       const voices: Voice[] = [];
       for (const stem of Object.keys(currentRouting)) {
         const route = currentRouting[stem] || {};
         const base = stem.split("@", 1)[0];
-        if (isObjectStem(stem, currentObjectStems) && (currentCounts?.[stem] ?? 2) >= 2) {
+        if (
+          isObjectStem(stem, currentObjectStems) &&
+          (currentCounts?.[stem] ?? 2) >= 2
+        ) {
           const { left, right } = stemPositionStereo(route);
-          voices.push({ key: `${stem}:L`, stem, base, kind: "object", position: scenePosition(left) });
-          voices.push({ key: `${stem}:R`, stem, base, kind: "object", position: scenePosition(right) });
+          voices.push({
+            key: `${stem}:L`,
+            stem,
+            base,
+            kind: "object",
+            position: scenePosition(left),
+          });
+          voices.push({
+            key: `${stem}:R`,
+            stem,
+            base,
+            kind: "object",
+            position: scenePosition(right),
+          });
         } else if (isObjectStem(stem, currentObjectStems)) {
-          voices.push({ key: stem, stem, base, kind: "object", position: scenePosition(stemPosition(route)) });
+          voices.push({
+            key: stem,
+            stem,
+            base,
+            kind: "object",
+            position: scenePosition(stemPosition(route)),
+          });
         } else {
           const lobes = Object.entries(route).flatMap(([channel, weight]) => {
             const position = speakerCoordinates[channel];
-            return position && weight > 0 ? [{ channel, position: scenePosition(position), weight }] : [];
+            return position && weight > 0
+              ? [{ channel, position: scenePosition(position), weight }]
+              : [];
           });
-          voices.push({ key: stem, stem, base, kind: "bed", position: scenePosition(stemPosition(route)), lobes });
+          voices.push({
+            key: stem,
+            stem,
+            base,
+            kind: "bed",
+            position: scenePosition(stemPosition(route)),
+            lobes,
+          });
         }
       }
 
-      const resolved = voices.map((voice) => {
-        const target = stemSpectrum.current.get(voice.base)?.level ?? 0;
-        const previous = levels.current.get(voice.key) ?? 0;
-        const level = smoothSceneLevel(previous, target, delta);
-        levels.current.set(voice.key, level);
-        return { voice, level, point: projectScenePoint(voice.position, width, height, camera.current) };
-      }).sort((a, b) => b.point.depth - a.point.depth);
+      const resolved = voices
+        .map((voice) => {
+          const target = stemSpectrum.current.get(voice.base)?.level ?? 0;
+          const previous = levels.current.get(voice.key) ?? 0;
+          const level = smoothSceneLevel(previous, target, delta);
+          levels.current.set(voice.key, level);
+          return {
+            voice,
+            level,
+            point: projectScenePoint(
+              voice.position,
+              width,
+              height,
+              camera.current,
+            ),
+          };
+        })
+        .sort((a, b) => b.point.depth - a.point.depth);
 
       const alphaScale = lerp(MIN_ALPHA_SCALE, 1, currentIntensity);
       blobCtx.clearRect(0, 0, width, height);
       blobCtx.globalCompositeOperation = "lighter";
       for (const { voice, level } of resolved) {
         if (voice.kind !== "bed" || !voice.lobes?.length) continue;
-        const emphasis = currentSelected && currentSelected !== voice.stem ? 0.45 : 1;
+        const emphasis =
+          currentSelected && currentSelected !== voice.stem ? 0.45 : 1;
         const strongest = Math.max(...voice.lobes.map((lobe) => lobe.weight));
-        const [r, g, b] = hexToRgb(currentColors[voice.stem] || canvasTheme.stemFallback);
+        const [r, g, b] = hexToRgb(
+          currentColors[voice.stem] || canvasTheme.stemFallback,
+        );
         for (const lobe of voice.lobes) {
-          const lobePoint = projectScenePoint(lobe.position, width, height, camera.current);
+          const lobePoint = projectScenePoint(
+            lobe.position,
+            width,
+            height,
+            camera.current,
+          );
           const weight = lobe.weight / strongest;
           const activity = bedLobeIntensity(
-            level, weight, currentSpeakerEnabled[lobe.channel] === false,
+            level,
+            weight,
+            currentSpeakerEnabled[lobe.channel] === false,
           );
           if (activity <= 0.005) continue;
-          const radius = Math.max(30, Math.min(90, lobePoint.scale * 0.62)) * (0.65 + weight * 0.35);
-          const haze = blobCtx.createRadialGradient(lobePoint.x, lobePoint.y, 0, lobePoint.x, lobePoint.y, radius);
+          const radius =
+            Math.max(30, Math.min(90, lobePoint.scale * 0.62)) *
+            (0.65 + weight * 0.35);
+          const haze = blobCtx.createRadialGradient(
+            lobePoint.x,
+            lobePoint.y,
+            0,
+            lobePoint.x,
+            lobePoint.y,
+            radius,
+          );
           const opacity = sceneActivityOpacity(activity);
-          haze.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${opacity * 0.7 * emphasis * alphaScale})`);
-          haze.addColorStop(0.42, `rgba(${r}, ${g}, ${b}, ${opacity * 0.3 * emphasis * alphaScale})`);
+          haze.addColorStop(
+            0,
+            `rgba(${r}, ${g}, ${b}, ${opacity * 0.7 * emphasis * alphaScale})`,
+          );
+          haze.addColorStop(
+            0.42,
+            `rgba(${r}, ${g}, ${b}, ${opacity * 0.3 * emphasis * alphaScale})`,
+          );
           haze.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
           blobCtx.fillStyle = haze;
           blobCtx.beginPath();
@@ -338,29 +510,77 @@ function SceneViewImpl({
       for (const channel of currentChannels) {
         const position = sceneSpeakerPosition(channel);
         if (!position) continue;
-        const speakerPoint = projectScenePoint(scenePosition(position), width, height, camera.current);
+        const speakerPoint = projectScenePoint(
+          scenePosition(position),
+          width,
+          height,
+          camera.current,
+        );
         const muted = currentSpeakerEnabled[channel] === false;
         const soloed = currentSolo.has(channel);
         const silent = !muted && currentSolo.size > 0 && !soloed;
         const target = silent
           ? 0
           : Math.min(1, (channelLevels.current.get(channel)?.rms ?? 0) * 8);
-        const activity = smoothSceneLevel(levels.current.get(`speaker:${channel}`) ?? 0, target, delta);
+        const activity = smoothSceneLevel(
+          levels.current.get(`speaker:${channel}`) ?? 0,
+          target,
+          delta,
+        );
         levels.current.set(`speaker:${channel}`, activity);
         if (activity > 0.005) {
-          const glow = ctx.createRadialGradient(speakerPoint.x, speakerPoint.y, 0, speakerPoint.x, speakerPoint.y, 16 + activity * 22);
+          const glow = ctx.createRadialGradient(
+            speakerPoint.x,
+            speakerPoint.y,
+            0,
+            speakerPoint.x,
+            speakerPoint.y,
+            16 + activity * 22,
+          );
           const [r, g, b] = hexToRgb(canvasTheme.headphone);
-          glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${(0.18 + activity * 0.3) * alphaScale})`);
+          glow.addColorStop(
+            0,
+            `rgba(${r}, ${g}, ${b}, ${(0.18 + activity * 0.3) * alphaScale})`,
+          );
           glow.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
           ctx.fillStyle = glow;
           ctx.beginPath();
-          ctx.arc(speakerPoint.x, speakerPoint.y, 16 + activity * 22, 0, Math.PI * 2);
+          ctx.arc(
+            speakerPoint.x,
+            speakerPoint.y,
+            16 + activity * 22,
+            0,
+            Math.PI * 2,
+          );
           ctx.fill();
         }
-        drawSpeakerPoint(ctx, speakerPoint.x, speakerPoint.y, 4, muted, soloed, silent);
-        ctx.fillStyle = muted ? canvasTheme.muteLabel : soloed ? canvasTheme.meterWarn : silent ? canvasTheme.label : canvasTheme.labelStrong;
-        ctx.fillText(speakerDisplayLabel(channel, currentChannels), speakerPoint.x, speakerPoint.y - 10);
-        nextSpeakerHits.push({ channel, x: speakerPoint.x, y: speakerPoint.y, radius: 12 });
+        drawSpeakerPoint(
+          ctx,
+          speakerPoint.x,
+          speakerPoint.y,
+          4,
+          muted,
+          soloed,
+          silent,
+        );
+        ctx.fillStyle = muted
+          ? canvasTheme.muteLabel
+          : soloed
+            ? canvasTheme.meterWarn
+            : silent
+              ? canvasTheme.label
+              : canvasTheme.labelStrong;
+        ctx.fillText(
+          speakerDisplayLabel(channel, currentChannels),
+          speakerPoint.x,
+          speakerPoint.y - 10,
+        );
+        nextSpeakerHits.push({
+          channel,
+          x: speakerPoint.x,
+          y: speakerPoint.y,
+          radius: 12,
+        });
       }
       speakerHits.current = nextSpeakerHits;
 
@@ -368,12 +588,25 @@ function SceneViewImpl({
         if (voice.kind !== "object" || !isSceneObjectAudible(level)) continue;
         const activity = Math.min(1, level * 8);
         const opacity = sceneActivityOpacity(activity);
-        const emphasis = currentSelected && currentSelected !== voice.stem ? 0.35 : 1;
+        const emphasis =
+          currentSelected && currentSelected !== voice.stem ? 0.35 : 1;
         const radius = Math.max(4, Math.min(11, point.scale * 0.08));
         const glowRadius = radius * (2 + activity * 2);
-        const [r, g, b] = hexToRgb(currentColors[voice.stem] || canvasTheme.stemFallback);
-        const glow = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, glowRadius);
-        glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${opacity * 0.7 * emphasis * alphaScale})`);
+        const [r, g, b] = hexToRgb(
+          currentColors[voice.stem] || canvasTheme.stemFallback,
+        );
+        const glow = ctx.createRadialGradient(
+          point.x,
+          point.y,
+          0,
+          point.x,
+          point.y,
+          glowRadius,
+        );
+        glow.addColorStop(
+          0,
+          `rgba(${r}, ${g}, ${b}, ${opacity * 0.7 * emphasis * alphaScale})`,
+        );
         glow.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
         ctx.fillStyle = glow;
         ctx.beginPath();
@@ -386,8 +619,10 @@ function SceneViewImpl({
       }
 
       const quiet = resolved.every(({ level }) => !isSceneObjectAudible(level));
-      idleFrames.current = !activeRef.current && quiet ? idleFrames.current + 1 : 0;
-      if (activeRef.current || idleFrames.current < SETTLE_FRAMES) frame.current = window.requestAnimationFrame(draw);
+      idleFrames.current =
+        !activeRef.current && quiet ? idleFrames.current + 1 : 0;
+      if (activeRef.current || idleFrames.current < SETTLE_FRAMES)
+        frame.current = window.requestAnimationFrame(draw);
       else frame.current = null;
     };
     frame.current = window.requestAnimationFrame(draw);
@@ -399,13 +634,25 @@ function SceneViewImpl({
     };
     return () => {
       observer.disconnect();
+      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
       if (frame.current !== null) window.cancelAnimationFrame(frame.current);
     };
   }, [stemSpectrum, channelLevels]);
 
   React.useEffect(() => {
     wakeRef.current();
-  }, [active, channels, routing, objectStems, selectedStem, colors, channelCounts, speakerEnabled, speakerSolo, intensity]);
+  }, [
+    active,
+    channels,
+    routing,
+    objectStems,
+    selectedStem,
+    colors,
+    channelCounts,
+    speakerEnabled,
+    speakerSolo,
+    intensity,
+  ]);
 
   const toggleSpeakerAt = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -414,7 +661,11 @@ function SceneViewImpl({
     let closestSpeaker: { channel: string; distance: number } | null = null;
     for (const hit of speakerHits.current) {
       const distance = Math.hypot(hit.x - x, hit.y - y);
-      if (distance <= hit.radius && (!closestSpeaker || distance < closestSpeaker.distance)) closestSpeaker = { channel: hit.channel, distance };
+      if (
+        distance <= hit.radius &&
+        (!closestSpeaker || distance < closestSpeaker.distance)
+      )
+        closestSpeaker = { channel: hit.channel, distance };
     }
     if (closestSpeaker) {
       if (event.altKey) onSoloSpeaker(closestSpeaker.channel);
@@ -435,7 +686,10 @@ function SceneViewImpl({
     if (Math.hypot(dx, dy) > 4) current.moved = true;
     if (!current.moved) return;
     camera.current.yaw += dx * 0.01;
-    camera.current.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, camera.current.pitch + dy * 0.01));
+    camera.current.pitch = Math.min(
+      MAX_PITCH,
+      Math.max(MIN_PITCH, camera.current.pitch + dy * 0.01),
+    );
     current.x = event.clientX;
     current.y = event.clientY;
     wakeRef.current();
@@ -443,7 +697,8 @@ function SceneViewImpl({
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const current = drag.current;
     drag.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
     if (current && !current.moved) toggleSpeakerAt(event);
   };
   const handleWheel = (event: React.WheelEvent<HTMLCanvasElement>) => {
@@ -452,41 +707,55 @@ function SceneViewImpl({
     wakeRef.current();
   };
   const handleKeyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
-    const turn = 5 * Math.PI / 180;
+    const turn = (5 * Math.PI) / 180;
     if (event.key === "Home") camera.current = { ...DEFAULT_CAMERA };
     else if (event.key === "ArrowLeft") camera.current.yaw -= turn;
     else if (event.key === "ArrowRight") camera.current.yaw += turn;
-    else if (event.key === "ArrowUp") camera.current.pitch = Math.max(MIN_PITCH, camera.current.pitch - turn);
-    else if (event.key === "ArrowDown") camera.current.pitch = Math.min(MAX_PITCH, camera.current.pitch + turn);
-    else if (event.key === "+" || event.key === "=") camera.current = zoomSceneCamera(camera.current, -180);
-    else if (event.key === "-" || event.key === "_") camera.current = zoomSceneCamera(camera.current, 180);
+    else if (event.key === "ArrowUp")
+      camera.current.pitch = Math.max(MIN_PITCH, camera.current.pitch - turn);
+    else if (event.key === "ArrowDown")
+      camera.current.pitch = Math.min(MAX_PITCH, camera.current.pitch + turn);
+    else if (event.key === "+" || event.key === "=")
+      camera.current = zoomSceneCamera(camera.current, -180);
+    else if (event.key === "-" || event.key === "_")
+      camera.current = zoomSceneCamera(camera.current, 180);
     else return;
     event.preventDefault();
     wakeRef.current();
   };
 
-  return <div className={cn("relative flex flex-col overflow-hidden rounded-lg border", className)} style={{ backgroundColor: canvasTheme.plotField }}>
-    <div ref={containerRef} className="min-h-0 flex-1">
-      <canvas
-        ref={canvasRef}
-        tabIndex={0}
-        aria-label="3D object scene. Bed clouds show routed speaker channels; click a speaker to mute it, or Option/Alt-click to solo it. Drag to orbit, scroll or use plus and minus to zoom, use arrow keys to rotate, and Home to reset the view."
-        className="h-full w-full touch-none cursor-grab outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60"
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={() => { drag.current = null; }}
-        onWheel={handleWheel}
-        onKeyDown={handleKeyDown}
+  return (
+    <div
+      className={cn(
+        "relative flex flex-col overflow-hidden rounded-lg border",
+        className,
+      )}
+      style={{ backgroundColor: canvasTheme.plotField }}
+    >
+      <div ref={containerRef} className="min-h-0 flex-1">
+        <canvas
+          ref={canvasRef}
+          tabIndex={0}
+          aria-label="3D object scene. Bed clouds show routed speaker channels; click a speaker to mute it, or Option/Alt-click to solo it. Drag to orbit, scroll or use plus and minus to zoom, use arrow keys to rotate, and Home to reset the view."
+          className="h-full w-full touch-none cursor-grab outline-none active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/60"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={() => {
+            drag.current = null;
+          }}
+          onWheel={handleWheel}
+          onKeyDown={handleKeyDown}
+        />
+      </div>
+      <IntensitySlider
+        value={intensity}
+        onChange={onIntensity}
+        label="Scene intensity"
+        className="absolute left-2 top-2 z-10"
       />
     </div>
-    <IntensitySlider
-      value={intensity}
-      onChange={onIntensity}
-      label="Scene intensity"
-      className="absolute left-2 top-2 z-10"
-    />
-  </div>;
+  );
 }
 
 export default React.memo(SceneViewImpl);
