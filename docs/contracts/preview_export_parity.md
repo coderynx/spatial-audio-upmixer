@@ -7,7 +7,8 @@ binaural/transaural/stereo collapse.
 This document used to specify how two independent implementations of that DSP
 were kept in agreement. There is only one implementation now: the Rust core in
 [`packages/dsp`](../../packages/dsp/AGENTS.md), reached through PyO3 from
-`packages/core` and through WebAssembly from the browser worklet. Most of what
+`packages/core`, through WebAssembly from the browser worklet, and directly
+from the Tauri native host. Most of what
 this contract governed — matching constants, matching filter realizations,
 matching stage order — is no longer possible to get wrong.
 
@@ -387,7 +388,7 @@ ceremony beyond staying shaped like that response.
 
 ## 3. What can still differ
 
-Six behaviours are genuinely different by nature, not by drift. Nothing else
+Seven behaviours are genuinely different by nature, not by drift. Nothing else
 should be.
 
 | # | Difference | Bound |
@@ -398,13 +399,15 @@ should be.
 | P4 | **Monitor-only A/B compensation.** Bypassing the master chain — or, since mastering phase 7, the reference matcher alone (`monitorMastering`'s `matchBypassed`, which strips both the spectral curve and the level gain) — measures that programme on its own key and applies a compensating scalar so both sides monitor at the same delivered loudness. It lives in the preview's `master.output_gain` ramp (`audioEngine.ts`), never in a manifest or an export, and is zero whenever nothing is bypassed. The bypassed side is gated by the same calibration rule as a mode switch, so it never plays unmatched. A whole-chain bypass already strips the matcher, so the stage flag does not enter the measurement key there. | 0 dB unbypassed; the two sides' delivered-loudness difference otherwise, itself capped by the true-peak ceiling |
 | P5 | **The export's dithered tail.** Bit-depth reduction (`io.writer.dither_channels`, `dsp-core/src/dither.rs`) runs only on the export, after every stage in §1, because only the writer knows the delivery subtype. The preview plays float32 and has no such stage. The divergence is inaudible by construction: ±1 LSB of TPDF at 24-bit is ≈ −138 dBFS, below the float32 mantissa's own quantization of the same programme, and it is the last operation in the export — nothing in §1 sees it. See `docs/standards/loudness_dsp_bs1770.md` §"Export tail". | ≤ 1.5 LSB of the delivery subtype; ≈ −138 dBFS at PCM_24, ≈ −90 dBFS at PCM_16 |
 | P6 | **Route-scale latency.** Each stem's routed normalization is a real measurement of that stem's routed signals (`stream::scale`, below), and until it lands the engine renders on the served `estimateRouteScale`. The pass has the same two stages the loudness one does, and restarts whenever a routing parameter moves, so a user dragging a routing control plays on the estimate until transport stops. It does not gate the transport — a stem at a slightly wrong level is better than a silent one — but a landed stage re-runs the loudness pass, so the delivered loudness is never left measured against the estimate. | The estimate's own error, which the routing table cannot bound in principle; excerpt stage lands in a second or two stopped |
+| P7 | **Apple Spatial monitor render.** The Tauri-only Apple Spatial mode hands the mastered speaker bed to Apple's PHASE renderer. The PCM before PHASE is the same native-bed output the export path owns; PHASE's device renderer, head tracking, and OS output adaptation are deliberately outside export parity, like any external ADM renderer. This mode never changes persisted mix or mastering parameters. | Pre-PHASE PCM remains algorithm-identical; post-PHASE output is monitor-only and not an export reference |
 
-Switching speaker layout is deliberately **not** a sixth entry. Selecting a
-different layout in the tracks panel rebuilds the preview from scratch — new
-`AudioContext`, new worklet node, stems re-decoded, loudness re-measured —
-rather than reaching the engine as a parameter change. An `AudioWorkletNode`'s
-`outputChannelCount` is fixed at construction, so a native-output layout
-change cannot reuse the node; and because the rebuild is total, there is no
+Switching speaker layout is deliberately **not** a parity entry. Selecting a
+different layout in the tracks panel rebuilds the preview from scratch — a
+new browser worklet or native session, stems re-decoded, loudness re-measured —
+rather than reaching the engine as a parameter change. A browser
+`AudioWorkletNode`'s `outputChannelCount` is fixed at construction and the
+native PHASE stream also has a fixed channel layout, so a native-output layout
+change cannot reuse either node; because the rebuild is total, there is no
 window in which the preview renders one layout's mix through another's
 topology. The cost is latency on a user action, not a parity gap.
 

@@ -1,4 +1,5 @@
 import type { ServedEngineConstants } from "@/features/projects/masteringProfiles"
+import { getServerUrl, isTauriRuntime } from "@/runtime"
 import type { CodecChoice } from "@/lib/codecs"
 
 export type Asset = {
@@ -228,14 +229,35 @@ export type Configuration = {
 
 const rootPath = document.querySelector<HTMLMetaElement>('meta[name="upmixer-root-path"]')?.content.replace(/\/$/, "") || ""
 
+export function apiUrl(path: string, serverUrl = getServerUrl()): string {
+  return isTauriRuntime || serverUrl ? `${serverUrl}${path}` : `${rootPath}${path}`
+}
+
+export function resolveApiResourceUrl(value: string, serverUrl = getServerUrl()): string {
+  if (!serverUrl || /^[a-z][a-z\d+.-]*:/i.test(value)) return value
+  const base = new URL(`${serverUrl}/`)
+  return new URL(value, value.startsWith("/") ? base.origin : base).toString()
+}
+
+export function normalizeApiUrls<T>(value: T, serverUrl = getServerUrl()): T {
+  if (!serverUrl || value === null || typeof value !== "object") return value
+  if (Array.isArray(value)) return value.map((item) => normalizeApiUrls(item, serverUrl)) as T
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+    key,
+    key.endsWith("_url") && typeof item === "string"
+      ? resolveApiResourceUrl(item, serverUrl)
+      : normalizeApiUrls(item, serverUrl),
+  ])) as T
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${rootPath}${path}`, init)
+  const response = await fetch(apiUrl(path), init)
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }))
     throw new Error(typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail))
   }
   if (response.status === 204) return undefined as T
-  return response.json() as Promise<T>
+  return normalizeApiUrls(await response.json()) as T
 }
 
 export const api = {
@@ -244,7 +266,7 @@ export const api = {
   listJobs: () => request<Job[]>("/api/v1/jobs"),
   listProjects: () => request<Project[]>("/api/v1/projects"),
   getProject: (id: string) => request<Project>(`/api/v1/projects/${id}`),
-  projectEventsUrl: (id: string) => `${rootPath}/api/v1/projects/${id}/events`,
+  projectEventsUrl: (id: string) => apiUrl(`/api/v1/projects/${id}/events`),
   upload: async (items: { file: File; path: string }[]) => {
     const data = new FormData()
     for (const item of items) {
@@ -287,9 +309,9 @@ export const api = {
   deleteProject: (id: string) => request(`/api/v1/projects/${id}`, { method: "DELETE" }),
   // DAW-style Save/Open: a portable .upmix.zip, distinct from exportProject
   // above (which renders a deliverable mix, not a re-editable workspace).
-  projectArchiveUrl: (id: string) => `${rootPath}/api/v1/projects/${id}/archive`,
+  projectArchiveUrl: (id: string) => apiUrl(`/api/v1/projects/${id}/archive`),
   trackStemsArchiveUrl: (projectId: string, trackId: string) =>
-    `${rootPath}/api/v1/projects/${projectId}/tracks/${trackId}/stems/archive`,
+    apiUrl(`/api/v1/projects/${projectId}/tracks/${trackId}/stems/archive`),
   importProjectArchive: async (file: File) => {
     const data = new FormData()
     data.append("file", file, file.name)

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Building2, Car, ChevronDown, ChevronRight, Grid3x3, Headphones, Laptop, Radio, Smartphone, Sofa, Speaker, SquareSplitHorizontal, Waves } from "lucide-react";
+import { AudioWaveform, Building2, Car, ChevronDown, ChevronRight, Grid3x3, Headphones, Laptop, Radio, Smartphone, Sofa, Speaker, SquareSplitHorizontal, Waves } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
@@ -8,6 +8,7 @@ import type { OutputMode } from "./useStemPreview";
 const MODE_OPTIONS: { value: OutputMode; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { value: "binaural", label: "Binaural", icon: Headphones },
   { value: "transaural", label: "Transaural", icon: Speaker },
+  { value: "apple_spatial", label: "Apple Spatial", icon: AudioWaveform },
   { value: "native", label: "Native", icon: Grid3x3 },
   { value: "stereo", label: "Stereo mixdown", icon: Waves },
 ];
@@ -20,11 +21,12 @@ const STEREO_MODE_OPTIONS: typeof MODE_OPTIONS = [
 
 // Rows that carry a profile submenu, keyed by their MODE_OPTIONS value.
 const SUBMENU_MODES = new Set<OutputMode>(["binaural", "transaural"]);
+const SPATIAL_MODES = new Set<OutputMode>(["binaural", "transaural", "apple_spatial"]);
 
 // First MODE_OPTIONS index outside the "Spatial audio" group (binaural,
 // transaural) — divider renders above it, no label needed for this second,
 // self-explanatory group (native, stereo mixdown).
-const GROUP_2_INDEX = MODE_OPTIONS.findIndex((option) => !SUBMENU_MODES.has(option.value));
+const GROUP_2_INDEX = MODE_OPTIONS.findIndex((option) => !SPATIAL_MODES.has(option.value));
 
 // Studio/Listening/Flat picker for the Spatial Audio Engine binaural render
 // (docs/standards/spatial_audio_engine.md), embedded as a submenu off the
@@ -62,6 +64,8 @@ export function OutputModeSelect({
   onSpatialProfileChange,
   transauralProfile,
   onTransauralProfileChange,
+  appleSpatialAvailable = false,
+  systemOutput = false,
 }: {
   value: OutputMode;
   onChange: (mode: OutputMode) => void;
@@ -76,6 +80,8 @@ export function OutputModeSelect({
   onSpatialProfileChange: (profile: SpatialProfile) => void;
   transauralProfile: TransauralProfile;
   onTransauralProfileChange: (profile: TransauralProfile) => void;
+  appleSpatialAvailable?: boolean;
+  systemOutput?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   const [menuFlip, setMenuFlip] = React.useState(false);
@@ -134,7 +140,9 @@ export function OutputModeSelect({
   // is current, so it is not a target of its own: with one real device left,
   // the picker would offer "System default" and its own duplicate.
   const selectableDevices = devices.filter((device) => device.deviceId !== "default");
-  const modeOptions = nativeOnly ? STEREO_MODE_OPTIONS : MODE_OPTIONS;
+  const modeOptions = nativeOnly
+    ? STEREO_MODE_OPTIONS
+    : MODE_OPTIONS.filter((option) => option.value !== "apple_spatial" || appleSpatialAvailable);
   const current = modeOptions.find((option) => option.value === value) ?? modeOptions[0];
   const CurrentIcon = current.icon;
   const currentProfile = PROFILE_OPTIONS.find((option) => option.value === spatialProfile) ?? PROFILE_OPTIONS[0];
@@ -289,7 +297,10 @@ export function OutputModeSelect({
           })}
         </div>
       )}
-      {value === "native" && selectableDevices.length > 1 && (
+      {systemOutput && (value === "native" || value === "apple_spatial") && (
+        <span className="text-[11px] text-muted-foreground">System output</span>
+      )}
+      {!systemOutput && value === "native" && selectableDevices.length > 1 && (
         <select
           aria-label="Output device"
           value={deviceId}

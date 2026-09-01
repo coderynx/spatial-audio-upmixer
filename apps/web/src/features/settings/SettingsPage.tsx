@@ -11,11 +11,13 @@ import { Toolbar, ToolbarSpacer } from "@/app/Toolbar";
 import { Workspace, WorkspaceScroll } from "@/app/Workspace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { useTheme } from "@/theme";
 import { cn } from "@/lib/utils";
+import { getServerUrl, normalizeServerUrl, saveServerUrl, useRuntime } from "@/runtime";
 
 type Section = "appearance" | "node" | "defaults";
 
@@ -52,9 +54,38 @@ export function SettingsPage({ configuration }: { configuration: Configuration |
   const [sample, setSample] = React.useState(0.62);
   const [sampleOn, setSampleOn] = React.useState(true);
   const { theme, setTheme } = useTheme();
+  const runtime = useRuntime();
+  const [nodeUrl, setNodeUrl] = React.useState(getServerUrl());
+  const [nodeStatus, setNodeStatus] = React.useState<string | null>(null);
+  const [testingNode, setTestingNode] = React.useState(false);
   useHeaderTitle(React.useMemo(() => <span className="text-[13px] font-semibold">Settings</span>, []));
   const stem = configuration?.capabilities.stem_separation;
   const choices = configuration?.choices;
+  const manifestKeys = configuration?.manifest_keys ?? {};
+
+  const testNode = async () => {
+    setTestingNode(true);
+    setNodeStatus(null);
+    try {
+      const base = normalizeServerUrl(nodeUrl);
+      const response = await fetch(`${base}/api/v1/configuration`);
+      if (!response.ok) throw new Error(`Server returned ${response.status}`);
+      setNodeStatus("Connected");
+    } catch (error) {
+      setNodeStatus(error instanceof Error ? error.message : "Connection failed");
+    } finally {
+      setTestingNode(false);
+    }
+  };
+
+  const saveNode = () => {
+    try {
+      saveServerUrl(nodeUrl);
+      window.location.reload();
+    } catch (error) {
+      setNodeStatus(error instanceof Error ? error.message : "Invalid URL");
+    }
+  };
 
   return (
     <Workspace
@@ -111,6 +142,13 @@ export function SettingsPage({ configuration }: { configuration: Configuration |
               <InspectorRow label="Platform" value={stem.platform} />
             </InspectorGroup>
           )}
+          {section === "node" && runtime.isTauri && (
+            <InspectorGroup title="Desktop audio">
+              <InspectorRow label="DSP" value={runtime.nativeDsp ? "Native" : "WASM fallback"} />
+              <InspectorRow label="Apple Spatial" value={runtime.appleSpatial ? "Available" : "Unavailable"} />
+              <InspectorRow label="Output" value="System output" />
+            </InspectorGroup>
+          )}
           {section === "defaults" && choices && (
             <InspectorGroup title="Counts">
               <InspectorRow label="Channel layouts" value={choices.channel_layouts.length} />
@@ -132,7 +170,7 @@ export function SettingsPage({ configuration }: { configuration: Configuration |
         </StatusBar>
       }
     >
-      {!configuration ? (
+      {!configuration && section !== "node" ? (
         <EmptyState icon={Cpu} title="Loading configuration…" />
       ) : section === "appearance" ? (
         <WorkspaceScroll className="grid auto-rows-min grid-cols-1 gap-2 p-3 2xl:grid-cols-2">
@@ -203,6 +241,32 @@ export function SettingsPage({ configuration }: { configuration: Configuration |
         </WorkspaceScroll>
       ) : section === "node" ? (
         <WorkspaceScroll className="space-y-2 p-3">
+          {runtime.isTauri && (
+            <Panel>
+              <PanelHeader title="Processing node" />
+              <PanelBody className="space-y-2">
+                <label className="block text-[11px] text-muted-foreground" htmlFor="processing-node-url">
+                  Server URL
+                </label>
+                <div className="flex gap-1.5">
+                  <Input
+                    id="processing-node-url"
+                    value={nodeUrl}
+                    onChange={(event) => setNodeUrl(event.target.value)}
+                    placeholder="http://127.0.0.1:8000"
+                    spellCheck={false}
+                  />
+                  <Button variant="outline" onClick={() => void testNode()} disabled={testingNode}>
+                    {testingNode ? "Testing" : "Test connection"}
+                  </Button>
+                  <Button onClick={saveNode}>Save</Button>
+                </div>
+                {nodeStatus && (
+                  <p role="status" className="text-[11px] text-muted-foreground">{nodeStatus}</p>
+                )}
+              </PanelBody>
+            </Panel>
+          )}
           <Panel>
             <PanelHeader title="Stem separation" />
             <PanelBody className="space-y-2">
@@ -242,11 +306,11 @@ export function SettingsPage({ configuration }: { configuration: Configuration |
           <ChoicePanel title="Bass profiles" values={choices?.bass_profiles} />
           <ChoicePanel title="Binaural profiles" values={choices?.binaural_profiles} />
           <Panel className="2xl:col-span-2">
-            <PanelHeader title={`Manifest keys · ${Object.keys(configuration.manifest_keys).length}`} />
+            <PanelHeader title={`Manifest keys · ${Object.keys(manifestKeys).length}`} />
             <PanelBody className="p-0">
               <table className="w-full text-left text-[13px]">
                 <tbody>
-                  {Object.entries(configuration.manifest_keys).map(([key, description]) => (
+                  {Object.entries(manifestKeys).map(([key, description]) => (
                     <tr key={key} className="border-b last:border-0">
                       <td className="whitespace-nowrap px-3 py-1 align-top font-mono text-[11px]">{key}</td>
                       <td className="px-3 py-1 text-[11px] text-muted-foreground">{description}</td>

@@ -24,6 +24,7 @@ import { MasteringSection } from "@/features/composer/sections/MasteringSection"
 import { isStereoLayout, outputModeForLayoutSwitch } from "@/lib/layouts";
 import { normalizeManifest, type Manifest, type StemDynamicEqSettings, type StemDynamicsSettings, type StemEqSettings } from "@/lib/manifest";
 import { isBedStem } from "@/lib/stems";
+import { useRuntime } from "@/runtime";
 import { AssetsTab } from "./assets/AssetsTab";
 import { KeyCommandsDialog } from "./KeyCommandsDialog";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
@@ -73,6 +74,7 @@ const COMMIT_DEBOUNCE_MS = 350;
 
 export function ProjectDetailPage({ configuration }: { configuration: Configuration | null }) {
   const { projectId } = useParams();
+  const runtime = useRuntime();
   const navigate = useNavigate();
   const [selectedStem, setSelectedStem] = React.useState<string | null>(null);
   const [draggedStem, setDraggedStem] = React.useState<string | null>(null);
@@ -559,10 +561,19 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           onSpatialProfileChange={setSpatialProfile}
           transauralProfile={transauralProfile}
           onTransauralProfileChange={setTransauralProfile}
+          appleSpatialAvailable={runtime.appleSpatial && !preview.fallbackReason}
+          systemOutput={runtime.isTauri}
         />
       </Transport>
     )}
     {error && <p className="flex-none border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
+    {(preview.fallbackReason || (outputMode === "apple_spatial" && !runtime.isTauri)) && (
+      <p className="flex-none border-b border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
+        {preview.fallbackReason
+          ? `Native audio unavailable — using WASM. ${preview.fallbackReason}`
+          : "Apple Spatial is desktop-only — using the saved binaural profile in this browser."}
+      </p>
+    )}
     {settingsView && manifest ? (
       <section className="min-h-0 flex-1 overflow-auto p-3">
         <ProjectSettingsSection
@@ -751,9 +762,12 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         value={
           outputMode === "binaural" ? `Binaural · ${spatialProfile}`
           : outputMode === "transaural" ? `Transaural · ${transauralProfile}`
+          : outputMode === "apple_spatial" ? (preview.fallbackReason || !runtime.isTauri ? `Binaural · ${spatialProfile}` : "Apple Spatial")
           : "Speakers"
         }
       />
+      <StatusSeparator />
+      <StatusCell label="Engine" value={preview.engineKind === "native" ? "Native DSP" : preview.fallbackReason ? "WASM fallback" : "WASM"} />
       <StatusSpacer />
       <StatusCell label="Transport" value={preview.playing ? "Playing" : preview.ready ? "Ready" : "Loading"} />
       <StatusSeparator />

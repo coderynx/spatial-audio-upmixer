@@ -5,7 +5,7 @@ import tseslint from "typescript-eslint";
 import globals from "globals";
 
 export default tseslint.config(
-  { ignores: ["dist", "node_modules", ".vite"] },
+  { ignores: ["dist", "node_modules", ".vite", "src-tauri/target"] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

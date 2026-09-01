@@ -187,7 +187,8 @@ function ChannelMetersImpl({
       // already show every discrete channel reaching the device. Binaural
       // and stereo both reserve +1 slot for the gap plus +2 for the group's
       // two bars.
-      const slots = currentMode === "native" ? order.length : order.length + 1 + 2;
+      const bedOutput = currentMode === "native" || currentMode === "apple_spatial";
+      const slots = bedOutput ? order.length : order.length + 1 + 2;
       const pitch = plotWidth / slots;
       const barWidth = Math.max(6, pitch * 0.7);
       const nextHits: HitTarget[] = [];
@@ -229,7 +230,7 @@ function ChannelMetersImpl({
       // (binaural or stereo downmix — whichever is live), independent of any
       // speaker mute. Native has no trailing group at all: the per-layout
       // bars above already are the discrete output.
-      if (currentMode !== "native") {
+      if (!bedOutput) {
         const dividerX = padLeft + (order.length + 0.5) * pitch;
         ctx.strokeStyle = canvasTheme.grid;
         ctx.beginPath();

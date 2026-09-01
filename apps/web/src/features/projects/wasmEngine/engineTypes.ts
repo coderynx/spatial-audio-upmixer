@@ -7,7 +7,7 @@ export function engineRef<T>(value: T): EngineRef<T> {
   return { current: value };
 }
 
-export type OutputMode = "binaural" | "transaural" | "stereo" | "native";
+export type OutputMode = "binaural" | "transaural" | "stereo" | "native" | "apple_spatial";
 
 export const POSITIONAL_CHANNELS = Object.keys(speakerCoordinates);
 
@@ -71,4 +71,5 @@ export type EngineCallbacks = {
   onVolume(volume: number): void;
   onMuted(muted: boolean): void;
   onLoop(loop: boolean): void;
+  onEngineStatus(kind: "native" | "wasm", fallbackReason: string | null): void;
 };

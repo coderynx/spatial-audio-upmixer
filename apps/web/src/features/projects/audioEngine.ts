@@ -12,6 +12,7 @@
 // method from the appropriate effect.
 
 import type { ProjectStem, StemScene } from "@/api";
+import { isTauriRuntime } from "@/runtime";
 import {
   applyTruePeakCeiling,
   bypassMatchDb,
@@ -31,10 +32,11 @@ import {
   resolveDeliveryTarget,
 } from "./masteringProfiles";
 import type { MasterPreview } from "./masterPreview";
+import { NativePreviewClient, type NativePreviewAssets, type NativeRenderer } from "./nativePreviewClient";
 import { DspEngineClient } from "./wasmEngine/engineClient";
 import { buildEngineParams } from "./wasmEngine/engineParams";
 import { LoudnessCalibration } from "./wasmEngine/calibration";
-import { FilterTapCache } from "./wasmEngine/filterTaps";
+import { FilterTapCache, withReferenceMatchParams } from "./wasmEngine/filterTaps";
 import {
   SILENT_MASTER_METERS,
   SILENT_METER_LEVEL,
@@ -74,7 +76,7 @@ export type { MasterMeters, MeterLevel, StemSpectrum } from "./wasmEngine/meters
 const CONTEXT_SAMPLE_RATE = 48000;
 
 export class PreviewAudioEngine {
-  readonly supported = Boolean(
+  readonly supported = isTauriRuntime || Boolean(
     window.AudioContext ||
       (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext,
   );
@@ -109,6 +111,9 @@ export class PreviewAudioEngine {
 
   private context: AudioContext | null = null;
   private client: DspEngineClient | null = null;
+  private nativeClient: NativePreviewClient | null = null;
+  private nativeFallback = !isTauriRuntime;
+  private nativeFailure: string | null = null;
   /** MONITOR domain: volume and mute, strictly after the rendered program. */
   private monitorGain: GainNode | null = null;
   private playing = false;
@@ -122,7 +127,9 @@ export class PreviewAudioEngine {
 
   private readonly taps = new FilterTapCache();
   private readonly calibration = new LoudnessCalibration({
-    measure: (weights, requestId) => this.client?.measure(weights, requestId) ?? Promise.resolve(null),
+    measure: (weights, requestId) => this.nativeClient?.measure(weights, requestId)
+      ?? this.client?.measure(weights, requestId)
+      ?? Promise.resolve(null),
     onMeasuring: (measuring) => this.callbacks.onMeasuring(measuring),
     onProgress: (progress) => this.callbacks.onMeasureProgress(progress),
   });
@@ -166,10 +173,15 @@ export class PreviewAudioEngine {
   toggleLoop() {
     this.loop = !this.loop;
     this.callbacks.onLoop(this.loop);
+    this.nativeClient?.setTransport({ loop: this.loop });
     this.client?.setTransport({ loop: this.loop });
   }
 
   private applyMonitorGain() {
+    if (this.nativeClient) {
+      this.nativeClient.setMonitor(this.volume, this.muted);
+      return;
+    }
     if (!this.monitorGain || !this.context) return;
     const target = this.muted ? 0 : this.volume;
     this.monitorGain.gain.setTargetAtTime(target, this.context.currentTime, 0.008);
@@ -184,8 +196,8 @@ export class PreviewAudioEngine {
   }
 
   async playFrom(time: number): Promise<boolean> {
-    if (!this.client || !this.context) return false;
-    if (this.context.state === "suspended") await this.context.resume();
+    if (!this.nativeClient && (!this.client || !this.context)) return false;
+    if (this.context?.state === "suspended") await this.context.resume();
     // Loudness calibration is mandatory: a mode/profile combination that
     // hasn't been measured yet has no valid `outputGain`, so refuse to start
     // rather than play at whatever gain happened to be left over from a
@@ -197,7 +209,8 @@ export class PreviewAudioEngine {
     this.currentTimeRef.current = frame / CONTEXT_SAMPLE_RATE;
     this.callbacks.onCurrentTime(this.currentTimeRef.current);
     this.playing = true;
-    this.client.start(frame, this.loop);
+    this.nativeClient?.start(frame, this.loop);
+    this.client?.start(frame, this.loop);
     this.callbacks.onPlaying(true);
     return true;
   }
@@ -205,6 +218,7 @@ export class PreviewAudioEngine {
   pause() {
     this.playing = false;
     this.apply();
+    this.nativeClient?.setTransport({ playing: false });
     this.client?.setTransport({ playing: false });
     this.callbacks.onPlaying(false);
     this.callbacks.onCurrentTime(this.currentTimeRef.current);
@@ -239,7 +253,8 @@ export class PreviewAudioEngine {
     const clamped = Math.max(0, Math.min(time, this.duration));
     this.currentTimeRef.current = clamped;
     this.callbacks.onCurrentTime(clamped);
-    await this.client?.seek(clamped * CONTEXT_SAMPLE_RATE);
+    await (this.nativeClient?.seek(clamped * CONTEXT_SAMPLE_RATE)
+      ?? this.client?.seek(clamped * CONTEXT_SAMPLE_RATE));
     return clamped;
   }
 
@@ -249,10 +264,12 @@ export class PreviewAudioEngine {
     this.currentTimeRef.current = clamped;
     this.callbacks.onCurrentTime(clamped);
     if (wasPlaying) {
+      this.nativeClient?.start(clamped * CONTEXT_SAMPLE_RATE, this.loop);
       this.client?.start(clamped * CONTEXT_SAMPLE_RATE, this.loop);
       return;
     }
-    await this.client?.seek(clamped * CONTEXT_SAMPLE_RATE);
+    await (this.nativeClient?.seek(clamped * CONTEXT_SAMPLE_RATE)
+      ?? this.client?.seek(clamped * CONTEXT_SAMPLE_RATE));
   }
 
   beginScrub() {
@@ -280,6 +297,11 @@ export class PreviewAudioEngine {
   }
 
   async syncProgram() {
+    if (this.nativeClient) {
+      this.apply();
+      if (!this.playing) await this.measureIfNeeded();
+      return;
+    }
     if (!this.loaded && !this.spatialLoadFailed) return;
     const key = this.programKey;
     try {
@@ -329,6 +351,7 @@ export class PreviewAudioEngine {
 
   private decodeProfile(): SpatialProfile | null {
     if (this.outputMode === "transaural") return "flat";
+    if (this.outputMode === "apple_spatial" && this.nativeFallback) return this.spatialProfile;
     return this.outputMode === "binaural" ? this.spatialProfile : null;
   }
 
@@ -381,8 +404,12 @@ export class PreviewAudioEngine {
   }
 
   apply() {
-    if (!this.client || !this.constants) return;
-    this.client.updateParams(this.buildParams());
+    if (!this.constants) return;
+    if (this.nativeClient) {
+      this.nativeClient.updateParams(this.buildParams(), this.nativeAssets(), this.nativeRenderer());
+    } else {
+      this.client?.updateParams(this.buildParams());
+    }
   }
 
   private buildParams() {
@@ -434,7 +461,9 @@ export class PreviewAudioEngine {
       lkfs: measured.monitorLkfs ?? measured.lkfs,
       dbtp: measured.monitorDbtp ?? measured.dbtp,
     };
-    const monitorOutputGain = objectAuthored && this.outputMode !== "native"
+    const bedOutput = this.outputMode === "native"
+      || (this.outputMode === "apple_spatial" && !this.nativeFallback);
+    const monitorOutputGain = objectAuthored && !bedOutput
       ? normalize
         ? correctionGain(
             {
@@ -453,10 +482,10 @@ export class PreviewAudioEngine {
       : 1;
     const deliveredGainDb = sourceGainDb + 20 * Math.log10(monitorOutputGain);
     this.publishLoudness({
-      integratedLkfs: objectAuthored && this.outputMode !== "native"
+      integratedLkfs: objectAuthored && !bedOutput
         ? monitorMeasured.lkfs + deliveredGainDb
         : measured.lkfs + 20 * Math.log10(correction),
-      truePeakDbtp: objectAuthored && this.outputMode !== "native"
+      truePeakDbtp: objectAuthored && !bedOutput
         ? monitorMeasured.dbtp + deliveredGainDb
         : measured.dbtp + 20 * Math.log10(correction),
       targetLkfs: target,
@@ -501,7 +530,9 @@ export class PreviewAudioEngine {
         monitorOutputGain,
         limiterCeilingDbtp: delivery.max_tp_dbtp,
       },
-      outputMode: this.outputMode,
+      outputMode: this.outputMode === "apple_spatial"
+        ? (this.nativeFallback ? "binaural" : "native")
+        : this.outputMode,
       spatialProfile: this.spatialProfile,
       transauralProfile: this.transauralProfile,
       meterWeights: this.measureWeights(),
@@ -558,16 +589,33 @@ export class PreviewAudioEngine {
    * a native bed wider than 5.1, where the 5.1 re-render it measures instead
    * fixes its own weights (`docs/standards/loudness_dsp_bs1770.md`). */
   private measureWeights(): number[] {
-    if (this.outputMode !== "native") return [1, 1];
+    if (this.outputMode !== "native" && !(this.outputMode === "apple_spatial" && !this.nativeFallback)) {
+      return [1, 1];
+    }
     return this.layoutChannels.map(loudnessWeight);
   }
 
   private async measureIfNeeded() {
-    if (!this.client || !this.loaded) return;
+    if ((!this.client && !this.nativeClient) || !this.loaded) return;
     await this.calibration.ensure(this.measureKey(), this.measureWeights());
   }
 
   async initialize(): Promise<void> {
+    if (!this.supported || !this.constants) return;
+    if (isTauriRuntime && !this.nativeFallback) {
+      try {
+        await this.initializeNative();
+        return;
+      } catch (error) {
+        this.nativeFallback = true;
+        this.nativeFailure = error instanceof Error ? error.message : "Native preview failed";
+        this.callbacks.onEngineStatus("wasm", this.nativeFailure);
+      }
+    }
+    await this.initializeWeb();
+  }
+
+  private async initializeWeb(): Promise<void> {
     if (!this.supported || !this.constants) return;
     this.reset();
     const token = ++this.loadToken;
@@ -654,6 +702,7 @@ export class PreviewAudioEngine {
       this.apply();
       this.loaded = true;
       this.spatialLoadFailed = false;
+      this.callbacks.onEngineStatus("wasm", this.nativeFailure);
       this.callbacks.onReady(true);
       await this.measureIfNeeded();
     } catch (error) {
@@ -662,6 +711,101 @@ export class PreviewAudioEngine {
         this.callbacks.onError(error instanceof Error ? error.message : "Preview failed to load");
       }
     }
+  }
+
+  private async initializeNative(): Promise<void> {
+    if (!this.constants) return;
+    this.reset();
+    const token = ++this.loadToken;
+    this.loaded = false;
+    this.callbacks.onError(null);
+    this.callbacks.onReady(false);
+    this.callbacks.onLoadProgress(0);
+    const sources = this.previewableStems().map((stem) => ({
+      key: stem.stem_key,
+      url: (stem.preview_url || stem.audio_url)!,
+      channels: stem.channels,
+    }));
+    let ready = false;
+    const client = await NativePreviewClient.create({
+      sources,
+      params: this.buildParams(),
+      assets: this.nativeAssets(),
+      renderer: this.nativeRenderer(),
+      onMaxChannels: (channels) => this.callbacks.onMaxChannels(channels),
+      onLoadProgress: (progress) => this.callbacks.onLoadProgress(progress),
+    }, {
+      onFrame: (frame) => this.onFrame(frame),
+      onEnded: () => this.onEnded(),
+      onLoaded: (frames) => {
+        this.duration = frames / CONTEXT_SAMPLE_RATE;
+        this.callbacks.onDuration(this.duration);
+      },
+      onMeasureProgress: (progress) => this.callbacks.onMeasureProgress(progress),
+      onMeasured: (result, requestId) => {
+        if (this.calibration.refine(result, requestId)) this.apply();
+      },
+      onError: (message) => {
+        if (ready) void this.fallbackToWeb(message);
+      },
+    });
+    this.nativeClient = client;
+    await client.ready;
+    if (token !== this.loadToken) {
+      client.dispose();
+      return;
+    }
+    ready = true;
+    this.loaded = true;
+    this.nativeFallback = false;
+    this.nativeFailure = null;
+    this.applyMonitorGain();
+    this.callbacks.onEngineStatus("native", null);
+    this.callbacks.onReady(true);
+    await this.measureIfNeeded();
+  }
+
+  private async fallbackToWeb(message: string) {
+    if (!this.nativeClient) return;
+    const time = this.currentTimeRef.current;
+    const wasPlaying = this.playing;
+    this.nativeFallback = true;
+    this.nativeFailure = message;
+    this.callbacks.onEngineStatus("wasm", message);
+    await this.initializeWeb();
+    await this.seek(time);
+    if (wasPlaying) await this.playFrom(time);
+  }
+
+  private nativeRenderer(): NativeRenderer {
+    return this.outputMode === "apple_spatial" ? "apple_spatial" : "direct";
+  }
+
+  private nativeAssets(): NativePreviewAssets {
+    const decodeProfile = this.decodeProfile();
+    const eqProfile = this.mastering?.eq?.profile;
+    const reference = this.mastering?.match_reference;
+    const strength = reference?.strength ?? 1;
+    const referenceFirUrl = reference?.spectrum && reference.fir_url && strength > 0
+      ? withReferenceMatchParams(
+          reference.fir_url,
+          strength,
+          reference.max_db ?? 6,
+          reference.smooth_octaves,
+          reference.low_hz,
+          reference.high_hz,
+        )
+      : undefined;
+    return {
+      decodeAsset: decodeProfile ? this.constants.decodeFilterSet[decodeProfile] : undefined,
+      xtcAsset: this.outputMode === "transaural"
+        ? this.constants.xtcFilterSet[this.transauralProfile]
+        : undefined,
+      masterEqAsset: eqProfile
+        ? this.constants.eqFirAssets[eqProfile as keyof typeof this.constants.eqFirAssets]
+        : undefined,
+      referenceFirUrl,
+    };
   }
 
   private async loadStems(token: number, context: AudioContext, client: DspEngineClient) {
@@ -749,6 +893,8 @@ export class PreviewAudioEngine {
     this.taps.resetPerProject();
     this.client?.dispose();
     this.client = null;
+    this.nativeClient?.dispose();
+    this.nativeClient = null;
     this.monitorGain?.disconnect();
     this.monitorGain = null;
     const context = this.context;

@@ -56,7 +56,8 @@ uv run pytest packages/core/tests apps/api/tests apps/cli/tests -q
 Run `uv run pytest packages/core/tests -m perf -s` for opt-in performance or
 real-model checks. For audio-output changes, also run focused CLI or package
 tests and report what output was verified. For web work, run `npm test` and
-`npm run build` in `apps/web`.
+`npm run build` in `apps/web`; on macOS also run `npm run tauri:build`. CI
+builds the desktop bundle on every change.
 
 ## Review and delivery
 

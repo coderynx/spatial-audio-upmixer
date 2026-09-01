@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { ProjectStem, StemScene } from "@/api";
 import { speakerCoordinates } from "@/lib/spatial";
+import { isTauriRuntime } from "@/runtime";
 import type { EngineConstants, SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import type { MasterPreview } from "./masterPreview";
 import {
@@ -98,6 +99,10 @@ export function useStemPreview(
   const [maxChannels, setMaxChannels] = React.useState(2);
   const [outputDevices, setOutputDevices] = React.useState<MediaDeviceInfo[]>([]);
   const [outputDeviceId, setOutputDeviceIdState] = React.useState("");
+  const [engineKind, setEngineKind] = React.useState<"native" | "wasm">(
+    isTauriRuntime ? "native" : "wasm",
+  );
+  const [fallbackReason, setFallbackReason] = React.useState<string | null>(null);
   // Per-speaker mute state — independent of stem mute/solo, since the
   // renderer input is the channel bed, not the stems.
   // "LFE" is included even though it has no ambisonic bus.
@@ -131,6 +136,10 @@ export function useStemPreview(
       onVolume: setVolumeState,
       onMuted: setMutedState,
       onLoop: setLoop,
+      onEngineStatus: (kind, reason) => {
+        setEngineKind(kind);
+        setFallbackReason(reason);
+      },
     };
     engineRef.current = new PreviewAudioEngine(callbacks);
   }
@@ -209,6 +218,7 @@ export function useStemPreview(
   }, []);
 
   React.useEffect(() => {
+    if (isTauriRuntime) return;
     if (!navigator.mediaDevices?.enumerateDevices) return;
     let cancelled = false;
     const load = () => {
@@ -308,5 +318,7 @@ export function useStemPreview(
     outputDevices,
     outputDeviceId,
     setOutputDeviceId,
+    engineKind,
+    fallbackReason,
   };
 }

@@ -5,7 +5,8 @@ The web application is an additional delivery surface around the existing `upmix
 ## Components
 
 - `apps/api/` (`upmixer_web/`) exposes a versioned FastAPI API and OpenAPI document.
-- `apps/web/` is a React and shadcn/ui client. It does not contain processing logic.
+- `apps/web/` is a React and shadcn/ui client shared by the browser and macOS Tauri hosts. DSP stays in
+  `packages/dsp`; the delivery layer only adapts transport and native output.
 - SQLAlchemy persists imports, jobs, per-track progress, and artifacts. SQLite is the default; install the `web-postgres` extra and supply a PostgreSQL URL without changing repositories or models.
 - `ObjectStorage`, `AudioSource`, and `AudioSink` isolate blob access. The first implementation uses local disk. An S3 implementation can materialize sources into worker scratch space and upload sink outputs without changing job orchestration.
 - `WorkerManager` recovers interrupted jobs and bounds processing concurrency. Each job's actual pipeline work (`StemUpmixPipeline.process_file`, including stem separation and mastering) runs in an isolated child process via `apps/api/src/worker/subprocess.py`, so a native crash (OS OOM-kill, CUDA/MPS driver crash, segfault) in that code fails only the one job, not the server. Progress and completion are relayed back over a queue; pause/delete requests terminate the child process.
@@ -20,7 +21,7 @@ Source files live under `imports/{import_id}` and outputs under `jobs/{job_id}`.
 
 Waveform envelopes for the editor timeline are precomputed server-side while stems are catalogued, from the samples the preview proxy encode already holds in memory, and stored as one `peaks.bin` plus a `peaks.json` sidecar per track. Projects catalogued before peaks existed are backfilled from their preview proxies on a dedicated single-thread executor that coalesces repeat requests, the same scheduling shape `prepare_reference_match` uses; `ProjectView.peaks_pending` reports that state so the browser polls only until the asset lands.
 
-The project editor renders an immediate stereo headphone preview alongside a live 3D source view (see "Preview audio engine" below for how). Browser preview code is delivery-layer behavior; separation and exports continue through `StemUpmixPipeline`.
+The project editor renders an immediate preview alongside a live 3D source view (see "Preview audio engine" below for how). Preview host code is delivery-layer behavior; separation and exports continue through `StemUpmixPipeline`.
 
 Deleting a job removes its outputs and database records. Shared source imports and stem cache entries remain because other jobs may reference them. Future storage management can add reference-counted import and cache eviction without changing job deletion semantics.
 
@@ -47,12 +48,15 @@ Interactive docs are served at `/api/docs`; the OpenAPI document is `/api/v1/ope
 
 ## Preview audio engine
 
-The preview does not send audio to the backend, and it no longer
-re-implements the DSP either. `apps/web/public/dsp.worklet.js` hosts the
-shared Rust core (`packages/dsp`) compiled to WebAssembly and renders the
-whole mastered speaker bed itself — routing, mastering, and the
-binaural/transaural/stereo collapse. Web Audio is left with decoding, one
-node, a monitor gain, and the destination.
+The preview no longer re-implements the DSP. Both hosts run the shared Rust
+core (`packages/dsp`) and render the whole mastered speaker bed locally —
+routing, mastering, and the selected monitor renderer. In a browser,
+`apps/web/public/dsp.worklet.js` runs the core as WebAssembly and Web Audio
+owns decoding and output. In Tauri, `src-tauri` runs the core as native Rust,
+decodes and resamples stems to 48 kHz, and streams the finished bed to PHASE.
+Apple Spatial Audio is desktop-only; the other monitor modes remain available
+in both hosts. Native startup failures are visible and fall back to the WASM
+engine without changing the saved project mix.
 
 The worklet is the *source*, not an insert: the decoded stems live in the
 wasm heap, so the engine always knows its input ahead of the playhead. That
@@ -62,8 +66,8 @@ minimum both get a queue in front of them, and nothing is emitted until its
 full look-ahead exists. See `packages/dsp/crates/dsp-core/src/stream/`.
 
 `audioEngine.ts` has no React import — it is the framework-free layer that
-owns the `AudioContext`, the transport, and the translation from a project's
-mix into the core's parameter block; `useStemPreview.ts` binds it to React
+selects the native or Web Audio host, owns transport, and translates a
+project's mix into the core's parameter block; `useStemPreview.ts` binds it to React
 state. Every "the mix changed" path — mute, solo, rebalance, routing, stem
 EQ, mastering, speaker mute, output mode, spatial and transaural profile —
 resolves to one parameter block and one message. There is no per-control
@@ -78,8 +82,8 @@ normalized shape the parameter builders consume. `resolveEngineConstants`
 maps between them, and is the only place voicing params get their
 snake_case → camelCase rename.
 
-**Preview module layout.** `audioEngine.ts` keeps the context, transport and
-monitor path; the pieces it delegates to live under
+**Preview module layout.** `audioEngine.ts` keeps transport and host selection;
+`nativePreviewClient.ts` adapts the Tauri command/channel protocol. The browser pieces live under
 `src/features/projects/wasmEngine/` — `engineClient.ts` (worklet messaging),
 `engineParams.ts` + `stemMix.ts` (mix → parameter block), `filterAssets.ts` +
 `filterTaps.ts` (FIR fetch and per-profile tap cache), `stemLoader.ts`
@@ -90,9 +94,9 @@ Stem preview proxies are versioned by stem generation and preview quality and
 served with a long-lived private browser-cache policy. Re-preparing stems
 rewrites those proxies before publishing the next generation.
 
-**Sample rate.** The context is pinned to 48 kHz. Every shipped FIR (HRIR,
-XTC, EQ) is designed at that rate, and the previous graph reinterpreted those
-taps at whatever rate the device happened to run.
+**Sample rate.** Both hosts render at 48 kHz. Every shipped FIR (HRIR, XTC,
+EQ) is designed at that rate. The native host resamples decoded sources before
+they enter the engine.
 
 **Gain domains.** The core's output carries the PROGRAM domain — what a
 bounce of the same parameters would contain, including the loudness and
@@ -109,8 +113,9 @@ the gain once it lands in the background (see
 `docs/contracts/preview_export_parity.md` P3). The measurement runs against
 an uncorrected render, so a previous correction cannot fold into the next one.
 
-**Filter assets.** The decode banks, XTC matrices, and EQ FIRs still ship as
-WAVs under `apps/web/public/` and are handed to the core as taps; only the
+**Filter assets.** The decode banks, XTC matrices, and EQ FIRs ship as WAVs
+under `apps/web/public/` and are handed to the core as taps; Tauri bundles the
+same files as app resources. Only the
 asset *names* are served (`GET /api/v1/configuration`). The wasm artifact
 itself lives at `apps/web/public/wasm/upmixer_dsp.wasm` and is committed, so
 a frontend checkout needs no Rust toolchain — rebuild it with `npm run
@@ -123,6 +128,9 @@ Dolby Encoding Engine integration belongs after `StorageAudioSink`. A future enc
 ## Reverse proxy
 
 Uvicorn trusts only `UPMIXER_FORWARDED_ALLOW_IPS`. Set it to the proxy address or network, not `*`, in exposed deployments. Set `UPMIXER_ROOT_PATH` when the proxy publishes the application beneath a path prefix. The frontend uses same-origin relative API URLs.
+The API permits the packaged macOS app's `tauri://localhost` origin and its
+`http://localhost:5173` Vite development origin by default;
+`UPMIXER_ALLOWED_ORIGINS` adds browser origins for other cross-origin deployments.
 
 ## Local development
 

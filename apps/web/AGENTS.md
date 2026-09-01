@@ -12,3 +12,6 @@ only `src/lib/canvasTheme.ts` (instrument displays) and `src/lib/stems.ts`
 After a `packages/dsp` change, run `npm run build:wasm` and
 `npm run bench:engine`. The committed artifact must match the Python binding,
 and preview work must retain the audio-thread budget.
+
+After any `apps/web` change, run `npm test`, `npm run build`, and
+`npm run tauri:build` on macOS. CI builds the desktop bundle on every change.

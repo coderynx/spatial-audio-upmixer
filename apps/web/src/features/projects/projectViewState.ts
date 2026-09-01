@@ -31,7 +31,7 @@ const DEFAULT_VIEW_STATE: ProjectViewState = {
   elevationIntensity: 0.5,
 };
 
-const OUTPUT_MODES: OutputMode[] = ["binaural", "transaural", "stereo", "native"];
+const OUTPUT_MODES: OutputMode[] = ["binaural", "transaural", "stereo", "native", "apple_spatial"];
 const SPATIAL_PROFILES: SpatialProfile[] = ["studio", "listening", "flat"];
 const TRANSAURAL_PROFILES: TransauralProfile[] = ["stereo", "smart_speaker", "car", "laptop", "phone"];
 const SPATIAL_VIEWS: SpatialView[] = ["haze", "elevation", "scene"];

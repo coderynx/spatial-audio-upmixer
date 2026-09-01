@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build --bundles app",
     "build:wasm": "cargo build --release --target wasm32-unknown-unknown --manifest-path ../../packages/dsp/crates/dsp-wasm/Cargo.toml && mkdir -p public/wasm && wasm-opt -O3 --enable-simd --strip-debug ../../packages/dsp/target/wasm32-unknown-unknown/release/upmixer_dsp_wasm.wasm -o public/wasm/upmixer_dsp.wasm",
     "lint": "eslint .",
     "test": "vitest run",
@@ -13,6 +16,7 @@
     "bench:engine": "node scripts/bench-preview-engine.mjs"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
     "@radix-ui/react-dialog": "^1.1.6",
     "@radix-ui/react-label": "^2.1.2",
     "@radix-ui/react-select": "^2.1.6",
@@ -30,6 +34,7 @@
     "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "@eslint/js": "^9.17.0",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",

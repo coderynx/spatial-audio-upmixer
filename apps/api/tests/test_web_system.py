@@ -13,6 +13,19 @@ def test_local_storage_rejects_parent_path(tmp_path):
         storage.local_path("../escape.wav")
 
 
+@pytest.mark.parametrize("origin", ["tauri://localhost", "http://localhost:5173"])
+def test_desktop_origin_can_reach_the_api(web_client, origin):
+    response = web_client.options(
+        "/api/v1/configuration",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+
+    assert response.headers["access-control-allow-origin"] == origin
+
+
 def test_configuration_lists_every_stem_and_runtime_capability(web_client):
     response = web_client.get("/api/v1/configuration")
     assert response.status_code == 200

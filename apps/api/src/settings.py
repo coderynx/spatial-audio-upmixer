@@ -7,6 +7,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+TAURI_ORIGIN = "tauri://localhost"
+TAURI_DEV_ORIGIN = "http://localhost:5173"
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -16,7 +19,7 @@ class Settings:
     database_url: str
     worker_count: int = 1
     root_path: str = ""
-    allowed_origins: tuple[str, ...] = ()
+    allowed_origins: tuple[str, ...] = (TAURI_ORIGIN, TAURI_DEV_ORIGIN)
     frontend_dir: Path | None = None
 
     @classmethod
@@ -26,7 +29,7 @@ class Settings:
             "UPMIXER_DATABASE_URL",
             f"sqlite:///{data_dir / 'upmixer.db'}",
         )
-        origins = tuple(
+        origins = (TAURI_ORIGIN, TAURI_DEV_ORIGIN) + tuple(
             item.strip()
             for item in os.getenv("UPMIXER_ALLOWED_ORIGINS", "").split(",")
             if item.strip()

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { OutputModeSelect } from "./OutputModeSelect";
 
@@ -50,5 +50,22 @@ describe("OutputModeSelect", () => {
       "Speakers",
       "Headphones",
     ]);
+  });
+
+  it("shows Apple Spatial only when the desktop capability is available", () => {
+    const view = renderSelect();
+    fireEvent.click(screen.getByRole("button", { name: /Preview output mode/ }));
+    expect(screen.queryByRole("button", { name: "Apple Spatial" })).not.toBeInTheDocument();
+    view.unmount();
+
+    renderSelect({ appleSpatialAvailable: true });
+    fireEvent.click(screen.getByRole("button", { name: /Preview output mode/ }));
+    expect(screen.getByRole("button", { name: "Apple Spatial" })).toBeInTheDocument();
+  });
+
+  it("uses the macOS system output instead of a desktop device picker", () => {
+    renderSelect({ systemOutput: true, devices: [device("abc", "Speakers"), device("def", "Headphones")] });
+    expect(screen.getByText("System output")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Output device" })).not.toBeInTheDocument();
   });
 });
