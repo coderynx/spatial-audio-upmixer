@@ -84,12 +84,9 @@ pub fn decode(bytes: Vec<u8>, extension: Option<&str>) -> Result<DecodedAudio, S
 }
 
 pub fn stereo_48k(decoded: DecodedAudio) -> Result<[Vec<f32>; 2], String> {
-    let left = decoded.channels[0].clone();
-    let right = decoded
-        .channels
-        .get(1)
-        .cloned()
-        .unwrap_or_else(|| left.clone());
+    let mut channels = decoded.channels.into_iter();
+    let left = channels.next().expect("decode rejects empty audio");
+    let right = channels.next().unwrap_or_else(|| left.clone());
     if decoded.sample_rate == 48_000 {
         return Ok([left, right]);
     }

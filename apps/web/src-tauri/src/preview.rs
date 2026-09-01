@@ -22,6 +22,7 @@ use crate::decode::{decode, stereo_48k};
 const SAMPLE_RATE: usize = 48_000;
 const QUANTUM: usize = 512;
 const REPORT_BLOCKS: usize = 3;
+const STEM_LOAD_CONCURRENCY: usize = 3;
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -199,33 +200,32 @@ impl Session {
         let params = parse_params(request.params)?;
         let mut engine = PreviewEngine::new(SAMPLE_RATE as u32, params, Vec::new());
         let total = request.sources.len().max(1);
-        for (index, source) in request.sources.iter().enumerate() {
-            if !matches!(source.channels, 1 | 2) {
-                return Err(format!(
-                    "Stem '{}' has an unsupported channel count",
-                    source.key
-                ));
+        let mut loaded = 0;
+        for sources in request.sources.chunks(STEM_LOAD_CONCURRENCY) {
+            let stems = thread::scope(|scope| {
+                sources
+                    .iter()
+                    .map(|source| {
+                        let client = client.clone();
+                        let server_base = &server_base;
+                        scope.spawn(move || load_stem(&client, server_base, source))
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .map(|handle| {
+                        handle
+                            .join()
+                            .map_err(|_| "Native stem loader stopped unexpectedly".to_string())?
+                    })
+                    .collect::<Result<Vec<_>, String>>()
+            })?;
+            for stem in stems {
+                engine.push_stem(stem);
+                loaded += 1;
+                let _ = events.send(NativeEvent::LoadProgress {
+                    progress: loaded as f64 / total as f64,
+                });
             }
-            let url = checked_url(&server_base, &source.url)?;
-            let response = client
-                .get(url.clone())
-                .send()
-                .and_then(reqwest::blocking::Response::error_for_status)
-                .map_err(|error| format!("Could not download '{}': {error}", source.key))?;
-            let bytes = response
-                .bytes()
-                .map_err(|error| format!("Could not read '{}': {error}", source.key))?;
-            let extension = Path::new(url.path())
-                .extension()
-                .and_then(|value| value.to_str());
-            let stereo = stereo_48k(decode(bytes.to_vec(), extension)?)?;
-            engine.push_stem(StemSource {
-                left: stereo[0].clone(),
-                right: stereo[1].clone(),
-            });
-            let _ = events.send(NativeEvent::LoadProgress {
-                progress: (index + 1) as f64 / total as f64,
-            });
         }
         load_assets(
             &client,
@@ -534,6 +534,33 @@ impl Session {
             }
         }
     }
+}
+
+fn load_stem(
+    client: &Client,
+    server_base: &Url,
+    source: &NativeSource,
+) -> Result<StemSource, String> {
+    if !matches!(source.channels, 1 | 2) {
+        return Err(format!(
+            "Stem '{}' has an unsupported channel count",
+            source.key
+        ));
+    }
+    let url = checked_url(server_base, &source.url)?;
+    let response = client
+        .get(url.clone())
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|error| format!("Could not download '{}': {error}", source.key))?;
+    let bytes = response
+        .bytes()
+        .map_err(|error| format!("Could not read '{}': {error}", source.key))?;
+    let extension = Path::new(url.path())
+        .extension()
+        .and_then(|value| value.to_str());
+    let [left, right] = stereo_48k(decode(bytes.to_vec(), extension)?)?;
+    Ok(StemSource { left, right })
 }
 
 fn parse_params(value: Value) -> Result<EngineParams, String> {
