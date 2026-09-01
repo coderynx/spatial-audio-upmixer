@@ -420,7 +420,6 @@ def test_an_ambient_send_is_ignored_by_a_layout_without_that_class():
 
 
 def test_the_zone_key_beats_the_stem_name_for_an_ambient_send():
-    stems = {"Other@surround": _reverberant()}
     router = _router(
         stem_ambient_rear={"Other": 0.0, "Other@surround": 0.8},
     )

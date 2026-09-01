@@ -7,7 +7,6 @@ from upmixer.formats import FORMAT_MAP, INPUT_FORMAT_MAP
 
 from .args_mastering import add_mastering_args
 from .args_stems import add_stem_args
-from .args_types import positive_float
 
 _INPUT_FORMAT_CHOICES = sorted(INPUT_FORMAT_MAP.keys())
 _OUTPUT_FORMAT_CHOICES = list(FORMAT_MAP)

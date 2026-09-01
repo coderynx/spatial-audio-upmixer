@@ -53,21 +53,40 @@ const PARAMS = {
 };
 
 type Posted = { type: string; [key: string]: unknown };
+type WorkletMessage = { data: unknown };
+type WorkletProcessor = {
+  port: { onmessage: (message: WorkletMessage) => void };
+  process(input: Float32Array[][], output: Float32Array[][]): void;
+  measurePass: number;
+  scalePass: number;
+  primedFrames: number;
+  wasm: { dsp_measure_progress(pass: number): number };
+};
+type WorkletProcessorConstructor = new (options: {
+  processorOptions: { module: WebAssembly.Module; channelCount: number };
+}) => WorkletProcessor;
 
 /** The worklet as the browser loads it: a bare script that registers a class
  * against three globals an AudioWorkletGlobalScope provides. */
-function loadProcessor(): { processor: any; posted: Posted[] } {
+function loadProcessor(): { processor: WorkletProcessor; posted: Posted[] } {
   const posted: Posted[] = [];
   class Base {
-    port = { postMessage: (message: Posted) => posted.push(message), onmessage: null as any };
+    port = {
+      postMessage: (message: Posted) => posted.push(message),
+      onmessage: null as ((message: WorkletMessage) => void) | null,
+    };
   }
-  let Processor: any;
+  let Processor: WorkletProcessorConstructor | undefined;
   new Function(
     "AudioWorkletProcessor",
     "registerProcessor",
     "sampleRate",
     SOURCE,
-  )(Base, (_name: string, cls: unknown) => (Processor = cls), SAMPLE_RATE);
+  )(Base, (_name: string, cls: unknown) => {
+    Processor = cls as WorkletProcessorConstructor;
+  }, SAMPLE_RATE);
+
+  if (!Processor) throw new Error("worklet processor did not register");
 
   const processor = new Processor({
     processorOptions: { module: new WebAssembly.Module(WASM), channelCount: CHANNELS },
@@ -86,7 +105,7 @@ function loadProcessor(): { processor: any; posted: Posted[] } {
 
 /** One paused render callback, which is where both background passes are
  * advanced from. */
-function quantum(processor: any, elapsed = QUANTUM / SAMPLE_RATE): void {
+function quantum(processor: WorkletProcessor, elapsed = QUANTUM / SAMPLE_RATE): void {
   workletTime += elapsed;
   processor.process([], [Array.from({ length: CHANNELS }, () => new Float32Array(QUANTUM))]);
 }

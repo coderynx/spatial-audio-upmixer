@@ -347,7 +347,7 @@ def test_audit_binaural_qc_programme() -> None:
     constant on every export, which is why the QC row measures the artifact
     ``render_binaural_delivery`` produces instead.
     """
-    from upmixer.binaural.renderer import render_binaural, render_binaural_delivery
+    from upmixer.binaural.renderer import render_binaural
     from upmixer.formats import BINAURAL
     from upmixer.loudness import measure_integrated_loudness
 

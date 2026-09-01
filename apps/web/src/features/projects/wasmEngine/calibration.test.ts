@@ -58,7 +58,7 @@ describe("LoudnessCalibration", () => {
   });
 
   it("keeps the programme running while a pass is in flight", async () => {
-    const { calibration, ensure, state } = harness({ "native:mastered": MASTERED });
+    const { ensure, state } = harness({ "native:mastered": MASTERED });
     await ensure("native:mastered");
     expect(state.measuring).toEqual([true, false]);
   });

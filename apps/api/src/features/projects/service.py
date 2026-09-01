@@ -24,6 +24,7 @@ from upmixer_web.features.projects.layouts import (
     track_layouts,
     track_prepare_overrides,
 )
+from upmixer_web.features.projects.deletion import mark_project_deleting as _mark_project_deleting
 from upmixer_web.features.projects.routing import merge_scene, routing_for_scene
 from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS, ProjectStemStorage
 from upmixer_web.shared.manifests import normalize_job_manifest
@@ -595,16 +596,5 @@ def reprepare_project_stems(
 
 
 def mark_project_deleting(session: Session, project: Project) -> bool:
-    """Mark an in-flight project for worker-side teardown, or signal the
-    caller to delete it immediately.
-
-    Returns ``True`` when the project is idle and the caller should delete it
-    right away (via ``WorkerManager.delete_now_project``); ``False`` when it
-    is in-flight and has been flagged ``deleting`` for the worker to tear down.
-    """
-    if project.status in {"preparing", "expanding"}:
-        project.status = "deleting"
-        project.status_message = "Stopping worker before deletion"
-        session.commit()
-        return False
-    return True
+    """Retain the project-service deletion transition import path."""
+    return _mark_project_deleting(session, project)

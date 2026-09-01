@@ -7,9 +7,14 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import soundfile as sf
+
+if TYPE_CHECKING:
+    from .inference.device import DeviceManager
+    from .inference.engine import SeparationEngine
 
 _log = logging.getLogger("upmixer")
 

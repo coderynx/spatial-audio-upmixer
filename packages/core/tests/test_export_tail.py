@@ -18,8 +18,7 @@ from upmixer.formats import FORMAT_MAP
 from upmixer.io.adm_writer import AdmBwfWriter
 from upmixer.io.writer import AudioWriter, dither_channels, write_audio
 from upmixer.manifest import ManifestError, parse_manifest, validate_manifest
-from upmixer.mastering import MasteringChain
-from upmixer.resample import anti_imaging_fir, resample_channels
+from upmixer.resample import anti_imaging_fir
 from upmixer.separation.stem_pipeline import StemUpmixPipeline
 
 _SR = 48_000

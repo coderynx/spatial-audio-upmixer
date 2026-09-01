@@ -1,14 +1,4 @@
-// Preview DSP processor: hosts the shared Rust core (packages/dsp) compiled
-// to WebAssembly and renders the whole mastered speaker bed itself.
-//
-// This node is the *source*, not an insert — the decoded stems live in the
-// wasm heap, so the engine can look ahead and run the same offline algorithms
-// the export does rather than causal approximations of them. See
-// docs/contracts/preview_export_parity.md.
-//
-// Deliberately dependency-free: an AudioWorkletGlobalScope has no module
-// loader, so the WebAssembly.Module is compiled on the main thread and handed
-// over through processorOptions, where instantiation is synchronous.
+// See docs/contracts/preview_export_parity.md.
 
 const RENDER_QUANTUM = 128;
 // Seek warm-up is discarded audio. Process enough of it per callback that a
@@ -16,41 +6,21 @@ const RENDER_QUANTUM = 128;
 const SEEK_FRAMES = 1024;
 const SCALE_RESTART_DELAY_SECONDS = 0.15;
 
-// Measurement runs in two stages: a fast excerpt pass clears the "calibrating
-// loudness" UI in a few seconds, then an exact whole-programme pass refines
-// the gain in the background. See docs/contracts/preview_export_parity.md P3.
+// Fast excerpts seed exact idle-time measurement; see preview_export_parity.md.
 const FAST_EXCERPT_COUNT = 3;
 const FAST_EXCERPT_SECONDS = 1;
 const FAST_EXCERPT_PREROLL_SECONDS = 0.25;
 
-// Frames of the fast excerpt pass to advance per paused quantum. Sized
-// well past one quantum's budget on purpose: the node is the *source* and its
-// output is already zero-filled while paused, so an overrun here costs a
-// dropped silent callback, not a glitch, and finishing the (short) excerpt
-// plan in a handful of calls is what makes the banner clear in seconds.
+// Paused output is silent, so fast measurement may exceed the render budget.
 const MEASURE_FRAMES_FAST_IDLE = 2048;
 
-// Frames of the exact whole-programme pass to advance per quantum while the
-// transport is idle. Measuring the whole programme costs ~0.12x realtime, so
-// it cannot happen in one call without starving the callback; it is spread
-// across quanta instead, using the budget the render is not using.
-//
-// It advances only while paused. Playing already spends most of the quantum,
-// and both the render and the measurement have periodic look-ahead strides
-// that overrun it when they land together. A pass is kept, not dropped, when
-// playback starts, so it resumes where it left off on the next pause.
+// Exact measurement advances only while paused to protect the render deadline.
 const MEASURE_FRAMES_IDLE = 384;
 
-// Frames of the route-scale pass to advance per paused quantum. It runs the
-// routing chain of one stem at a time — no mastering, no decode.
+// Route-scale measurement excludes mastering and decode.
 const SCALE_FRAMES_IDLE = 4096;
 
-// The route-scale pass runs the two stages the loudness pass does: a handful
-// of excerpts for an answer within a second or two, then the whole programme,
-// which is the number the export normalizes by and the one that finally
-// stands. The cost is per stem, not per programme: measured at ~90x realtime
-// for one stem's routing, the excerpt plan below is a couple of seconds for a
-// thirteen-stem bed while paused.
+// Route-scale excerpts seed exact per-stem normalization.
 const SCALE_EXCERPT_COUNT = 5;
 const SCALE_EXCERPT_SECONDS = 3;
 const SCALE_EXCERPT_PREROLL_SECONDS = 0.5;
@@ -461,7 +431,8 @@ class UpmixerDspProcessor extends AudioWorkletProcessor {
     if (first === "scale" ? this.advanceScale() : this.advanceMeasure()) return;
     const second = this.backgroundTurn;
     this.backgroundTurn = second === "scale" ? "measure" : "scale";
-    second === "scale" ? this.advanceScale() : this.advanceMeasure();
+    if (second === "scale") this.advanceScale();
+    else this.advanceMeasure();
   }
 
   endMeasure() {

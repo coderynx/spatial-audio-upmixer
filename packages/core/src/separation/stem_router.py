@@ -49,7 +49,6 @@ from upmixer.separation.stem_placement import (
     STEM_ROUTING_PRESET_NAMES,
     STEM_ROUTING_PRESETS,
     StemPlacement,
-    placement_route,
     preset_routing,
 )
 from upmixer.utils import (

@@ -18,6 +18,7 @@ from upmixer.separation.stem_pipeline_exec import (
     GetSeparator,
     execute_plan,
     execute_plan_with_silence_skip,
+    temporary_wav_path,
 )
 from upmixer.separation.stem_plan import (
     DEFAULT_STEMS,

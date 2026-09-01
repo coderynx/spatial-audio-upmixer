@@ -1,15 +1,4 @@
-// Preview mastering + stem-router graph helpers. The tunable DSP *values* the
-// backend engine uses (compressor/bass profiles, gains, cutoffs,
-// loudness ceilings, voicing params) are NOT defined here — they are fetched
-// once at bootstrap from GET /api/v1/configuration's `constants` block and
-// threaded in as `EngineConstants` (see resolveEngineConstants below and
-// docs/contracts/preview_export_parity.md). This module keeps only the pure
-// graph-building functions and the structural/asset constants the web owns.
-
-// FIR asset basenames (EngineConstants.eqFirAssets / .stemEqFirAssets) map each
-// profile to its precomputed `/eq_fir/<name>.wav`. These are backend-owned and
-// fetched, not hardcoded here — see resolveEngineConstants and
-// docs/contracts/preview_export_parity.md §2.
+// See docs/contracts/preview_export_parity.md §2.
 import type { DynamicEqBand, StemDynamicEqBand, StemDynamicsSettings, StemEqSettings } from "@/lib/manifest";
 
 export type EqProfileName =
@@ -167,9 +156,6 @@ export function resolveLfTargets(
   return targets;
 }
 
-// --- Channel-bed router (ported from upmixer/separation/stem_router.py) —
-// see docs/web_architecture.md "Preview audio graph" for why (not HRTF panning). --
-
 /** Per-channel-group gains — upmixer/config.py `center_gain`/`surround_gain`/
  * `back_gain`/`height_gain`. Fetched, not hardcoded (see EngineConstants). */
 export type ChannelGroupGains = { center: number; surround: number; back: number; height: number };
@@ -187,18 +173,7 @@ export type HeightShaping = {
   directionalBandGain: number;
 };
 
-// --- Spatial Audio Engine voicing chain (ported from upmixer/binaural/) --
-//
-// Studio/Listening/Flat binaural profiles. Filter geometry/SH/decode-filter
-// contract lives in docs/standards/spatial_audio_engine.md; this section
-// only carries the post-decode voicing chain topology. The per-profile
-// voicing *values* are fetched (EngineConstants.voicingParams).
-
 export type SpatialProfile = "studio" | "listening" | "flat";
-
-// Decode-filter set basenames are backend-owned (upmixer/binaural/profiles.py
-// DECODE_FILTER_SET) and fetched as EngineConstants.decodeFilterSet — see
-// resolveEngineConstants.
 
 export type VoicingParams = {
   crossfeedAmount: number;
@@ -214,27 +189,7 @@ export type VoicingParams = {
   loudnessTargetLkfs: number | null;
 };
 
-// Decode filter set contract (docs/standards/spatial_audio_engine.md §4):
-// 16 ACN channels x {L, R} FIR filters, shipped as four 8-channel WAVs so
-// the browser's per-file multichannel decode stays under its 8ch cap.
-
-// Stereo / Smart-speaker / Car / Laptop / Phone crosstalk-cancellation (transaural) profiles.
-// Filter geometry/regularization contract lives in
-// docs/standards/transaural_speakers.md; this section carries the XTC asset
-// name only. The voicing *values* are fetched
-// (EngineConstants.transauralVoicingParams), reusing the same VoicingParams
-// shape as the binaural profiles.
-
 export type TransauralProfile = "stereo" | "smart_speaker" | "car" | "laptop" | "phone";
-
-// XTC filter set basenames are backend-owned (upmixer/crosstalk/profiles.py
-// XTC_FILTER_SET) and fetched as EngineConstants.xtcFilterSet — see
-// resolveEngineConstants.
-
-// XTC filter set contract (docs/standards/transaural_speakers.md §4): 4 FIR
-// filters (H_LL, H_LR, H_RL, H_RR) in one 4-channel WAV — unlike the 32ch
-// binaural decode bank, 4 channels fits well inside the browser's 8ch cap,
-// so no multi-file split is needed.
 
 /** BS.1770-5 Annex 1 Table 3 / Annex 3 Table 5 channel weight: side surrounds
  * carry +1.5 dB, LFE is excluded from the sum, every other channel is unity.
