@@ -16,7 +16,13 @@
         "width": 1440,
         "height": 900,
         "minWidth": 1024,
-        "minHeight": 700
+        "minHeight": 700,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 12,
+          "y": 22
+        }
       }
     ],
     "security": {
@@ -32,6 +38,7 @@
       "../public/eq_fir/": "eq_fir/"
     },
     "macOS": {
+      "entitlements": "Entitlements.plist",
       "minimumSystemVersion": "15.0"
     }
   }

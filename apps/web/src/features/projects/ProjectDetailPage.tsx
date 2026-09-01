@@ -164,9 +164,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const outputMode = viewState.outputMode;
   const spatialProfile = viewState.spatialProfile;
   const transauralProfile = viewState.transauralProfile;
+  const appleHeadTracking = viewState.appleHeadTracking;
   const setOutputMode = React.useCallback((next: OutputMode) => patchViewState({ outputMode: next }), [patchViewState]);
   const setSpatialProfile = React.useCallback((next: SpatialProfile) => patchViewState({ spatialProfile: next }), [patchViewState]);
   const setTransauralProfile = React.useCallback((next: TransauralProfile) => patchViewState({ transauralProfile: next }), [patchViewState]);
+  const setAppleHeadTracking = React.useCallback((next: boolean) => patchViewState({ appleHeadTracking: next }), [patchViewState]);
   React.useEffect(() => {
     if (stereoLayout && outputMode !== "native") setOutputMode("native");
   }, [stereoLayout, outputMode, setOutputMode]);
@@ -214,7 +216,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     () => monitorMastering(previewMastering, masteringBypassed, matchBypassed),
     [previewMastering, masteringBypassed, matchBypassed],
   );
-  const preview = useStemPreview(previewStems, {}, trackManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants, trackManifest?.routing, masteringBypassed, matchBypassed);
+  const preview = useStemPreview(previewStems, {}, trackManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants, trackManifest?.routing, masteringBypassed, matchBypassed, appleHeadTracking);
   const previousRoutingLayoutRef = React.useRef(routingLayout);
   React.useEffect(() => { previousRoutingLayoutRef.current = routingLayout; }, [projectId]);
   React.useEffect(() => {
@@ -561,6 +563,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           onSpatialProfileChange={setSpatialProfile}
           transauralProfile={transauralProfile}
           onTransauralProfileChange={setTransauralProfile}
+          appleHeadTracking={appleHeadTracking}
+          onAppleHeadTrackingChange={setAppleHeadTracking}
           appleSpatialAvailable={runtime.appleSpatial && !preview.fallbackReason}
           systemOutput={runtime.isTauri}
         />

@@ -76,6 +76,7 @@ class ProjectViewState(BaseModel):
     output_mode: str = Field(default="binaural", max_length=32)
     spatial_profile: str = Field(default="studio", max_length=32)
     transaural_profile: str = Field(default="stereo", max_length=32)
+    apple_head_tracking: bool = True
     master_volume: float = Field(default=1.0, ge=0.0, le=1.0)
     mastering_bypassed: bool = False
     spatial_view: str = Field(default="haze", max_length=32)

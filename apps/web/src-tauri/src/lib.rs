@@ -40,6 +40,7 @@ struct UpdateRequest {
     params: Value,
     assets: NativeAssets,
     renderer: NativeRenderer,
+    apple_head_tracking: bool,
 }
 
 #[derive(Deserialize)]
@@ -124,6 +125,7 @@ fn native_preview_update(
             params: request.params,
             assets: request.assets,
             renderer: request.renderer,
+            apple_head_tracking: request.apple_head_tracking,
         },
     )
 }

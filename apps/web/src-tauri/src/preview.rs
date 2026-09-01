@@ -47,6 +47,7 @@ pub struct OpenRequest {
     pub params: Value,
     pub assets: NativeAssets,
     pub renderer: NativeRenderer,
+    pub apple_head_tracking: bool,
 }
 
 pub enum Command {
@@ -54,6 +55,7 @@ pub enum Command {
         params: Value,
         assets: NativeAssets,
         renderer: NativeRenderer,
+        apple_head_tracking: bool,
     },
     Transport {
         playing: Option<bool>,
@@ -131,6 +133,7 @@ struct Session {
     client: Client,
     assets: NativeAssets,
     renderer: NativeRenderer,
+    apple_head_tracking: bool,
     commands: Receiver<Command>,
     events: Channel<NativeEvent>,
     playing: bool,
@@ -238,6 +241,7 @@ impl Session {
         let audio = AudioHost::new(
             layout,
             request.renderer == NativeRenderer::AppleSpatial,
+            request.apple_head_tracking,
             engine.position(),
         )?;
         audio.pause();
@@ -259,6 +263,7 @@ impl Session {
             client,
             assets: request.assets,
             renderer: request.renderer,
+            apple_head_tracking: request.apple_head_tracking,
             commands,
             events,
             playing: false,
@@ -301,6 +306,7 @@ impl Session {
                 params,
                 assets,
                 renderer,
+                apple_head_tracking,
             } => {
                 let params = parse_params(params)?;
                 let old_layout = output_layout(self.engine.params(), self.renderer)?.to_string();
@@ -320,6 +326,7 @@ impl Session {
                     self.audio = AudioHost::new(
                         new_layout,
                         renderer == NativeRenderer::AppleSpatial,
+                        apple_head_tracking,
                         self.engine.position(),
                     )?;
                     self.scheduled_frame = self.engine.position();
@@ -330,7 +337,9 @@ impl Session {
                         self.audio.pause();
                     }
                 }
+                self.audio.set_head_tracking(apple_head_tracking);
                 self.renderer = renderer;
+                self.apple_head_tracking = apple_head_tracking;
                 if self.engine.stem_count() > 0 && !self.engine.has_route_scales() {
                     self.route_scale = Some(ScaleState {
                         pass: RouteScalePass::new_excerpts(
@@ -352,7 +361,9 @@ impl Session {
                     self.looping = looping;
                 }
                 if let Some(frame) = frame {
-                    self.seek(frame)?;
+                    if frame != self.engine.position() {
+                        self.seek(frame)?;
+                    }
                 }
                 if let Some(playing) = playing {
                     self.playing = playing;
@@ -396,6 +407,7 @@ impl Session {
         self.audio = AudioHost::new(
             layout,
             self.renderer == NativeRenderer::AppleSpatial,
+            self.apple_head_tracking,
             self.engine.position(),
         )?;
         self.scheduled_frame = self.engine.position();

@@ -54,10 +54,19 @@ routing, mastering, and the selected monitor renderer. In a browser,
 `apps/web/public/dsp.worklet.js` runs the core as WebAssembly and Web Audio
 owns decoding and output. In Tauri, `src-tauri` runs the core as native Rust,
 decodes and resamples stems to 48 kHz, and streams the finished bed to the
-native output bridge. Multichannel Apple Spatial Audio uses
-`AVSampleBufferAudioRenderer`, while direct output and stereo use `AVAudioEngine`. Apple
-Spatial Audio is desktop-only; the other monitor modes remain available in both
-hosts. Native startup failures are visible and fall back to the WASM engine
+native output bridge. Multichannel Apple Spatial Audio uses a
+`PHASEPushStreamNode` with `PHASEAmbientMixerDefinition`, while direct output
+and stereo use `AVAudioEngine`. The ambient mixer receives the standard
+`AVAudioChannelLayout`, so PHASE renders each channel from the corresponding
+speaker direction without application-owned speaker coordinates. Its four
+recycled 512-frame buffers bound queued PCM to 42.7 ms. Because PHASE ignores
+LFE in an ambient layout, the adapter restores its +10 dB replay gain and folds
+it equally into FL/FR before scheduling. Apple Spatial Audio is desktop-only;
+its output submenu persists a head-tracking preference and applies it directly
+to the PHASE listener on compatible AirPods. Release signing must preserve the
+Head Pose entitlement for that option to take effect.
+The other monitor modes remain available in both hosts.
+Native startup failures are visible and fall back to the WASM engine
 without changing the saved project mix.
 
 The worklet is the *source*, not an insert: the decoded stems live in the

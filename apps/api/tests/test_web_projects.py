@@ -193,6 +193,7 @@ def test_project_view_state_persists_independently_of_settings(tmp_path, monkeyp
             "output_mode": "transaural",
             "spatial_profile": "listening",
             "transaural_profile": "car",
+            "apple_head_tracking": False,
             "master_volume": 0.75,
             "mastering_bypassed": True,
             "spatial_view": "scene",

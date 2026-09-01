@@ -5,10 +5,10 @@ import { cn } from "@/lib/utils";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 import type { OutputMode } from "./useStemPreview";
 
-const MODE_OPTIONS: { value: OutputMode; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+const MODE_OPTIONS: { value: OutputMode; label: string; icon?: React.ComponentType<{ className?: string }> }[] = [
   { value: "binaural", label: "Binaural", icon: Headphones },
   { value: "transaural", label: "Transaural", icon: Speaker },
-  { value: "apple_spatial", label: "Apple Spatial", icon: AudioWaveform },
+  { value: "apple_spatial", label: "Apple Spatial Audio", icon: AudioWaveform },
   { value: "native", label: "Native", icon: Grid3x3 },
   { value: "stereo", label: "Stereo mixdown", icon: Waves },
 ];
@@ -64,6 +64,8 @@ export function OutputModeSelect({
   onSpatialProfileChange,
   transauralProfile,
   onTransauralProfileChange,
+  appleHeadTracking = true,
+  onAppleHeadTrackingChange,
   appleSpatialAvailable = false,
   systemOutput = false,
 }: {
@@ -80,6 +82,8 @@ export function OutputModeSelect({
   onSpatialProfileChange: (profile: SpatialProfile) => void;
   transauralProfile: TransauralProfile;
   onTransauralProfileChange: (profile: TransauralProfile) => void;
+  appleHeadTracking?: boolean;
+  onAppleHeadTrackingChange: (enabled: boolean) => void;
   appleSpatialAvailable?: boolean;
   systemOutput?: boolean;
 }) {
@@ -147,6 +151,7 @@ export function OutputModeSelect({
   const CurrentIcon = current.icon;
   const currentProfile = PROFILE_OPTIONS.find((option) => option.value === spatialProfile) ?? PROFILE_OPTIONS[0];
   const currentTransauralProfile = TRANSAURAL_PROFILE_OPTIONS.find((option) => option.value === transauralProfile) ?? TRANSAURAL_PROFILE_OPTIONS[0];
+  const currentHeadTrackingLabel = appleHeadTracking ? "Enabled" : "Disabled";
   // Binaural/transaural show their active profile inline; native/stereo fall
   // back to the mode's own label so the trigger never reads as broken.
   const currentModeProfile = value === "transaural" ? currentTransauralProfile : value === "binaural" ? currentProfile : null;
@@ -178,7 +183,7 @@ export function OutputModeSelect({
         className="h-8 w-[156px] shrink-0 justify-between px-2.5"
       >
         <span className="flex min-w-0 items-center gap-1">
-          <CurrentIcon className="h-4 w-4 shrink-0" />
+          {CurrentIcon && <CurrentIcon className="h-4 w-4 shrink-0" />}
           <span className="truncate text-xs font-medium text-muted-foreground">{triggerLabel}</span>
         </span>
         <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
@@ -193,10 +198,14 @@ export function OutputModeSelect({
           {modeOptions.map((option, index) => {
             const Icon = option.icon;
             const disabled = option.value === "native" && !nativeSupported;
-            const hasSubmenu = SUBMENU_MODES.has(option.value);
+            const hasSubmenu = SUBMENU_MODES.has(option.value) || option.value === "apple_spatial";
             const rowSubmenuOpen = activeSubmenu === option.value;
             const rowProfileOptions = option.value === "transaural" ? TRANSAURAL_PROFILE_OPTIONS : PROFILE_OPTIONS;
-            const rowCurrentProfile = option.value === "transaural" ? currentTransauralProfile : currentProfile;
+            const rowCurrentLabel = option.value === "transaural"
+              ? currentTransauralProfile
+              : option.value === "apple_spatial"
+                ? `HT · ${currentHeadTrackingLabel}`
+                : currentProfile.label;
             return (
               <React.Fragment key={option.value}>
                 {!nativeOnly && index === 0 && (
@@ -236,11 +245,11 @@ export function OutputModeSelect({
                     option.value === value && "bg-accent/60",
                   )}
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
+                  {Icon && <Icon className="h-4 w-4 shrink-0" />}
                   <span className="flex-1 font-medium">{option.label}</span>
                   {hasSubmenu && (
                     <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                      {rowCurrentProfile.label}
+                      {typeof rowCurrentLabel === "string" ? rowCurrentLabel : rowCurrentLabel.label}
                       <ChevronRight className="h-3.5 w-3.5" />
                     </span>
                   )}
@@ -259,14 +268,30 @@ export function OutputModeSelect({
                     onMouseLeave={scheduleClose}
                   >
                   <div className="w-64 rounded-md border bg-popover p-1 shadow-md">
-                    {rowProfileOptions.map((profileOption) => {
+                    {option.value === "apple_spatial" ? (
+                      <label className="flex items-center justify-between gap-3 px-2 py-1.5 text-sm font-medium">
+                        Head tracking
+                        <input
+                          aria-label="Head tracking enabled"
+                          type="checkbox"
+                          checked={appleHeadTracking}
+                          onChange={(event) => {
+                            onAppleHeadTrackingChange(event.target.checked);
+                            onChange(option.value);
+                            setOpen(false);
+                            setActiveSubmenu(null);
+                          }}
+                          className="h-4 w-4 accent-primary"
+                        />
+                      </label>
+                    ) : rowProfileOptions.map((profileOption) => {
                       const ProfileIcon = profileOption.icon;
                       const selected = option.value === "transaural"
                         ? profileOption.value === transauralProfile
                         : profileOption.value === spatialProfile;
                       return (
                         <button
-                          key={profileOption.value}
+                          key={String(profileOption.value)}
                           type="button"
                           onClick={() => {
                             if (option.value === "transaural") {
@@ -297,7 +322,7 @@ export function OutputModeSelect({
           })}
         </div>
       )}
-      {systemOutput && (value === "native" || value === "apple_spatial") && (
+      {systemOutput && value === "native" && (
         <span className="text-[11px] text-muted-foreground">System output</span>
       )}
       {!systemOutput && value === "native" && selectableDevices.length > 1 && (

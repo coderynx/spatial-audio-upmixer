@@ -60,6 +60,7 @@ export function useStemPreview(
   masteringBypassed = false,
   // The reference matcher's own A/B, on the same machinery.
   matchBypassed = false,
+  appleHeadTracking = true,
 ) {
   const layoutChannelsKey = layoutChannels.join(",");
   // Stable-identity, layout-scoped speaker list: drives the ambisonic
@@ -160,6 +161,7 @@ export function useStemPreview(
   engine.outputMode = outputMode;
   engine.spatialProfile = spatialProfile;
   engine.transauralProfile = transauralProfile;
+  engine.appleHeadTracking = appleHeadTracking;
   if (constants) engine.constants = constants;
   engine.positionalChannels = positionalChannels;
   engine.speakerEnabled = effectiveSpeakerEnabled;
@@ -192,6 +194,7 @@ export function useStemPreview(
     outputMode,
     spatialProfile,
     transauralProfile,
+    appleHeadTracking,
     masteringBypassed,
     matchBypassed,
   });

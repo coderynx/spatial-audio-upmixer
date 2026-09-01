@@ -8,9 +8,11 @@ extern "C" {
     fn upmixer_audio_create(
         layout: *const c_char,
         spatial: bool,
+        head_tracking: bool,
         start_frame: i64,
         error: *mut *mut c_char,
     ) -> *mut c_void;
+    fn upmixer_audio_set_head_tracking(host: *mut c_void, enabled: bool);
     fn upmixer_audio_start(host: *mut c_void, error: *mut *mut c_char) -> bool;
     fn upmixer_audio_pause(host: *mut c_void);
     fn upmixer_audio_resume(host: *mut c_void);
@@ -34,13 +36,19 @@ pub fn max_output_channels() -> usize {
 pub struct AudioHost(*mut c_void);
 
 impl AudioHost {
-    pub fn new(layout: &str, spatial: bool, start_frame: usize) -> Result<Self, String> {
+    pub fn new(
+        layout: &str,
+        spatial: bool,
+        head_tracking: bool,
+        start_frame: usize,
+    ) -> Result<Self, String> {
         let layout = CString::new(layout).map_err(|_| "Invalid channel layout".to_string())?;
         let mut error = ptr::null_mut();
         let host = unsafe {
             upmixer_audio_create(
                 layout.as_ptr(),
                 spatial,
+                head_tracking,
                 i64::try_from(start_frame).unwrap_or(i64::MAX),
                 &mut error,
             )
@@ -62,6 +70,10 @@ impl AudioHost {
 
     pub fn resume(&self) {
         unsafe { upmixer_audio_resume(self.0) };
+    }
+
+    pub fn set_head_tracking(&self, enabled: bool) {
+        unsafe { upmixer_audio_set_head_tracking(self.0, enabled) };
     }
 
     pub fn schedule(&self, channels: &[Vec<f32>], frames: usize) -> Result<(), String> {
@@ -112,11 +124,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn apple_media_pipeline_handles_every_layout_except_stereo() {
+    fn apple_spatial_uses_phase_for_every_layout_except_stereo() {
         for layout in ["stereo", "5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"] {
             let name = CString::new(layout).unwrap();
-            let media = unsafe { upmixer_audio_uses_media_pipeline(name.as_ptr(), true) };
-            assert_eq!(media, layout != "stereo");
+            let phase = unsafe { upmixer_audio_uses_media_pipeline(name.as_ptr(), true) };
+            assert_eq!(phase, layout != "stereo");
             assert!(!unsafe { upmixer_audio_uses_media_pipeline(name.as_ptr(), false) });
         }
     }

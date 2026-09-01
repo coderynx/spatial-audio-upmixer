@@ -19,6 +19,7 @@ function renderSelect(props: Partial<React.ComponentProps<typeof OutputModeSelec
       onSpatialProfileChange={vi.fn()}
       transauralProfile="stereo"
       onTransauralProfileChange={vi.fn()}
+      onAppleHeadTrackingChange={vi.fn()}
       {...props}
     />,
   );
@@ -55,17 +56,35 @@ describe("OutputModeSelect", () => {
   it("shows Apple Spatial only when the desktop capability is available", () => {
     const view = renderSelect();
     fireEvent.click(screen.getByRole("button", { name: /Preview output mode/ }));
-    expect(screen.queryByRole("button", { name: "Apple Spatial" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Apple Spatial Audio" })).not.toBeInTheDocument();
     view.unmount();
 
     renderSelect({ appleSpatialAvailable: true });
     fireEvent.click(screen.getByRole("button", { name: /Preview output mode/ }));
-    expect(screen.getByRole("button", { name: "Apple Spatial" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Apple Spatial Audio/ })).toBeInTheDocument();
+  });
+
+  it("selects Apple Spatial head tracking from its submenu", () => {
+    const onChange = vi.fn();
+    const onAppleHeadTrackingChange = vi.fn();
+    renderSelect({ appleSpatialAvailable: true, onChange, onAppleHeadTrackingChange });
+
+    fireEvent.click(screen.getByRole("button", { name: /Preview output mode/ }));
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /^Apple Spatial Audio/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Head tracking enabled" }));
+
+    expect(onAppleHeadTrackingChange).toHaveBeenCalledWith(false);
+    expect(onChange).toHaveBeenCalledWith("apple_spatial");
   });
 
   it("uses the macOS system output instead of a desktop device picker", () => {
     renderSelect({ systemOutput: true, devices: [device("abc", "Speakers"), device("def", "Headphones")] });
     expect(screen.getByText("System output")).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Output device" })).not.toBeInTheDocument();
+  });
+
+  it("hides the system output label for Apple Spatial Audio", () => {
+    renderSelect({ value: "apple_spatial", appleSpatialAvailable: true, systemOutput: true });
+    expect(screen.queryByText("System output")).not.toBeInTheDocument();
   });
 });
