@@ -22,8 +22,9 @@ npm run tauri:dev
 ```
 
 The desktop app defaults to `http://127.0.0.1:8000`; change and test the processing-node URL under Settings.
-Desktop preview runs the shared Rust DSP natively and adds Apple Spatial Audio through PHASE. If native startup
-fails, the editor reports the failure and falls back to the browser WASM preview. Build an app bundle with
+Desktop preview runs the shared Rust DSP natively and sends multichannel Apple Spatial Audio through
+`AVSampleBufferAudioRenderer`; direct output and stereo retain the PHASE sink. If native startup fails,
+the editor reports the failure and falls back to the browser WASM preview. Build an app bundle with
 `npm run tauri:build` (macOS 15 and the Xcode Command Line Tools are required).
 
 ## Build

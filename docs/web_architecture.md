@@ -53,10 +53,12 @@ core (`packages/dsp`) and render the whole mastered speaker bed locally —
 routing, mastering, and the selected monitor renderer. In a browser,
 `apps/web/public/dsp.worklet.js` runs the core as WebAssembly and Web Audio
 owns decoding and output. In Tauri, `src-tauri` runs the core as native Rust,
-decodes and resamples stems to 48 kHz, and streams the finished bed to PHASE.
-Apple Spatial Audio is desktop-only; the other monitor modes remain available
-in both hosts. Native startup failures are visible and fall back to the WASM
-engine without changing the saved project mix.
+decodes and resamples stems to 48 kHz, and streams the finished bed to the
+native output bridge. Multichannel Apple Spatial Audio uses
+`AVSampleBufferAudioRenderer`, while direct output and stereo use PHASE. Apple
+Spatial Audio is desktop-only; the other monitor modes remain available in both
+hosts. Native startup failures are visible and fall back to the WASM engine
+without changing the saved project mix.
 
 The worklet is the *source*, not an insert: the decoded stems live in the
 wasm heap, so the engine always knows its input ahead of the playhead. That

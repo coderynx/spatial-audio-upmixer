@@ -3,6 +3,8 @@ use std::ptr;
 
 #[link(name = "upmixer_phase_bridge", kind = "static")]
 extern "C" {
+    #[cfg(test)]
+    fn upmixer_phase_uses_media_pipeline(layout: *const c_char, spatial: bool) -> bool;
     fn upmixer_phase_create(
         layout: *const c_char,
         spatial: bool,
@@ -90,4 +92,19 @@ fn take_error(error: *mut c_char, fallback: &str) -> String {
         .into_owned();
     unsafe { upmixer_phase_free_error(error) };
     message
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apple_media_pipeline_handles_every_layout_except_stereo() {
+        for layout in ["stereo", "5.1", "7.1", "5.1.2", "5.1.4", "7.1.2", "7.1.4"] {
+            let name = CString::new(layout).unwrap();
+            let media = unsafe { upmixer_phase_uses_media_pipeline(name.as_ptr(), true) };
+            assert_eq!(media, layout != "stereo");
+            assert!(!unsafe { upmixer_phase_uses_media_pipeline(name.as_ptr(), false) });
+        }
+    }
 }

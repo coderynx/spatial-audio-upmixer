@@ -289,7 +289,9 @@ impl Session {
                 if renderer != self.renderer || old_layout != new_layout {
                     self.phase =
                         PhaseHost::new(new_layout, renderer == NativeRenderer::AppleSpatial)?;
-                    if !self.playing {
+                    if self.playing {
+                        self.phase.resume();
+                    } else {
                         self.phase.pause();
                     }
                 }
@@ -357,7 +359,9 @@ impl Session {
         self.engine.seek(frame);
         let layout = phase_layout(self.engine.params(), self.renderer)?;
         self.phase = PhaseHost::new(layout, self.renderer == NativeRenderer::AppleSpatial)?;
-        if !self.playing {
+        if self.playing {
+            self.phase.resume();
+        } else {
             self.phase.pause();
         }
         Ok(())

@@ -5,6 +5,7 @@
 
 typedef void *UpmixerPhaseHost;
 
+bool upmixer_phase_uses_media_pipeline(const char *layout, bool spatial);
 UpmixerPhaseHost upmixer_phase_create(const char *layout, bool spatial, char **error);
 bool upmixer_phase_start(UpmixerPhaseHost host, char **error);
 void upmixer_phase_pause(UpmixerPhaseHost host);
