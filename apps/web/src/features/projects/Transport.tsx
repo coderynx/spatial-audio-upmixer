@@ -135,7 +135,7 @@ function TransportImpl({
   }, [playing, currentTimeRef]);
   const displayTime = playing ? liveTime : currentTime;
   return (
-    // Three-column true centring, see docs/web_ui_design.md §6.6.
+    // Three-column true centring, see docs/web_ui_controls.md.
     <div className="grid h-18 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b bg-card px-2 py-4">
       <div className="flex min-w-0 items-center gap-2 justify-self-start overflow-hidden">{leading}</div>
       <div className="flex items-center gap-2 justify-self-center">

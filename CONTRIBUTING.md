@@ -10,8 +10,9 @@ This is a uv workspace monorepo:
 - `apps/api` — the `upmixer-web` FastAPI server (`upmixer_web`), consuming core's public API only.
 - `apps/web` — the React/shadcn/ui client, talking to `apps/api` over `/api/*`.
 
-See `AGENTS.md` for the full architecture boundary, coding conventions, comment policy, file-size policy, and
-standards references — read it before making non-trivial changes.
+Read `AGENTS.md` and the linked [agent workflow](docs/agent_workflow.md) before
+making a non-trivial change. The [documentation map](docs/README.md) points to
+task-specific contracts.
 
 ## Setup
 
@@ -49,9 +50,6 @@ when output changes.
 
 ## Code conventions
 
-Target Python 3.11+, four-space indentation, standard type hints, `snake_case`/`PascalCase` naming. No formatter
-or linter is configured for Python; keep changes PEP 8-aligned. The frontend uses ESLint/Prettier
+Follow the [agent workflow](docs/agent_workflow.md). Python has no configured
+formatter or linter; keep it PEP 8-aligned. The frontend uses ESLint/Prettier
 (`npm run lint`, `npm run format` in `apps/web`).
-
-Comments are reserved for non-obvious DSP/standards constraints, model-specific quirks, and necessary workarounds
-— see AGENTS.md's Comment Policy for the full rules.

@@ -69,7 +69,7 @@ passed / 45 deselected**, web **292 → 298 passed**.
 Docs updated in the same phase: parity contract §2 (the served
 `reference_match_smooth` block, the "unset controls stay off the URL" rule,
 and the raw-curve statement) and §3 **P4** (extended to the stage-scoped
-bypass); `web_ui_design.md` §6.6 and §6.8.
+bypass); `web_ui_controls.md` (project header and loudness).
 
 ## The design decision the plan asked for, and what it cost
 

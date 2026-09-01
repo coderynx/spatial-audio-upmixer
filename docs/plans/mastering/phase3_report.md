@@ -52,8 +52,7 @@ Docs updated in the same phase: parity contract §1 (the momentary/short-term
 row), §2 (`meter_weights`), §3 (new **P4**, the monitor-only A/B
 compensation) and ledger **D42**; `standards/loudness_dsp_bs1770.md`
 (momentary/short-term on the 100 ms grid, where each is measured, and a new
-crest-metrics section); `web_ui_design.md` §6.4 (GR bars) and a new §6.8
-(loudness readout).
+crest-metrics section); `web_ui_controls.md` (channel strips and loudness).
 
 ## The A/B: what it matches, and why not `bypass_mastering`
 

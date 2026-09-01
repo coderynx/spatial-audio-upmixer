@@ -60,7 +60,7 @@ export type TimelineViewProps = {
   /** Per-stem program gain, same manifest field and range as the mixer
    * strip's vertical fader and the inspector's copy of it (`ChannelStrip.tsx`)
    * — a third home for the one value, not a parallel control (see
-   * docs/web_ui_design.md §6.4, updated alongside this addition). */
+   * docs/web_ui_controls.md, updated alongside this addition). */
   gains: Record<string, number>;
   onGain: (stem: string, value: number) => void;
   /** Live per-channel level, keyed same as `useStemPreview`'s `stemLevels` —

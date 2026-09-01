@@ -19,7 +19,7 @@ import type { EngineRef } from "./wasmEngine/engineTypes";
 // target beside it and the crest metrics derived from those same numbers.
 // Numbers only — every value is measured in the core (see `MasterMeters`),
 // this file just draws them.
-// Appearance follows the strip idiom of docs/web_ui_design.md §6.4.
+// Appearance follows docs/web_ui_controls.md.
 
 /** Below this the meter is reading silence, not a level. */
 const SILENT_LKFS = -70;

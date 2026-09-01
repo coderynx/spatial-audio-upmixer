@@ -11,6 +11,8 @@ footprint. This repository is a uv workspace monorepo — `packages/core` (libra
 
 An optional web application adds interactive track and album workflows without changing the CLI. It uses the same manifests and processing pipelines, so browser-configured jobs remain portable to automation.
 
+For implementation references, use the [documentation map](docs/README.md).
+
 ## Web application
 
 The stack is two processes: the FastAPI server (`apps/api`) and the React client (`apps/web`). Stem separation

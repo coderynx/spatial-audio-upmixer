@@ -32,5 +32,7 @@ static SPA.
   root `scripts/build_*_filters.py` tools.
 - `scripts/` — `bench-preview-engine.mjs` (audio-thread realtime budget gate, `npm run bench:engine`).
 
-See `AGENTS.md`, [Web UI design specification](../../docs/web_ui_design.md), and
-[Web architecture](../../docs/web_architecture.md) before adding a page, control, or visual state.
+See `AGENTS.md`, [UI design](../../docs/web_ui_design.md),
+[UI controls](../../docs/web_ui_controls.md), and
+[web architecture](../../docs/web_architecture.md) before adding a page,
+control, or visual state.
