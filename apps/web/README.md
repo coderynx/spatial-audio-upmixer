@@ -22,9 +22,17 @@ npm run tauri:dev
 ```
 
 The desktop app defaults to `http://127.0.0.1:8000`; change and test the processing-node URL under Settings.
-Desktop preview runs the shared Rust DSP natively and sends multichannel Apple Spatial Audio through
-`AVSampleBufferAudioRenderer`; all other output modes use direct AVAudioEngine output. If native startup fails,
-the editor reports the failure and falls back to the browser WASM preview. Build an app bundle with
+Desktop preview runs the shared Rust DSP natively, rendering the complete
+mastered speaker bed. Direct output and stereo use AVAudioEngine. In non-stereo
+Apple Spatial mode, its real-time multichannel PCM bed flows through
+`PHASEPushStreamNode` and `PHASEAmbientMixerDefinition`, which maps the
+declared speaker layout through PHASE's public device-aware renderer; no beds,
+objects, or stems are submitted separately. Because PHASE ambient ignores LFE,
+the native adapter restores LFE replay gain and folds it equally into FL/FR
+before PHASE. Supported devices can apply automatic output spatialization,
+personalized Spatial Audio, and head tracking. It is not bit-identical to Apple
+Music: Music Mode coefficients are not public. If native startup fails, the editor reports the
+failure and falls back to the browser WASM preview. Build an app bundle with
 `npm run tauri:build` (macOS 15 and the Xcode Command Line Tools are required).
 
 ## Build

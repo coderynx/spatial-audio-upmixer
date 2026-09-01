@@ -60,6 +60,7 @@ export function useStemPreview(
   masteringBypassed = false,
   // The reference matcher's own A/B, on the same machinery.
   matchBypassed = false,
+  appleHeadTracking = true,
 ) {
   const layoutChannelsKey = layoutChannels.join(",");
   // Stable-identity, layout-scoped speaker list: drives the ambisonic
@@ -165,6 +166,7 @@ export function useStemPreview(
   engine.speakerEnabled = effectiveSpeakerEnabled;
   engine.masteringBypassed = masteringBypassed;
   engine.matchBypassed = matchBypassed;
+  engine.appleHeadTracking = appleHeadTracking;
 
   // Layout changed (not just the initial mount): drop mute state for
   // speakers the new layout no longer has and default any newly-added ones
@@ -194,6 +196,7 @@ export function useStemPreview(
     transauralProfile,
     masteringBypassed,
     matchBypassed,
+    appleHeadTracking,
   });
   engine.programKey = programKey;
 

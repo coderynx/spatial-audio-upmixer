@@ -6,8 +6,10 @@
 typedef void *UpmixerAudioHost;
 
 bool upmixer_audio_uses_media_pipeline(const char *layout, bool spatial);
-UpmixerAudioHost upmixer_audio_create(const char *layout, bool spatial, int64_t start_frame,
+UpmixerAudioHost upmixer_audio_create(const char *layout, bool spatial, bool head_tracking,
+                                      int64_t start_frame,
                                       char **error);
+void upmixer_audio_set_head_tracking(UpmixerAudioHost host, bool enabled);
 bool upmixer_audio_start(UpmixerAudioHost host, char **error);
 void upmixer_audio_pause(UpmixerAudioHost host);
 void upmixer_audio_resume(UpmixerAudioHost host);

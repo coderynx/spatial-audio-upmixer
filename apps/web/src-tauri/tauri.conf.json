@@ -32,6 +32,7 @@
       "../public/eq_fir/": "eq_fir/"
     },
     "macOS": {
+      "entitlements": "Entitlements.plist",
       "minimumSystemVersion": "15.0"
     }
   }

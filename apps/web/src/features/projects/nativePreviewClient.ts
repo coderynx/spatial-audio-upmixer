@@ -35,6 +35,7 @@ export type NativeOpenOptions = {
   params: DspEngineParams;
   assets: NativePreviewAssets;
   renderer: NativeRenderer;
+  appleHeadTracking: boolean;
   onMaxChannels(maxChannels: number): void;
   onLoadProgress(progress: number): void;
 };
@@ -43,7 +44,7 @@ export class NativePreviewClient {
   readonly ready: Promise<string>;
   private sessionId = 0;
   private disposed = false;
-  private pendingUpdate: { params: DspEngineParams; assets: NativePreviewAssets; renderer: NativeRenderer } | null = null;
+  private pendingUpdate: { params: DspEngineParams; assets: NativePreviewAssets; renderer: NativeRenderer; appleHeadTracking: boolean } | null = null;
   private updateScheduled = false;
   private queue = Promise.resolve<unknown>(undefined);
   private pendingMeasure: ((value: { lkfs: number; dbtp: number; monitorLkfs?: number; monitorDbtp?: number } | null) => void) | null = null;
@@ -98,14 +99,15 @@ export class NativePreviewClient {
         params: options.params,
         assets: options.assets,
         renderer: options.renderer,
+        appleHeadTracking: options.appleHeadTracking,
       },
       onEvent: channel,
     });
     return client;
   }
 
-  updateParams(params: DspEngineParams, assets: NativePreviewAssets, renderer: NativeRenderer) {
-    this.pendingUpdate = { params, assets, renderer };
+  updateParams(params: DspEngineParams, assets: NativePreviewAssets, renderer: NativeRenderer, appleHeadTracking: boolean) {
+    this.pendingUpdate = { params, assets, renderer, appleHeadTracking };
     if (this.updateScheduled || this.disposed) return;
     this.updateScheduled = true;
     requestAnimationFrame(() => {

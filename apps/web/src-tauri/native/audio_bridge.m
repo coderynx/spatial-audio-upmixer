@@ -1,28 +1,30 @@
 #import "audio_bridge.h"
 
-#import <AVFoundation/AVFoundation.h>
 #import <AVFAudio/AVFAudio.h>
-#import <CoreMedia/CoreMedia.h>
 #import <Foundation/Foundation.h>
+#import <PHASE/PHASE.h>
 #import <time.h>
 #import <unistd.h>
 
 static const AVAudioFrameCount BUFFER_FRAMES = 512;
 static const NSUInteger BUFFER_COUNT = 4;
+static const uint32_t LFE_CHANNEL = 3;
+static const float LFE_FRONT_FOLD_GAIN = 1.58113883f;
 
 @interface UpmixerAudio : NSObject
 @property(nonatomic, strong) AVAudioEngine *engine;
 @property(nonatomic, strong) AVAudioPlayerNode *player;
-@property(nonatomic, strong) AVSampleBufferAudioRenderer *mediaRenderer;
-@property(nonatomic, strong) AVSampleBufferRenderSynchronizer *mediaSynchronizer;
+@property(nonatomic, strong) PHASEEngine *phaseEngine;
+@property(nonatomic, strong) PHASESoundEvent *phaseEvent;
+@property(nonatomic, strong) PHASEPushStreamNode *phaseStream;
+@property(nonatomic, strong) PHASEListener *listener;
 @property(nonatomic, strong) AVAudioFormat *format;
 @property(nonatomic, strong) NSMutableArray<AVAudioPCMBuffer *> *available;
 @property(nonatomic) dispatch_semaphore_t semaphore;
-@property(nonatomic) BOOL mediaPipeline;
-@property(nonatomic) BOOL mediaPlaying;
-@property(nonatomic) BOOL mediaStarted;
-@property(nonatomic) int64_t startFrame;
+@property(nonatomic) BOOL phasePipeline;
 @property(nonatomic) int64_t nextFrame;
+@property(nonatomic) int64_t presentedFrame;
+@property(nonatomic) NSTimeInterval presentationLatency;
 @property(nonatomic) BOOL upmixer714;
 @end
 
@@ -33,12 +35,6 @@ static void set_error(char **out, NSError *error, NSString *fallback) {
     if (!out) return;
     NSString *message = error.localizedDescription ?: fallback;
     *out = strdup(message.UTF8String);
-}
-
-static bool set_status_error(char **out, OSStatus status, NSString *fallback) {
-    NSString *message = [NSString stringWithFormat:@"%@ (OSStatus %d)", fallback, (int)status];
-    set_error(out, nil, message);
-    return false;
 }
 
 static double monotonic_seconds(void) {
@@ -65,7 +61,8 @@ bool upmixer_audio_uses_media_pipeline(const char *layout_name, bool spatial) {
     }
 }
 
-UpmixerAudioHost upmixer_audio_create(const char *layout_name, bool spatial, int64_t start_frame,
+UpmixerAudioHost upmixer_audio_create(const char *layout_name, bool spatial, bool head_tracking,
+                                      int64_t start_frame,
                                       char **error) {
     @autoreleasepool {
         NSString *layoutName = [NSString stringWithUTF8String:layout_name ?: "stereo"];
@@ -77,31 +74,66 @@ UpmixerAudioHost upmixer_audio_create(const char *layout_name, bool spatial, int
 
         UpmixerAudio *host = [UpmixerAudio new];
         host.upmixer714 = [layoutName isEqualToString:@"7.1.4"];
-        host.mediaPipeline = upmixer_audio_uses_media_pipeline(layout_name, spatial);
-        host.startFrame = start_frame;
+        host.phasePipeline = upmixer_audio_uses_media_pipeline(layout_name, spatial);
         host.nextFrame = start_frame;
-        if (host.mediaPipeline) {
+        host.presentedFrame = start_frame;
+        if (host.phasePipeline) {
             host.format = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
                                                           sampleRate:48000
-                                                         interleaved:YES
+                                                         interleaved:NO
                                                        channelLayout:layout];
             if (!host.format) {
-                set_error(error, nil, @"Could not create the Apple media audio format");
+                set_error(error, nil, @"Could not create the PHASE audio format");
                 return NULL;
             }
-            host.mediaRenderer = [AVSampleBufferAudioRenderer new];
-            host.mediaRenderer.allowedAudioSpatializationFormats = AVAudioSpatializationFormatMultichannel;
-            host.mediaSynchronizer = [AVSampleBufferRenderSynchronizer new];
-            host.mediaSynchronizer.delaysRateChangeUntilHasSufficientMediaData = NO;
-            [host.mediaSynchronizer addRenderer:host.mediaRenderer];
-            return (__bridge_retained void *)host;
+            host.phaseEngine = [[PHASEEngine alloc] initWithUpdateMode:PHASEUpdateModeAutomatic];
+            host.phaseEngine.outputSpatializationMode = PHASESpatializationModeAutomatic;
+            AVAudioEngine *latencyEngine = [AVAudioEngine new];
+            AVAudioOutputNode *output = latencyEngine.outputNode;
+            // ponytail: PHASE exposes no spatializer latency; include it if Apple adds a presentation clock.
+            host.presentationLatency = output.presentationLatency + output.latency;
+            PHASEListener *listener = [[PHASEListener alloc] initWithEngine:host.phaseEngine];
+            listener.automaticHeadTrackingFlags = head_tracking ? PHASEAutomaticHeadTrackingFlagOrientation : 0;
+            NSError *phaseError = nil;
+            if (![host.phaseEngine.rootObject addChild:listener error:&phaseError]) {
+                set_error(error, phaseError, @"Could not attach the PHASE listener");
+                return NULL;
+            }
+            host.listener = listener;
+            PHASEAmbientMixerDefinition *mixer =
+                [[PHASEAmbientMixerDefinition alloc] initWithChannelLayout:layout
+                                                                 orientation:simd_quaternion(0.0f, (simd_float3){0.0f, 0.0f, 1.0f})
+                                                                  identifier:@"upmixer_ambient_mixer"];
+            PHASEPushStreamNodeDefinition *streamDefinition =
+                [[PHASEPushStreamNodeDefinition alloc] initWithMixerDefinition:mixer
+                                                                         format:host.format
+                                                                    identifier:@"upmixer_push_stream"];
+            streamDefinition.normalize = NO;
+            PHASESoundEventNodeAsset *asset =
+                [host.phaseEngine.assetRegistry registerSoundEventAssetWithRootNode:streamDefinition
+                                                                          identifier:@"upmixer_sound_event"
+                                                                               error:&phaseError];
+            if (!asset) {
+                set_error(error, phaseError, @"Could not register the PHASE sound event");
+                return NULL;
+            }
+            PHASEMixerParameters *parameters = [PHASEMixerParameters new];
+            [parameters addAmbientMixerParametersWithIdentifier:mixer.identifier listener:listener];
+            host.phaseEvent = [[PHASESoundEvent alloc] initWithEngine:host.phaseEngine
+                                                        assetIdentifier:asset.identifier
+                                                        mixerParameters:parameters
+                                                                  error:&phaseError];
+            if (!host.phaseEvent) {
+                set_error(error, phaseError, @"Could not create the PHASE sound event");
+                return NULL;
+            }
+        } else {
+            host.format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:48000 channelLayout:layout];
+            host.engine = [AVAudioEngine new];
+            host.player = [AVAudioPlayerNode new];
+            [host.engine attachNode:host.player];
+            [host.engine connect:host.player to:host.engine.outputNode format:host.format];
         }
-
-        host.format = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:48000 channelLayout:layout];
-        host.engine = [AVAudioEngine new];
-        host.player = [AVAudioPlayerNode new];
-        [host.engine attachNode:host.player];
-        [host.engine connect:host.player to:host.engine.outputNode format:host.format];
         host.available = [NSMutableArray arrayWithCapacity:BUFFER_COUNT];
         host.semaphore = dispatch_semaphore_create(BUFFER_COUNT);
         for (NSUInteger i = 0; i < BUFFER_COUNT; i++) {
@@ -112,10 +144,34 @@ UpmixerAudioHost upmixer_audio_create(const char *layout_name, bool spatial, int
     }
 }
 
+void upmixer_audio_set_head_tracking(UpmixerAudioHost opaque, bool enabled) {
+    UpmixerAudio *host = (__bridge UpmixerAudio *)opaque;
+    if (host.phasePipeline) {
+        host.listener.automaticHeadTrackingFlags = enabled ? PHASEAutomaticHeadTrackingFlagOrientation : 0;
+    }
+}
+
 bool upmixer_audio_start(UpmixerAudioHost opaque, char **error) {
     @autoreleasepool {
         UpmixerAudio *host = (__bridge UpmixerAudio *)opaque;
-        if (host.mediaPipeline) return true;
+        if (host.phasePipeline) {
+            NSError *engineError = nil;
+            if (![host.phaseEngine startAndReturnError:&engineError]) {
+                set_error(error, engineError, @"Could not start PHASE audio output");
+                return false;
+            }
+            [host.phaseEvent startWithCompletion:nil];
+            double deadline = monotonic_seconds() + 2.0;
+            while (!host.phaseStream) {
+                host.phaseStream = host.phaseEvent.pushStreamNodes[@"upmixer_push_stream"];
+                if (monotonic_seconds() >= deadline) {
+                    set_error(error, nil, @"PHASE did not start the push stream");
+                    return false;
+                }
+                usleep(1000);
+            }
+            return true;
+        }
         NSError *engineError = nil;
         if (![host.engine startAndReturnError:&engineError]) {
             set_error(error, engineError, @"Could not start direct audio output");
@@ -127,9 +183,8 @@ bool upmixer_audio_start(UpmixerAudioHost opaque, char **error) {
 
 void upmixer_audio_pause(UpmixerAudioHost opaque) {
     UpmixerAudio *host = (__bridge UpmixerAudio *)opaque;
-    if (host.mediaPipeline) {
-        host.mediaPlaying = NO;
-        host.mediaSynchronizer.rate = 0.0f;
+    if (host.phasePipeline) {
+        [host.phaseEvent pause];
         return;
     }
     [host.player pause];
@@ -137,31 +192,11 @@ void upmixer_audio_pause(UpmixerAudioHost opaque) {
 
 void upmixer_audio_resume(UpmixerAudioHost opaque) {
     UpmixerAudio *host = (__bridge UpmixerAudio *)opaque;
-    if (host.mediaPipeline) {
-        host.mediaPlaying = YES;
-        if (host.mediaStarted) host.mediaSynchronizer.rate = 1.0f;
+    if (host.phasePipeline) {
+        [host.phaseEvent resume];
         return;
     }
     [host.player play];
-}
-
-static bool media_renderer_failed(UpmixerAudio *host, char **error) {
-    if (host.mediaRenderer.status != AVQueuedSampleBufferRenderingStatusFailed) return false;
-    set_error(error, host.mediaRenderer.error, @"Apple media renderer failed");
-    return true;
-}
-
-static bool wait_for_media_capacity(UpmixerAudio *host, char **error) {
-    const double deadline = monotonic_seconds() + 2.0;
-    while (true) {
-        if (media_renderer_failed(host, error)) return false;
-        if (host.mediaRenderer.readyForMoreMediaData) return true;
-        if (monotonic_seconds() >= deadline) {
-            set_error(error, nil, @"Apple media renderer stopped accepting audio");
-            return false;
-        }
-        usleep(1000);
-    }
 }
 
 static uint32_t source_channel(UpmixerAudio *host, uint32_t channel) {
@@ -171,54 +206,15 @@ static uint32_t source_channel(UpmixerAudio *host, uint32_t channel) {
     return channel;
 }
 
-static bool schedule_media_buffer(UpmixerAudio *host, const float *const *channels,
-                                  uint32_t channelCount, uint32_t frames, char **error) {
-    @autoreleasepool {
-        if (!wait_for_media_capacity(host, error)) return false;
-
-        size_t byteCount = (size_t)frames * channelCount * sizeof(float);
-        CMBlockBufferRef block = NULL;
-        OSStatus status = CMBlockBufferCreateWithMemoryBlock(
-            kCFAllocatorDefault, NULL, byteCount, kCFAllocatorDefault, NULL, 0, byteCount,
-            kCMBlockBufferAssureMemoryNowFlag, &block);
-        if (status != noErr) return set_status_error(error, status, @"Could not allocate an Apple media buffer");
-
-        char *bytes = NULL;
-        status = CMBlockBufferGetDataPointer(block, 0, NULL, NULL, &bytes);
-        if (status != noErr) {
-            CFRelease(block);
-            return set_status_error(error, status, @"Could not access an Apple media buffer");
-        }
-        float *interleaved = (float *)bytes;
-        for (uint32_t frame = 0; frame < frames; frame++) {
-            for (uint32_t channel = 0; channel < channelCount; channel++) {
-                interleaved[(size_t)frame * channelCount + channel] =
-                    channels[source_channel(host, channel)][frame];
-            }
-        }
-
-        CMTime startTime = CMTimeMake(host.nextFrame, 48000);
-        CMSampleTimingInfo timing = {
-            .duration = CMTimeMake(1, 48000),
-            .presentationTimeStamp = startTime,
-            .decodeTimeStamp = kCMTimeInvalid,
-        };
-        size_t sampleSize = channelCount * sizeof(float);
-        CMSampleBufferRef sample = NULL;
-        status = CMSampleBufferCreate(kCFAllocatorDefault, block, true, NULL, NULL,
-                                      host.format.formatDescription, frames, 1, &timing,
-                                      1, &sampleSize, &sample);
-        CFRelease(block);
-        if (status != noErr) return set_status_error(error, status, @"Could not create an Apple audio sample");
-
-        [host.mediaRenderer enqueueSampleBuffer:sample];
-        CFRelease(sample);
-        host.nextFrame += frames;
-        if (host.mediaPlaying && !host.mediaStarted) {
-            host.mediaStarted = YES;
-            [host.mediaSynchronizer setRate:1.0f time:CMTimeMake(host.startFrame, 48000)];
-        }
-        return !media_renderer_failed(host, error);
+static void fold_lfe_into_fronts(AVAudioPCMBuffer *buffer, uint32_t frames) {
+    float *left = buffer.floatChannelData[0];
+    float *right = buffer.floatChannelData[1];
+    float *lfe = buffer.floatChannelData[LFE_CHANNEL];
+    for (uint32_t frame = 0; frame < frames; frame++) {
+        float folded = lfe[frame] * LFE_FRONT_FOLD_GAIN;
+        left[frame] += folded;
+        right[frame] += folded;
+        lfe[frame] = 0.0f;
     }
 }
 
@@ -228,9 +224,6 @@ bool upmixer_audio_schedule(UpmixerAudioHost opaque, const float *const *channel
     if (!host || channel_count != host.format.channelCount || frames > BUFFER_FRAMES) {
         set_error(error, nil, @"Native audio buffer format mismatch");
         return false;
-    }
-    if (host.mediaPipeline) {
-        return schedule_media_buffer(host, channels, channel_count, frames, error);
     }
     dispatch_semaphore_wait(host.semaphore, DISPATCH_TIME_FOREVER);
     __block AVAudioPCMBuffer *buffer;
@@ -243,33 +236,56 @@ bool upmixer_audio_schedule(UpmixerAudioHost opaque, const float *const *channel
         uint32_t source = source_channel(host, channel);
         memcpy(buffer.floatChannelData[channel], channels[source], frames * sizeof(float));
     }
-    [host.player scheduleBuffer:buffer
-         completionCallbackType:AVAudioPlayerNodeCompletionDataRendered
-              completionHandler:^(AVAudioPlayerNodeCompletionCallbackType condition) {
-        (void)condition;
-        @synchronized(host.available) {
-            [host.available addObject:buffer];
-        }
-        dispatch_semaphore_signal(host.semaphore);
-    }];
+    if (host.phasePipeline) {
+        // PHASEAmbientMixer ignores LFE. Restore its +10 dB replay gain and
+        // distribute it over the front pair at 0.5 each (BS.775 front spread).
+        fold_lfe_into_fronts(buffer, frames);
+        int64_t endFrame = host.nextFrame + frames;
+        host.nextFrame = endFrame;
+        [host.phaseStream scheduleBuffer:buffer
+                   completionCallbackType:PHASEPushStreamCompletionDataRendered
+                        completionHandler:^(PHASEPushStreamCompletionCallbackCondition condition) {
+            (void)condition;
+            @synchronized(host.available) {
+                [host.available addObject:buffer];
+            }
+            dispatch_semaphore_signal(host.semaphore);
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                         (int64_t)(host.presentationLatency * NSEC_PER_SEC)),
+                           dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
+                @synchronized(host) {
+                    host.presentedFrame = MAX(host.presentedFrame, endFrame);
+                }
+            });
+        }];
+    } else {
+        [host.player scheduleBuffer:buffer
+             completionCallbackType:AVAudioPlayerNodeCompletionDataRendered
+                  completionHandler:^(AVAudioPlayerNodeCompletionCallbackType condition) {
+            (void)condition;
+            @synchronized(host.available) {
+                [host.available addObject:buffer];
+            }
+            dispatch_semaphore_signal(host.semaphore);
+        }];
+    }
     return true;
 }
 
 int64_t upmixer_audio_playback_frame(UpmixerAudioHost opaque) {
     UpmixerAudio *host = (__bridge UpmixerAudio *)opaque;
-    if (!host.mediaPipeline) return -1;
-    if (!host.mediaStarted) return host.startFrame;
-    CMTime time = host.mediaSynchronizer.currentTime;
-    if (!CMTIME_IS_NUMERIC(time)) return -1;
-    return CMTimeConvertScale(time, 48000, kCMTimeRoundingMethod_Default).value;
+    if (!host.phasePipeline) return -1;
+    @synchronized(host) {
+        return host.presentedFrame;
+    }
 }
 
 void upmixer_audio_destroy(UpmixerAudioHost opaque) {
     if (!opaque) return;
     UpmixerAudio *host = (__bridge_transfer UpmixerAudio *)opaque;
-    if (host.mediaPipeline) {
-        host.mediaSynchronizer.rate = 0.0f;
-        [host.mediaRenderer flush];
+    if (host.phasePipeline) {
+        [host.phaseEvent stopAndInvalidate];
+        [host.phaseEngine stop];
         return;
     }
     [host.player stop];

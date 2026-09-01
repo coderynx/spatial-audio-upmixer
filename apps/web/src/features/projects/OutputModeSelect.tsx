@@ -19,7 +19,7 @@ const STEREO_MODE_OPTIONS: typeof MODE_OPTIONS = [
   { value: "native", label: "Stereo", icon: SquareSplitHorizontal },
 ];
 
-// Rows that carry a profile submenu, keyed by their MODE_OPTIONS value.
+// Rows that carry a submenu, keyed by their MODE_OPTIONS value.
 const SUBMENU_MODES = new Set<OutputMode>(["binaural", "transaural"]);
 const SPATIAL_MODES = new Set<OutputMode>(["binaural", "transaural", "apple_spatial"]);
 
@@ -48,6 +48,11 @@ const TRANSAURAL_PROFILE_OPTIONS: { value: TransauralProfile; label: string; ico
   { value: "phone", label: "Phone", icon: Smartphone },
 ];
 
+const HEAD_TRACKING_OPTIONS = [
+  { value: true, label: "Head tracking on", icon: Headphones },
+  { value: false, label: "Head tracking off", icon: Headphones },
+];
+
 // Grace period before the profile submenu closes on mouse-out.
 const SUBMENU_CLOSE_DELAY_MS = 200;
 
@@ -64,6 +69,8 @@ export function OutputModeSelect({
   onSpatialProfileChange,
   transauralProfile,
   onTransauralProfileChange,
+  appleHeadTracking = true,
+  onAppleHeadTrackingChange,
   appleSpatialAvailable = false,
   systemOutput = false,
 }: {
@@ -80,14 +87,14 @@ export function OutputModeSelect({
   onSpatialProfileChange: (profile: SpatialProfile) => void;
   transauralProfile: TransauralProfile;
   onTransauralProfileChange: (profile: TransauralProfile) => void;
+  appleHeadTracking?: boolean;
+  onAppleHeadTrackingChange: (enabled: boolean) => void;
   appleSpatialAvailable?: boolean;
   systemOutput?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   const [menuFlip, setMenuFlip] = React.useState(false);
-  // Which submenu-carrying row (if any) is open — at most one at a time,
-  // same as the single `submenuOpen` boolean this replaces, generalized to
-  // pick between the binaural and transaural rows' distinct option lists.
+  // Which submenu-carrying row (if any) is open — at most one at a time.
   const [activeSubmenu, setActiveSubmenu] = React.useState<OutputMode | null>(null);
   const [submenuFlip, setSubmenuFlip] = React.useState(false);
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -147,6 +154,7 @@ export function OutputModeSelect({
   const CurrentIcon = current.icon;
   const currentProfile = PROFILE_OPTIONS.find((option) => option.value === spatialProfile) ?? PROFILE_OPTIONS[0];
   const currentTransauralProfile = TRANSAURAL_PROFILE_OPTIONS.find((option) => option.value === transauralProfile) ?? TRANSAURAL_PROFILE_OPTIONS[0];
+  const currentHeadTracking = HEAD_TRACKING_OPTIONS.find((option) => option.value === appleHeadTracking) ?? HEAD_TRACKING_OPTIONS[0];
   // Binaural/transaural show their active profile inline; native/stereo fall
   // back to the mode's own label so the trigger never reads as broken.
   const currentModeProfile = value === "transaural" ? currentTransauralProfile : value === "binaural" ? currentProfile : null;
@@ -193,10 +201,10 @@ export function OutputModeSelect({
           {modeOptions.map((option, index) => {
             const Icon = option.icon;
             const disabled = option.value === "native" && !nativeSupported;
-            const hasSubmenu = SUBMENU_MODES.has(option.value);
+            const hasSubmenu = SUBMENU_MODES.has(option.value) || option.value === "apple_spatial";
             const rowSubmenuOpen = activeSubmenu === option.value;
-            const rowProfileOptions = option.value === "transaural" ? TRANSAURAL_PROFILE_OPTIONS : PROFILE_OPTIONS;
-            const rowCurrentProfile = option.value === "transaural" ? currentTransauralProfile : currentProfile;
+            const rowProfileOptions = option.value === "transaural" ? TRANSAURAL_PROFILE_OPTIONS : option.value === "apple_spatial" ? HEAD_TRACKING_OPTIONS : PROFILE_OPTIONS;
+            const rowCurrentProfile = option.value === "transaural" ? currentTransauralProfile : option.value === "apple_spatial" ? currentHeadTracking : currentProfile;
             return (
               <React.Fragment key={option.value}>
                 {!nativeOnly && index === 0 && (
@@ -263,14 +271,18 @@ export function OutputModeSelect({
                       const ProfileIcon = profileOption.icon;
                       const selected = option.value === "transaural"
                         ? profileOption.value === transauralProfile
-                        : profileOption.value === spatialProfile;
+                        : option.value === "apple_spatial"
+                          ? profileOption.value === appleHeadTracking
+                          : profileOption.value === spatialProfile;
                       return (
                         <button
-                          key={profileOption.value}
+                          key={String(profileOption.value)}
                           type="button"
                           onClick={() => {
                             if (option.value === "transaural") {
                               onTransauralProfileChange(profileOption.value as TransauralProfile);
+                            } else if (option.value === "apple_spatial") {
+                              onAppleHeadTrackingChange(profileOption.value as boolean);
                             } else {
                               onSpatialProfileChange(profileOption.value as SpatialProfile);
                             }

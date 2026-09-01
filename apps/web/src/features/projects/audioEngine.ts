@@ -93,6 +93,7 @@ export class PreviewAudioEngine {
   outputMode: OutputMode = "binaural";
   spatialProfile: SpatialProfile = "studio";
   transauralProfile: TransauralProfile = "stereo";
+  appleHeadTracking = true;
   constants!: EngineConstants;
   positionalChannels: string[] = [];
   speakerEnabled: Record<string, boolean> = {};
@@ -406,7 +407,7 @@ export class PreviewAudioEngine {
   apply() {
     if (!this.constants) return;
     if (this.nativeClient) {
-      this.nativeClient.updateParams(this.buildParams(), this.nativeAssets(), this.nativeRenderer());
+      this.nativeClient.updateParams(this.buildParams(), this.nativeAssets(), this.nativeRenderer(), this.appleHeadTracking);
     } else {
       this.client?.updateParams(this.buildParams());
     }
@@ -732,6 +733,7 @@ export class PreviewAudioEngine {
       params: this.buildParams(),
       assets: this.nativeAssets(),
       renderer: this.nativeRenderer(),
+      appleHeadTracking: this.appleHeadTracking,
       onMaxChannels: (channels) => this.callbacks.onMaxChannels(channels),
       onLoadProgress: (progress) => this.callbacks.onLoadProgress(progress),
     }, {

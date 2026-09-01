@@ -50,15 +50,24 @@ Interactive docs are served at `/api/docs`; the OpenAPI document is `/api/v1/ope
 
 The preview no longer re-implements the DSP. Both hosts run the shared Rust
 core (`packages/dsp`) and render the whole mastered speaker bed locally —
-routing, mastering, and the selected monitor renderer. In a browser,
+routing and mastering. In a browser,
 `apps/web/public/dsp.worklet.js` runs the core as WebAssembly and Web Audio
 owns decoding and output. In Tauri, `src-tauri` runs the core as native Rust,
 decodes and resamples stems to 48 kHz, and streams the finished bed to the
-native output bridge. Multichannel Apple Spatial Audio uses
-`AVSampleBufferAudioRenderer`, while direct output and stereo use `AVAudioEngine`. Apple
-Spatial Audio is desktop-only; the other monitor modes remain available in both
-hosts. Native startup failures are visible and fall back to the WASM engine
-without changing the saved project mix.
+native output bridge. Direct output and stereo use `AVAudioEngine`. For
+non-stereo Apple Spatial Audio, the real-time multichannel PCM bed goes through
+`PHASEPushStreamNode` and `PHASEAmbientMixerDefinition`; PHASE maps the
+declared speaker layout with its public device-aware spatial renderer. It
+receives no separate beds, objects, or stems. PHASE's ambient mixer ignores
+LFE, so the native output adapter restores the rendered LFE's +10 dB replay
+gain and folds it equally into FL/FR before PHASE; this preserves the speaker
+bed's mono low-frequency level without creating a separate PHASE source.
+Supported devices can apply automatic output spatialization, personalized
+Spatial Audio, and head tracking. This is not bit-identical to Apple Music:
+Music Mode coefficients are not public. Apple Spatial Audio is desktop-only;
+the other monitor modes remain available in both hosts. Native startup failures
+are visible and fall back to the WASM engine without changing the saved project
+mix.
 
 The worklet is the *source*, not an insert: the decoded stems live in the
 wasm heap, so the engine always knows its input ahead of the playhead. That

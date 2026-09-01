@@ -8,6 +8,7 @@ export type ProjectViewState = {
   outputMode: OutputMode;
   spatialProfile: SpatialProfile;
   transauralProfile: TransauralProfile;
+  appleHeadTracking: boolean;
   masterVolume: number;
   masteringBypassed: boolean;
   matchBypassed: boolean;
@@ -23,6 +24,7 @@ const DEFAULT_VIEW_STATE: ProjectViewState = {
   outputMode: "binaural",
   spatialProfile: "studio",
   transauralProfile: "stereo",
+  appleHeadTracking: true,
   masterVolume: 1,
   masteringBypassed: false,
   matchBypassed: false,
@@ -58,6 +60,7 @@ function normalizeViewState(raw: Record<string, unknown> | undefined): ProjectVi
     outputMode: pick(raw?.output_mode, OUTPUT_MODES, DEFAULT_VIEW_STATE.outputMode),
     spatialProfile: pick(raw?.spatial_profile, SPATIAL_PROFILES, DEFAULT_VIEW_STATE.spatialProfile),
     transauralProfile: pick(raw?.transaural_profile, TRANSAURAL_PROFILES, DEFAULT_VIEW_STATE.transauralProfile),
+    appleHeadTracking: raw?.apple_head_tracking !== false,
     masterVolume: clamp01(raw?.master_volume, DEFAULT_VIEW_STATE.masterVolume),
     masteringBypassed: raw?.mastering_bypassed === true,
     matchBypassed: raw?.match_bypassed === true,
@@ -73,6 +76,7 @@ function toPayload(state: ProjectViewState): Record<string, unknown> {
     output_mode: state.outputMode,
     spatial_profile: state.spatialProfile,
     transaural_profile: state.transauralProfile,
+    apple_head_tracking: state.appleHeadTracking,
     master_volume: state.masterVolume,
     mastering_bypassed: state.masteringBypassed,
     match_bypassed: state.matchBypassed,

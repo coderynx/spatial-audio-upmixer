@@ -19,6 +19,7 @@ function renderSelect(props: Partial<React.ComponentProps<typeof OutputModeSelec
       onSpatialProfileChange={vi.fn()}
       transauralProfile="stereo"
       onTransauralProfileChange={vi.fn()}
+      onAppleHeadTrackingChange={vi.fn()}
       {...props}
     />,
   );
@@ -60,7 +61,20 @@ describe("OutputModeSelect", () => {
 
     renderSelect({ appleSpatialAvailable: true });
     fireEvent.click(screen.getByRole("button", { name: /Preview output mode/ }));
-    expect(screen.getByRole("button", { name: "Apple Spatial" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Apple Spatial/ })).toBeInTheDocument();
+  });
+
+  it("selects Apple Spatial head tracking from its submenu", () => {
+    const onChange = vi.fn();
+    const onAppleHeadTrackingChange = vi.fn();
+    renderSelect({ appleSpatialAvailable: true, onChange, onAppleHeadTrackingChange });
+
+    fireEvent.click(screen.getByRole("button", { name: /Preview output mode/ }));
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /^Apple Spatial/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Head tracking off" }));
+
+    expect(onAppleHeadTrackingChange).toHaveBeenCalledWith(false);
+    expect(onChange).toHaveBeenCalledWith("apple_spatial");
   });
 
   it("uses the macOS system output instead of a desktop device picker", () => {
