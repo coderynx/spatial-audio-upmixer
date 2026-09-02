@@ -10,7 +10,6 @@ export type StagedAsset = {
   stems: string[];
   sampleRate: number;
   subtype: string;
-  channelLayout: string;
   bleedReduction: boolean;
 };
 
@@ -23,7 +22,6 @@ export function AssetStagingRow({
   availableStems,
   sampleRates,
   subtypes,
-  channelLayouts,
   onChange,
   onRemove,
 }: {
@@ -31,7 +29,6 @@ export function AssetStagingRow({
   availableStems: string[];
   sampleRates: number[];
   subtypes: string[];
-  channelLayouts: string[];
   onChange: (patch: Partial<StagedAsset>) => void;
   onRemove: () => void;
 }) {
@@ -56,12 +53,6 @@ export function AssetStagingRow({
           value={asset.subtype}
           onChange={(subtype) => onChange({ subtype })}
           options={subtypes.map((value) => ({ value, label: value }))}
-        />
-        <SelectField
-          label="Channel layout"
-          value={asset.channelLayout}
-          onChange={(channelLayout) => onChange({ channelLayout })}
-          options={channelLayouts.map((value) => ({ value, label: value }))}
         />
       </div>
       <StemSelectorGrid available={availableStems} selected={asset.stems} onChange={(stems) => onChange({ stems })} />

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronDown, ChevronRight, Download, RotateCcw } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Plus, RotateCcw, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -7,12 +7,14 @@ import { api } from "@/api";
 import type { Configuration, Project, ProjectStem, ProjectTrack } from "@/api";
 import { formatBytes, formatDuration } from "@/lib/format";
 import { downloadWithProgress } from "@/lib/download";
-import { CHANNEL_LAYOUTS } from "@/lib/layouts";
 import { getStemColor, getStemIcon } from "@/lib/stems";
-import { cn } from "@/lib/utils";
+import { normalizeManifest } from "@/lib/manifest";
+import { deliveryTargetLabel } from "../deliveryTargets";
 import { useRuntime } from "@/runtime";
 import { ProjectTitle } from "../ProjectTitle";
 import { ReprepareStemsDialog, type ReprepareSettings } from "./ReprepareStemsDialog";
+
+import { DeleteDeliveryTargetDialog, DeliveryTargetDialog, type DeliveryTargetSettings } from "./DeliveryTargetDialog";
 
 function statusVariant(status: string) {
   if (status === "ready") return "success" as const;
@@ -178,7 +180,7 @@ function TrackRow({
           </>
         )}
       </div>
-      <TrackLayoutPicker
+      <TrackDeliveryTargets
         projectId={projectId}
         track={track}
         configuration={configuration}
@@ -204,11 +206,7 @@ function TrackRow({
   );
 }
 
-/** A track's speaker layouts. Each one it carries owns a complete, separate
- * mix, master and delivery — adding one seeds it from the track's current
- * mix re-placed onto the new speakers, removing one discards that layout's
- * work, so the last one can't be removed. */
-function TrackLayoutPicker({
+function TrackDeliveryTargets({
   projectId,
   track,
   configuration,
@@ -221,19 +219,35 @@ function TrackLayoutPicker({
 }) {
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const available = configuration?.choices.channel_layouts || CHANNEL_LAYOUTS;
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [deleteLayout, setDeleteLayout] = React.useState<string | null>(null);
 
-  async function toggle(layout: string) {
-    const next = track.layouts.includes(layout)
-      ? track.layouts.filter((item) => item !== layout)
-      : [...track.layouts, layout];
-    if (!next.length) return;
+  async function create(settings: DeliveryTargetSettings) {
     setSaving(true);
     setError(null);
     try {
-      onProjectUpdate(await api.setTrackLayouts(projectId, track.id, next));
+      await api.setTrackLayouts(projectId, track.id, [...track.layouts, settings.mixing.channel_layout]);
+      onProjectUpdate(await api.saveProjectTrackLayout(projectId, track.id, settings.mixing.channel_layout, {
+        manifest_overrides: settings,
+        scene_overrides: track.scene_overrides,
+      }));
     } catch (reason) {
       setError((reason as Error).message);
+      throw reason;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove() {
+    if (!deleteLayout) return;
+    setSaving(true);
+    setError(null);
+    try {
+      onProjectUpdate(await api.setTrackLayouts(projectId, track.id, track.layouts.filter((layout) => layout !== deleteLayout)));
+    } catch (reason) {
+      setError((reason as Error).message);
+      throw reason;
     } finally {
       setSaving(false);
     }
@@ -241,32 +255,14 @@ function TrackLayoutPicker({
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 border-t bg-muted/10 px-3 py-2 pl-11">
-      <span className="mr-1 text-[11px] text-muted-foreground">Speaker layouts</span>
-      {available.map((layout) => {
-        const active = track.layouts.includes(layout);
-        const last = active && track.layouts.length === 1;
-        return (
-          <button
-            key={layout}
-            type="button"
-            role="switch"
-            aria-checked={active}
-            aria-label={`${layout} layout for ${track.asset.title || track.asset.filename}`}
-            disabled={saving || last}
-            title={last ? "A track must keep at least one speaker layout" : undefined}
-            onClick={() => void toggle(layout)}
-            className={cn(
-              "h-6 rounded-md border px-2 text-[11px] transition-colors disabled:opacity-60",
-              active
-                ? "border-primary/40 bg-primary/15 font-medium text-primary"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            {layout}
-          </button>
-        );
-      })}
+      <span className="mr-1 text-[11px] text-muted-foreground">Delivery targets</span>
+      {track.layouts.map((layout) => <span key={layout} className="group inline-flex items-center rounded-md border py-1 pl-2 text-[11px]">{deliveryTargetLabel(track, layout)}
+        {track.layouts.length > 1 && <button type="button" aria-label={`Delete ${deliveryTargetLabel(track, layout)}`} className="ml-1 grid h-4 w-4 place-items-center rounded text-muted-foreground opacity-0 hover:bg-destructive/10 hover:text-destructive focus:opacity-100 group-hover:opacity-100" onClick={() => setDeleteLayout(layout)}><X className="h-3 w-3" /></button>}
+      </span>)}
+      <Button variant="outline" size="sm" disabled={saving} onClick={() => setCreateOpen(true)}><Plus />Create delivery target</Button>
       {error && <span className="text-[11px] text-destructive">{error}</span>}
+      <DeliveryTargetDialog open={createOpen} configuration={configuration} initial={normalizeManifest(track.layout_overrides[track.layouts[0]] || {})} onOpenChange={setCreateOpen} onCreate={create} />
+      <DeleteDeliveryTargetDialog open={deleteLayout !== null} target={deleteLayout ? deliveryTargetLabel(track, deleteLayout) : null} onOpenChange={(open) => { if (!open) setDeleteLayout(null); }} onConfirm={remove} />
     </div>
   );
 }

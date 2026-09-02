@@ -5,7 +5,6 @@ import { EmptyState } from "@/app/EmptyState";
 import { PanelBody, PanelHeader } from "@/app/Panel";
 import { Button } from "@/components/ui/button";
 import { SelectField } from "@/components/forms/fields";
-import { CHANNEL_LAYOUTS } from "@/lib/layouts";
 import { defaultManifest, fallbackStems } from "@/lib/manifest";
 import { normalizeStemHierarchy } from "@/lib/stemHierarchy";
 import { droppedItems, type UploadItem } from "@/lib/uploads";
@@ -52,18 +51,15 @@ export function AssetsTab({
   const availableStems = choices?.stems || fallbackStems;
   const sampleRates = choices?.sample_rates || [44100, 48000, 88200, 96000, 192000];
   const subtypes = choices?.output_subtypes || ["PCM_16", "PCM_24", "PCM_32", "FLOAT"];
-  const channelLayouts = choices?.channel_layouts || CHANNEL_LAYOUTS;
   const engineDefaults = defaultManifest.engine;
-  const projectLayout = (project.manifest as { mixing?: { channel_layout?: string } }).mixing?.channel_layout;
 
   const defaultSettings = React.useCallback((): Defaults => ({
     stems: normalizeStemHierarchy(project.requested_stems.length ? project.requested_stems : availableStems.slice(0, 6)),
     sampleRate: sampleRates[0],
     subtype: subtypes.includes("PCM_24") ? "PCM_24" : subtypes[0],
-    channelLayout: projectLayout || channelLayouts[channelLayouts.length - 1],
     bleedReduction: engineDefaults.stem_bleed_reduction,
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable option lists derived from `configuration`, not worth re-deriving the callback identity for
-  }), [project.requested_stems, projectLayout]);
+  }), [project.requested_stems]);
 
   const [staged, setStaged] = React.useState<StagedAsset[]>([]);
   const [busy, setBusy] = React.useState(false);
@@ -106,7 +102,6 @@ export function AssetsTab({
             stem_bleed_reduction: settings.bleedReduction,
           },
           format: { sample_rate: settings.sampleRate, subtype: settings.subtype },
-          mixing: { channel_layout: settings.channelLayout },
         };
       });
       const next = await api.addProjectAssets(project.id, { import_id: imported.id, per_asset_overrides: perAssetOverrides });
@@ -185,7 +180,7 @@ export function AssetsTab({
             <EmptyState
               icon={UploadCloud}
               title="Upload one or more tracks"
-              description="WAV and FLAC audio, or a ZIP of either. Each file gets its own stems, sample rate, bit depth, and channel layout."
+              description="WAV and FLAC audio, or a ZIP of either. Each file gets its own stems, sample rate, and bit depth."
               action={
                 <Button size="sm" variant="outline" onClick={() => fileInput.current?.click()}>
                   <Plus />
@@ -202,7 +197,6 @@ export function AssetsTab({
                   availableStems={availableStems}
                   sampleRates={sampleRates}
                   subtypes={subtypes}
-                  channelLayouts={channelLayouts}
                   onChange={(patch) => updateStaged(item.localId, patch)}
                   onRemove={() => removeStaged(item.localId)}
                 />

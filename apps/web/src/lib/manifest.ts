@@ -141,6 +141,7 @@ export type Manifest = {
   };
   format: {
     type: string;
+    delivery_profile: string | null;
     codec: string;
     subtype: string;
     sample_rate: number;
@@ -263,7 +264,7 @@ export const defaultManifest: Manifest = {
     normalize_output: true,
   },
   format: {
-    type: "multichannel", codec: "wav_pcm", subtype: "PCM_24", sample_rate: 48000,
+    type: "multichannel", delivery_profile: null, codec: "wav_pcm", subtype: "PCM_24", sample_rate: 48000,
     downmix: { enabled: false, output: null, surround_coeff: 0.7071 },
     binaural: { profile: "studio" },
     transaural: { profile: "stereo" },

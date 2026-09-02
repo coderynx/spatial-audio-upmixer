@@ -4,6 +4,7 @@ import type { ProjectTrack } from "@/api";
 import { cn } from "@/lib/utils";
 import { useRuntime } from "@/runtime";
 import { ProjectTitle } from "./ProjectTitle";
+import { deliveryTargetLabel } from "./deliveryTargets";
 
 export type LayoutSelection = { trackId: string; layout: string };
 
@@ -21,7 +22,7 @@ export type LayoutSelection = { trackId: string; layout: string };
  * Stays mounted at `w-0` when collapsed rather than unmounting (`null`) —
  * `w-56`/`w-0` transition on `width`, clipped by `overflow-hidden`, is what
  * gives the collapse/expand its slide animation. The inner header/nav keep
- * a fixed `w-56` of their own so their content doesn't reflow or wrap as
+ * a fixed `w-[300px]` of their own so their content doesn't reflow or wrap as
  * the outer box's width animates; the outer box is what does the clipping.
  * Reopening it is `ProjectDetailPage`'s top-bar "Tracks" toggle — this
  * component carries no collapse control of its own, since a second one
@@ -47,15 +48,15 @@ export function TrackRail({
       aria-hidden={collapsed}
       className={cn(
         "flex min-h-0 flex-col overflow-hidden bg-card transition-[width] duration-150 ease-in-out",
-        collapsed ? "w-0" : "w-56 border-r",
+        collapsed ? "w-0" : "w-[300px] border-r",
       )}
     >
-      <div className="flex h-8 w-56 shrink-0 items-center border-b px-2">
+      <div className="flex h-8 w-[300px] shrink-0 items-center border-b px-2">
         <p className="truncate text-[11px] font-semibold uppercase tracking-[.08em] text-muted-foreground">
           Tracks
         </p>
       </div>
-      <nav className="min-h-0 w-56 flex-1 overflow-y-auto p-2">
+      <nav className="min-h-0 w-[300px] flex-1 overflow-y-auto p-2">
         {tracks.map((track) => {
           const label = track.asset.title || track.asset.filename;
           const open = !collapsedTracks[track.id];
@@ -101,6 +102,7 @@ export function TrackRail({
                         key={layout}
                         type="button"
                         tabIndex={collapsed ? -1 : undefined}
+                        aria-label={layout}
                         aria-current={active ? "true" : undefined}
                         onClick={() => onChange({ trackId: track.id, layout })}
                         className={cn(
@@ -110,7 +112,7 @@ export function TrackRail({
                             : "text-muted-foreground hover:bg-accent hover:text-foreground",
                         )}
                       >
-                        <span className="min-w-0 flex-1 truncate">{layout}</span>
+                        <span className="min-w-0 flex-1 truncate">{deliveryTargetLabel(track, layout)}</span>
                       </button>
                     );
                   })}

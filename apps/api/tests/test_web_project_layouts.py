@@ -140,6 +140,22 @@ def test_a_layout_block_retargets_a_delivery_it_cannot_carry(layouts_client):
     assert overrides["stereo"]["format"]["type"] == "multichannel"
 
 
+def test_a_layout_block_accepts_a_delivery_profile(layouts_client):
+    project_id, track_id = _project_with_track(layouts_client)
+    base = f"/api/v1/projects/{project_id}/tracks/{track_id}"
+
+    assert layouts_client.put(f"{base}/layouts", json={"layouts": ["7.1.4", "7.1.2"]}).status_code == 200
+    response = layouts_client.put(f"{base}/layouts/7.1.2/settings", json={
+        "manifest_overrides": {
+            "format": {"type": "adm-bwf", "delivery_profile": "atmos-music"},
+            "mastering": {"loudness": {"target": -18.0, "max_tp": -1.0}},
+        },
+        "scene_overrides": {},
+    })
+    assert response.status_code == 200
+    assert response.json()["tracks"][0]["layout_overrides"]["7.1.2"]["format"]["delivery_profile"] == "atmos-music"
+
+
 def test_removing_a_layout_discards_only_that_layouts_mix(layouts_client):
     project_id, track_id = _project_with_track(layouts_client)
     base = f"/api/v1/projects/{project_id}/tracks/{track_id}"

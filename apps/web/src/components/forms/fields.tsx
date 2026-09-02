@@ -184,6 +184,7 @@ export function NumberField({
       <div className="relative">
         <Input
           type="number"
+          aria-label={label}
           value={draft}
           min={min}
           step={step}

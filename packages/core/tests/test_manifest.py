@@ -212,6 +212,12 @@ class TestValidateManifestAssets:
         _, jobs = parse_manifest(data)
         assert jobs[0].config["stem_object_metadata"] == metadata
 
+    def test_accepts_and_maps_delivery_profile(self):
+        data = _minimal(format={"delivery_profile": "netflix-atmos-movie"})
+        validate_manifest(data)
+        _, jobs = parse_manifest(data)
+        assert jobs[0].config["delivery_profile"] == "netflix-atmos-movie"
+
     @pytest.mark.parametrize("metadata", [
         {"gain": -1.0},
         {"importance": 11},

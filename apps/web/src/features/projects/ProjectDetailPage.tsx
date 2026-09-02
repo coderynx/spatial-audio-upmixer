@@ -596,7 +596,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
               tracks={project.tracks}
               value={selection}
               onChange={setSelection}
-              onRename={(trackId, name) => void saveProjectTrackName(trackId, name)}
+          onRename={(trackId, name) => void saveProjectTrackName(trackId, name)}
           collapsed={trackRailCollapsed}
         />
       );

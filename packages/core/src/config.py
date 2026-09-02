@@ -46,6 +46,9 @@ class UpmixConfig:
     # Fixed so two renders of the same job are byte-identical.
     output_dither_seed: int = 20260819
     output_type: str = "multichannel"
+    # Delivery-profile label is descriptive; its layout/format/mastering
+    # settings remain the executable delivery contract.
+    delivery_profile: str | None = None
     output_codec: str = "wav_pcm"
     sample_rate: int | None = None
     output_sample_rate: int | None = None

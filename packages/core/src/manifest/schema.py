@@ -84,6 +84,7 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
 
     "format": {
         "type":        ("config", "output_type"),
+        "delivery_profile": ("config", "delivery_profile"),
         "codec":       ("config", "output_codec"),
         "subtype":     ("config", "output_subtype"),
         "dither":      ("config", "output_dither"),
@@ -187,6 +188,7 @@ def register_block_keys(section: str, keys: BlockMapping) -> None:
 _FIELD_MAP: dict[str, tuple[str, type]] = {
     "format":                     ("output_format",            str),
     "output_type":                ("output_type",              str),
+    "delivery_profile":           ("delivery_profile",         str),
     "output_codec":               ("output_codec",             str),
     "output_subtype":             ("output_subtype",           str),
     "output_dither":              ("output_dither",            str),
