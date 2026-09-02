@@ -27,7 +27,6 @@ MANIFEST_TO_CANONICAL: dict[str, str] = {
     "crowd":   "Crowd",
     "lead-vocals": "Lead Vocals",
     "backing-vocals": "Backing Vocals",
-    "vocals-reverb": "Vocals Reverb",
 }
 
 CANONICAL_STEMS: frozenset[str] = frozenset(MANIFEST_TO_CANONICAL.values())
@@ -45,19 +44,6 @@ MODEL_DRUMS = "MDX23C-DrumSep-aufr33-jarredou.ckpt"
 
 MODEL_KARAOKE = "mel_band_roformer_karaoke_gabox_v2.ckpt"
 _KARAOKE_OUTPUT_CACHE_TAG = "lead-vocals-v2"
-
-MODEL_DEREVERB = "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt"
-
-DEREVERB_MODELS: tuple[str, ...] = (
-    MODEL_DEREVERB,
-    "dereverb_mel_band_roformer_less_aggressive_anvuew_sdr_18.8050.ckpt",
-)
-
-MODEL_WET_DENOISE = "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt"
-
-WET_VOCAL_STEM = "Vocals Reverb"
-
-_DEREVERB_NOISE_RESIDUAL = "_wet_noise"
 
 DEUX_OUTPUT_STEMS: frozenset[str] = frozenset({"Vocals", "_deux_inst"})
 PRIMARY_OUTPUT_STEMS: frozenset[str] = frozenset({"Vocals", "Bass", "Drums", "Guitar", "Piano", "Other"})
@@ -85,10 +71,7 @@ class SeparationTask:
         keep_stems:   Final output stems the user requested from this task.
                       Does not include intermediates needed only by later stages.
         stem_overrides: Optional lowercase model-tag → canonical name mapping for
-                      this task alone, overriding ``MODEL_STEM_OVERRIDES``. The
-                      dereverb model names its outputs after the reverb split,
-                      not after the stem it was fed, so the same checkpoint maps
-                      to a different dry stem depending on its input.
+                      this task alone, overriding ``MODEL_STEM_OVERRIDES``.
     """
 
     model: str
@@ -153,9 +136,6 @@ def normalize_stems(stems: list[str]) -> list[str]:
 
 def resolve_separation_plan(
     canonical: list[str],
-    wet_dry_split: bool = False,
-    wet_denoise: bool = False,
-    dereverb_model: str = MODEL_DEREVERB,
 ) -> SeparationPlan:
     """Build an ordered execution plan for the given canonical stem names.
 
@@ -170,32 +150,15 @@ def resolve_separation_plan(
         canonical: Canonical (title-case) stem names — output of
                    :func:`normalize_stems` or :data:`DEFAULT_STEMS`.
                    An empty list is treated identically to DEFAULT_STEMS.
-        wet_dry_split: Split the vocal stem into a dry stem and a wet
-                   (reverb/ambience) stem. Requesting ``"Vocals Reverb"``
-                   explicitly enables it too.
-        wet_denoise: Run a gentle denoise pass over the wet stem only.
-        dereverb_model: Checkpoint for the split.
 
     Returns:
         :class:`SeparationPlan` with tasks in correct execution order.
     """
     requested = frozenset(canonical) if canonical else frozenset(DEFAULT_STEMS)
 
-    split_needed = wet_dry_split or WET_VOCAL_STEM in requested
-    if split_needed:
-        requested = requested | {WET_VOCAL_STEM}
-
     for parent, children in _CHILD_STEMS_BY_PARENT.items():
         if requested & children:
             requested = requested - {parent}
-
-    # The dereverb checkpoints are vocal-trained and also strip non-centre
-    # harmonies, so on a combined Vocals stem the wet residual swallows
-    # backing vocals; split the lead instead whenever the karaoke stage runs
-    # (upmixer-knowledge models/cleanup.md).
-    split_parent = (
-        "Lead Vocals" if split_needed and (requested & VOCAL_SUB_STEMS) else "Vocals"
-    )
 
     tasks: list[SeparationTask] = []
 
@@ -211,7 +174,7 @@ def resolve_separation_plan(
     primary_needed = bool(requested & PRIMARY_OUTPUT_STEMS)
     drum_sub_needed = bool(requested & DRUM_SUB_STEMS)
     vocal_sub_needed = bool(requested & VOCAL_SUB_STEMS)
-    deux_needed = primary_needed or drum_sub_needed or vocal_sub_needed or split_needed
+    deux_needed = primary_needed or drum_sub_needed or vocal_sub_needed
     instrumental_needed = bool(requested & (PRIMARY_OUTPUT_STEMS - {"Vocals"}))
     primary_stage_needed = instrumental_needed or drum_sub_needed
 
@@ -253,30 +216,6 @@ def resolve_separation_plan(
             output_stems=VOCAL_SUB_STEMS,
             keep_stems=requested & VOCAL_SUB_STEMS,
         ))
-
-    if split_needed:
-        # The wet stem is the model's residual against its own input
-        # (``mix - primary`` in demix.py), so dry + wet nulls against the
-        # parent stem and no energy is invented or lost.
-        tasks.append(SeparationTask(
-            model=dereverb_model,
-            input_source=split_parent,
-            output_stems=frozenset({split_parent, WET_VOCAL_STEM}),
-            keep_stems=requested & {split_parent, WET_VOCAL_STEM},
-            stem_overrides={"noreverb": split_parent, "reverb": WET_VOCAL_STEM},
-        ))
-
-        if wet_denoise:
-            tasks.append(SeparationTask(
-                model=MODEL_WET_DENOISE,
-                input_source=WET_VOCAL_STEM,
-                output_stems=frozenset({WET_VOCAL_STEM, _DEREVERB_NOISE_RESIDUAL}),
-                keep_stems=frozenset({WET_VOCAL_STEM}),
-                stem_overrides={
-                    "dry": WET_VOCAL_STEM,
-                    "other": _DEREVERB_NOISE_RESIDUAL,
-                },
-            ))
 
     stems_hash = hashlib.sha256("|".join(sorted(requested)).encode()).hexdigest()[:20]
     inference_identity_parts: list[str] = []

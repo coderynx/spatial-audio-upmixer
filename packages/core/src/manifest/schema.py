@@ -77,9 +77,6 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "stem_bleed_reduction":         ("config", "stem_bleed_reduction"),
         "stem_drum_remask":             ("config", "stem_drum_remask"),
         "stem_primary_remask":          ("config", "stem_primary_remask"),
-        "stem_wet_dry_split":           ("config", "stem_wet_dry_split"),
-        "stem_dereverb_model":          ("config", "stem_dereverb_model"),
-        "stem_wet_denoise":             ("config", "stem_wet_denoise"),
     },
 
     "format": {
@@ -284,9 +281,6 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "stem_bleed_reduction":        ("stem_bleed_reduction",        bool),
     "stem_drum_remask":            ("stem_drum_remask",            bool),
     "stem_primary_remask":         ("stem_primary_remask",         bool),
-    "stem_wet_dry_split":          ("stem_wet_dry_split",          bool),
-    "stem_dereverb_model":         ("stem_dereverb_model",         str),
-    "stem_wet_denoise":            ("stem_wet_denoise",            bool),
     "stem_source_anchor_strength": ("stem_source_anchor_strength", float),
     "downmix_output":              ("downmix_output_path",    str),
     "downmix_surround_coeff":      ("surround_downmix_coeff", float),

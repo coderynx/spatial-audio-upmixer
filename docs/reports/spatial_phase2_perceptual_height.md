@@ -19,7 +19,7 @@ that bin's energy; each carries 0.25 at crossover.
 
 The routing presets use the three values evaluated by Lee's perceptual-band
 study: 4 kHz for lead, vocal, and drum stems; 2 kHz for cymbals, harmonic
-instruments, crowd, and other material; and 500 Hz for `Vocals Reverb`. This
+instruments, crowd, and other material. This
 is a conservative initial allocation: vocal and transient height sends retain
 only their airy tail, while the dedicated diffuse reverb can rise broadly.
 The source is Y.-H. Lee, “2D-to-3D Ambience Upmixing based on Perceptual Band

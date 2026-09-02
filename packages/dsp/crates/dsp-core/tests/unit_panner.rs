@@ -319,10 +319,6 @@ fn preset_ambient_keeps_the_pulse_dry_and_scales_the_room_per_preset() {
     assert!(preset_ambient("balanced", "nope").is_none());
     assert!(preset_ambient("nope", "Crowd").is_none());
     assert_eq!(
-        preset_ambient_height_crossover("balanced", "Vocals Reverb"),
-        Some(500.0)
-    );
-    assert_eq!(
         preset_ambient_height_crossover("balanced", "Vocals"),
         Some(4000.0)
     );

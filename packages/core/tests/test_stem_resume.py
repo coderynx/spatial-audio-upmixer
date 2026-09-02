@@ -23,11 +23,10 @@ def _plan():
                            frozenset({"Vocals", "_inst"}), frozenset({"Vocals"})),
             SeparationTask("b.ckpt", "_inst",
                            frozenset({"Bass", "Drums"}), frozenset({"Bass", "Drums"})),
-            SeparationTask("c.ckpt", "Vocals",
-                           frozenset({"Vocals", "Vocals Reverb"}),
-                           frozenset({"Vocals", "Vocals Reverb"})),
+            SeparationTask("c.ckpt", "Vocals", frozenset({"Vocals"}),
+                           frozenset({"Vocals"})),
         ],
-        requested_stems=frozenset({"Vocals", "Vocals Reverb", "Bass", "Drums"}),
+        requested_stems=frozenset({"Vocals", "Bass", "Drums"}),
         stems_hash="x",
     )
 
@@ -37,7 +36,7 @@ def _separator(tmp_path, runs, fail_on=None):
     emits = {
         "a.ckpt": {"Vocals": 1.0, "_inst": 2.0},
         "b.ckpt": {"Bass": 3.0, "Drums": 4.0},
-        "c.ckpt": {"Vocals": 5.0, "Vocals Reverb": 6.0},
+        "c.ckpt": {"Vocals": 5.0},
     }
 
     class Fake:
@@ -101,7 +100,6 @@ def test_a_failed_run_resumes_at_the_stage_that_failed(tmp_path):
     assert stems["Bass"][0, 0] == 3.0
     assert stems["Drums"][0, 0] == 4.0
     assert stems["Vocals"][0, 0] == 5.0
-    assert stems["Vocals Reverb"][0, 0] == 6.0
 
 
 def test_a_successful_run_leaves_no_checkpoint(tmp_path):

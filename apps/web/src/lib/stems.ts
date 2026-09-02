@@ -1,5 +1,4 @@
 import {
-  AudioWaveform,
   Drum,
   Guitar,
   MicVocal,
@@ -27,11 +26,10 @@ export const stemColors: Record<string, string> = {
   Crowd: "#3b82f6",
   "Lead Vocals": "#f43f5e",
   "Backing Vocals": "#d946ef",
-  "Vocals Reverb": "#fb7185",
 };
 
 const bedStemNames = new Set([
-  "Bass", "Kick", "Snare", "Other", "Crowd", "Backing Vocals", "Vocals Reverb",
+  "Bass", "Kick", "Snare", "Other", "Crowd", "Backing Vocals",
 ]);
 
 const stemIcons: Record<string, LucideIcon> = {
@@ -49,7 +47,6 @@ const stemIcons: Record<string, LucideIcon> = {
   crowd: UsersRound,
   "lead vocals": MicVocal,
   "backing vocals": Speech,
-  "vocals reverb": AudioWaveform,
   other: Music2,
 };
 

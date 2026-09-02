@@ -71,7 +71,6 @@ scaling) respects the explicit-control contract.
 
 | Phase | File | Deliverable |
 |-------|------|-------------|
-| 12 | `phase12_wet_dry_split.md` | Per-stem dereverb at separation time; wet component becomes an ordinary stem routed surround/height-heavy. Vocals first, harness-gated, default off. The only phase that touches separation — eval harness + knowledge base rules apply. **Code complete, default off** — the wet stem is the dereverb model's own residual, so dry + wet nulls against the parent. Harness run on a synthetic dry+RIR corpus (directional, not licensed-corpus): the standard anvuew checkpoint wins by a thin margin and stays the default, and the harmony trap measured at −0.8 dB (the wet stem *is* a side-panned backing layer), which added a warning on the combined-`Vocals` path. Licensed-corpus run and listening A/B still outstanding; see `phase12_report.md` §7. |
 | 13 | *(removed)* | Split the phase 11 duck into 3 Linkwitz-Riley bands so cymbal wash keeps flowing to the heights through snare hits. Shipped, then the whole transient/sustain duck feature (phases 11 and 13 both) was removed; the plan and report are deleted along with it. |
 | 14 | `phase14_spatial_automation.md` | Optional, product-heavy: per-stem automation curves (gain + send openness) as prepare-time data — editable in the UI, consumed identically by export and preview; slice 2 adds suggested curves from section analysis. |
 

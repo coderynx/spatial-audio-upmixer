@@ -30,9 +30,6 @@ _NEW_MODELS = (
     "mel_band_roformer_vocals_becruily.ckpt",
     "mel_band_roformer_instrumental_becruily.ckpt",
     "mel_band_roformer_karaoke_becruily.ckpt",
-    "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt",
-    "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt",
-    "dereverb_mel_band_roformer_less_aggressive_anvuew_sdr_18.8050.ckpt",
 )
 
 

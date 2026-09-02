@@ -541,7 +541,7 @@ def test_stem_object_and_bed_classes_follow_the_delivery_table():
 
     for stem in ("Crash", "Ride", "Hi-Hat", "Toms", "Guitar", "Piano", "Lead Vocals"):
         assert router._object_placement_for(stem) is not None
-    for stem in ("Bass", "Kick", "Snare", "Other", "Crowd", "Backing Vocals", "Vocals Reverb"):
+    for stem in ("Bass", "Kick", "Snare", "Other", "Crowd", "Backing Vocals"):
         assert router._object_placement_for(stem) is None
 
 

@@ -9,7 +9,7 @@ from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel, validate_delivery
 from upmixer.io.writer import DITHER_MODES
 from upmixer.manifest.schema import _BLOCK_REGISTRY, BlockMapping, ManifestError, _leaf_type
-from upmixer.separation.stem_plan import DEREVERB_MODELS, MANIFEST_TO_CANONICAL
+from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
 
 _SEMVER_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
 
@@ -175,7 +175,6 @@ def _validate_leaf(value: object, entry: tuple[str, str], path: str) -> None:
         "mastering.dynamic_eq.profile": set(_dyneq_profile_choices()),
         "format.binaural.profile": set(_binaural_profile_choices()),
         "format.transaural.profile": set(_transaural_profile_choices()),
-        "engine.stem_dereverb_model": set(DEREVERB_MODELS),
     }
     if path in choices and value not in choices[path]:
         raise ManifestError(f"{path} has an unsupported value: {value!r}.")

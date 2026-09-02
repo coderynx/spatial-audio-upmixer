@@ -30,7 +30,7 @@ const fn placement(
 /// Preset names, in the order they are offered.
 pub const PRESET_NAMES: [&str; 6] = ["balanced", "intimate", "stage", "wide", "immersive", "live"];
 
-const BALANCED_PLACEMENTS: [(&str, StemPlacement); 17] = [
+const BALANCED_PLACEMENTS: [(&str, StemPlacement); 16] = [
     (
         "Lead Vocals",
         placement(0.0, 0.0, 60.0, 0.10, 0.0, 0.00, 1.5),
@@ -59,13 +59,9 @@ const BALANCED_PLACEMENTS: [(&str, StemPlacement); 17] = [
         "Crowd",
         placement(180.0, 14.0, 128.0, 0.40, 0.0, 0.50, -3.0),
     ),
-    (
-        "Vocals Reverb",
-        placement(180.0, 24.0, 156.0, 0.50, 0.0, 0.68, -5.0),
-    ),
 ];
 
-const INTIMATE_PLACEMENTS: [(&str, StemPlacement); 17] = [
+const INTIMATE_PLACEMENTS: [(&str, StemPlacement); 16] = [
     (
         "Lead Vocals",
         placement(0.0, 0.0, 60.0, 0.05, 0.0, 0.00, 2.0),
@@ -91,13 +87,9 @@ const INTIMATE_PLACEMENTS: [(&str, StemPlacement); 17] = [
         placement(0.0, 4.0, 60.0, 0.14, 0.32, 0.08, 0.0),
     ),
     ("Crowd", placement(180.0, 8.0, 92.0, 0.26, 0.0, 0.30, -2.0)),
-    (
-        "Vocals Reverb",
-        placement(180.0, 12.0, 110.0, 0.34, 0.0, 0.42, -4.0),
-    ),
 ];
 
-const STAGE_PLACEMENTS: [(&str, StemPlacement); 17] = [
+const STAGE_PLACEMENTS: [(&str, StemPlacement); 16] = [
     (
         "Lead Vocals",
         placement(0.0, 0.0, 60.0, 0.08, 0.0, 0.00, 1.5),
@@ -126,13 +118,9 @@ const STAGE_PLACEMENTS: [(&str, StemPlacement); 17] = [
         "Crowd",
         placement(180.0, 14.0, 128.0, 0.36, 0.0, 0.46, -3.0),
     ),
-    (
-        "Vocals Reverb",
-        placement(180.0, 24.0, 156.0, 0.46, 0.0, 0.64, -5.0),
-    ),
 ];
 
-const WIDE_PLACEMENTS: [(&str, StemPlacement); 17] = [
+const WIDE_PLACEMENTS: [(&str, StemPlacement); 16] = [
     (
         "Lead Vocals",
         placement(0.0, 0.0, 62.0, 0.12, 0.0, 0.00, 1.2),
@@ -161,13 +149,9 @@ const WIDE_PLACEMENTS: [(&str, StemPlacement); 17] = [
         "Crowd",
         placement(180.0, 18.0, 140.0, 0.46, 0.0, 0.62, -3.5),
     ),
-    (
-        "Vocals Reverb",
-        placement(180.0, 28.0, 168.0, 0.56, 0.0, 0.76, -5.5),
-    ),
 ];
 
-const IMMERSIVE_PLACEMENTS: [(&str, StemPlacement); 17] = [
+const IMMERSIVE_PLACEMENTS: [(&str, StemPlacement); 16] = [
     (
         "Lead Vocals",
         placement(0.0, 0.0, 60.0, 0.10, 0.0, 0.00, 1.0),
@@ -196,13 +180,9 @@ const IMMERSIVE_PLACEMENTS: [(&str, StemPlacement); 17] = [
         "Crowd",
         placement(180.0, 30.0, 142.0, 0.48, 0.0, 0.68, -4.0),
     ),
-    (
-        "Vocals Reverb",
-        placement(180.0, 40.0, 170.0, 0.60, 0.0, 0.82, -6.0),
-    ),
 ];
 
-const LIVE_PLACEMENTS: [(&str, StemPlacement); 17] = [
+const LIVE_PLACEMENTS: [(&str, StemPlacement); 16] = [
     (
         "Lead Vocals",
         placement(0.0, 0.0, 60.0, 0.12, 0.0, 0.00, 1.0),
@@ -230,10 +210,6 @@ const LIVE_PLACEMENTS: [(&str, StemPlacement); 17] = [
     (
         "Crowd",
         placement(180.0, 24.0, 158.0, 0.54, 0.0, 0.72, -4.5),
-    ),
-    (
-        "Vocals Reverb",
-        placement(180.0, 32.0, 174.0, 0.66, 0.0, 0.86, -6.0),
     ),
 ];
 
@@ -266,7 +242,7 @@ pub fn preset_stems(preset: &str) -> &'static [(&'static str, StemPlacement)] {
 
 /// How readily a stem's ambient half leaves the front wall at `balanced`'s
 /// scale, followed by its height crossover in Hz.
-const AMBIENT_DEFAULTS: [(&str, f64, f64, f64); 17] = [
+const AMBIENT_DEFAULTS: [(&str, f64, f64, f64); 16] = [
     ("Lead Vocals", 0.0, 0.0, 4000.0),
     ("Vocals", 0.06, 0.04, 4000.0),
     ("Backing Vocals", 0.20, 0.16, 4000.0),
@@ -283,7 +259,6 @@ const AMBIENT_DEFAULTS: [(&str, f64, f64, f64); 17] = [
     ("Other", 0.22, 0.18, 2000.0),
     ("Instrumental", 0.16, 0.12, 2000.0),
     ("Crowd", 0.55, 0.35, 2000.0),
-    ("Vocals Reverb", 0.65, 0.45, 500.0),
 ];
 
 /// How much each preset leans on the room, against the ambient defaults.

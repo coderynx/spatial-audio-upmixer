@@ -51,15 +51,11 @@ _SEPARATION_ENGINE_KEYS = (
     "stem_silence_min_duration_s", "stem_silence_crossfade_ms", "stem_silence_pad_ms",
     "stem_bleed_reduction",
     "stem_drum_remask", "stem_primary_remask",
-    "stem_wet_dry_split", "stem_dereverb_model", "stem_wet_denoise",
 )
 
 _TRACK_ENGINE_OVERRIDE_KEYS = {
     "stems",
     "stem_bleed_reduction",
-    "stem_wet_dry_split",
-    "stem_dereverb_model",
-    "stem_wet_denoise",
 }
 
 

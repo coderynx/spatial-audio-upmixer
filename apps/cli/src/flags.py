@@ -234,12 +234,6 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.stem_drum_remask = args.stem_drum_remask
     if args.stem_primary_remask is not None:
         config.stem_primary_remask = args.stem_primary_remask
-    if args.stem_wet_dry_split is not None:
-        config.stem_wet_dry_split = args.stem_wet_dry_split
-    if args.stem_dereverb_model is not None:
-        config.stem_dereverb_model = args.stem_dereverb_model
-    if args.stem_wet_denoise is not None:
-        config.stem_wet_denoise = args.stem_wet_denoise
     if args.stems is not None:
         from upmixer.separation.stem_plan import normalize_stems as _normalize
         raw = [s.strip() for s in args.stems.split(",") if s.strip()]

@@ -247,37 +247,3 @@ def add_stem_args(parser: argparse.ArgumentParser) -> None:
             "sum to it (stem mode only). Default: enabled."
         ),
     )
-
-    parser.add_argument(
-        "--stem-wet-dry-split",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        dest="stem_wet_dry_split",
-        help=(
-            "Split the vocal stem into a dry stem and a wet 'Vocals Reverb' "
-            "stem routed surround/height-heavy (stem mode only). Downloads a "
-            "dereverb model on first use. Default: disabled."
-        ),
-    )
-
-    parser.add_argument(
-        "--stem-dereverb-model",
-        type=str,
-        default=None,
-        metavar="CKPT",
-        help=(
-            "Model for the wet/dry split. Default: "
-            "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt."
-        ),
-    )
-
-    parser.add_argument(
-        "--stem-wet-denoise",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        dest="stem_wet_denoise",
-        help=(
-            "Run a gentle denoise pass over the wet stem of the wet/dry split "
-            "only. Default: disabled."
-        ),
-    )

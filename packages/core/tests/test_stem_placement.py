@@ -100,7 +100,6 @@ def test_presets_define_stem_appropriate_bed_controls() -> None:
             assert 0.0 <= placement.diversity <= 1.0
             assert -6.0 <= placement.center_level_db <= 2.0
         assert placements["Lead Vocals"].center_level_db > placements["Crowd"].center_level_db
-        assert placements["Vocals Reverb"].diversity > placements["Crowd"].diversity
 
     assert STEM_ROUTING_PRESETS["intimate"]["Other"].diversity < STEM_ROUTING_PRESETS["wide"]["Other"].diversity
 

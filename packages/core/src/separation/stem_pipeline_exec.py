@@ -350,8 +350,7 @@ def _run_one_stage(
         if not name.startswith("_"):
             all_loaded[name] = audio
 
-    # A stage may re-emit a stem an earlier one left on disk (the dereverb
-    # split replaces its own parent). That copy is stale from here on.
+    # A later stage may re-emit a stem an earlier one left on disk.
     for name in loaded.keys() | on_disk.keys():
         superseded = all_disk.pop(name, None)
         if superseded is not None and superseded != on_disk.get(name):

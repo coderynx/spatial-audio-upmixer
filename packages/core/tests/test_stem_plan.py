@@ -424,7 +424,7 @@ def _fake_multi_model_separator(tmp_path):
             "Bass": 3.0, "Drums": 4.0, "Guitar": 5.0,
             "Piano": 6.0, "Other": 7.0, "Vocals": 99.0,
         },
-        "dereverb.ckpt": {"Vocals": 8.0, "Vocals Reverb": 9.0},
+        "c.ckpt": {"Vocals": 8.0},
     }
 
     class FakeSeparator:
@@ -481,11 +481,10 @@ def test_primary_vocals_leftover_never_replaces_the_real_vocals(tmp_path):
             SeparationTask(MODEL_PRIMARY, "_deux_inst",
                            PRIMARY_INSTRUMENTAL_STEMS,
                            PRIMARY_INSTRUMENTAL_STEMS),
-            SeparationTask("dereverb.ckpt", "Vocals",
-                           frozenset({"Vocals", "Vocals Reverb"}),
-                           frozenset({"Vocals", "Vocals Reverb"})),
+            SeparationTask("c.ckpt", "Vocals", frozenset({"Vocals"}),
+                           frozenset({"Vocals"})),
         ],
-        requested_stems=frozenset({"Vocals", "Vocals Reverb", "Bass"}),
+        requested_stems=frozenset({"Vocals", "Bass"}),
         stems_hash="x",
     )
     source = tmp_path / "in.wav"
@@ -495,8 +494,7 @@ def test_primary_vocals_leftover_never_replaces_the_real_vocals(tmp_path):
         _fake_multi_model_separator(tmp_path), plan, str(source), 48_000
     )
 
-    # The dereverb stage ran, which it cannot do if primary ate its input.
-    assert "Vocals Reverb" in stems
+    # The final vocal stage ran, which it cannot do if primary ate its input.
     assert stems["Vocals"][0, 0] == 8.0
     assert 99.0 not in {float(v[0, 0]) for v in stems.values()}
 

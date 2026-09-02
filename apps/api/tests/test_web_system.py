@@ -33,7 +33,7 @@ def test_configuration_lists_every_stem_and_runtime_capability(web_client):
     assert configuration["choices"]["stems"] == [
         "Vocals", "Bass", "Drums", "Guitar", "Piano", "Other",
         "Kick", "Snare", "Toms", "Hi-Hat", "Ride", "Crash", "Crowd",
-        "Lead Vocals", "Backing Vocals", "Vocals Reverb",
+        "Lead Vocals", "Backing Vocals",
     ]
     assert "vocal-presence" in configuration["choices"]["stem_eq_profiles"]
     assert "stem_phase_fix_reference_models" not in configuration["choices"]
@@ -118,7 +118,6 @@ def test_configuration_serves_engine_constants(web_client):
         "Vocals": ("vocals-balance", "vocals-harshness", "vocals-control"),
         "Lead Vocals": ("lead-vocals-presence", "lead-vocals-sibilance", "lead-vocals-control"),
         "Backing Vocals": ("backing-vocals-air", "backing-vocals-sibilance", "backing-vocals-control"),
-        "Vocals Reverb": ("vocals-reverb-cleanup", "vocals-reverb-mud", "vocals-reverb-control"),
         "Bass": ("bass-foundation", "bass-bloom-control", "bass-foundation-control"),
         "Drums": ("drums-kit-punch", "drums-kit-ring", "drums-kit-control"),
         "Kick": ("kick-weight", "kick-boxiness", "kick-control"),

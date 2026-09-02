@@ -24,9 +24,6 @@ instrumental    Vocals -3 dB, Drums +1 dB, Bass +1 dB
 bass-heavy      Bass +2 dB, Drums +1 dB, Vocals -0.5 dB
 balanced        All stems 0 dB (identity — useful as manifest placeholder)
 
-A wet vocal stem (``"Vocals Reverb"``, phase 12's wet/dry split) tracks its
-dry stem's gain in every profile: moving one without the other changes the
-wet/dry ratio, which is perceived distance, and no level profile means to.
 """
 from __future__ import annotations
 
@@ -41,14 +38,12 @@ REBALANCE_PROFILES: dict[str, dict[str, float]] = {
     "vocal-forward": {
         "Vocals":        +2.5,
         "Lead Vocals":   +2.5,
-        "Vocals Reverb": +2.5,
         "Drums":         -1.0,
         "Other":         -0.5,
     },
     "instrumental": {
         "Vocals":        -3.0,
         "Lead Vocals":   -3.0,
-        "Vocals Reverb": -3.0,
         "Drums":         +1.0,
         "Bass":          +1.0,
     },
@@ -56,7 +51,6 @@ REBALANCE_PROFILES: dict[str, dict[str, float]] = {
         "Bass":          +2.0,
         "Drums":         +1.0,
         "Vocals":        -0.5,
-        "Vocals Reverb": -0.5,
     },
     "balanced": {},
 }
