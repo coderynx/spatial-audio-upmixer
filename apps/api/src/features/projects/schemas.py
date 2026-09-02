@@ -24,6 +24,7 @@ class StemView(ApiModel):
 
 class ProjectTrackView(ApiModel):
     id: str
+    name: str | None = None
     position: int
     status: str
     progress: float
@@ -133,6 +134,10 @@ class UpdateProjectSettingsRequest(BaseModel):
 class UpdateProjectTrackSettingsRequest(BaseModel):
     manifest_overrides: dict[str, Any] = Field(default_factory=dict)
     scene_overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class UpdateProjectTrackRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=512)
 
 
 class SetTrackLayoutsRequest(BaseModel):

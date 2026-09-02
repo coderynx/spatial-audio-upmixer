@@ -110,6 +110,14 @@ export function useProjectState(projectId: string | undefined, onFirstLoad: (pro
       .catch((reason) => setError((reason as Error).message));
   }, [projectId, nextSeq, shouldApplyProject]);
 
+  const saveProjectTrackName = React.useCallback((trackId: string, name: string) => {
+    if (!projectId) return Promise.resolve();
+    const seq = nextSeq();
+    return api.renameProjectTrack(projectId, trackId, name)
+      .then((updated) => { if (shouldApplyProject(seq)) setProject(updated); })
+      .catch((reason) => setError((reason as Error).message));
+  }, [projectId, nextSeq, shouldApplyProject]);
+
   const saveProjectFields = React.useCallback(async (fields: Record<string, unknown>) => {
     if (!projectId || !project || !manifest) return;
     const seq = nextSeq();
@@ -144,6 +152,6 @@ export function useProjectState(projectId: string | undefined, onFirstLoad: (pro
 
   return {
     project, manifest, error, setError,
-    applyProject, saveTrack, saveProjectFields, retry, reprepareStems,
+    applyProject, saveTrack, saveProjectTrackName, saveProjectFields, retry, reprepareStems,
   };
 }

@@ -194,6 +194,7 @@ class ProjectTrack(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     asset_id: Mapped[str] = mapped_column(ForeignKey("media_assets.id"), index=True)
+    name: Mapped[str | None] = mapped_column(String(512))
     position: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(32), default="queued")
     progress: Mapped[float] = mapped_column(Float, default=0.0)

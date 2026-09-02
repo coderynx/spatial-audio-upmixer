@@ -267,6 +267,7 @@ def add_project_assets(
         # collection — only appending keeps the in-memory list in sync.
         project.tracks.append(ProjectTrack(
             asset_id=asset.id,
+            name=asset.title or asset.filename,
             position=start_position + offset,
             layout_overrides={layout: _normalized_track_layout_block(project, layout, overrides, seed_balanced=True)},
         ))
@@ -398,6 +399,16 @@ def update_track_layout_settings(
         layout: _normalized_track_layout_block(project, layout, manifest_overrides),
     }
     track.scene_overrides = copy.deepcopy(scene_overrides)
+    project.revision += 1
+    session.commit()
+    return get_project(session, project.id)  # type: ignore[return-value]
+
+
+def update_project_track_name(session: Session, project: Project, track_id: str, name: str) -> Project:
+    track = _track_or_raise(project, track_id)
+    track.name = name.strip()
+    if not track.name:
+        raise ValueError("Track name cannot be blank")
     project.revision += 1
     session.commit()
     return get_project(session, project.id)  # type: ignore[return-value]

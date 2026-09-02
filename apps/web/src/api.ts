@@ -114,6 +114,7 @@ export type ProjectStem = {
 
 export type ProjectTrack = {
   id: string
+  name?: string | null
   position: number
   status: string
   progress: number
@@ -297,6 +298,8 @@ export const api = {
     request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}/layouts/${encodeURIComponent(layout)}/settings`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   setTrackLayouts: (projectId: string, trackId: string, layouts: string[]) =>
     request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}/layouts`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layouts }) }),
+  renameProjectTrack: (projectId: string, trackId: string, name: string) =>
+    request<Project>(`/api/v1/projects/${projectId}/tracks/${trackId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }),
   saveProjectViewState: (id: string, payload: Record<string, unknown>) =>
     request<void>(`/api/v1/projects/${id}/view-state`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   expandProjectStems: (id: string, stems: string[]) =>

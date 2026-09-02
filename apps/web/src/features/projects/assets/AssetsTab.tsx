@@ -1,9 +1,10 @@
 import * as React from "react";
-import { Plus, Play, UploadCloud } from "lucide-react";
+import { Plus, Play, Save, UploadCloud } from "lucide-react";
 import { api, type Configuration, type Project } from "@/api";
 import { EmptyState } from "@/app/EmptyState";
 import { PanelBody, PanelHeader } from "@/app/Panel";
 import { Button } from "@/components/ui/button";
+import { SelectField } from "@/components/forms/fields";
 import { CHANNEL_LAYOUTS } from "@/lib/layouts";
 import { defaultManifest, fallbackStems } from "@/lib/manifest";
 import { normalizeStemHierarchy } from "@/lib/stemHierarchy";
@@ -32,6 +33,8 @@ export function AssetsTab({
   project,
   configuration,
   onProjectUpdate,
+  onPreviewQualityChange,
+  onRenameTrack,
   onOpenTrack,
   onRetry,
   onReprepare,
@@ -39,6 +42,8 @@ export function AssetsTab({
   project: Project;
   configuration: Configuration | null;
   onProjectUpdate: (project: Project) => void;
+  onPreviewQualityChange: (quality: string) => void;
+  onRenameTrack?: (trackId: string, name: string) => void;
   onOpenTrack: (trackId: string) => void;
   onRetry: () => void;
   onReprepare: (settings: ReprepareSettings) => Promise<void>;
@@ -128,6 +133,30 @@ export function AssetsTab({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+      <div className="rounded-lg border bg-card">
+        <PanelHeader title="Settings" />
+        <div className="flex flex-wrap items-end gap-3 p-3">
+        <div className="w-64">
+          <SelectField
+            label="Preview audio quality"
+            value={project.preview_quality}
+            onChange={onPreviewQualityChange}
+            options={(choices?.preview_qualities || ["low", "medium", "high"]).map((value) => ({ value, label: value }))}
+            hint="Lower quality decodes and loads faster. It does not affect exports."
+          />
+        </div>
+        {project.tracks.length > 0 && (
+          <div className="w-full border-t pt-3">
+            <Button variant="outline" size="sm" asChild>
+              <a href={api.projectArchiveUrl(project.id)} download aria-label="Download project">
+                <Save />
+                Download project
+              </a>
+            </Button>
+          </div>
+        )}
+        </div>
+      </div>
       <div
         onDragOver={(event) => { event.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
@@ -206,7 +235,7 @@ export function AssetsTab({
       {showLog && <PreparationPanel project={project} onRetry={onRetry} />}
 
       {project.tracks.length > 0 && (
-        <PreparedTrackTree project={project} configuration={configuration} onOpenTrack={onOpenTrack} onReprepare={onReprepare} onProjectUpdate={onProjectUpdate} />
+        <PreparedTrackTree project={project} configuration={configuration} onOpenTrack={onOpenTrack} onReprepare={onReprepare} onProjectUpdate={onProjectUpdate} onRenameTrack={onRenameTrack || (() => {})} />
       )}
     </div>
   );

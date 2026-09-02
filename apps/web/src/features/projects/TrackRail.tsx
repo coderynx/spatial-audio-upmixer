@@ -1,12 +1,9 @@
 import * as React from "react";
-import { AudioLines, ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { ProjectTrack } from "@/api";
 import { cn } from "@/lib/utils";
-
-function statusDot(status: string) {
-  if (status === "ready") return null;
-  return status === "failed" ? "bg-destructive" : "bg-warning";
-}
+import { useRuntime } from "@/runtime";
+import { ProjectTitle } from "./ProjectTitle";
 
 export type LayoutSelection = { trackId: string; layout: string };
 
@@ -34,13 +31,16 @@ export function TrackRail({
   tracks,
   value,
   onChange,
+  onRename = () => {},
   collapsed,
 }: {
   tracks: ProjectTrack[];
   value: LayoutSelection | null;
   onChange: (selection: LayoutSelection) => void;
+  onRename?: (trackId: string, name: string) => void;
   collapsed: boolean;
 }) {
+  const runtime = useRuntime();
   const [collapsedTracks, setCollapsedTracks] = React.useState<Record<string, boolean>>({});
   return (
     <aside
@@ -58,7 +58,6 @@ export function TrackRail({
       <nav className="min-h-0 w-56 flex-1 overflow-y-auto p-2">
         {tracks.map((track) => {
           const label = track.asset.title || track.asset.filename;
-          const dot = statusDot(track.status);
           const open = !collapsedTracks[track.id];
           const activeTrack = track.id === value?.trackId;
           return (
@@ -85,29 +84,13 @@ export function TrackRail({
                     <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
                   )}
                 </button>
-                <button
-                  type="button"
-                  tabIndex={collapsed ? -1 : undefined}
-                  aria-label={dot ? `${label} — ${track.status}` : undefined}
-                  onClick={() =>
-                    onChange({ trackId: track.id, layout: activeTrack && value ? value.layout : track.layouts[0] })
-                  }
-                  className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-1 text-left hover:text-foreground"
-                >
-                  <span className="relative shrink-0">
-                    <AudioLines className="h-4 w-4" aria-hidden="true" />
-                    {dot && (
-                      <span
-                        className={cn("absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full ring-1 ring-card", dot)}
-                        aria-hidden="true"
-                      />
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{label}</span>
-                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                    {track.stems.length || ""}
-                  </span>
-                </button>
+                <ProjectTitle
+                  name={track.name || label}
+                  entity="track"
+                  isTauri={runtime.isTauri}
+                  onClick={() => onChange({ trackId: track.id, layout: activeTrack && value ? value.layout : track.layouts[0] })}
+                  onRename={(name) => onRename(track.id, name)}
+                />
               </div>
               {open && (
                 <div className="ml-3 border-l pl-1">

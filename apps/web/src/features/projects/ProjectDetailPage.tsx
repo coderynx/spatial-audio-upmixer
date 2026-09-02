@@ -6,7 +6,6 @@ import {
   FolderOpen,
   Package,
   PanelLeft,
-  Settings,
   SlidersHorizontal,
   UploadCloud,
   Wand2,
@@ -35,7 +34,7 @@ import { OutputModeSelect } from "./OutputModeSelect";
 import { monitorMastering } from "./masterPreview";
 import { ProjectDeliverySection } from "./ProjectDeliverySection";
 import { PreviewPanel } from "./PreviewPanel";
-import { ProjectSettingsSection } from "./ProjectSettingsSection";
+import { ProjectTitle } from "./ProjectTitle";
 import { useProjectViewState, type SpatialView } from "./projectViewState";
 import { Transport } from "./Transport";
 import { TrackRail } from "./TrackRail";
@@ -66,8 +65,6 @@ const STAGES = [
   { value: "delivery" as const, label: "Delivery", icon: Package },
 ];
 
-const SETTINGS_SEGMENT = [{ value: "settings" as const, label: "Settings", icon: Settings }];
-
 // Matches `projectViewState.ts`'s save debounce: long enough that a drag's
 // continuous ticks never individually reach the backend, short enough that
 // stopping the drag feels like it saved immediately.
@@ -80,12 +77,11 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const [selectedStem, setSelectedStem] = React.useState<string | null>(null);
   const [draggedStem, setDraggedStem] = React.useState<string | null>(null);
   const [activeTab, setActiveTab] = React.useState<Stage>("mixing");
-  const [settingsView, setSettingsView] = React.useState(false);
   const [preset, setPreset] = React.useState("balanced");
   const [exporting, setExporting] = React.useState(false);
   const {
     project, manifest, error, setError, applyProject,
-    saveTrack, saveProjectFields, retry, reprepareStems,
+    saveTrack, saveProjectTrackName, saveProjectFields, retry, reprepareStems,
   } = useProjectState(projectId, (next) => {
     if (next.tracks.length === 0 || !next.prepared_stems.length) setActiveTab("assets");
   });
@@ -479,15 +475,14 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           <ChevronLeft className="h-3.5 w-3.5" />Projects
         </Link>
         <span className="text-muted-foreground">/</span>
-        <span className="truncate text-[13px] font-semibold">{project.name}</span>
+        <ProjectTitle name={project.name} onRename={(name) => void saveProjectFields({ name })} isTauri={runtime.isTauri} />
       </div>
       <SegmentedControl
         aria-label="Project stage"
         segments={STAGES}
-        value={settingsView ? ("" as Stage) : activeTab}
+        value={activeTab}
         onChange={(value) => {
           setActiveTab(value);
-          setSettingsView(false);
         }}
         className={cn("justify-self-center self-stretch", runtime.isTauri && "bg-secondary")}
         fill
@@ -495,21 +490,12 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         activeClassName="bg-primary shadow-sm"
         activeTextClassName="text-primary-foreground"
       />
-      <SegmentedControl
-        aria-label="Project settings"
-        segments={SETTINGS_SEGMENT}
-        value={(settingsView ? "settings" : "") as "settings"}
-        onChange={() => setSettingsView(true)}
-        // -mr-4 pulls this flush with Transport's col-3 right edge: AppShell's
-        // header reserves px-3 vs Transport's px-2, plus an unused gap-3 slot.
-        className={cn("justify-self-end -mr-4", runtime.isTauri && "bg-secondary")}
-      />
     </div>
-  ) : null, [project?.name, activeTab, settingsView]);
+  ) : null, [project?.name, activeTab, runtime.isTauri, saveProjectFields]);
   useHeaderTitle(headerTitle);
   if (!project) return <main className="grid h-full place-items-center p-5 text-sm text-muted-foreground">{error || "Loading project…"}</main>;
   const transportLeading = (
-    activeTab !== "assets" && !settingsView && (
+    activeTab !== "assets" && (
       // Collapsing takes the rail fully out of the layout (see TrackRail.tsx),
       // so its own header button can't be what brings it back.
       <Button
@@ -579,21 +565,14 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           : "Apple Spatial is desktop-only — using the saved binaural profile in this browser."}
       </p>
     )}
-    {settingsView && manifest ? (
-      <section className="min-h-0 flex-1 overflow-auto p-3">
-        <ProjectSettingsSection
-          project={project}
-          configuration={configuration}
-          onRename={(name) => void saveProjectFields({ name })}
-          onPreviewQualityChange={(quality) => void saveProjectFields({ preview_quality: quality })}
-        />
-      </section>
-    ) : activeTab === "assets" ? (
+    {activeTab === "assets" ? (
       <section className="flex min-h-0 flex-1 flex-col">
         <AssetsTab
           project={project}
           configuration={configuration}
           onProjectUpdate={applyProject}
+          onPreviewQualityChange={(quality) => void saveProjectFields({ preview_quality: quality })}
+          onRenameTrack={(trackId, name) => void saveProjectTrackName(trackId, name)}
           onOpenTrack={(trackId) => {
             const track = project.tracks.find((item) => item.id === trackId);
             setSelection({ trackId, layout: track?.layouts[0] || selectedLayout });
@@ -614,9 +593,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     ) : (() => {
       const trackRail = (
         <TrackRail
-          tracks={project.tracks}
-          value={selection}
-          onChange={setSelection}
+              tracks={project.tracks}
+              value={selection}
+              onChange={setSelection}
+              onRename={(trackId, name) => void saveProjectTrackName(trackId, name)}
           collapsed={trackRailCollapsed}
         />
       );

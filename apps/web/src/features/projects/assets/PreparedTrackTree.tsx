@@ -10,6 +10,8 @@ import { downloadWithProgress } from "@/lib/download";
 import { CHANNEL_LAYOUTS } from "@/lib/layouts";
 import { getStemColor, getStemIcon } from "@/lib/stems";
 import { cn } from "@/lib/utils";
+import { useRuntime } from "@/runtime";
+import { ProjectTitle } from "../ProjectTitle";
 import { ReprepareStemsDialog, type ReprepareSettings } from "./ReprepareStemsDialog";
 
 function statusVariant(status: string) {
@@ -28,12 +30,14 @@ export function PreparedTrackTree({
   onOpenTrack,
   onReprepare,
   onProjectUpdate,
+  onRenameTrack,
 }: {
   project: Project;
   configuration: Configuration | null;
   onOpenTrack: (trackId: string) => void;
   onReprepare: (settings: ReprepareSettings) => Promise<void>;
   onProjectUpdate: (project: Project) => void;
+  onRenameTrack: (trackId: string, name: string) => void;
 }) {
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({});
   const [reprepareOpen, setReprepareOpen] = React.useState(false);
@@ -68,6 +72,7 @@ export function PreparedTrackTree({
             onToggle={() => setCollapsed((current) => ({ ...current, [track.id]: !current[track.id] }))}
             onOpenTrack={() => onOpenTrack(track.id)}
             onProjectUpdate={onProjectUpdate}
+            onRename={(name) => onRenameTrack(track.id, name)}
           />
         ))}
       </div>
@@ -90,6 +95,7 @@ function TrackRow({
   onToggle,
   onOpenTrack,
   onProjectUpdate,
+  onRename,
 }: {
   projectId: string;
   track: ProjectTrack;
@@ -98,7 +104,9 @@ function TrackRow({
   onToggle: () => void;
   onOpenTrack: () => void;
   onProjectUpdate: (project: Project) => void;
+  onRename: (name: string) => void;
 }) {
+  const runtime = useRuntime();
   // Stem zones are read against the track's first layout — the stems
   // themselves are layout-independent, this only names their channels.
   const channelNames = configuration?.choices.layout_channels?.[track.layouts[0]];
@@ -132,7 +140,7 @@ function TrackRow({
           {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         </button>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13px] font-medium">{track.asset.title || track.asset.filename}</p>
+          <ProjectTitle name={track.name || track.asset.title || track.asset.filename} entity="track" isTauri={runtime.isTauri} onRename={onRename} />
           <p className="truncate text-[11px] text-muted-foreground">
             {formatDuration(track.asset.duration_seconds)} · {track.asset.channels ?? "—"} ch ·{" "}
             {track.asset.sample_rate ? `${track.asset.sample_rate / 1000} kHz` : "—"} · {formatBytes(track.asset.size_bytes)}

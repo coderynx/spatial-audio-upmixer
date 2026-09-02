@@ -79,6 +79,14 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
         assert project["manifest"]["engine"]["mode"] == "stem"
         assert project["requested_stems"] == ["Vocals", "Kick"]
         assert len(project["tracks"]) == 1
+        assert project["tracks"][0]["name"] == "tone"
+
+        renamed_track = client.put(
+            f"/api/v1/projects/{project['id']}/tracks/{project['tracks'][0]['id']}",
+            json={"name": "Lead vocal"},
+        )
+        assert renamed_track.status_code == 200
+        assert renamed_track.json()["tracks"][0]["name"] == "Lead vocal"
 
         saved = client.put(f"/api/v1/projects/{project['id']}/settings", json={
             "name": "Editable master v2",
@@ -87,7 +95,7 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
         })
         assert saved.status_code == 200
         assert saved.json()["name"] == "Editable master v2"
-        assert saved.json()["revision"] == 3
+        assert saved.json()["revision"] == 4
 
         expanded = client.post(f"/api/v1/projects/{project['id']}/stems", json={"stems": ["Bass"]})
         assert expanded.status_code == 200

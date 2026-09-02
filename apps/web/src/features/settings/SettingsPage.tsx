@@ -130,7 +130,7 @@ export function SettingsPage({ configuration }: { configuration: Configuration |
                 ? "Appearance is stored in this browser only and never travels with a project or manifest."
                 : section === "node"
                   ? "The processing node is detected on the server. Accelerator selection is automatic — jobs run on CPU when no compatible device is found."
-                  : "Defaults are reported by the server and describe every value a manifest may take. Per-project overrides live in Project settings."}
+                  : "Defaults are reported by the server and describe every value a manifest may take. Per-project overrides live in the project workspace."}
             </p>
           </InspectorGroup>
           {section === "node" && stem && (

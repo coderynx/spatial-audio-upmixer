@@ -34,6 +34,7 @@ from upmixer_web.features.projects.schemas import (
     ReprepareProjectStemsRequest,
     SetTrackLayoutsRequest,
     UpdateProjectSettingsRequest,
+    UpdateProjectTrackRequest,
     UpdateProjectTrackSettingsRequest,
 )
 from upmixer_web.features.projects.service import (
@@ -50,6 +51,7 @@ from upmixer_web.features.projects.service import (
     retry_project,
     set_track_layouts,
     update_project_settings,
+    update_project_track_name,
     update_project_view_state,
     update_track_layout_settings,
 )
@@ -179,6 +181,19 @@ def register_project_routes(
             raise HTTPException(status_code=404, detail="Project not found")
         try:
             project = set_track_layouts(session, project, track_id, request.layouts)
+        except TrackNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return project_view(project, settings.root_path, app.state.project_stems, manager)
+
+    @app.put("/api/v1/projects/{project_id}/tracks/{track_id}", response_model=ProjectView, tags=["projects"])
+    def rename_project_track(project_id: str, track_id: str, request: UpdateProjectTrackRequest, session: Session = Depends(database_session)) -> ProjectView:
+        project = get_project(session, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        try:
+            project = update_project_track_name(session, project, track_id, request.name)
         except TrackNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:

@@ -36,6 +36,7 @@ vi.mock("@/api", async (importOriginal) => {
       exportProject: vi.fn(async () => ({ id: "job-1" })),
       saveProject: vi.fn(async () => project),
       saveProjectTrackLayout: vi.fn(async () => project),
+      renameProjectTrack: vi.fn(async () => project),
       retryProject: vi.fn(async () => project),
       reprepareProjectStems: vi.fn(async () => project),
       saveProjectViewState: vi.fn(async () => undefined),
@@ -567,19 +568,47 @@ describe("ProjectDetailPage keyboard shortcuts", () => {
     expect(button).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("leaves the rename field alone — typing shortcut letters into it mutates nothing", async () => {
+  it("saves preview quality from Prepare", async () => {
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Prepare" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Preview audio quality" }), { target: { value: "low" } });
+
+    await waitFor(() => expect(api.saveProject).toHaveBeenCalledWith("project-1", expect.objectContaining({ preview_quality: "low" })));
+  });
+
+  it("renames the project from the header and can cancel the edit", async () => {
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
 
-    await user.click(screen.getByRole("button", { name: "Settings" }));
-    const nameField = screen.getByLabelText(/project name/i);
-    await user.clear(nameField);
-    await user.type(nameField, "mssx?");
+    await user.click(screen.getByRole("button", { name: "Rename project" }));
+    const nameField = screen.getByRole("textbox", { name: "Project name" });
+    fireEvent.change(nameField, { target: { value: "Renamed master" } });
+    expect(nameField).toHaveValue("Renamed master");
+    await user.click(screen.getByRole("button", { name: "Confirm project name" }));
 
-    expect(screen.queryByRole("group", { name: "Mixer" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Keyboard shortcuts" })).not.toBeInTheDocument();
-    expect(api.saveProject).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.saveProject).toHaveBeenCalledWith("project-1", expect.objectContaining({ name: "Renamed master" })));
+
+    await user.click(screen.getByRole("button", { name: "Rename project" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Project name" }), { target: { value: "Discarded" } });
+    await user.click(screen.getByRole("button", { name: "Cancel project name" }));
+
+    expect(screen.getByText("Editable master")).toBeInTheDocument();
+    expect(api.saveProject).toHaveBeenCalledTimes(1);
+  });
+
+  it("renames a track from the mixing list", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText("Editable master")).toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: "Rename track" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Track name" }), { target: { value: "Lead vocal" } });
+    await user.click(screen.getByRole("button", { name: "Confirm track name" }));
+
+    await waitFor(() => expect(api.renameProjectTrack).toHaveBeenCalledWith("project-1", "track-1", "Lead vocal"));
   });
 });
 
