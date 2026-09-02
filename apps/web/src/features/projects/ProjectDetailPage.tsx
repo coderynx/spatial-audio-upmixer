@@ -25,6 +25,7 @@ import { isStereoLayout, outputModeForLayoutSwitch } from "@/lib/layouts";
 import { normalizeManifest, type Manifest, type StemDynamicEqSettings, type StemDynamicsSettings, type StemEqSettings } from "@/lib/manifest";
 import { isBedStem } from "@/lib/stems";
 import { useRuntime } from "@/runtime";
+import { cn } from "@/lib/utils";
 import { AssetsTab } from "./assets/AssetsTab";
 import { KeyCommandsDialog } from "./KeyCommandsDialog";
 import type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
@@ -488,7 +489,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
           setActiveTab(value);
           setSettingsView(false);
         }}
-        className="justify-self-center self-stretch"
+        className={cn("justify-self-center self-stretch", runtime.isTauri && "bg-secondary")}
         fill
         slideIndicator
         activeClassName="bg-primary shadow-sm"
@@ -501,7 +502,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         onChange={() => setSettingsView(true)}
         // -mr-4 pulls this flush with Transport's col-3 right edge: AppShell's
         // header reserves px-3 vs Transport's px-2, plus an unused gap-3 slot.
-        className="justify-self-end -mr-4"
+        className={cn("justify-self-end -mr-4", runtime.isTauri && "bg-secondary")}
       />
     </div>
   ) : null, [project?.name, activeTab, settingsView]);

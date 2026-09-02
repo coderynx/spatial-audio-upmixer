@@ -79,7 +79,48 @@ function AppShellLayout({
     localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
   }, [collapsed]);
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
+      <header
+        onMouseDown={isTauriRuntime ? dragWindow : undefined}
+        className={cn(
+          "flex h-[var(--topbar-h)] shrink-0 items-center border-b px-3 py-2",
+          isTauriRuntime ? "bg-accent/50" : "bg-card",
+        )}
+      >
+        <div className={cn(
+          "flex h-full shrink-0 items-center gap-2.5",
+          isTauriRuntime && collapsed ? "w-20 justify-center px-1" : collapsed ? "w-12 justify-center px-1" : "w-56 px-3",
+          isTauriRuntime && !collapsed && "pl-[88px]",
+        )}>
+          {!isTauriRuntime && <img src={logoMark} alt="" className="h-7 w-7 shrink-0" />}
+          {!collapsed && (
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-semibold leading-tight tracking-tight">Upmixer</p>
+              <p className="truncate text-[10px] font-medium uppercase leading-tight tracking-[.12em] text-muted-foreground">Studio</p>
+            </div>
+          )}
+        </div>
+        <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+          <div className="min-w-0 flex-1 self-stretch">{headerNode}</div>
+          <div className="flex shrink-0 items-center gap-1">
+            {onRefresh && (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Refresh"
+                onClick={onRefresh}
+              >
+                <RefreshCw />
+              </Button>
+            )}
+            <div className="lg:hidden">
+              <ThemeToggle className={isTauriRuntime ? "bg-secondary hover:bg-accent" : undefined} />
+            </div>
+            {onCreate && createLabel && <Button className="ml-1" onClick={onCreate}>{createLabel}</Button>}
+          </div>
+        </div>
+      </header>
+      <div className="flex min-h-0 flex-1">
       <aside
         className={cn(
           "z-10 hidden shrink-0 flex-col bg-card transition-[width] duration-150 lg:flex",
@@ -87,25 +128,6 @@ function AppShellLayout({
           collapsed ? "w-12" : "w-56",
         )}
       >
-        <div
-          onMouseDown={isTauriRuntime ? dragWindow : undefined}
-          className={cn(
-            "flex h-[var(--topbar-h)] shrink-0 items-center gap-2.5",
-            collapsed ? "justify-center px-1" : "px-3",
-            isTauriRuntime && !collapsed && "pl-[88px]",
-          )}
-        >
-          {!isTauriRuntime && <img src={logoMark} alt="" className="h-7 w-7 shrink-0" />}
-
-          {!collapsed && (
-            <div className="min-w-0">
-              <p className="truncate text-[13px] font-semibold leading-tight tracking-tight">Upmixer</p>
-              <p className="truncate text-[10px] font-medium uppercase leading-tight tracking-[.12em] text-muted-foreground">
-                Studio
-              </p>
-            </div>
-          )}
-        </div>
         <nav className={cn("min-h-0 flex-1 overflow-y-auto p-2", isTauriRuntime && "border-r")}>
           {!collapsed && (
             <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[.1em] text-muted-foreground">
@@ -155,38 +177,8 @@ function AppShellLayout({
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
-        <header
-          onMouseDown={isTauriRuntime ? dragWindow : undefined}
-          className="flex h-[var(--topbar-h)] shrink-0 items-center justify-between gap-3 border-b bg-card px-3 py-2"
-        >
-          <div className={cn("flex min-w-0 flex-1 items-center gap-2.5", isTauriRuntime && collapsed && "pl-7")}>
-            <div className={cn("lg:hidden", isTauriRuntime && "hidden")}>
-              <img src={logoMark} alt="" className="h-5 w-5" />
-            </div>
-            {/* `flex-1` so a page whose own header content wants to centre
-                something (`ProjectDetailPage`'s stage tabs, via the same
-                three-column `minmax(0,1fr)_auto_minmax(0,1fr)` grid
-                `Transport` uses) gets the bar's true full width to centre
-                against, not just its own intrinsic content width. */}
-            <div className="min-w-0 flex-1 self-stretch">{headerNode}</div>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {onRefresh && (
-              <Button variant="ghost" size="icon" aria-label="Refresh" onClick={onRefresh}>
-                <RefreshCw />
-              </Button>
-            )}
-            <div className="lg:hidden">
-              <ThemeToggle />
-            </div>
-            {onCreate && createLabel && (
-              <Button className="ml-1" onClick={onCreate}>
-                {createLabel}
-              </Button>
-            )}
-          </div>
-        </header>
         <div className="min-h-0 flex-1">{children}</div>
+      </div>
       </div>
     </div>
   );
