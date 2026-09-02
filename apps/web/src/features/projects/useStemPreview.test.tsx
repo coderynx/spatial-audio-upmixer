@@ -363,6 +363,7 @@ describe("useStemPreview metering", () => {
       channelLevels: { current: Map<string, { rms: number }> };
       headphoneLevels: { current: { left: { rms: number }; right: { rms: number } } };
       stemSpectrum: { current: Map<string, { level: number; centroid: number }> };
+      playPause: () => Promise<void>;
     };
 
     // Two stems (each a left/right pair), their reductions, six channels, one output pair —
@@ -376,6 +377,9 @@ describe("useStemPreview metering", () => {
     ];
     // One [level, centroid] pair per stem.
     const spectrum = [0.5, 0.6, 0.2, 0.3];
+    await act(async () => {
+      await preview.playPause();
+    });
     act(() => {
       capturedCallbacks.onFrame?.({ position: 48000, meters, spectrum } as never);
     });
@@ -415,11 +419,13 @@ describe("useStemPreview metering", () => {
       0.7, 0.8, 0.9, 1.0,
     ];
     const spectrum = [0.5, 0.6, 1, 0.2, 0.3, 0.4];
+    await act(async () => {
+      await preview.playPause();
+    });
     act(() => {
       capturedCallbacks.onFrame?.({ position: 48000, meters, spectrum } as never);
     });
     await act(async () => {
-      await preview.playPause();
       await preview.playPause();
     });
 
@@ -427,6 +433,38 @@ describe("useStemPreview metering", () => {
     expect(preview.channelLevels.current.get("FL")?.rms).toBe(0);
     expect(preview.headphoneLevels.current.left.rms).toBe(0);
     expect(preview.headphoneLevels.current.right.rms).toBe(0);
+    expect(preview.stemSpectrum.current.get("Vocals")?.level).toBe(0);
+  });
+
+  it("ignores a queued frame that arrives after stopping", async () => {
+    await renderPreview();
+    const preview = (globalThis as unknown as Record<string, unknown>).preview as {
+      stemSpectrum: { current: Map<string, { level: number; centroid: number }> };
+      playPause: () => Promise<void>;
+      stop: () => void;
+    };
+
+    await act(async () => {
+      await preview.playPause();
+    });
+    act(() => {
+      capturedCallbacks.onFrame?.({
+        position: 48000,
+        meters: [],
+        spectrum: [0.8, 0.4, 0, 0],
+      } as never);
+    });
+    expect(preview.stemSpectrum.current.get("Vocals")?.level).toBe(0.8);
+
+    act(() => preview.stop());
+    act(() => {
+      capturedCallbacks.onFrame?.({
+        position: 49000,
+        meters: [],
+        spectrum: [0.9, 0.5, 0, 0],
+      } as never);
+    });
+
     expect(preview.stemSpectrum.current.get("Vocals")?.level).toBe(0);
   });
 });

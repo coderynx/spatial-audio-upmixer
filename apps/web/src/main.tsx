@@ -6,6 +6,8 @@ import "./index.css"
 import { isTauriRuntime, RuntimeProvider } from "./runtime"
 import { ThemeProvider } from "./theme"
 
+document.documentElement.toggleAttribute("data-tauri", isTauriRuntime)
+
 const Router = isTauriRuntime ? HashRouter : BrowserRouter
 
 createRoot(document.getElementById("root")!).render(

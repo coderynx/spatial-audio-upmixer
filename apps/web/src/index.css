@@ -110,4 +110,9 @@
       "Segoe UI",
       sans-serif;
   }
+  html[data-tauri],
+  html[data-tauri] * {
+    user-select: none;
+    -webkit-user-select: none;
+  }
 }

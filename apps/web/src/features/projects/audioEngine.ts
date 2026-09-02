@@ -238,6 +238,8 @@ export class PreviewAudioEngine {
     for (const key of this.channelLevels.current.keys()) {
       this.channelLevels.current.set(key, SILENT_METER_LEVEL);
     }
+    for (const key of this.stemDynamics.current.keys()) this.stemDynamics.current.set(key, 0);
+    for (const key of this.stemDynamicEq.current.keys()) this.stemDynamicEq.current.set(key, 0);
     this.headphoneLevels.current = { left: SILENT_METER_LEVEL, right: SILENT_METER_LEVEL };
     this.masterMeters.current = SILENT_MASTER_METERS;
     for (const [key, spectrum] of this.stemSpectrum.current) {
@@ -826,6 +828,7 @@ export class PreviewAudioEngine {
   }
 
   private onFrame(frame: MeterFrame) {
+    if (!this.playing) return;
     if (!this.scrubbing) {
       this.currentTimeRef.current = frame.position / CONTEXT_SAMPLE_RATE;
     }
