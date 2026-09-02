@@ -27,6 +27,15 @@ def test_bass_harmonics_overrides_the_legacy_switch_and_clamps():
     assert config.mastering_bass_harmonics == 1.0
 
 
+def test_bass_cli_options_override_a_manifest_bypass():
+    config = UpmixConfig(mastering_bass_enabled=False)
+    args = _parsed(["--mastering-bass", "deep"])
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    assert config.mastering_bass_enabled is True
+
+
 def test_stem_lfe_sets_only_the_lfe_key_on_a_new_stem_routing():
     config = UpmixConfig()
     args = _parsed(["--stem-lfe", "Bass=0.8,Vocals=0"])

@@ -106,6 +106,7 @@ export type Manifest = {
       sidechain_hpf_hz: number | null;
     };
     bass: {
+      enabled: boolean | null;
       profile: string | null;
       sub_gain_db: number | null;
       mid_gain_db: number | null;
@@ -228,6 +229,7 @@ export const defaultManifest: Manifest = {
       sidechain_hpf_hz: null,
     },
     bass: {
+      enabled: null,
       profile: null,
       sub_gain_db: null,
       mid_gain_db: null,

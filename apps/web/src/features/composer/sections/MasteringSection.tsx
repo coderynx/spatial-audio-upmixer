@@ -1,7 +1,6 @@
 import * as React from "react";
 import type { LucideIcon } from "lucide-react";
 import { Sparkles, TrendingDown, TrendingUp, Waves } from "lucide-react";
-import { Panel, PanelBody, PanelHeader } from "@/app/Panel";
 import {
   FIELD_GRID,
   NullablePotField,
@@ -95,9 +94,8 @@ export function MasteringSection({
     ? { defaultOct: served.default_oct, minOct: served.min_oct, maxOct: served.max_oct }
     : PRE_BOOTSTRAP_SMOOTH;
 
-  // Switching an effect off clears its profile, which is what the manifest
-  // means by "off". Remembering the last profile means switching back on
-  // restores the choice instead of silently resetting it.
+  // Profile-based effects use a cleared profile as their off state. Remembering
+  // the last profile means switching back on restores the choice.
   const lastEq = React.useRef(eq.profile);
   const lastCompressor = React.useRef(compressor.profile);
 
@@ -107,6 +105,7 @@ export function MasteringSection({
   const bassProfiles = configuration?.constants?.bass_profiles ?? {};
   const defaultUnifyHz = configuration?.constants?.bass_unify_default_hz ?? 90;
   const resolvedBass = resolveBassParams(bass, bassProfiles, defaultUnifyHz);
+  const bassEnabled = bass.enabled === false ? false : resolvedBass !== null;
   const bassValues = {
     sub_gain_db: resolvedBass?.sub_gain_db ?? 0,
     mid_gain_db: resolvedBass?.mid_gain_db ?? 0,
@@ -137,6 +136,7 @@ export function MasteringSection({
     const needsBus = values.punch !== 0 || values.harmonics > 0;
     setMastering({
       bass: {
+        enabled: true,
         profile: null,
         sub_gain_db: values.sub_gain_db,
         mid_gain_db: values.mid_gain_db,
@@ -356,14 +356,16 @@ export function MasteringSection({
         </div>
       </EffectPanel>
 
-      <Panel>
-        <PanelHeader title="Bass" />
-        <PanelBody className="space-y-2.5 overflow-visible">
+      <EffectPanel
+        title="Bass"
+        enabled={bassEnabled}
+        onEnabledChange={(enabled) => setMastering({ bass: { ...bass, enabled } })}
+      >
         <div className="space-y-1.5">
           <Label>Preset</Label>
           <Select
             value={selectedBassPreset}
-            disabled={!BASS_PRESETS.some((name) => bassProfiles[name])}
+            disabled={!bassEnabled || !BASS_PRESETS.some((name) => bassProfiles[name])}
             onValueChange={(name) => {
               const preset = bassProfiles[name];
               if (preset) {
@@ -408,6 +410,7 @@ export function MasteringSection({
             max={12}
             step={0.1}
             suffix=" dB"
+            disabled={!bassEnabled}
             onChange={(value) => applyBass({ ...bassValues, sub_gain_db: value ?? 0 })}
           />
           <NullablePotField
@@ -418,6 +421,7 @@ export function MasteringSection({
             max={12}
             step={0.1}
             suffix=" dB"
+            disabled={!bassEnabled}
             onChange={(value) => applyBass({ ...bassValues, mid_gain_db: value ?? 0 })}
           />
           <NullablePotField
@@ -428,6 +432,7 @@ export function MasteringSection({
             max={100}
             step={1}
             suffix="%"
+            disabled={!bassEnabled}
             onChange={(value) => applyBass({ ...bassValues, punch: (value ?? 0) / 100 })}
           />
           <NullablePotField
@@ -438,11 +443,11 @@ export function MasteringSection({
             max={100}
             step={1}
             suffix="%"
+            disabled={!bassEnabled}
             onChange={(value) => applyBass({ ...bassValues, harmonics: (value ?? 0) / 100 })}
           />
         </div>
-        </PanelBody>
-      </Panel>
+      </EffectPanel>
 
       {/* Last before the true-peak limiter, which is what the depth is
           measured down from. Off by default: it trades distortion for

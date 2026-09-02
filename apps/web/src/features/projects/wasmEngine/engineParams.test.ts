@@ -247,6 +247,16 @@ describe("buildEngineParams", () => {
     expect(params.lf_targets.some(([index]) => index === 3)).toBe(false);
   });
 
+  it("removes LF routing when the bass module is bypassed", () => {
+    const bass = { ...constants.bassProfiles.deep, enabled: false };
+    const params = buildEngineParams(input({ master: { bass } })).master as {
+      bass: unknown;
+      lf_targets: unknown[];
+    };
+    expect(params.bass).toBeNull();
+    expect(params.lf_targets).toEqual([]);
+  });
+
   it("leaves the head and the clipper out unless the project asks for them", () => {
     const off = buildEngineParams(input()).master as { head: unknown; clip: unknown };
     expect(off.head).toBeNull();

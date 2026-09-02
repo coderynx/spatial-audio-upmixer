@@ -384,6 +384,23 @@ class TestBassExciter:
             np.testing.assert_array_equal(automatic[name], explicit[name])
         assert not np.array_equal(automatic["FL"], chs["FL"])
 
+    def test_explicit_module_bypass_beats_legacy_values(self):
+        from upmixer.config import UpmixConfig
+        from upmixer.formats import FORMAT_MAP
+        from upmixer.mastering.chain import MasteringChain
+
+        chs = _bass_in_front(n=48000)
+        fmt = FORMAT_MAP["7.1"]
+        disabled = UpmixConfig(
+            mastering_bass_enabled=False,
+            mastering_bass_profile="deep",
+            mastering_bass_harmonics=1.0,
+            loudness_normalize=False,
+        )
+        out, _ = MasteringChain(disabled).process(dict(chs), 48000, fmt)
+        for name in chs:
+            np.testing.assert_array_equal(out[name], chs[name])
+
 
 @pytest.mark.parametrize("profile_name", list(BASS_PROFILES.keys()))
 def test_all_profiles_run(profile_name):

@@ -219,7 +219,7 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
       eq_strength: master.eqStrength ?? 1,
       dynamic_eq: master.dynamicEq ?? [],
       compressor: comp ?? null,
-      bass: bass
+      bass: bass && bass.enabled !== false
         ? {
             sub_gain_db: bass.sub_gain_db,
             mid_gain_db: bass.mid_gain_db,
@@ -254,7 +254,7 @@ export function buildEngineParams(input: BuildEngineParamsInput): Record<string,
         safety_margin_db: c.safetyMarginDb,
       },
       lf_targets:
-        bass && bass.unify_hz !== null
+        bass && bass.enabled !== false && bass.unify_hz !== null
           ? resolveLfTargets(speakers, bass, c.lfSpreads, c.lfeGain)
           : [],
       output_gain: master.outputGain ?? 1,

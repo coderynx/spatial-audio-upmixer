@@ -35,6 +35,7 @@ export type LfSpreadName = "front" | "bed" | "all";
 export type BassLfeMode = "off" | "add" | "split";
 
 export type BassProfile = {
+  enabled?: boolean;
   sub_gain_db: number;
   mid_gain_db: number;
   unify_hz: number | null;
@@ -123,7 +124,7 @@ const SAFE_BASS: ServedBassProfile = {
 };
 
 export function resolveBassParams(
-  block: (Overrides<ServedBassProfile> & { harmonics?: unknown }) | null | undefined,
+  block: (Overrides<ServedBassProfile> & { harmonics?: unknown; enabled?: boolean | null }) | null | undefined,
   presets: Record<string, ServedBassProfile>,
   defaultUnifyHz: number,
 ): BassProfile | null {
@@ -144,7 +145,7 @@ export function resolveBassParams(
   if (resolved.unify_hz === null && (resolved.punch !== 0 || harmonics > 0)) {
     resolved.unify_hz = defaultUnifyHz;
   }
-  return { ...resolved, excite: harmonics > 0, harmonics };
+  return { ...resolved, enabled: block.enabled !== false, excite: harmonics > 0, harmonics };
 }
 
 export const resolveCompParams = (

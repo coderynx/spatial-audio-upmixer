@@ -67,6 +67,7 @@ _log = logging.getLogger("upmixer")
 from upmixer.manifest import register_block_keys as _rbk
 _rbk("mastering", {
     "bass": {
+        "enabled":     ("config", "mastering_bass_enabled"),
         "profile":     ("config", "mastering_bass_profile"),
         "sub_gain_db": ("config", "mastering_bass_sub_gain_db"),
         "mid_gain_db": ("config", "mastering_bass_mid_gain_db"),

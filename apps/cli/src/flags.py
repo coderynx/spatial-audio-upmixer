@@ -96,6 +96,21 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.mastering_comp_makeup_db = args.mastering_comp_makeup
     if args.mastering_comp_sidechain_hpf is not None:
         config.mastering_comp_sidechain_hpf_hz = args.mastering_comp_sidechain_hpf
+    if any((
+        args.mastering_bass is not None,
+        args.mastering_bass_sub is not None,
+        args.mastering_bass_mid is not None,
+        args.mastering_bass_unify is not None,
+        args.mastering_bass_spread is not None,
+        args.mastering_bass_punch is not None,
+        args.mastering_bass_harmonics is not None,
+        args.mastering_bass_excite,
+        args.mastering_bass_lfe_mode is not None,
+        args.mastering_bass_lfe_send is not None,
+        args.mastering_bass_lfe is not None,
+        args.mastering_bass_decorrelate is not None,
+    )):
+        config.mastering_bass_enabled = True
     if args.mastering_bass is not None:
         config.mastering_bass_profile = args.mastering_bass
     if args.mastering_bass_sub is not None:

@@ -37,9 +37,10 @@ Processing order
 2.5 **Bass control** (optional) — multichannel bass management: sub/mid-bass
    EQ, LF unification across the bed with redistribution, transient shaping
    and harmonic excitation on the unified bus, mid-bass decorrelation, an LFE
-   send, and an LFE gain trim.  Controlled by ``config.mastering_bass_profile`` and individual
-   ``mastering_bass_*`` params.  Disabled when both profile and all individual
-   params are unset.
+   send, and an LFE gain trim.  Controlled by ``config.mastering_bass_enabled``
+   plus ``config.mastering_bass_profile`` and individual ``mastering_bass_*``
+   params.  ``False`` is an explicit bypass; ``None`` preserves the legacy
+   profile/override activation rules.
 
    This stage runs *after* reference matching for a reason that is not
    cosmetic: ``match_reference/spectrum.py`` compares a BS.1770-weighted
@@ -406,7 +407,7 @@ class MasteringChain:
                 channels = accept(processed) if renderer_aware else processed
                 comp_gr = (comp.gr_peak_db, comp.gr_avg_db)
 
-        _bass_active = (
+        _bass_overrides = (
             cfg.mastering_bass_profile is not None
             or cfg.mastering_bass_sub_gain_db is not None
             or cfg.mastering_bass_mid_gain_db is not None
@@ -419,6 +420,9 @@ class MasteringChain:
             or cfg.mastering_bass_lfe_gain_db is not None
             or cfg.mastering_bass_excite is not None
             or cfg.mastering_bass_decorrelate is not None
+        )
+        _bass_active = cfg.mastering_bass_enabled is True or (
+            cfg.mastering_bass_enabled is not False and _bass_overrides
         )
         if _bass_active:
             from .bass import BASS_PROFILES, DEFAULT_UNIFY_HZ, BassController

@@ -228,6 +228,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "mastering_comp_knee_db":     ("mastering_comp_knee_db",      float),
     "mastering_comp_makeup_db":   ("mastering_comp_makeup_db",    float),
     "mastering_comp_sidechain_hpf_hz": ("mastering_comp_sidechain_hpf_hz", float),
+    "mastering_bass_enabled":        ("mastering_bass_enabled",        bool),
     "mastering_bass_profile":        ("mastering_bass_profile",        str),
     "mastering_bass_sub_gain_db":    ("mastering_bass_sub_gain_db",    float),
     "mastering_bass_mid_gain_db":    ("mastering_bass_mid_gain_db",    float),

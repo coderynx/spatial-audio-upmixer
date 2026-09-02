@@ -212,7 +212,31 @@ describe("MasteringSection bass controls", () => {
     for (const label of ["Exciter", "Crossover", "Spread", "Width", "Subwoofer", "Sub level", "Sub trim"]) {
       expect(screen.queryByLabelText(label)).toBeNull();
     }
-    expect(screen.queryByRole("switch", { name: "Bass" })).toBeNull();
+    expect(screen.getByRole("switch", { name: "Bass" })).not.toBeChecked();
+  });
+
+  it("turns the bass module on from the header", () => {
+    const setManifest = renderBass();
+    fireEvent.click(screen.getByRole("switch", { name: "Bass" }));
+    expect(setManifest.mock.calls.at(-1)![0].mastering.bass.enabled).toBe(true);
+  });
+
+  it("toggles the bass module from its header and keeps tuned values", () => {
+    const setManifest = renderBass({ enabled: true, sub_gain_db: 2 });
+    const toggle = screen.getByRole("switch", { name: "Bass" });
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(toggle);
+    expect(setManifest.mock.calls.at(-1)![0].mastering.bass).toMatchObject({
+      enabled: false,
+      sub_gain_db: 2,
+    });
+  });
+
+  it("disables the bass controls while the module is bypassed", () => {
+    renderBass({ enabled: false, sub_gain_db: 2 });
+    expect(screen.getByRole("switch", { name: "Bass" })).not.toBeChecked();
+    expect(screen.getByRole("slider", { name: "Low end" })).toHaveAttribute("data-disabled");
   });
 
   it("preserves legacy routing until the first bass edit", () => {
@@ -223,6 +247,7 @@ describe("MasteringSection bass controls", () => {
     fireEvent.keyDown(screen.getByRole("slider", { name: "Low end" }), { key: "ArrowUp" });
     const next = setManifest.mock.calls.at(-1)![0].mastering.bass;
     expect(next).toMatchObject({
+      enabled: true,
       profile: null,
       sub_gain_db: 1.1,
       mid_gain_db: 0.5,
@@ -239,11 +264,12 @@ describe("MasteringSection bass controls", () => {
   });
 
   it("applies a preset as concrete safe values", () => {
-    const setManifest = renderBass();
+    const setManifest = renderBass({ enabled: true });
     fireEvent.click(screen.getByRole("combobox", { name: "Preset" }));
     fireEvent.click(screen.getByRole("option", { name: /Enhance/ }));
 
     expect(setManifest.mock.calls.at(-1)![0].mastering.bass).toEqual({
+      enabled: true,
       profile: null,
       sub_gain_db: 1.5,
       mid_gain_db: 0.5,

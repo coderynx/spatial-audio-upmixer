@@ -287,7 +287,9 @@ voicing is bit-identical to the pre-band one.
 
 Bass harmonic enhancement uses the existing exciter algorithm on both paths;
 `mastering.bass.harmonics` scales its served `bass_excite_blend` from zero to
-full strength. Zero bypasses it. Punch or non-zero Harmonics with no explicit
+full strength. Zero bypasses it. `mastering.bass.enabled: false` bypasses the
+whole bass stage while retaining its tuned values; `null` preserves legacy
+profile/override activation. Punch or non-zero Harmonics with no explicit
 crossover resolves to the served `bass_unify_default_hz`, so preview and
 export create the same LF bus without putting that technical control in the
 mastering UI. The legacy `excite` boolean maps to zero or full strength.

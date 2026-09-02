@@ -67,7 +67,7 @@ class TestBassManifestKeys:
         }
         for name, profile in BASS_PROFILES.items():
             assert set(profile) <= keys, f"profile '{name}' has unroutable fields"
-        assert keys == set(next(iter(BASS_PROFILES.values()))) | {"profile", "harmonics"}
+        assert keys == set(next(iter(BASS_PROFILES.values()))) | {"enabled", "profile", "harmonics"}
 
     def test_a_stale_block_is_rejected(self):
         """The failure this migration exists to prevent."""

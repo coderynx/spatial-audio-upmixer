@@ -195,11 +195,12 @@ class TestParseAndApplyIntegration:
 
     def test_bass_section(self):
         data = _minimal(mastering={"bass": {
-            "profile": "enhance", "harmonics": 0.5, "excite": True,
+            "enabled": False, "profile": "enhance", "harmonics": 0.5, "excite": True,
         }})
         _, jobs = parse_manifest(data)
         cfg = UpmixConfig()
         apply_asset_job(cfg, jobs[0])
+        assert cfg.mastering_bass_enabled is False
         assert cfg.mastering_bass_profile == "enhance"
         assert cfg.mastering_bass_harmonics == pytest.approx(0.5)
         assert cfg.mastering_bass_excite is True

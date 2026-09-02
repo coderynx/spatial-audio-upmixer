@@ -111,6 +111,9 @@ class UpmixConfig:
     mastering_comp_makeup_db: float | None = None
     mastering_comp_sidechain_hpf_hz: float | None = None
 
+    # None preserves the legacy profile/override activation rules; False is
+    # an explicit module bypass that keeps tuned values available to the UI.
+    mastering_bass_enabled: bool | None = None
     mastering_bass_profile: str | None = None
     mastering_bass_sub_gain_db: float | None = None
     mastering_bass_mid_gain_db: float | None = None

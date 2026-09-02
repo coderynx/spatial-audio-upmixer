@@ -111,7 +111,9 @@ allowed. Advanced JSON is validated by the server on save.
 The Bass panel is a mastering control, not an LFE router. Its presets write
 concrete `sub_gain_db`, `mid_gain_db`, `punch`, and `harmonics` values, then
 use the QC-safe routing contract (`spread: bed`, no authored LFE send or trim,
-and a 90 Hz LF bus only when Punch or Harmonics needs it). Existing manifests
+and a 90 Hz LF bus only when Punch or Harmonics needs it). The header switch
+stores `enabled: false` as a reversible module bypass without clearing those
+values. Existing manifests
 with a bass profile or custom routing retain that behavior until the first
 bass edit, when the panel materializes the audible values and adopts the safe
 routing. `harmonics: 0` bypasses excitation; the legacy nullable `excite`
