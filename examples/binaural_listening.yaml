@@ -2,9 +2,9 @@
 #
 # Renders a flattering "hi-fi system" consumer preview: a 7.1.4 bed
 # virtualized through the Spatial Audio Engine's Listening decode filters
-# (reference cinema room BRIR — same room amount as Studio, RT60 ~120 ms, with
-# a warmer tail) plus a deliberately obvious hi-fi enhance voicing chain: a
-# Harman-style tilt (+2 dB bass, +3 dB air, +1.5 dB presence), a
+# (short, low-level warm early ambience with a darker tail) plus a deliberately
+# obvious hi-fi enhance voicing chain: a
+# Harman-style tilt (+1 dB bass, +4 dB air, +2 dB presence), a
 # cinema-width soundstage (+15%), and light crossfeed for externalization.
 # Loudness-matched to the neutral profiles (no lift). Tone-colored, not
 # neutral — use the Studio profile for reference monitoring. See

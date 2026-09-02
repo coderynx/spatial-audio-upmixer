@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from upmixer.formats import MEASURED_HRIR_LAYOUTS, OutputFormat
+
 
 class BinauralProfile(str, Enum):
     STUDIO = "studio"
@@ -49,6 +51,27 @@ DECODE_FILTER_SET: dict[BinauralProfile, str] = {
     BinauralProfile.STUDIO: "studio_o3_decode",
     BinauralProfile.LISTENING: "listening_o3_decode",
 }
+"""Legacy profile-only names retained for callers that do not name a layout."""
+
+def decode_filter_set_name(
+    profile: BinauralProfile | str,
+    layout: OutputFormat | str,
+) -> str:
+    """Return the shipped decode-bank name for *profile* and bed *layout*.
+
+    Measured banks are layout-specific. The delivery validator still limits
+    binaural output to ``BINAURAL_BED_FORMATS``; raw rendering also supports
+    the other real speaker layouts in ``FORMAT_MAP``.
+    """
+    resolved = resolve_profile(profile) if isinstance(profile, str) else profile
+    layout_name = layout.name if isinstance(layout, OutputFormat) else layout
+    if layout_name not in MEASURED_HRIR_LAYOUTS:
+        raise ValueError(
+            f"Unsupported measured-HRIR layout '{layout_name}'. "
+            f"Valid: {MEASURED_HRIR_LAYOUTS}"
+        )
+    base = DECODE_FILTER_SET[resolved]
+    return f"{base}_{layout_name.replace('.', '_')}"
 
 VOICING_PARAMS: dict[BinauralProfile, VoicingParams] = {
     BinauralProfile.FLAT: VoicingParams(),

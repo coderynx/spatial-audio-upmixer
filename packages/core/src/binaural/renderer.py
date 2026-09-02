@@ -14,7 +14,7 @@ import upmixer_dsp
 
 from upmixer.binaural.decoder import load_decode_filter_set
 from upmixer.binaural.geometry import speaker_azimuth_elevation
-from upmixer.binaural.profiles import DECODE_FILTER_SET, VOICING_PARAMS, resolve_profile
+from upmixer.binaural.profiles import VOICING_PARAMS, decode_filter_set_name, resolve_profile
 from upmixer.binaural.voicing import apply_voicing
 from upmixer.formats import BINAURAL, ChannelLabel, OutputFormat
 from upmixer.loudness import normalize_loudness
@@ -37,6 +37,7 @@ def render_binaural(
     lfe_gain: float = 0.31622776601683794,
     lfe_cutoff_hz: float = 120.0,
     lfe_filter_order: int = 4,
+    lfe_already_processed: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Render a discrete multichannel bed to raw (unmastered) binaural stereo.
 
@@ -52,6 +53,8 @@ def render_binaural(
             bed and reads as boomy.
         lfe_cutoff_hz: LFE lowpass cutoff, matching ``UpmixConfig.lfe_cutoff_hz``.
         lfe_filter_order: LFE lowpass order, matching ``UpmixConfig.lfe_filter_order``.
+        lfe_already_processed: whether the input LFE already includes its
+            routing gain and lowpass; used by delivery after ``StemRouter``.
 
     Returns:
         (left, right) float64 arrays of the same length as the bed channels.
@@ -71,7 +74,9 @@ def render_binaural(
         feeds.append(np.ascontiguousarray(signal[:n_samples], dtype=np.float64))
         directions.append((position.azimuth_rad, position.elevation_rad))
 
-    filter_set = load_decode_filter_set(DECODE_FILTER_SET[resolved], sample_rate)
+    filter_set = load_decode_filter_set(
+        decode_filter_set_name(resolved, bed_fmt), sample_rate
+    )
     left, right = upmixer_dsp.render_hoa_to_binaural(
         feeds,
         directions,
@@ -80,9 +85,9 @@ def render_binaural(
     )
 
     if ChannelLabel.LFE.value in channels:
-        lfe = _lfe_lowpass(
-            channels[ChannelLabel.LFE.value][:n_samples], sample_rate, lfe_cutoff_hz, lfe_filter_order
-        ) * lfe_gain
+        lfe = np.ascontiguousarray(channels[ChannelLabel.LFE.value][:n_samples], dtype=np.float64)
+        if not lfe_already_processed:
+            lfe = _lfe_lowpass(lfe, sample_rate, lfe_cutoff_hz, lfe_filter_order) * lfe_gain
         left = left + lfe
         right = right + lfe
 
@@ -120,9 +125,11 @@ def render_binaural_delivery(
     the gain correction, so it only ever engages as a true-peak safety net
     instead of clipping the raw HRTF sum.
     """
+    # StemRouter already authors LFE's gain and lowpass before mastering.
     left, right = render_binaural(
-        channels, bed_fmt, sample_rate, cfg.binaural_profile, lfe_gain=cfg.lfe_gain,
+        channels, bed_fmt, sample_rate, cfg.binaural_profile, lfe_gain=1.0,
         lfe_cutoff_hz=cfg.lfe_cutoff_hz, lfe_filter_order=cfg.lfe_filter_order,
+        lfe_already_processed=True,
     )
     stereo_channels = {ChannelLabel.FL.value: left, ChannelLabel.FR.value: right}
 

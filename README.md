@@ -265,8 +265,8 @@ through one of three profiles (`--binaural-profile`):
 
 | Profile | For | Room | Consumer voicing |
 |---|---|---|---|
-| `studio` (default) | Professional monitoring, as if in a treated spatial-audio mixing room | Neutral measured-style room | None |
-| `listening` | Flattering "hi-fi system" consumer preview on headphones | Reference cinema room (studio room amount, warmer tail) | Hi-fi enhance (loudness-matched): +2 dB bass, +3 dB air, +1.5 dB presence, +15% cinema width |
+| `studio` (default) | Professional monitoring, as if in a treated spatial-audio mixing room | Subtle neutral early ambience | None |
+| `listening` | Flattering "hi-fi system" consumer preview on headphones | Subtle warm early ambience | Hi-fi enhance (loudness-matched): +1 dB bass, +4 dB air, +2 dB presence, +15% cinema width |
 | `flat` | Anechoic reference — verify the mix with zero added coloration | None | None |
 
 ```bash
@@ -408,7 +408,7 @@ CLI flags > per-asset manifest values > global manifest values > UpmixConfig def
 | [`atmos_music.yaml`](examples/atmos_music.yaml) | YAML ADM-BWF music-authoring bed |
 | [`atmos_music.json`](examples/atmos_music.json) | Equivalent JSON ADM-BWF example |
 | [`binaural_studio.yaml`](examples/binaural_studio.yaml) | Headphone export, neutral Studio monitoring profile |
-| [`binaural_listening.yaml`](examples/binaural_listening.yaml) | Headphone export, Listening (reference cinema room) profile |
+| [`binaural_listening.yaml`](examples/binaural_listening.yaml) | Headphone export, Listening (warm early-ambience) profile |
 | [`batch_album_stem.yaml`](examples/batch_album_stem.yaml) | Explicit album jobs with shared stem settings |
 | [`batch_dir_stem.yaml`](examples/batch_dir_stem.yaml) | Directory expansion and per-directory overrides |
 | [`batch_explicit_jobs.yaml`](examples/batch_explicit_jobs.yaml) | Per-track deep-merged overrides |

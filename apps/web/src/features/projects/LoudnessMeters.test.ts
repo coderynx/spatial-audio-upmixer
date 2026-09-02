@@ -32,6 +32,11 @@ describe("collapse-mode label", () => {
     expect(collapseModeLabel("transaural", 12)).toBe("Transaural");
   });
 
+  it("labels Apple Spatial loudness as pre-PHASE", () => {
+    expect(collapseModeLabel("apple_spatial", 12)).toBe("Apple Spatial · pre-PHASE 5.1");
+    expect(collapseModeLabel("apple_spatial", 6)).toBe("Apple Spatial · pre-PHASE bed");
+  });
+
   it("distinguishes a native bed from the 5.1 re-render it is measured on", () => {
     expect(collapseModeLabel("native", 12)).toBe("5.1 re-render");
     expect(collapseModeLabel("native", 8)).toBe("5.1 re-render");

@@ -135,6 +135,9 @@ FORMAT_MAP = {
     "7.1.4": SURROUND_714,
 }
 
+MEASURED_HRIR_LAYOUTS: tuple[str, ...] = tuple(FORMAT_MAP)
+"""Real speaker layouts with a layout-specific measured binaural bank."""
+
 DOLBY_ADM_BED_FORMATS: tuple[str, ...] = ("5.1", "7.1", "7.1.2")
 """Bed configurations permitted by Dolby Atmos Master ADM Profile v1.1."""
 

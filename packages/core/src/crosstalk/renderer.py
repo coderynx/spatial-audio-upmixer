@@ -29,6 +29,7 @@ def render_crosstalk(
     lfe_gain: float = 0.31622776601683794,
     lfe_cutoff_hz: float = 120.0,
     lfe_filter_order: int = 4,
+    lfe_already_processed: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Render a discrete multichannel bed to raw (unmastered) transaural stereo.
 
@@ -46,6 +47,8 @@ def render_crosstalk(
             decode (see :func:`upmixer.binaural.renderer.render_binaural`).
         lfe_cutoff_hz: LFE lowpass cutoff, matching ``UpmixConfig.lfe_cutoff_hz``.
         lfe_filter_order: LFE lowpass order, matching ``UpmixConfig.lfe_filter_order``.
+        lfe_already_processed: whether the input LFE already includes its
+            routing gain and lowpass; used by delivery after ``StemRouter``.
 
     Returns:
         (left, right) float64 speaker-feed arrays, same length as the bed.
@@ -54,6 +57,7 @@ def render_crosstalk(
     ear_left, ear_right = render_binaural(
         channels, bed_fmt, sample_rate, "flat", lfe_gain=lfe_gain,
         lfe_cutoff_hz=lfe_cutoff_hz, lfe_filter_order=lfe_filter_order,
+        lfe_already_processed=lfe_already_processed,
     )
 
     # Voicing shapes the ear signals the canceller is asked to deliver, so it
@@ -87,9 +91,11 @@ def render_crosstalk_delivery(
     correction, not before — limiting the raw pre-gain sum would bake in
     saturation no later stage can undo).
     """
+    # StemRouter already authors LFE's gain and lowpass before mastering.
     left, right = render_crosstalk(
-        channels, bed_fmt, sample_rate, cfg.transaural_profile, lfe_gain=cfg.lfe_gain,
+        channels, bed_fmt, sample_rate, cfg.transaural_profile, lfe_gain=1.0,
         lfe_cutoff_hz=cfg.lfe_cutoff_hz, lfe_filter_order=cfg.lfe_filter_order,
+        lfe_already_processed=True,
     )
     stereo_channels = {ChannelLabel.FL.value: left, ChannelLabel.FR.value: right}
 

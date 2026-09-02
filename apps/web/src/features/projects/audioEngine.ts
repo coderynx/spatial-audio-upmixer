@@ -339,8 +339,12 @@ export class PreviewAudioEngine {
 
   async loadDecodeFilterSet(profile: SpatialProfile): Promise<boolean> {
     if (!this.context || !this.constants) return false;
+    const assetName = this.decodeAssetName(profile);
     return this.taps.loadDecode(
-      this.context, this.constants, profile, () => profile === this.decodeProfile(),
+      this.context,
+      profile,
+      assetName,
+      () => profile === this.decodeProfile() && assetName === this.decodeAssetName(profile),
     );
   }
 
@@ -356,6 +360,21 @@ export class PreviewAudioEngine {
     if (this.outputMode === "transaural") return "flat";
     if (this.outputMode === "apple_spatial" && this.nativeFallback) return this.spatialProfile;
     return this.outputMode === "binaural" ? this.spatialProfile : null;
+  }
+
+  private decodeLayoutName(): string | null {
+    const positional = this.layoutChannels.filter((channel) => channel !== "LFE");
+    const layout = Object.entries(this.constants.speakerDirections).find(
+      ([, directions]) => Object.keys(directions).length === positional.length
+        && positional.every((channel) => directions[channel]),
+    )?.[0];
+    return layout ?? null;
+  }
+
+  private decodeAssetName(profile: SpatialProfile): string {
+    const base = this.constants.decodeFilterSet[profile];
+    const layout = this.decodeLayoutName();
+    return layout ? `${base}_${layout.replace(/\./g, "_")}` : base;
   }
 
   private async loadSpatialFilterSets(): Promise<boolean> {
@@ -444,18 +463,25 @@ export class PreviewAudioEngine {
       constants: this.constants,
     });
     const objectAuthored = resolvedStems.some((stem) => stem.objectMode !== undefined);
-    // The authored correction gets the same full budget as export. Object
-    // monitors receive their renderer-only correction separately below.
+    // Match the collapse wrapper's bounded delivery correction. Native and
+    // Apple bed output retain the full mastering budget.
+    const maxGainDb = this.outputMode === "binaural"
+      ? this.constants.binauralLoudnessMaxGainDb
+      : this.outputMode === "transaural"
+        ? this.constants.crosstalkLoudnessMaxGainDb
+        : this.outputMode === "apple_spatial" && this.nativeFallback
+          ? this.constants.binauralLoudnessMaxGainDb
+        : this.constants.loudnessMaxGainDb;
     const measured = this.calibration.measured;
     const correction = correctionGain(
       measured,
       delivery,
-      this.constants.loudnessMaxGainDb,
+      maxGainDb,
       normalize,
     );
     // MONITOR domain, folded into the same ramp: the A/B match never reaches
     // an export or the manifest, unlike `master.output_gain`'s own meaning.
-    const matchDb = this.matchDb(delivery, normalize);
+    const matchDb = this.matchDb(delivery, normalize, maxGainDb);
     const matched = correction * 10 ** (matchDb / 20);
     // A match that boosts is still bound by the ceiling: the bypassed side
     // has no limiter of its own, so the compensation must not clip the DAC.
@@ -478,7 +504,7 @@ export class PreviewAudioEngine {
               dbtp: monitorMeasured.dbtp + sourceGainDb,
             },
             delivery,
-            this.constants.loudnessMaxGainDb,
+            maxGainDb,
             true,
           )
         : applyTruePeakCeiling(
@@ -547,13 +573,13 @@ export class PreviewAudioEngine {
   }
 
   /** The A/B's compensating monitor gain, once both sides are measured. */
-  private matchDb(delivery: DeliveryTarget, normalize: boolean): number {
+  private matchDb(delivery: DeliveryTarget, normalize: boolean, maxGainDb: number): number {
     if (!this.masteringBypassed && !this.matchBypassed) return 0;
     return bypassMatchDb(
       this.calibration.get(this.measureKey(false, false)),
       this.calibration.get(this.measureKey()),
       delivery,
-      this.constants.loudnessMaxGainDb,
+      maxGainDb,
       normalize,
     );
   }
@@ -805,7 +831,7 @@ export class PreviewAudioEngine {
         )
       : undefined;
     return {
-      decodeAsset: decodeProfile ? this.constants.decodeFilterSet[decodeProfile] : undefined,
+      decodeAsset: decodeProfile ? this.decodeAssetName(decodeProfile) : undefined,
       xtcAsset: this.outputMode === "transaural"
         ? this.constants.xtcFilterSet[this.transauralProfile]
         : undefined,

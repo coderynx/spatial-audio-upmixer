@@ -7,14 +7,27 @@ from upmixer.binaural.ambisonics import N_ACN_CHANNELS, encode_gains
 from upmixer.binaural.decoder import decode_to_binaural, load_decode_filter_set
 from upmixer.binaural.geometry import speaker_azimuth_elevation
 from upmixer.binaural.head_model import synth_hrir
-from upmixer.binaural.profiles import BINAURAL_PROFILES, VOICING_PARAMS, BinauralProfile, resolve_profile
+from upmixer.binaural.profiles import (
+    BINAURAL_PROFILES,
+    DECODE_FILTER_SET,
+    VOICING_PARAMS,
+    BinauralProfile,
+    decode_filter_set_name,
+    resolve_profile,
+)
 from upmixer.binaural.renderer import (
     BINAURAL_LOUDNESS_MAX_GAIN_DB,
     render_binaural,
     render_binaural_delivery,
 )
 from upmixer.config import UpmixConfig
-from upmixer.formats import BINAURAL, BINAURAL_BED_FORMATS, ChannelLabel, FORMAT_MAP
+from upmixer.formats import (
+    BINAURAL,
+    BINAURAL_BED_FORMATS,
+    ChannelLabel,
+    FORMAT_MAP,
+    MEASURED_HRIR_LAYOUTS,
+)
 from upmixer.mastering.delivery import resolve_delivery_target
 
 
@@ -132,8 +145,22 @@ def test_azimuth_left_speaker_is_positive():
 
 
 @pytest.mark.parametrize("profile", BINAURAL_PROFILES)
-def test_load_decode_filter_set_shape(profile):
-    name = {"flat": "flat_o3_decode", "studio": "studio_o3_decode", "listening": "listening_o3_decode"}[profile]
+@pytest.mark.parametrize("layout", MEASURED_HRIR_LAYOUTS)
+def test_decode_filter_set_name_includes_supported_layout(profile, layout):
+    assert decode_filter_set_name(profile, FORMAT_MAP[layout]) == (
+        f"{profile}_o3_decode_{layout.replace('.', '_')}"
+    )
+
+
+def test_decode_filter_set_name_rejects_unsupported_layout():
+    with pytest.raises(ValueError, match="Unsupported measured-HRIR"):
+        decode_filter_set_name("flat", BINAURAL)
+
+
+@pytest.mark.parametrize("profile", BINAURAL_PROFILES)
+@pytest.mark.parametrize("layout", MEASURED_HRIR_LAYOUTS)
+def test_load_decode_filter_set_shape(profile, layout):
+    name = f"{profile}_o3_decode_{layout.replace('.', '_')}"
     filter_set = load_decode_filter_set(name, 48000)
     assert filter_set.taps.shape[0] == N_ACN_CHANNELS
     assert filter_set.taps.shape[1] == 2
@@ -141,17 +168,77 @@ def test_load_decode_filter_set_shape(profile):
     assert np.all(np.isfinite(filter_set.taps))
 
 
+@pytest.mark.parametrize("profile", BINAURAL_PROFILES)
+def test_load_decode_filter_set_keeps_legacy_profile_only_name(profile):
+    legacy_name = DECODE_FILTER_SET[BinauralProfile(profile)]
+    filter_set = load_decode_filter_set(legacy_name, 48000)
+    assert filter_set.name == legacy_name
+    assert filter_set.taps.shape[:2] == (N_ACN_CHANNELS, 2)
+
+
+@pytest.mark.parametrize("profile", ("studio", "listening"))
+def test_room_profiles_keep_ambience_short_and_below_direct_energy(profile):
+    filter_set = load_decode_filter_set(f"{profile}_o3_decode_7_1_4", 48000)
+    assert filter_set.taps.shape[-1] <= 2000
+
+    direct_energy = float(np.sum(filter_set.taps[..., :256] ** 2))
+    ambience_energy = float(np.sum(filter_set.taps[..., 256:] ** 2))
+    assert direct_energy > 0.0
+    assert ambience_energy <= direct_energy * 0.1
+
+
 def test_load_decode_filter_set_resamples():
-    filter_set_48k = load_decode_filter_set("flat_o3_decode", 48000)
-    filter_set_44k = load_decode_filter_set("flat_o3_decode", 44100)
+    filter_set_48k = load_decode_filter_set("flat_o3_decode_5_1_4", 48000)
+    filter_set_44k = load_decode_filter_set("flat_o3_decode_5_1_4", 44100)
     assert filter_set_44k.sample_rate == 44100
     # Resampled length should scale roughly with the rate ratio.
     ratio = filter_set_44k.taps.shape[-1] / filter_set_48k.taps.shape[-1]
     assert ratio == pytest.approx(44100 / 48000, rel=0.05)
 
 
+def test_render_binaural_loads_the_selected_profile_and_layout_bank(monkeypatch):
+    import upmixer.binaural.renderer as renderer
+    from upmixer.binaural.decoder import DecodeFilterSet
+
+    loaded: list[str] = []
+
+    def fake_load(name: str, sample_rate: int) -> DecodeFilterSet:
+        loaded.append(name)
+        return DecodeFilterSet(name, sample_rate, np.zeros((N_ACN_CHANNELS, 2, 1)))
+
+    monkeypatch.setattr(renderer, "load_decode_filter_set", fake_load)
+    monkeypatch.setattr(
+        renderer.upmixer_dsp,
+        "render_hoa_to_binaural",
+        lambda *_args: (np.zeros(1), np.zeros(1)),
+    )
+
+    render_binaural(
+        {"FL": np.zeros(1)}, FORMAT_MAP["7.1.4"], 48000, "listening"
+    )
+
+    assert loaded == ["listening_o3_decode_7_1_4"]
+
+
+@pytest.mark.parametrize("layout", ("5.1", "7.1", "5.1.2"))
+def test_render_binaural_supports_non_height_layouts(layout):
+    fmt = FORMAT_MAP[layout]
+    n = 256
+    channels = {
+        channel.value: np.ones(n, dtype=np.float64) * 0.01
+        for channel in fmt.channels
+    }
+
+    left, right = render_binaural(channels, fmt, 48000, "flat")
+
+    assert left.shape == (n,)
+    assert right.shape == (n,)
+    assert np.all(np.isfinite(left))
+    assert np.all(np.isfinite(right))
+
+
 def test_decode_to_binaural_silence_in_silence_out():
-    filter_set = load_decode_filter_set("flat_o3_decode", 48000)
+    filter_set = load_decode_filter_set("flat_o3_decode_5_1_4", 48000)
     hoa = np.zeros((N_ACN_CHANNELS, 1000))
     left, right = decode_to_binaural(hoa, filter_set)
     assert left.shape == (1000,)
@@ -205,9 +292,9 @@ def test_listening_profile_differs_from_flat():
 
 
 def test_listening_output_differs_from_studio():
-    # Listening's cinema tail plus its hi-fi enhancement voicing (bass/air
-    # tilt, presence, wide M/S) should render audibly differently from
-    # Studio's neutral monitor room + bypassed voicing.
+    # Listening's low-level ambience plus its hi-fi enhancement voicing
+    # (bass/air tilt, presence, wide M/S) should render audibly differently
+    # from Studio's neutral monitor profile + bypassed voicing.
     sr = 48000
     n = sr
     bed_fmt = FORMAT_MAP["7.1.4"]
@@ -251,11 +338,11 @@ def test_binaural_bed_formats_are_valid_output_formats():
 
 @pytest.mark.parametrize("profile", BINAURAL_PROFILES)
 @pytest.mark.parametrize("bed_name", BINAURAL_BED_FORMATS)
-def test_render_binaural_is_left_right_balanced_for_a_centered_signal(bed_name, profile):
-    # Regression: the decode filter set's virtual-loudspeaker direction set
-    # must be exactly mirror-symmetric (see scripts/build_binaural_filters.py
-    # real_speaker_directions) or a perfectly centered/symmetric bed decodes to
-    # audibly unequal L/R levels even though nothing in the mix is panned.
+def test_render_binaural_keeps_centered_signal_within_measured_lr_tolerance(bed_name, profile):
+    # A measured KU100 is not mirror-symmetrized. Keep a dB bound instead of
+    # requiring synthetic exact symmetry. Listening's intentional voicing can
+    # add a small spectral imbalance, so its bound is 3 dB; unvoiced profiles
+    # remain at 2 dB, above the measured maximum for this deterministic check.
     sr = 48000
     n = sr
     bed_fmt = FORMAT_MAP[bed_name]
@@ -266,7 +353,8 @@ def test_render_binaural_is_left_right_balanced_for_a_centered_signal(bed_name, 
     left, right = render_binaural(channels, bed_fmt, sr, profile)
     left_rms = float(np.sqrt(np.mean(left**2)))
     right_rms = float(np.sqrt(np.mean(right**2)))
-    assert left_rms == pytest.approx(right_rms, rel=1e-9)
+    imbalance_db = abs(20.0 * np.log10(left_rms / right_rms))
+    assert imbalance_db <= (3.0 if profile == "listening" else 2.0)
 
 
 @pytest.mark.parametrize("profile", BINAURAL_PROFILES)
@@ -324,6 +412,62 @@ def test_lfe_is_attenuated_relative_to_unity_sum():
     attenuated_rms = float(np.sqrt(np.mean(attenuated_l**2) + np.mean(attenuated_r**2)))
     unity_rms = float(np.sqrt(np.mean(unity_l**2) + np.mean(unity_r**2)))
     assert attenuated_rms < unity_rms * 0.5
+
+
+def test_binaural_delivery_does_not_reapply_routed_lfe_gain(monkeypatch):
+    # StemRouter has already authored this LFE. Delivery must bypass both
+    # processing stages; the public raw default remains unchanged.
+    import upmixer.binaural.renderer as renderer
+
+    cfg = UpmixConfig(
+        binaural_profile="flat",
+        lfe_gain=0.25,
+        loudness_normalize=False,
+    )
+    seen: dict[str, float] = {}
+
+    def fake_render(*_args, lfe_gain: float, lfe_already_processed: bool, **_kwargs):
+        seen["lfe_gain"] = lfe_gain
+        seen["lfe_already_processed"] = lfe_already_processed
+        return np.ones(48000), np.ones(48000)
+
+    monkeypatch.setattr(renderer, "render_binaural", fake_render)
+    bed_fmt = FORMAT_MAP["7.1.4"]
+    channels = {label.value: np.zeros(48000) for label in bed_fmt.channels}
+    renderer.render_binaural_delivery(channels, bed_fmt, 48000, cfg)
+
+    assert seen["lfe_gain"] == 1.0
+    assert seen["lfe_already_processed"] is True
+
+
+def test_binaural_renderer_bypasses_lfe_processing_for_authored_bed(monkeypatch):
+    import upmixer.binaural.renderer as renderer
+
+    n = 48000
+    bed_fmt = FORMAT_MAP["7.1.4"]
+    authored = np.linspace(-0.25, 0.25, n)
+    channels = {label.value: np.zeros(n) for label in bed_fmt.channels}
+    channels[ChannelLabel.LFE.value] = authored
+
+    monkeypatch.setattr(
+        renderer.upmixer_dsp,
+        "render_hoa_to_binaural",
+        lambda *_args: (np.zeros(n), np.zeros(n)),
+    )
+    monkeypatch.setattr(renderer, "apply_voicing", lambda left, right, *_args: (left, right))
+    monkeypatch.setattr(renderer, "_lfe_lowpass", lambda *_args: pytest.fail("LFE was processed twice"))
+
+    left, right = renderer.render_binaural(
+        channels,
+        bed_fmt,
+        48000,
+        "flat",
+        lfe_gain=1.0,
+        lfe_already_processed=True,
+    )
+
+    np.testing.assert_array_equal(left, authored)
+    np.testing.assert_array_equal(right, authored)
 
 
 def test_lfe_lowpass_follows_configured_cutoff():

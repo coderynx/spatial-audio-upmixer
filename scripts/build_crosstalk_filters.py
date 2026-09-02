@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Generates the 2x2 crosstalk-cancellation (XTC) FIR filter sets.
+"""Build measured 2x2 crosstalk-cancellation (XTC) FIR filter sets.
 
 Dev-only tool — not imported by production code. For each transaural profile,
-synthesizes the speaker-to-ear acoustic transfer matrix C from the same
-parametric spherical-head model the binaural HRIR decode uses
-(``upmixer.binaural.head_model.synth_hrir``), then computes a
+loads the speaker-to-ear acoustic transfer matrix C from the SADIE II D1/KU100
+measured SOFA used by the binaural HRIR decode, then computes a
 frequency-dependent Tikhonov-regularized inverse H = C^H (C C^H + beta(f)
 I)^-1 — the standard crosstalk-canceller design (Atal-Schroeder /
 Cooper-Bauck shuffler lineage), with beta(f) set per bin to Choueiri's
@@ -17,17 +16,22 @@ result into ``apps/web/public/xtc/`` so the browser preview uses
 byte-identical filters.
 
 Usage:
-    uv run python scripts/build_crosstalk_filters.py
+    uv run --with h5py python scripts/build_crosstalk_filters.py --sofa PATH
 """
 from __future__ import annotations
 
+import argparse
 import shutil
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
-from upmixer.binaural.head_model import synth_hrir
+if __package__:
+    from .build_binaural_filters import SofaHrirDataset, load_sofa_dataset, select_hrir
+else:
+    from build_binaural_filters import SofaHrirDataset, load_sofa_dataset, select_hrir
+
 from upmixer.crosstalk.geometry import speaker_azimuths_rad
 from upmixer.crosstalk.profiles import XTC_FILTER_SET, XTC_PARAMS, XtcParams
 
@@ -40,7 +44,7 @@ CORE_OUT_DIR = ROOT / "packages" / "core" / "src" / "crosstalk" / "xtc"
 WEB_OUT_DIR = ROOT / "apps" / "web" / "public" / "xtc"
 
 
-def _speaker_to_ear_matrix(params: XtcParams) -> np.ndarray:
+def _speaker_to_ear_matrix(dataset: SofaHrirDataset, params: XtcParams) -> np.ndarray:
     """Return the (2, 2, HRIR_TAPS) speaker->ear impulse-response matrix.
 
     Row = ear (0=left, 1=right), column = speaker (0=left, 1=right) — matches
@@ -48,11 +52,11 @@ def _speaker_to_ear_matrix(params: XtcParams) -> np.ndarray:
     speaker<-ear; C is ear<-speaker, its acoustic inverse).
     """
     az_left, az_right = speaker_azimuths_rad(params)
-    c_ll, c_rl = synth_hrir(az_left, 0.0, SAMPLE_RATE, HRIR_TAPS)
-    c_lr, c_rr = synth_hrir(az_right, 0.0, SAMPLE_RATE, HRIR_TAPS)
+    c_left = select_hrir(dataset, float(np.degrees(az_left)), 0.0)
+    c_right = select_hrir(dataset, float(np.degrees(az_right)), 0.0)
     c = np.zeros((2, 2, HRIR_TAPS), dtype=np.float64)
-    c[0, 0], c[0, 1] = c_ll, c_lr
-    c[1, 0], c[1, 1] = c_rl, c_rr
+    c[0, 0], c[1, 0] = c_left
+    c[0, 1], c[1, 1] = c_right
     return c
 
 
@@ -95,9 +99,9 @@ def _xtc_band_weight(freqs_hz: np.ndarray, params: XtcParams) -> np.ndarray:
     return weight
 
 
-def build_filter_set(params: XtcParams) -> np.ndarray:
+def build_filter_set(dataset: SofaHrirDataset, params: XtcParams) -> np.ndarray:
     """Return the (params.taps, 4) XTC filter matrix: [H_LL, H_LR, H_RL, H_RR]."""
-    c_time = _speaker_to_ear_matrix(params)
+    c_time = _speaker_to_ear_matrix(dataset, params)
     c_freq = np.fft.rfft(c_time, n=N_FFT, axis=-1)  # (2, 2, n_bins)
     n_bins = c_freq.shape[-1]
     freqs_hz = np.fft.rfftfreq(N_FFT, d=1.0 / SAMPLE_RATE)
@@ -148,20 +152,50 @@ def write_filter_set(name: str, matrix: np.ndarray, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{name}.wav"
     sf.write(str(path), matrix, SAMPLE_RATE, subtype="FLOAT")
-    print(f"  wrote {path.relative_to(ROOT)}  ({matrix.shape[0]} taps)")
+    shown = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
+    print(f"  wrote {shown}  ({matrix.shape[0]} taps)")
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sofa", type=Path, required=True, help="SADIE II D1/KU100 48 kHz SOFA input")
+    parser.add_argument("--core-out", type=Path, default=CORE_OUT_DIR)
+    parser.add_argument("--web-out", type=Path, default=WEB_OUT_DIR)
+    return parser.parse_args()
 
 
 def main() -> None:
+    args = _parse_args()
+    dataset = load_sofa_dataset(args.sofa)
+    interpolation_count = 0
+    direction_count = 2 * len(XTC_PARAMS)
     for profile, params in XTC_PARAMS.items():
         name = XTC_FILTER_SET[profile]
         print(f"Building {name} (span={params.azimuth_left_deg - params.azimuth_right_deg:.0f}deg, gamma={params.gamma_db}dB)...")
-        matrix = build_filter_set(params)
-        write_filter_set(name, matrix, CORE_OUT_DIR)
+        azimuths = [float(np.degrees(az)) for az in speaker_azimuths_rad(params)]
+        profile_interpolation_count = 0
+        for azimuth in azimuths:
+            try:
+                select_hrir(dataset, azimuth, 0.0, interpolate=False)
+            except KeyError:
+                interpolation_count += 1
+                profile_interpolation_count += 1
+        matrix = build_filter_set(dataset, params)
+        write_filter_set(name, matrix, args.core_out)
+        print(
+            f"  measured directions: {2 - profile_interpolation_count} exact, "
+            f"{profile_interpolation_count} interpolated"
+        )
 
-    WEB_OUT_DIR.mkdir(parents=True, exist_ok=True)
-    for wav in CORE_OUT_DIR.glob("*.wav"):
-        shutil.copyfile(wav, WEB_OUT_DIR / wav.name)
-        print(f"  copied -> {(WEB_OUT_DIR / wav.name).relative_to(ROOT)}")
+    args.web_out.mkdir(parents=True, exist_ok=True)
+    for wav in args.core_out.glob("*.wav"):
+        shutil.copyfile(wav, args.web_out / wav.name)
+        shown = (args.web_out / wav.name).relative_to(ROOT) if (args.web_out / wav.name).is_relative_to(ROOT) else args.web_out / wav.name
+        print(f"  copied -> {shown}")
+    print(
+        f"Measured speaker directions: {direction_count - interpolation_count} exact, "
+        f"{interpolation_count} interpolated"
+    )
 
 
 if __name__ == "__main__":

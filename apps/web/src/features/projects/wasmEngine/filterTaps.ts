@@ -41,6 +41,7 @@ export class FilterTapCache {
   referenceTaps: Float64Array | null = null;
 
   loadedDecodeProfile: SpatialProfile | null = null;
+  loadedDecodeAsset: string | null = null;
   loadedXtcProfile: TransauralProfile | null = null;
   private masterEqAsset: string | null = null;
   private referenceFirUrl: string | null = null;
@@ -52,15 +53,20 @@ export class FilterTapCache {
    */
   async loadDecode(
     context: AudioContext,
-    constants: EngineConstants,
     profile: SpatialProfile,
+    assetName: string,
     isCurrent: () => boolean,
   ): Promise<boolean> {
-    if (this.loadedDecodeProfile === profile && this.decodeTaps) return true;
-    const taps = await loadDecodeTaps(context, constants.decodeFilterSet[profile]);
+    if (
+      this.loadedDecodeProfile === profile
+      && this.loadedDecodeAsset === assetName
+      && this.decodeTaps
+    ) return true;
+    const taps = await loadDecodeTaps(context, assetName);
     if (!isCurrent()) return false;
     this.decodeTaps = taps;
     this.loadedDecodeProfile = profile;
+    this.loadedDecodeAsset = assetName;
     return true;
   }
 

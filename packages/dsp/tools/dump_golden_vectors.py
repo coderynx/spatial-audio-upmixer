@@ -413,7 +413,12 @@ def dump_match_reference() -> None:
 def dump_spatial() -> None:
     from upmixer.binaural.ambisonics import encode_gains
     from upmixer.binaural.decoder import decode_to_binaural, load_decode_filter_set
-    from upmixer.binaural.profiles import DECODE_FILTER_SET, VOICING_PARAMS
+    from upmixer.binaural.profiles import (
+        DECODE_FILTER_SET,
+        VOICING_PARAMS,
+        decode_filter_set_name,
+    )
+    from upmixer.formats import FORMAT_MAP
     from upmixer.binaural.voicing import apply_voicing
     from upmixer.crosstalk.filters import apply_xtc, load_xtc_filter_set
     from upmixer.crosstalk.profiles import (
@@ -453,7 +458,9 @@ def dump_spatial() -> None:
     # Decode and XTC filters ship as WAV assets; the taps travel with the
     # fixture so the Rust side tests the convolution, not the file loader.
     studio = next(k for k in DECODE_FILTER_SET if getattr(k, "value", k) == "studio")
-    decode = load_decode_filter_set(DECODE_FILTER_SET[studio], sr)
+    decode = load_decode_filter_set(
+        decode_filter_set_name(studio, FORMAT_MAP["7.1.4"]), sr
+    )
     hoa = np.stack([
         deterministic_signal(n, sr, seed_phase=float(i)) * (0.1 + 0.02 * i)
         for i in range(decode.taps.shape[0])

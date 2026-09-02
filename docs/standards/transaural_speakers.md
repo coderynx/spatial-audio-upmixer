@@ -5,9 +5,10 @@
 "shuffler" simplification for symmetric listener geometry, and Choueiri's
 analysis of frequency-dependent regularization for optimal XTC (see
 References), whose published optimization criterion §4.2 implements. No
-proprietary BACCH product filter set or measured/licensed XTC dataset is
-reproduced here; the speaker-to-ear model those filters are inverted from is
-this engine's own parametric head model (§4.1), not a measured HRTF.
+proprietary BACCH product filter set is reproduced here; the speaker-to-ear
+model those filters are inverted from is the measured SADIE II D1/KU100 SOFA
+described in §4.1. Its build-time provenance is recorded in
+`docs/standards/measured_hrir_provenance.md`.
 **Scope:** Rendering a discrete multichannel bed to speaker-ready,
 crosstalk-cancelled stereo for real stereo loudspeakers. This document is
 the signed contract for the core engine's transaural rendering pass
@@ -135,29 +136,25 @@ dataclass) and `packages/core/src/crosstalk/geometry.py::speaker_azimuths_rad`.
 
 ### 4.1 Speaker-to-ear transfer matrix
 
-The acoustic path from each speaker to each ear is synthesized with the
-**same parametric spherical-head HRTF model** the binaural engine's decode
-filters use — piecewise Woodworth ITD for front and rear hemispheres plus
-frequency-dependent head-shadow ILD (a lowpass plus a
-`SHADOW_SHELF_HZ = 700 Hz` high shelf) —
-now promoted to a shared module, `packages/core/src/binaural/head_model.py::synth_hrir`,
-imported by both `scripts/build_binaural_filters.py` and
-`scripts/build_crosstalk_filters.py` so the two spatial-audio targets never
-drift onto two different head models. For a profile's left speaker at
-azimuth `θ_L` and right speaker at `θ_R`:
+The acoustic path from each speaker to each ear is taken from the measured
+SADIE II D1/KU100 `SimpleFreeFieldHRIR` SOFA used by the binaural filter
+generator. The build script reuses `load_sofa_dataset` and `select_hrir` from
+`scripts/build_binaural_filters.py`; exact source directions are selected when
+available, with the loader's small spherical inverse-distance interpolation as
+the fallback. For a profile's left speaker at azimuth `θ_L` and right speaker
+at `θ_R` (both at 0° elevation):
 
 ```
-C_LL, C_RL = synth_hrir(θ_L, 0, sr, n_taps)   # left speaker: (left ear=ipsi, right ear=contra)
-C_LR, C_RR = synth_hrir(θ_R, 0, sr, n_taps)   # right speaker: (left ear=contra, right ear=ipsi)
+C_LL, C_RL = measured_hrir(θ_L, 0)   # left speaker: (left ear=ipsi, right ear=contra)
+C_LR, C_RR = measured_hrir(θ_R, 0)   # right speaker: (left ear=contra, right ear=ipsi)
 ```
 
 giving the 2x2 (ear × speaker) impulse-response matrix `C`.
 
-The shelf matters more here than it does for headphone rendering. A head only
-shadows wavelengths shorter than itself, so a real interaural level difference
-collapses below a few hundred Hz; a frequency-flat ILD would make `C` look far
-better conditioned at low frequency than it physically is, and the filters
-inverted from it would be designed for a listener who does not exist.
+The measured source is a single KU100 listener, not a universal listener
+model: pinnae, torso, room, cabinet response, and head movement remain outside
+the contract. The SOFA is a build-time input only; no SOFA reader or measured
+dataset is required by the runtime.
 
 ### 4.2 Regularized inverse
 
@@ -222,27 +219,25 @@ time-domain FIRs `H_LL, H_LR, H_RL, H_RR`.
 
 ### 4.5 Objective correctness check
 
-Because the filters are inverted from a synthetic head rather than a measured
-one, no crosstalk-cancellation change ships without confirming, per profile,
-all of the following on the synthesized `C`/`H` pair — the same "no
-separation-quality change ships without a report" discipline
-`docs/evaluation_harness.md` establishes for the separation engine
-(`packages/core/tests/test_crosstalk.py`):
+Because the filters are inverted from measured data, no crosstalk-cancellation
+change ships without confirming, per profile, all of the following on the
+measured `C`/`H` pair — the same "no separation-quality change ships without a
+report" discipline `docs/evaluation_harness.md` establishes for the separation
+engine (`packages/core/tests/test_crosstalk.py`):
 
 | Check | Test |
 |---|---|
 | Contralateral leakage falls vs. no cancellation, 300 Hz–6 kHz, with ipsilateral level inside a bounded coloration window | `test_xtc_reduces_contralateral_leakage_within_coloration_bound` |
 | Both halves of that tradeoff also hold *per sub-band* (300 Hz–1 k, 1–3 k, 3–6 k), so a good total can't hide a dead or colored octave | `test_xtc_per_band_depth_and_coloration` |
-| Filters still work on a head they were not designed for (±10 % head radius) — catches a design that scores well only by overfitting the model head | `test_xtc_survives_head_size_mismatch` |
 | Below the active band the delayed filter matrix remains identity (unity diagonal, negligible crossfeed) | `test_xtc_filter_set_is_delayed_identity_below_active_band` |
-| The §4.3 crossover passes low frequencies flat and adds no comb notch | `test_xtc_passes_low_frequencies_without_a_crossover_notch` |
+| The §4.3 protected low-frequency passband stays flat and adds no comb notch | `test_xtc_passes_low_frequencies_without_a_crossover_notch` |
 
-Measured depth on the design head (300 Hz–6 kHz leakage suppression, with
-ipsilateral coloration ≤ 0.9 dB in every profile): `stereo` 26.6 dB, `car`
-23.8 dB, `laptop` 18.5 dB, `smart_speaker` 17.0 dB, `phone` 15.5 dB. Under a
-±10 % head-radius mismatch these fall to 7–14 dB, which is the honest
-real-world expectation — a fixed-geometry XTC filter cannot hold its design
-depth on an arbitrary listener.
+Against the measured SADIE plant (300 Hz–6 kHz leakage suppression), the old
+parametric filters scored `stereo` −2.5 dB, `smart_speaker` 4.1 dB, `car` −4.7
+dB, `laptop` 2.8 dB, and `phone` 6.5 dB. The measured filters score 39.2 dB,
+16.5 dB, 38.7 dB, 23.9 dB, and 13.3 dB respectively, with ipsilateral
+coloration no greater than 1.7 dB. These are design-listener measurements,
+not a claim that every listener or room will receive the same depth.
 
 Build script: `scripts/build_crosstalk_filters.py` (dev-only, not imported
 by production code).
@@ -335,10 +330,10 @@ mirrors the binaural delivery stage exactly — see `spatial_audio_engine.md`
 **What this engine does not model**, stated plainly rather than left
 implicit:
 
-- **The listener's actual head.** `C` comes from a parametric spherical-head
-  model (§4.1), not a measured HRTF, so the design depth in §4.5 is an upper
-  bound no real listener reaches; the ±10 % head-radius figures there are the
-  honest expectation. Pinnae, torso, and cabinet/room response are absent.
+- **The listener's actual head.** `C` comes from one measured SADIE II D1/KU100
+  listener (§4.1), not the eventual listener, so the design depth in §4.5 is
+  an upper bound. Pinnae, torso, and cabinet/room response are not transferable
+  across listeners or rooms.
 - **Elevation**, fixed at 0 — real speakers are assumed ear-level, and tilt
   or height is not corrected for.
 - **Head movement.** There is no head-tracking, so the sweet spot is a single
@@ -351,8 +346,8 @@ implicit:
   judgment checked against the objective harness in §4.5, not listening-test
   results.
 
-Swapping in a measured HRTF/BRIR dataset later only requires regenerating the
-same file layout (§5) — no engine code changes.
+Regenerating the same file layout (§5) from another measured HRTF/BRIR remains
+a build-time operation; no engine code changes are needed.
 
 ---
 

@@ -598,9 +598,58 @@ describe("useStemPreview loudness calibration", () => {
   });
 
   it("uses the flat decode bank for transaural regardless of the binaural profile", async () => {
-    await renderPreview({ outputMode: "transaural", spatialProfile: "listening" });
+    await renderPreview({
+      outputMode: "transaural",
+      spatialProfile: "listening",
+      layoutChannels: ["FL", "FR", "C", "LFE", "SL", "SR", "TFL", "TFR", "TBL", "TBR"],
+    });
     const { loadDecodeTaps } = await import("./wasmEngine/filterAssets");
-    expect((loadDecodeTaps as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1]).toBe("flat_o3_decode");
+    expect((loadDecodeTaps as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1]).toBe("flat_o3_decode_5_1_4");
+  });
+
+  it.each([
+    ["5.1", ["FL", "FR", "C", "LFE", "SL", "SR"]],
+    ["7.1", ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR"]],
+    ["5.1.2", ["FL", "FR", "C", "LFE", "SL", "SR", "TFL", "TFR"]],
+  ])("loads the measured decode bank for the %s bed", async (_layout, channels) => {
+    await renderPreview({ layoutChannels: channels });
+    const { loadDecodeTaps } = await import("./wasmEngine/filterAssets");
+    expect((loadDecodeTaps as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1]).toBe(
+      `studio_o3_decode_${String(_layout).replace(/\./g, "_")}`,
+    );
+  });
+
+  it("keeps the profile-only bank as a fallback when a layout is unknown", async () => {
+    await renderPreview({ layoutChannels: ["FL", "FR", "UNKNOWN"] });
+    const { loadDecodeTaps } = await import("./wasmEngine/filterAssets");
+    expect((loadDecodeTaps as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1]).toBe("studio_o3_decode");
+  });
+
+  it("loads the selected profile and layout decode bank", async () => {
+    await renderPreview({
+      spatialProfile: "listening",
+      layoutChannels: ["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR"],
+    });
+    const { loadDecodeTaps } = await import("./wasmEngine/filterAssets");
+    expect((loadDecodeTaps as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1]).toBe("listening_o3_decode_7_1_4");
+  });
+
+  it("reloads the decode bank when the bed layout changes", async () => {
+    const result = await renderPreview({
+      layoutChannels: ["FL", "FR", "C", "LFE", "SL", "SR", "TFL", "TFR", "TBL", "TBR"],
+    });
+    const { loadDecodeTaps } = await import("./wasmEngine/filterAssets");
+    const loader = loadDecodeTaps as ReturnType<typeof vi.fn>;
+    const loaded = loader.mock.calls.length;
+
+    await act(async () => {
+      result.rerender(<Harness layoutChannels={["FL", "FR", "C", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR"]} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(loader.mock.calls.length).toBeGreaterThan(loaded);
+    expect(loader.mock.calls.at(-1)?.[1]).toBe("studio_o3_decode_7_1_4");
   });
 
   it("surfaces a required transaural filter failure", async () => {
@@ -731,9 +780,9 @@ describe("useStemPreview loudness calibration", () => {
     expect(measureCalls).toHaveLength(1);
   });
 
-  it("applies the same loudness-correction budget to native and binaural for an identical measurement", async () => {
-    // 22 dB below target: inside the 30 dB native budget, but the old
-    // binaural-only cap (6 dB) would have left binaural far short of it.
+  it("uses collapse budgets while native Apple rendering keeps the full budget", async () => {
+    // 22 dB below target: native and native Apple use the full 30 dB budget,
+    // while binaural/transaural and the WASM Apple fallback use the 6 dB cap.
     measureResult = { lkfs: -40, dbtp: -30 };
     await renderPreview({ outputMode: "native" });
     const nativeGain = (sentParams.at(-1) as { master: { output_gain: number } }).master.output_gain;
@@ -742,8 +791,18 @@ describe("useStemPreview loudness calibration", () => {
     await renderPreview({ outputMode: "binaural" });
     const binauralGain = (sentParams.at(-1) as { master: { output_gain: number } }).master.output_gain;
 
-    expect(binauralGain).toBeCloseTo(nativeGain, 6);
+    measureResult = { lkfs: -40, dbtp: -30 };
+    await renderPreview({ outputMode: "transaural" });
+    const transauralGain = (sentParams.at(-1) as { master: { output_gain: number } }).master.output_gain;
+
+    measureResult = { lkfs: -40, dbtp: -30 };
+    await renderPreview({ outputMode: "apple_spatial" });
+    const appleGain = (sentParams.at(-1) as { master: { output_gain: number } }).master.output_gain;
+
+    expect(20 * Math.log10(binauralGain)).toBeCloseTo(6, 6);
+    expect(transauralGain).toBeCloseTo(binauralGain, 6);
     expect(20 * Math.log10(nativeGain)).toBeCloseTo(22, 6);
+    expect(20 * Math.log10(appleGain)).toBeCloseTo(6, 6);
   });
 
   it("holds a calibration-driven gain increase until playback stops", async () => {

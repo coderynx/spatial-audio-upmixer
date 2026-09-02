@@ -4,13 +4,13 @@
     "n": 12000,
     "sample_rate": 48000,
     "n_acn": 16,
-    "n_taps": 6128
+    "n_taps": 1264
   },
   "tolerance": 1e-09,
   "arrays": {
     "taps": {
       "file": "binaural_decode.taps.f64",
-      "len": 196096
+      "len": 40448
     },
     "left": {
       "file": "binaural_decode.left.f64",

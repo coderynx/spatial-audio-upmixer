@@ -123,6 +123,9 @@ of excerpts followed by an exact pass over the whole programme that refines
 the gain once it lands in the background (see
 `docs/contracts/preview_export_parity.md` P3). The measurement runs against
 an uncorrected render, so a previous correction cannot fold into the next one.
+Apple Spatial is the one monitor-only limitation: the pass measures the
+native PCM before PHASE, since the app has no post-PHASE capture path, so its
+readout and correction do not claim the final spatialized acoustic loudness.
 
 **Filter assets.** The decode banks, XTC matrices, and EQ FIRs ship as WAVs
 under `apps/web/public/` and are handed to the core as taps; Tauri bundles the
