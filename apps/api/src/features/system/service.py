@@ -27,6 +27,7 @@ def engine_constants() -> dict[str, Any]:
     from upmixer.mastering.eq import EQ_FIR_ASSETS
     from upmixer.mastering.bass import (
         BASS_PROFILES,
+        DEFAULT_UNIFY_HZ,
         DECORR_FAST_MS,
         DECORR_HIGH_HZ,
         DECORR_LOW_HZ,
@@ -136,6 +137,7 @@ def engine_constants() -> dict[str, Any]:
         "bass_mid_cutoff_hz": MID_CUTOFF_HZ,
         "bass_excite_blend": EXCITE_BLEND,
         "bass_excite_drive": EXCITE_DRIVE,
+        "bass_unify_default_hz": DEFAULT_UNIFY_HZ,
         "bass_lf_spreads": {name: list(channels) for name, channels in LF_SPREADS.items()},
         "bass_punch_fast_ms": PUNCH_FAST_MS,
         "bass_punch_slow_ms": PUNCH_SLOW_MS,

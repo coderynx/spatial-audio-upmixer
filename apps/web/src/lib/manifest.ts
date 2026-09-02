@@ -112,6 +112,7 @@ export type Manifest = {
       unify_hz: number | null;
       spread: string | null;
       punch: number | null;
+      harmonics: number | null;
       excite: boolean | null;
       lfe_mode: string | null;
       lfe_send: number | null;
@@ -233,6 +234,7 @@ export const defaultManifest: Manifest = {
       unify_hz: null,
       spread: null,
       punch: null,
+      harmonics: null,
       excite: null,
       lfe_mode: null,
       lfe_send: null,

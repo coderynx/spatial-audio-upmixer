@@ -117,6 +117,7 @@ class UpmixConfig:
     mastering_bass_unify_hz: float | None = None
     mastering_bass_spread: str | None = None
     mastering_bass_punch: float | None = None
+    mastering_bass_harmonics: float | None = None
     # Tri-state like every other bass override: None = take the profile's
     # value, True/False = force it. A plain bool could not express "the
     # profile turns the exciter on and the user turned it back off".

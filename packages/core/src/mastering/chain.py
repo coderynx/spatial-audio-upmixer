@@ -413,6 +413,7 @@ class MasteringChain:
             or cfg.mastering_bass_unify_hz is not None
             or cfg.mastering_bass_spread is not None
             or cfg.mastering_bass_punch is not None
+            or cfg.mastering_bass_harmonics is not None
             or cfg.mastering_bass_lfe_mode is not None
             or cfg.mastering_bass_lfe_send is not None
             or cfg.mastering_bass_lfe_gain_db is not None
@@ -420,7 +421,7 @@ class MasteringChain:
             or cfg.mastering_bass_decorrelate is not None
         )
         if _bass_active:
-            from .bass import BassController, BASS_PROFILES
+            from .bass import BASS_PROFILES, DEFAULT_UNIFY_HZ, BassController
             preset = BASS_PROFILES.get(cfg.mastering_bass_profile or "", {})
 
             def _bp(attr: str, default=0.0):
@@ -428,19 +429,29 @@ class MasteringChain:
                 stripped = attr.removeprefix("mastering_bass_")
                 return val if val is not None else preset.get(stripped, default)
 
+            punch = _bp("mastering_bass_punch")
+            harmonics = cfg.mastering_bass_harmonics
+            if harmonics is None:
+                excite = cfg.mastering_bass_excite
+                harmonics = float(excite if excite is not None else preset.get("excite", False))
+            unify_hz = _bp("mastering_bass_unify_hz", None)
+            if unify_hz is None and (punch != 0.0 or harmonics > 0.0):
+                unify_hz = DEFAULT_UNIFY_HZ
+
             bass = BassController(
                 sub_gain_db=_bp("mastering_bass_sub_gain_db"),
                 mid_gain_db=_bp("mastering_bass_mid_gain_db"),
-                unify_hz=_bp("mastering_bass_unify_hz", None),
+                unify_hz=unify_hz,
                 spread=_bp("mastering_bass_spread", "bed"),
-                punch=_bp("mastering_bass_punch"),
-                excite=_bp("mastering_bass_excite", False),
+                punch=punch,
+                excite=harmonics > 0.0,
                 lfe_mode=_bp("mastering_bass_lfe_mode", "off"),
                 lfe_send=_bp("mastering_bass_lfe_send"),
                 lfe_gain_db=_bp("mastering_bass_lfe_gain_db"),
                 decorrelate=_bp("mastering_bass_decorrelate"),
                 lfe_authoring_gain=cfg.lfe_gain,
                 sample_rate=sample_rate,
+                harmonics=harmonics,
             )
             processed = bass.process(
                 sources() if renderer_aware else channels,

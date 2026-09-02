@@ -309,6 +309,19 @@ def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(
             "stems": ["Vocals", "Bass"],
             "stem_bleed_reduction": True,
         }
+        for manifest in (
+            body["manifest"],
+            body["tracks"][0]["layout_overrides"]["7.1.4"],
+        ):
+            mixing = manifest["mixing"]
+            for field in (
+                "stem_placement",
+                "stem_routing",
+                "stem_ambient_rear",
+                "stem_ambient_height",
+                "stem_ambient_height_crossover_hz",
+            ):
+                assert set(mixing[field]) == {"Vocals", "Bass"}
         assert all(track["status"] == "queued" for track in body["tracks"])
 
         conflict = client.post(f"/api/v1/projects/{expanding_id}/stems/reprepare")
@@ -396,11 +409,9 @@ def test_settings_save_with_full_client_engine_block_does_not_reseparate(tmp_pat
     engine.dispose()
 
 
-def test_project_seeds_stem_routing_when_client_sends_empty_dict(tmp_path, monkeypatch):
-    """The web client always sends `mixing.stem_routing` (default `{}`) rather than
-    omitting the key, so seeding must trigger on an empty dict, not just a missing
-    one — otherwise every stem is silent in preview/export until the user manually
-    applies a routing preset."""
+def test_project_seeds_complete_balanced_preset(tmp_path, monkeypatch):
+    """Creation and preparation persist the whole shared balanced mix, even when
+    the web client sends empty preset maps."""
     settings = Settings(
         data_dir=tmp_path,
         database_url=f"sqlite:///{tmp_path / 'projects.db'}",
@@ -424,6 +435,26 @@ def test_project_seeds_stem_routing_when_client_sends_empty_dict(tmp_path, monke
             "scene": {},
         })
         assert created.status_code == 201
+        created_mixing = created.json()["manifest"]["mixing"]
+        for field in (
+            "stem_placement",
+            "stem_routing",
+            "stem_ambient_rear",
+            "stem_ambient_height",
+            "stem_ambient_height_crossover_hz",
+        ):
+            assert set(created_mixing[field]) == {"Vocals", "Bass"}
+        assert created_mixing["stem_placement"]["Vocals"] == {
+            "azimuth_deg": 0.0,
+            "elevation_deg": 2.0,
+            "width_deg": 26.0,
+            "object_size": 0.12,
+            "diversity": 0.0,
+            "center_level_db": 0.5,
+        }
+        assert created_mixing["stem_ambient_rear"]["Vocals"] == 0.06
+        assert created_mixing["stem_ambient_height"]["Vocals"] == 0.04
+        assert created_mixing["stem_ambient_height_crossover_hz"]["Vocals"] == 4000.0
         response = client.post(f"/api/v1/projects/{created.json()['id']}/assets", json={
             "import_id": imported["id"],
         })
@@ -431,6 +462,15 @@ def test_project_seeds_stem_routing_when_client_sends_empty_dict(tmp_path, monke
         stem_routing = response.json()["manifest"]["mixing"]["stem_routing"]
         assert stem_routing.get("Vocals")
         assert stem_routing.get("Bass")
+        track_mixing = response.json()["tracks"][0]["layout_overrides"]["7.1.4"]["mixing"]
+        for field in (
+            "stem_placement",
+            "stem_routing",
+            "stem_ambient_rear",
+            "stem_ambient_height",
+            "stem_ambient_height_crossover_hz",
+        ):
+            assert set(track_mixing[field]) == {"Vocals", "Bass"}
 
 
 def test_project_view_builds_stem_urls_from_catalogued_stems(tmp_path, monkeypatch):

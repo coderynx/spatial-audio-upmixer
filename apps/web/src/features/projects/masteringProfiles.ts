@@ -41,11 +41,14 @@ export type BassProfile = {
   spread: LfSpreadName;
   punch: number;
   excite: boolean;
+  harmonics?: number;
   lfe_mode: BassLfeMode;
   lfe_send: number;
   lfe_gain_db: number;
   decorrelate: number;
 };
+
+export type ServedBassProfile = Omit<BassProfile, "harmonics">;
 
 /** One named delivery specification. `tolerance_lu` is null where the spec
  * publishes a target without one. */
@@ -106,10 +109,43 @@ function resolveProfile<T extends object>(
   return resolved;
 }
 
-export const resolveBassParams = (
-  block: Overrides<BassProfile> | null | undefined,
-  presets: Record<string, BassProfile>,
-) => resolveProfile(block, presets);
+const SAFE_BASS: ServedBassProfile = {
+  sub_gain_db: 0,
+  mid_gain_db: 0,
+  unify_hz: null,
+  spread: "bed",
+  punch: 0,
+  excite: false,
+  lfe_mode: "off",
+  lfe_send: 0,
+  lfe_gain_db: 0,
+  decorrelate: 0,
+};
+
+export function resolveBassParams(
+  block: (Overrides<ServedBassProfile> & { harmonics?: unknown }) | null | undefined,
+  presets: Record<string, ServedBassProfile>,
+  defaultUnifyHz: number,
+): BassProfile | null {
+  if (!block || (!block.profile && !Object.entries(block).some(
+    ([key, value]) => key !== "profile" && value !== null && value !== undefined,
+  ))) return null;
+  const preset = block.profile ? presets[block.profile] : undefined;
+  const resolved = { ...SAFE_BASS, ...preset };
+  for (const key of Object.keys(SAFE_BASS) as (keyof ServedBassProfile)[]) {
+    const override = block[key];
+    if (override !== undefined && override !== null) resolved[key] = override as never;
+  }
+  const harmonics = block.harmonics !== undefined && block.harmonics !== null
+    ? Number(block.harmonics)
+    : block.excite !== undefined && block.excite !== null
+      ? Number(block.excite)
+      : Number(preset?.excite ?? false);
+  if (resolved.unify_hz === null && (resolved.punch !== 0 || harmonics > 0)) {
+    resolved.unify_hz = defaultUnifyHz;
+  }
+  return { ...resolved, excite: harmonics > 0, harmonics };
+}
 
 export const resolveCompParams = (
   block: Overrides<CompProfile> | null | undefined,
@@ -277,13 +313,14 @@ export type ServedEngineConstants = {
   };
   reference_match_smooth: { default_oct: number; min_oct: number; max_oct: number };
   comp_profiles: Record<string, CompProfile>;
-  bass_profiles: Record<string, BassProfile>;
+  bass_profiles: Record<string, ServedBassProfile>;
   delivery_targets: Record<string, DeliveryTarget>;
   delivery_default: DeliveryTarget;
   bass_sub_cutoff_hz: number;
   bass_mid_cutoff_hz: number;
   bass_excite_blend: number;
   bass_excite_drive: number;
+  bass_unify_default_hz: number;
   bass_lf_spreads: Record<string, string[]>;
   bass_punch_fast_ms: number;
   bass_punch_slow_ms: number;
@@ -332,13 +369,14 @@ export type EngineConstants = {
    * Served so the panel never authors the numbers the realizer applies. */
   referenceMatchSmooth: { defaultOct: number; minOct: number; maxOct: number };
   compProfiles: Record<CompProfileName, CompProfile>;
-  bassProfiles: Record<BassProfileName, BassProfile>;
+  bassProfiles: Record<BassProfileName, ServedBassProfile>;
   deliveryTargets: Record<string, DeliveryTarget>;
   deliveryDefault: DeliveryTarget;
   subCutoffHz: number;
   midCutoffHz: number;
   exciteBlend: number;
   exciteDrive: number;
+  defaultUnifyHz: number;
   lfSpreads: Record<LfSpreadName, string[]>;
   punchFastMs: number;
   punchSlowMs: number;
@@ -416,13 +454,14 @@ export function resolveEngineConstants(s: ServedEngineConstants): EngineConstant
       maxOct: s.reference_match_smooth.max_oct,
     },
     compProfiles: s.comp_profiles as Record<CompProfileName, CompProfile>,
-    bassProfiles: s.bass_profiles as Record<BassProfileName, BassProfile>,
+    bassProfiles: s.bass_profiles as Record<BassProfileName, ServedBassProfile>,
     deliveryTargets: s.delivery_targets,
     deliveryDefault: s.delivery_default,
     subCutoffHz: s.bass_sub_cutoff_hz,
     midCutoffHz: s.bass_mid_cutoff_hz,
     exciteBlend: s.bass_excite_blend,
     exciteDrive: s.bass_excite_drive,
+    defaultUnifyHz: s.bass_unify_default_hz,
     lfSpreads: s.bass_lf_spreads as Record<LfSpreadName, string[]>,
     punchFastMs: s.bass_punch_fast_ms,
     punchSlowMs: s.bass_punch_slow_ms,

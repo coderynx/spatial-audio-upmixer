@@ -218,6 +218,7 @@ describe("buildEngineParams", () => {
     const overridden = resolveBassParams(
       { profile: "enhance", punch: -0.4, unify_hz: 55 },
       constants.bassProfiles,
+      constants.defaultUnifyHz,
     )!;
     const params = buildEngineParams(input({ master: { bass: overridden } })).master as {
       bass: { punch: number; unify_hz: number; excite: boolean };
@@ -227,6 +228,23 @@ describe("buildEngineParams", () => {
     expect(params.bass.unify_hz).toBe(55);
     // Untouched fields still come from the profile.
     expect(params.bass.excite).toBe(constants.bassProfiles.enhance.excite);
+  });
+
+  it("resolves concrete harmonics without a profile", () => {
+    const bass = resolveBassParams(
+      { harmonics: 0.5, punch: 0.2 },
+      constants.bassProfiles,
+      constants.defaultUnifyHz,
+    )!;
+    const params = buildEngineParams(input({ master: { bass } })).master as {
+      bass: { excite: boolean; excite_blend: number; unify_hz: number };
+      lf_targets: [number, number][];
+    };
+
+    expect(params.bass.excite).toBe(true);
+    expect(params.bass.excite_blend).toBe(constants.exciteBlend * 0.5);
+    expect(params.bass.unify_hz).toBe(constants.defaultUnifyHz);
+    expect(params.lf_targets.some(([index]) => index === 3)).toBe(false);
   });
 
   it("leaves the head and the clipper out unless the project asks for them", () => {

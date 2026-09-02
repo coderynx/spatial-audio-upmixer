@@ -11,6 +11,7 @@ use upmixer_dsp_core::spatial::presets;
 
 type PlacementTuple = (f64, f64, f64, f64, f64);
 type PresetPlacementTuple = (f64, f64, f64, f64, f64, f64, f64);
+type PresetAmbientTuple = (f64, f64, f64);
 
 fn placement(values: PlacementTuple) -> StemPlacement {
     StemPlacement::new(values.0, values.1, values.2, values.3, values.4)
@@ -149,6 +150,18 @@ fn preset_placements(preset: &str) -> Vec<(String, PresetPlacementTuple)> {
         .collect()
 }
 
+#[pyfunction]
+fn preset_ambient(preset: &str) -> Vec<(String, PresetAmbientTuple)> {
+    presets::preset_stems(preset)
+        .iter()
+        .filter_map(|(stem, _)| {
+            let (rear, height) = presets::preset_ambient(preset, stem)?;
+            let crossover = presets::preset_ambient_height_crossover(preset, stem)?;
+            Some((stem.to_string(), (rear, height, crossover)))
+        })
+        .collect()
+}
+
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(direction, m)?)?;
     m.add_function(wrap_pyfunction!(panning_gains, m)?)?;
@@ -160,6 +173,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fold_route_to_stereo, m)?)?;
     m.add_function(wrap_pyfunction!(preset_names, m)?)?;
     m.add_function(wrap_pyfunction!(preset_placements, m)?)?;
+    m.add_function(wrap_pyfunction!(preset_ambient, m)?)?;
     m.add("VIRTUAL_SOURCE_STEP_DEG", panner::VIRTUAL_SOURCE_STEP_DEG)?;
     m.add("MINIMUM_SEND", panner::MINIMUM_SEND)?;
     m.add(

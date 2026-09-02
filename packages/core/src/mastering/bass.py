@@ -73,6 +73,7 @@ _rbk("mastering", {
         "unify_hz":    ("config", "mastering_bass_unify_hz"),
         "spread":      ("config", "mastering_bass_spread"),
         "punch":       ("config", "mastering_bass_punch"),
+        "harmonics":   ("config", "mastering_bass_harmonics"),
         "excite":      ("config", "mastering_bass_excite"),
         "lfe_mode":    ("config", "mastering_bass_lfe_mode"),
         "lfe_send":    ("config", "mastering_bass_lfe_send"),
@@ -130,6 +131,7 @@ LFE_MODES: tuple[str, ...] = ("off", "add", "split")
 
 UNIFY_MIN_HZ: float = 40.0
 UNIFY_MAX_HZ: float = 120.0
+DEFAULT_UNIFY_HZ: float = 90.0
 
 SUB_CUTOFF_HZ: float = 80.0
 MID_CUTOFF_HZ: float = 200.0
@@ -221,6 +223,8 @@ class BassController:
                             Positive favours attacks, negative densifies,
                             0.0 = bypass.
         excite:             Enable the harmonic exciter on the LF bus.
+        harmonics:          Exciter amount [0.0-1.0]. ``None`` preserves the
+                            legacy on/off value from ``excite``.
         lfe_mode:           One of :data:`LFE_MODES`.
         lfe_send:           LFE share of the LF bus [0.0-1.0].
         lfe_gain_db:        dB gain trim applied to the LFE channel only.
@@ -246,6 +250,7 @@ class BassController:
         decorrelate: float,
         lfe_authoring_gain: float,
         sample_rate: int,
+        harmonics: float | None = None,
     ) -> None:
         self._sub_db = float(sub_gain_db)
         self._mid_db = float(mid_gain_db)
@@ -256,7 +261,9 @@ class BassController:
         )
         self._spread = spread
         self._punch = float(np.clip(punch, -1.0, 1.0))
-        self._excite = bool(excite)
+        self._harmonics = float(np.clip(
+            float(excite) if harmonics is None else harmonics, 0.0, 1.0
+        ))
         self._lfe_mode = lfe_mode
         self._lfe_send = float(lfe_send)
         self._lfe_db = float(lfe_gain_db)
@@ -306,11 +313,11 @@ class BassController:
             self._mid_db,
             self._unify_hz,
             self._punch,
-            self._excite,
+            self._harmonics > 0.0,
             self._lfe_db,
             SUB_CUTOFF_HZ,
             MID_CUTOFF_HZ,
-            EXCITE_BLEND,
+            EXCITE_BLEND * self._harmonics,
             EXCITE_DRIVE,
             PUNCH_FAST_MS,
             PUNCH_SLOW_MS,
@@ -336,8 +343,8 @@ class BassController:
             )
         if self._punch != 0.0:
             _log.debug("  BassController: punch %+.2f", self._punch)
-        if self._excite:
-            _log.debug("  BassController: harmonic exciter enabled")
+        if self._harmonics > 0.0:
+            _log.debug("  BassController: harmonics %.0f%%", self._harmonics * 100.0)
         if self._decorrelate > 0.0:
             _log.debug(
                 "  BassController: %.0f-%.0f Hz decorrelated %.2f over %d sections",

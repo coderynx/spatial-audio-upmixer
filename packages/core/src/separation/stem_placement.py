@@ -71,6 +71,11 @@ STEM_ROUTING_PRESETS: dict[str, dict[str, StemPlacement]] = {
 }
 """Every preset's canonical table, mirrored from the shared core."""
 
+
+def preset_ambient(preset: str) -> dict[str, tuple[float, float, float]]:
+    """Return a preset's ambient rear, height, and crossover values."""
+    return dict(upmixer_dsp.preset_ambient(preset))
+
 BALANCED_PLACEMENTS: dict[str, StemPlacement] = STEM_ROUTING_PRESETS["balanced"]
 """The reference table. Every other preset is a deliberate departure from it."""
 

@@ -84,6 +84,7 @@ def test_the_full_mastering_block_the_web_sends_validates(web_client):
             "bass": {
                 "profile": None, "sub_gain_db": None, "mid_gain_db": None, "unify_hz": None,
                 "spread": None, "punch": None, "excite": None, "lfe_mode": None,
+                "harmonics": None,
                 "lfe_send": None, "lfe_gain_db": None, "decorrelate": None,
             },
         },

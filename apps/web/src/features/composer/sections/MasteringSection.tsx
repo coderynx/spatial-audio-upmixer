@@ -1,21 +1,21 @@
 import * as React from "react";
 import type { LucideIcon } from "lucide-react";
-import { Minimize2, Sparkles, Speaker, TrendingDown, TrendingUp, Waves } from "lucide-react";
+import { Sparkles, TrendingDown, TrendingUp, Waves } from "lucide-react";
+import { Panel, PanelBody, PanelHeader } from "@/app/Panel";
 import {
   FIELD_GRID,
   NullablePotField,
   SelectField,
   SliderField,
-  SwitchRow,
 } from "@/components/forms/fields";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
-import { resolveDeliveryTarget } from "@/features/projects/masteringProfiles";
+import { resolveBassParams, resolveDeliveryTarget } from "@/features/projects/masteringProfiles";
 import type { MasteringReference } from "@/api";
 import type { ManifestSectionProps } from "./types";
 import { DynamicEqPanel } from "./DynamicEqPanel";
 import { ReferenceMatchPanel } from "./ReferenceMatchPanel";
-import { EffectPanel, FieldGroup, POT_GRID, titleCase } from "./EffectPanel";
+import { EffectPanel, POT_GRID, titleCase } from "./EffectPanel";
 
 type MasteringSectionProps = ManifestSectionProps & {
   masteringReference: MasteringReference | null;
@@ -34,25 +34,13 @@ type MasteringSectionProps = ManifestSectionProps & {
  * The note is the documentation — §6.3 puts it on the option rather than as
  * prose under the picker. Icons are neutral shapes, not brand marks. */
 const BASS_PROFILES: Record<string, { label: string; note: string; icon: LucideIcon }> = {
-  deep: { label: "Deep", note: "Bass from every speaker", icon: Waves },
-  enhance: { label: "Enhance", note: "Fuller, richer low end", icon: Sparkles },
-  cinema: { label: "Cinema", note: "Bass moved to the subwoofer", icon: Speaker },
-  mono: { label: "Tighten", note: "Bass centred up front", icon: Minimize2 },
   boost: { label: "Boost", note: "More low end", icon: TrendingUp },
   cut: { label: "Cut", note: "Less low end", icon: TrendingDown },
+  enhance: { label: "Enhance", note: "Fuller, richer low end", icon: Sparkles },
+  deep: { label: "Deep", note: "Focused low bass and harmonics", icon: Waves },
 };
 
-const SPREAD_LABELS: Record<string, string> = {
-  front: "Front pair only",
-  bed: "All floor speakers",
-  all: "Floor and height speakers",
-};
-
-const LFE_MODE_LABELS: Record<string, string> = {
-  off: "Leave the subwoofer alone",
-  add: "Add a copy to the subwoofer",
-  split: "Move the bass to the subwoofer",
-};
+const BASS_PRESETS = ["boost", "cut", "enhance", "deep"] as const;
 
 const bassMeta = (value: string) =>
   BASS_PROFILES[value] || { label: titleCase(value), note: "", icon: Waves };
@@ -102,38 +90,68 @@ export function MasteringSection({
     configuration?.constants?.delivery_targets,
     configuration?.constants?.delivery_default ?? PRE_BOOTSTRAP_DELIVERY,
   );
-  // Every bass override is nullable, so an unset control has to show what the
-  // profile does. A native <select> given a value no option carries displays
-  // its first option instead, which silently claimed "front"/"off" while the
-  // profile was running "bed"/"add".
   const served = configuration?.constants?.reference_match_smooth;
   const smoothing = served
     ? { defaultOct: served.default_oct, minOct: served.min_oct, maxOct: served.max_oct }
     : PRE_BOOTSTRAP_SMOOTH;
-  const bassProfile = bass.profile
-    ? configuration?.constants?.bass_profiles?.[bass.profile]
-    : undefined;
-  const profileExcite = bassProfile?.excite ?? false;
-  // Bass management redistributes the low band across a speaker array, so
-  // most of its controls have nothing to act on until the layout provides
-  // one: an LFE send needs an LFE channel, and on a two-channel bed every
-  // spread resolves to FL+FR, leaving unification as a plain bass mono-maker.
-  const layoutChannels = choices?.layout_channels?.[manifest.mixing.channel_layout] ?? [];
-  const hasLfe = layoutChannels.includes("LFE");
-  // Two bed channels means every spread resolves to the same pair, leaving
-  // unification as a plain bass mono-maker — there is no placement to choose.
-  const canSpread = layoutChannels.filter((name) => name !== "LFE").length > 2;
-  const bassOff = !bass.profile;
 
   // Switching an effect off clears its profile, which is what the manifest
   // means by "off". Remembering the last profile means switching back on
   // restores the choice instead of silently resetting it.
   const lastEq = React.useRef(eq.profile);
   const lastCompressor = React.useRef(compressor.profile);
-  const lastBass = React.useRef(bass.profile);
 
   const setMastering = (patch: Partial<typeof manifest.mastering>) =>
     setManifest({ ...manifest, mastering: { ...manifest.mastering, ...patch } });
+
+  const bassProfiles = configuration?.constants?.bass_profiles ?? {};
+  const defaultUnifyHz = configuration?.constants?.bass_unify_default_hz ?? 90;
+  const resolvedBass = resolveBassParams(bass, bassProfiles, defaultUnifyHz);
+  const bassValues = {
+    sub_gain_db: resolvedBass?.sub_gain_db ?? 0,
+    mid_gain_db: resolvedBass?.mid_gain_db ?? 0,
+    punch: resolvedBass?.punch ?? 0,
+    harmonics: resolvedBass?.harmonics ?? 0,
+  };
+  const expectedUnify = bassValues.punch !== 0 || bassValues.harmonics > 0
+    ? defaultUnifyHz
+    : null;
+  const legacyBass = bass.profile !== null
+    || bass.excite !== null
+    || (bass.unify_hz !== null && bass.unify_hz !== expectedUnify)
+    || (bass.spread !== null && bass.spread !== "bed")
+    || (bass.lfe_mode !== null && bass.lfe_mode !== "off")
+    || (bass.lfe_send !== null && bass.lfe_send !== 0)
+    || (bass.lfe_gain_db !== null && bass.lfe_gain_db !== 0)
+    || (bass.decorrelate !== null && bass.decorrelate !== 0);
+  const selectedBassPreset = legacyBass ? "legacy" : BASS_PRESETS.find((name) => {
+    const preset = bassProfiles[name];
+    return preset
+      && preset.sub_gain_db === bassValues.sub_gain_db
+      && preset.mid_gain_db === bassValues.mid_gain_db
+      && preset.punch === bassValues.punch
+      && Number(preset.excite) === bassValues.harmonics;
+  }) ?? "custom";
+
+  const applyBass = (values: typeof bassValues) => {
+    const needsBus = values.punch !== 0 || values.harmonics > 0;
+    setMastering({
+      bass: {
+        profile: null,
+        sub_gain_db: values.sub_gain_db,
+        mid_gain_db: values.mid_gain_db,
+        unify_hz: needsBus ? defaultUnifyHz : null,
+        spread: "bed",
+        punch: values.punch,
+        harmonics: values.harmonics,
+        excite: null,
+        lfe_mode: "off",
+        lfe_send: 0,
+        lfe_gain_db: 0,
+        decorrelate: 0,
+      },
+    });
+  };
 
   const profileToggle = (
     current: string | null,
@@ -338,30 +356,37 @@ export function MasteringSection({
         </div>
       </EffectPanel>
 
-      <EffectPanel
-        title="Bass"
-        enabled={bass.profile !== null}
-        toggleDisabled={cannotEnable(bass.profile, choices?.bass_profiles)}
-        onEnabledChange={profileToggle(bass.profile, lastBass, choices?.bass_profiles, (profile) =>
-          setMastering({ bass: { ...bass, profile } }),
-        )}
-      >
-        {/* The profile is what everything below refines, so it gets the
-            full-width rich picker and its own row (§6.3). */}
+      <Panel>
+        <PanelHeader title="Bass" />
+        <PanelBody className="space-y-2.5 overflow-visible">
         <div className="space-y-1.5">
-          <Label>Profile</Label>
+          <Label>Preset</Label>
           <Select
-            value={bass.profile || ""}
-            disabled={bassOff}
-            onValueChange={(profile) => setMastering({ bass: { ...bass, profile } })}
+            value={selectedBassPreset}
+            disabled={!BASS_PRESETS.some((name) => bassProfiles[name])}
+            onValueChange={(name) => {
+              const preset = bassProfiles[name];
+              if (preset) {
+                applyBass({
+                  sub_gain_db: preset.sub_gain_db,
+                  mid_gain_db: preset.mid_gain_db,
+                  punch: preset.punch,
+                  harmonics: Number(preset.excite),
+                });
+              }
+            }}
           >
-            <SelectTrigger aria-label="Profile" className="h-11 px-2">
+            <SelectTrigger aria-label="Preset" className="h-11 px-2">
               <span className="flex min-w-0 flex-1 items-center gap-2">
-                {bass.profile ? <BassOption value={bass.profile} /> : null}
+                {selectedBassPreset in BASS_PROFILES
+                  ? <BassOption value={selectedBassPreset} />
+                  : <span>{legacyBass ? "Legacy settings" : "Custom"}</span>}
               </span>
             </SelectTrigger>
             <SelectContent>
-              {(choices?.bass_profiles || []).map((value) => (
+              {legacyBass && <SelectItem value="legacy" disabled>Legacy settings</SelectItem>}
+              {!legacyBass && <SelectItem value="custom" disabled>Custom</SelectItem>}
+              {BASS_PRESETS.filter((name) => bassProfiles[name]).map((value) => (
                 <SelectItem key={value} value={value} className="h-11">
                   <BassOption value={value} />
                 </SelectItem>
@@ -369,108 +394,55 @@ export function MasteringSection({
             </SelectContent>
           </Select>
         </div>
-
-        <FieldGroup title="Tone">
-          <SwitchRow
-            label="Exciter"
-            hint={bass.excite === null ? "from profile" : undefined}
-            checked={bass.excite ?? profileExcite}
-            disabled={bassOff}
-            onChange={(excite) => setMastering({ bass: { ...bass, excite } })}
+        {legacyBass && (
+          <p role="status" className="rounded-md bg-warning/10 px-2 py-1.5 text-[11px] text-warning">
+            Legacy bass routing is active. Choose a preset or move a control to replace it with QC-safe bass settings.
+          </p>
+        )}
+        <div className={POT_GRID}>
+          <NullablePotField
+            label="Low end"
+            value={bassValues.sub_gain_db}
+            defaultValue={0}
+            min={-12}
+            max={12}
+            step={0.1}
+            suffix=" dB"
+            onChange={(value) => applyBass({ ...bassValues, sub_gain_db: value ?? 0 })}
           />
-          <div className={POT_GRID}>
-            {(
-              [
-                ["sub_gain_db", "Sub gain", "dB", 0.1, -12, 12, 0],
-                ["mid_gain_db", "Mid-bass", "dB", 0.1, -12, 12, 0],
-                ["unify_hz", "Crossover", "Hz", 1, 40, 120, 90],
-                ["punch", "Punch", "", 0.01, -1, 1, 0],
-              ] as const
-            ).map(([key, label, suffix, step, min, max, defaultValue]) => (
-              <NullablePotField
-                key={key}
-                label={label}
-                value={bass[key]}
-                defaultValue={defaultValue}
-                min={min}
-                max={max}
-                step={step}
-                suffix={suffix ? ` ${suffix}` : undefined}
-                disabled={bassOff}
-                onChange={(value) => setMastering({ bass: { ...bass, [key]: value } })}
-              />
-            ))}
-          </div>
-        </FieldGroup>
-
-        {/* Bass management redistributes the low band across a speaker array.
-            Spread and the subwoofer feed need a layout that offers one, so
-            they are not rendered at all rather than shown dimmed. Width acts
-            between any two channels, so the group itself always renders. */}
-        <FieldGroup title="Placement">
-            {canSpread && (
-              <SelectField
-                label="Spread"
-                value={bass.spread || bassProfile?.spread || ""}
-                disabled={bassOff}
-                onChange={(spread) => setMastering({ bass: { ...bass, spread } })}
-                options={(choices?.bass_spreads || []).map((value) => ({
-                  value,
-                  label: SPREAD_LABELS[value] || titleCase(value),
-                }))}
-              />
-            )}
-            {hasLfe && (
-              <>
-                <SelectField
-                  label="Subwoofer"
-                  value={bass.lfe_mode || bassProfile?.lfe_mode || ""}
-                  disabled={bassOff}
-                  onChange={(lfe_mode) => setMastering({ bass: { ...bass, lfe_mode } })}
-                  options={(choices?.bass_lfe_modes || []).map((value) => ({
-                    value,
-                    label: LFE_MODE_LABELS[value] || titleCase(value),
-                  }))}
-                />
-                <div className={POT_GRID}>
-                  {(
-                    [
-                      ["lfe_send", "Sub level", "", 0.01, 0, 1, 0],
-                      ["lfe_gain_db", "Sub trim", "dB", 0.1, -12, 12, 0],
-                    ] as const
-                  ).map(([key, label, suffix, step, min, max, defaultValue]) => (
-                    <NullablePotField
-                      key={key}
-                      label={label}
-                      value={bass[key]}
-                      defaultValue={defaultValue}
-                      min={min}
-                      max={max}
-                      step={step}
-                      suffix={suffix ? ` ${suffix}` : undefined}
-                      disabled={bassOff}
-                      onChange={(value) => setMastering({ bass: { ...bass, [key]: value } })}
-                    />
-                  ))}
-                </div>
-              </>
-            )}
-            {/* Decorrelation spreads the sustained 100-300 Hz band across
-                channels; everything under the crossover stays mono. */}
-            <div className={POT_GRID}>
-              <NullablePotField
-                label="Width"
-                value={bass.decorrelate}
-                defaultValue={0}
-                min={0}
-                max={1}
-                step={0.01}
-                disabled={bassOff}
-                onChange={(decorrelate) => setMastering({ bass: { ...bass, decorrelate } })}
-              />
-            </div>
-          </FieldGroup>
-      </EffectPanel>
+          <NullablePotField
+            label="Body"
+            value={bassValues.mid_gain_db}
+            defaultValue={0}
+            min={-12}
+            max={12}
+            step={0.1}
+            suffix=" dB"
+            onChange={(value) => applyBass({ ...bassValues, mid_gain_db: value ?? 0 })}
+          />
+          <NullablePotField
+            label="Punch"
+            value={bassValues.punch * 100}
+            defaultValue={0}
+            min={-100}
+            max={100}
+            step={1}
+            suffix="%"
+            onChange={(value) => applyBass({ ...bassValues, punch: (value ?? 0) / 100 })}
+          />
+          <NullablePotField
+            label="Harmonics"
+            value={bassValues.harmonics * 100}
+            defaultValue={0}
+            min={0}
+            max={100}
+            step={1}
+            suffix="%"
+            onChange={(value) => applyBass({ ...bassValues, harmonics: (value ?? 0) / 100 })}
+          />
+        </div>
+        </PanelBody>
+      </Panel>
 
       {/* Last before the true-peak limiter, which is what the depth is
           measured down from. Off by default: it trades distortion for

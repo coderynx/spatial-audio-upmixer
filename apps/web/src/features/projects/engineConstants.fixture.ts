@@ -123,6 +123,7 @@ export const TEST_SERVED_CONSTANTS: ServedEngineConstants = {
   bass_mid_cutoff_hz: 200.0,
   bass_excite_blend: 0.15,
   bass_excite_drive: 3.0,
+  bass_unify_default_hz: 90.0,
   bass_lf_spreads: {
     front: ["FL", "FR"],
     bed: ["FL", "FR", "C", "SL", "SR", "BL", "BR"],

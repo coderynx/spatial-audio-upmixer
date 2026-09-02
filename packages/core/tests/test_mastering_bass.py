@@ -348,6 +348,18 @@ class TestBassExciter:
         excited = _make_bc(unify_hz=90.0, excite=True, sample_rate=48000).process(chs)
         assert np.sum(excited["FL"] ** 2) > np.sum(plain["FL"] ** 2)
 
+    def test_harmonics_scales_the_exciter_blend(self):
+        chs = _bass_in_front()
+        args = dict(unify_hz=90.0, sample_rate=48000)
+        plain = _make_bc(**args).process(chs)
+        half = _make_bc(harmonics=0.5, **args).process(chs)
+        full = _make_bc(harmonics=1.0, **args).process(chs)
+        np.testing.assert_allclose(
+            half["FL"] - plain["FL"],
+            0.5 * (full["FL"] - plain["FL"]),
+            atol=1e-12,
+        )
+
     def test_exciter_stays_out_of_the_lfe(self):
         """tanh's harmonics land above the 120 Hz the LFE is limited to."""
         chs = _bass_in_front()
@@ -355,6 +367,22 @@ class TestBassExciter:
         plain = _make_bc(**args).process(chs)
         excited = _make_bc(excite=True, **args).process(chs)
         np.testing.assert_array_equal(plain["LFE"], excited["LFE"])
+
+    def test_harmonics_alone_uses_the_safe_unification_default(self):
+        from upmixer.config import UpmixConfig
+        from upmixer.formats import FORMAT_MAP
+        from upmixer.mastering.chain import MasteringChain
+
+        chs = _bass_in_front(n=48000)
+        fmt = FORMAT_MAP["7.1"]
+        base = dict(mastering_bass_harmonics=0.5, loudness_normalize=False)
+        automatic, _ = MasteringChain(UpmixConfig(**base)).process(dict(chs), 48000, fmt)
+        explicit, _ = MasteringChain(
+            UpmixConfig(**base, mastering_bass_unify_hz=90.0)
+        ).process(dict(chs), 48000, fmt)
+        for name in chs:
+            np.testing.assert_array_equal(automatic[name], explicit[name])
+        assert not np.array_equal(automatic["FL"], chs["FL"])
 
 
 @pytest.mark.parametrize("profile_name", list(BASS_PROFILES.keys()))

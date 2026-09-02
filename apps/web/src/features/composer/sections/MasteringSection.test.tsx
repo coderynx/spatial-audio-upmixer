@@ -181,36 +181,19 @@ describe("MasteringSection", () => {
 });
 
 describe("MasteringSection bass controls", () => {
-  const withLayout = (channels: Record<string, string[]>) => ({
-    ...configuration,
-    choices: {
-      ...configuration.choices,
-      bass_profiles: ["deep", "cinema"],
-      bass_spreads: ["front", "bed", "all"],
-      bass_lfe_modes: ["off", "add", "split"],
-      layout_channels: channels,
-    },
-  });
-
-  const LAYOUTS = {
-    stereo: ["FL", "FR"],
-    "5.0": ["FL", "FR", "C", "SL", "SR"],
-    "7.1.4": ["FL", "FR", "C", "LFE", "SL", "SR", "BL", "BR", "TFL", "TFR", "TBL", "TBR"],
-  };
-
-  const renderAt = (layout: string, profile: string | null = "deep") =>
+  const renderBass = (bass: Partial<typeof defaultManifest.mastering.bass> = {}) => {
+    const setManifest = vi.fn();
     render(
       <MasteringSection
         manifest={{
           ...defaultManifest,
-          mixing: { ...defaultManifest.mixing, channel_layout: layout },
           mastering: {
             ...defaultManifest.mastering,
-            bass: { ...defaultManifest.mastering.bass, profile },
+            bass: { ...defaultManifest.mastering.bass, ...bass },
           },
         }}
-        setManifest={vi.fn()}
-        configuration={withLayout(LAYOUTS) as Configuration}
+        setManifest={setManifest}
+        configuration={configuration}
         masteringReference={null}
         referenceUploading={false}
         referenceError={null}
@@ -218,69 +201,61 @@ describe("MasteringSection bass controls", () => {
         onReferenceClear={vi.fn()}
       />,
     );
+    return setManifest;
+  };
 
-  // `SelectField` renders a bare <Label>, so the select is reached through
-  // its wrapper rather than by label association. Pots carry `aria-label`.
-  const select = (label: string) =>
-    screen.getByText(label).parentElement!.querySelector("select")!;
-
-  it("names the profile in plain language rather than by its manifest value", () => {
-    renderAt("7.1.4");
-    // "deep" is the stored value; "Deep / Bass from every speaker" is the
-    // documentation, carried on the option itself.
-    expect(screen.getAllByText("Deep").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Bass from every speaker").length).toBeGreaterThan(0);
-  });
-
-  it("hides spread and the subwoofer on a layout with nowhere to place bass", () => {
-    // Stereo has two bed channels and no LFE, so redistribution has nothing
-    // to act on. Showing those dimmed is what made the panel unreadable.
-    renderAt("stereo");
-    expect(screen.queryByText("Spread")).toBeNull();
-    expect(screen.queryByText("Subwoofer")).toBeNull();
-    // Width still applies: decorrelating FL against FR is the stereo case the
-    // stage exists for, so the group itself stays.
-    expect(screen.getByText("Placement")).toBeInTheDocument();
-    expect(screen.getByLabelText("Width")).toBeInTheDocument();
-  });
-
-  it("shows spread but not the subwoofer on a layout with no LFE", () => {
-    renderAt("5.0");
-    expect(screen.getByText("Placement")).toBeInTheDocument();
-    expect(select("Spread")).toBeInTheDocument();
-    expect(screen.queryByText("Subwoofer")).toBeNull();
-    expect(screen.queryByLabelText("Sub level")).toBeNull();
-  });
-
-  it("shows every placement control on a layout that has an LFE", () => {
-    renderAt("7.1.4");
-    expect(select("Spread")).toBeInTheDocument();
-    expect(select("Subwoofer")).toBeInTheDocument();
-    expect(screen.getByLabelText("Sub level")).toBeInTheDocument();
-    expect(screen.getByLabelText("Sub trim")).toBeInTheDocument();
-  });
-
-  it("shows the profile's own placement while the overrides are unset", () => {
-    // A native <select> handed a value no option carries falls back to its
-    // first option, which read "front"/"off" while `deep` was running
-    // "bed"/"add" — the panel claiming a redistribution that was not running.
-    renderAt("7.1.4");
-    expect(defaultManifest.mastering.bass.spread).toBeNull();
-    expect(select("Spread")).toHaveValue("bed");
-    expect(select("Subwoofer")).toHaveValue("add");
-  });
-
-  it("keeps the tone controls on every layout", () => {
-    renderAt("stereo");
-    expect(screen.getByText("Tone")).toBeInTheDocument();
-    for (const label of ["Sub gain", "Mid-bass", "Crossover", "Punch"]) {
-      expect(screen.getByLabelText(label)).not.toHaveAttribute("data-disabled");
+  it("shows only mix-facing bass controls", () => {
+    renderBass();
+    for (const label of ["Preset", "Low end", "Body", "Punch", "Harmonics"]) {
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
     }
+    for (const label of ["Exciter", "Crossover", "Spread", "Width", "Subwoofer", "Sub level", "Sub trim"]) {
+      expect(screen.queryByLabelText(label)).toBeNull();
+    }
+    expect(screen.queryByRole("switch", { name: "Bass" })).toBeNull();
   });
 
-  it("disables the body while the effect is switched off", () => {
-    renderAt("7.1.4", null);
-    expect(screen.getByLabelText("Sub gain")).toHaveAttribute("data-disabled");
-    expect(select("Spread")).toBeDisabled();
+  it("preserves legacy routing until the first bass edit", () => {
+    const setManifest = renderBass({ profile: "deep" });
+    expect(screen.getByRole("status")).toHaveTextContent("Legacy bass routing is active");
+    expect(setManifest).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByRole("slider", { name: "Low end" }), { key: "ArrowUp" });
+    const next = setManifest.mock.calls.at(-1)![0].mastering.bass;
+    expect(next).toMatchObject({
+      profile: null,
+      sub_gain_db: 1.1,
+      mid_gain_db: 0.5,
+      punch: 0.25,
+      harmonics: 1,
+      unify_hz: 90,
+      spread: "bed",
+      excite: null,
+      lfe_mode: "off",
+      lfe_send: 0,
+      lfe_gain_db: 0,
+      decorrelate: 0,
+    });
+  });
+
+  it("applies a preset as concrete safe values", () => {
+    const setManifest = renderBass();
+    fireEvent.click(screen.getByRole("combobox", { name: "Preset" }));
+    fireEvent.click(screen.getByRole("option", { name: /Enhance/ }));
+
+    expect(setManifest.mock.calls.at(-1)![0].mastering.bass).toEqual({
+      profile: null,
+      sub_gain_db: 1.5,
+      mid_gain_db: 0.5,
+      unify_hz: 90,
+      spread: "bed",
+      punch: 0.2,
+      harmonics: 1,
+      excite: null,
+      lfe_mode: "off",
+      lfe_send: 0,
+      lfe_gain_db: 0,
+      decorrelate: 0,
+    });
   });
 });

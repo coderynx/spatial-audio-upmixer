@@ -417,7 +417,11 @@ export class PreviewAudioEngine {
     // Resolve the profile against the project's per-field overrides here, so
     // a moved pot reaches the worklet instead of being replaced by the bare
     // preset on the way (ledger D30).
-    const bass = resolveBassParams(this.mastering?.bass, this.constants.bassProfiles);
+    const bass = resolveBassParams(
+      this.mastering?.bass,
+      this.constants.bassProfiles,
+      this.constants.defaultUnifyHz,
+    );
     const comp = resolveCompParams(this.mastering?.compressor, this.constants.compProfiles);
     // Resolve the delivery target the way the export does, so a manifest that
     // names a preset without spelling out its numbers calibrates the preview

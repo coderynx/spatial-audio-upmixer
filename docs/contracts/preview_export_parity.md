@@ -285,6 +285,13 @@ approximating any of it — see `docs/plans/mixing/phase7_mask_parity_report.md`
 A band gain of exactly 1.0 skips the section on both sides, so the default
 voicing is bit-identical to the pre-band one.
 
+Bass harmonic enhancement uses the existing exciter algorithm on both paths;
+`mastering.bass.harmonics` scales its served `bass_excite_blend` from zero to
+full strength. Zero bypasses it. Punch or non-zero Harmonics with no explicit
+crossover resolves to the served `bass_unify_default_hz`, so preview and
+export create the same LF bus without putting that technical control in the
+mastering UI. The legacy `excite` boolean maps to zero or full strength.
+
 The delivery-target table (`upmixer.mastering.delivery`'s
 `DELIVERY_TARGETS`) is served the same way, as `constants.delivery_targets`
 plus a `choices.delivery_targets` name list. The web never re-types a

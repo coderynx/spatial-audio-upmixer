@@ -14,7 +14,12 @@ from typing import Any
 from upmixer.codecs import DEFAULT_CODEC, validate_codec
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, validate_delivery
-from upmixer.separation.stem_router import build_stem_routing, fold_route_to_stereo
+from upmixer.separation import preset_ambient, resolve_placements
+from upmixer.separation.stem_router import (
+    DEFAULT_ROUTING_PRESET,
+    build_stem_routing,
+    fold_route_to_stereo,
+)
 from upmixer_web.shared.models import Project, ProjectTrack
 
 DEFAULT_LAYOUT = "7.1.4"
@@ -142,4 +147,41 @@ def normalize_layout_mix(block: dict[str, Any], layout: str, stems: list[str]) -
             stem: fold_route_to_stereo(route)
             for stem, route in mixing["stem_routing"].items()
         }
+    return block
+
+
+def seed_balanced_mix(block: dict[str, Any], layout: str, stems: list[str]) -> dict[str, Any]:
+    """Complete a mix with the shared balanced placement and room defaults."""
+    normalize_layout_mix(block, layout, stems)
+    mixing = block["mixing"]
+    stem_routing = mixing["stem_routing"]
+    if stem_routing:
+        for stem, route in build_stem_routing(stems, FORMAT_MAP[layout]).items():
+            stem_routing.setdefault(stem, route)
+    placements = resolve_placements(DEFAULT_ROUTING_PRESET, layout)
+    ambient = preset_ambient(DEFAULT_ROUTING_PRESET)
+    placement_map = mixing.setdefault("stem_placement", {})
+    rear_map = mixing.setdefault("stem_ambient_rear", {})
+    height_map = mixing.setdefault("stem_ambient_height", {})
+    crossover_map = mixing.setdefault("stem_ambient_height_crossover_hz", {})
+    for stem in stems:
+        base = stem.split("@", 1)[0]
+        placement = placements.get(base)
+        if placement is None:
+            continue
+        placement_map.setdefault(stem, {
+            "azimuth_deg": placement.azimuth_deg,
+            "elevation_deg": placement.elevation_deg,
+            "width_deg": placement.width_deg,
+            "object_size": placement.object_size,
+            "diversity": placement.diversity,
+            "center_level_db": placement.center_level_db,
+        })
+        sends = ambient.get(base)
+        if sends is None:
+            continue
+        rear, height, crossover = sends
+        rear_map.setdefault(stem, rear)
+        height_map.setdefault(stem, height)
+        crossover_map.setdefault(stem, crossover)
     return block

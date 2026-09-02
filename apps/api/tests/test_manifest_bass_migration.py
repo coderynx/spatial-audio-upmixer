@@ -59,8 +59,7 @@ class TestBassManifestKeys:
         assert "mastering.bass.mono_cutoff_hz" not in list_manifest_keys()
 
     def test_every_profile_field_is_a_manifest_key(self):
-        """A profile field with no manifest key cannot be overridden; a
-        manifest key with no profile field fails to resolve."""
+        """Every legacy profile field can still be overridden."""
         keys = {
             k.removeprefix("mastering.bass.")
             for k in list_manifest_keys()
@@ -68,7 +67,7 @@ class TestBassManifestKeys:
         }
         for name, profile in BASS_PROFILES.items():
             assert set(profile) <= keys, f"profile '{name}' has unroutable fields"
-        assert keys == set(next(iter(BASS_PROFILES.values()))) | {"profile"}
+        assert keys == set(next(iter(BASS_PROFILES.values()))) | {"profile", "harmonics"}
 
     def test_a_stale_block_is_rejected(self):
         """The failure this migration exists to prevent."""

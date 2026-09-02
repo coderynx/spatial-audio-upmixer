@@ -15,6 +15,18 @@ def _parsed(argv: list[str]):
     return parser.parse_args(["in.wav", "out.wav", *argv])
 
 
+def test_bass_harmonics_overrides_the_legacy_switch_and_clamps():
+    config = UpmixConfig(mastering_bass_excite=True)
+    args = _parsed([
+        "--mastering-bass-harmonics", "1.5",
+        "--mastering-bass-excite",
+    ])
+
+    _apply_cli_flags(config, args, sample_rate_set=False)
+
+    assert config.mastering_bass_harmonics == 1.0
+
+
 def test_stem_lfe_sets_only_the_lfe_key_on_a_new_stem_routing():
     config = UpmixConfig()
     args = _parsed(["--stem-lfe", "Bass=0.8,Vocals=0"])

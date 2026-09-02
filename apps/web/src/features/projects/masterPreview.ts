@@ -49,6 +49,7 @@ export type MasterPreview = {
     unify_hz?: number | null;
     spread?: string | null;
     punch?: number | null;
+    harmonics?: number | null;
     excite?: boolean | null;
     lfe_mode?: string | null;
     lfe_send?: number | null;

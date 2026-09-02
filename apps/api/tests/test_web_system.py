@@ -51,6 +51,7 @@ def test_configuration_lists_every_stem_and_runtime_capability(web_client):
 
 def test_configuration_serves_engine_constants(web_client):
     from upmixer.config import UpmixConfig
+    from upmixer.mastering.bass import DEFAULT_UNIFY_HZ
     from upmixer.mastering.compressor import COMP_PROFILES
 
     response = web_client.get("/api/v1/configuration")
@@ -69,7 +70,7 @@ def test_configuration_serves_engine_constants(web_client):
         "dyneq_profiles", "stem_dynamic_eq_profiles", "stem_dynamics_profiles", "stem_processing_presets", "reference_match_smooth",
         "comp_profiles", "bass_profiles", "delivery_targets", "delivery_default",
         "bass_sub_cutoff_hz", "bass_mid_cutoff_hz",
-        "bass_excite_blend", "bass_excite_drive", "bass_lf_spreads",
+        "bass_excite_blend", "bass_excite_drive", "bass_unify_default_hz", "bass_lf_spreads",
         "bass_punch_fast_ms", "bass_punch_slow_ms", "bass_punch_max_db",
         "bass_decorr_low_hz", "bass_decorr_high_hz", "bass_decorr_sections",
         "bass_decorr_max_delay_ms", "bass_decorr_fast_ms", "bass_decorr_slow_ms",
@@ -84,6 +85,7 @@ def test_configuration_serves_engine_constants(web_client):
     cfg = UpmixConfig()
     assert constants["lfe_gain"] == cfg.lfe_gain
     assert constants["channel_group_gains"]["center"] == cfg.center_gain
+    assert constants["bass_unify_default_hz"] == DEFAULT_UNIFY_HZ
     assert constants["comp_profiles"]["transparent"]["threshold_db"] == (
         COMP_PROFILES["transparent"]["threshold_db"]
     )

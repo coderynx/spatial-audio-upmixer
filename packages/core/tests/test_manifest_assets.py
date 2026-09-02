@@ -194,12 +194,20 @@ class TestParseAndApplyIntegration:
         assert cfg.loudness_target_lkfs == pytest.approx(-16.0)
 
     def test_bass_section(self):
-        data = _minimal(mastering={"bass": {"profile": "enhance", "excite": True}})
+        data = _minimal(mastering={"bass": {
+            "profile": "enhance", "harmonics": 0.5, "excite": True,
+        }})
         _, jobs = parse_manifest(data)
         cfg = UpmixConfig()
         apply_asset_job(cfg, jobs[0])
         assert cfg.mastering_bass_profile == "enhance"
+        assert cfg.mastering_bass_harmonics == pytest.approx(0.5)
         assert cfg.mastering_bass_excite is True
+
+    @pytest.mark.parametrize("value", [-0.1, 1.1])
+    def test_bass_harmonics_bounds(self, value):
+        with pytest.raises(ManifestError, match="mastering.bass.harmonics"):
+            validate_manifest(_minimal(mastering={"bass": {"harmonics": value}}))
 
     def test_match_reference_section(self):
         data = _minimal(mastering={"match_reference": {"path": "ref.wav", "strength": 0.5}})

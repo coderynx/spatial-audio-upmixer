@@ -108,7 +108,9 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.mastering_bass_spread = args.mastering_bass_spread
     if args.mastering_bass_punch is not None:
         config.mastering_bass_punch = max(-1.0, min(1.0, args.mastering_bass_punch))
-    if args.mastering_bass_excite:
+    if args.mastering_bass_harmonics is not None:
+        config.mastering_bass_harmonics = max(0.0, min(1.0, args.mastering_bass_harmonics))
+    elif args.mastering_bass_excite:
         config.mastering_bass_excite = True
     if args.mastering_bass_lfe_mode is not None:
         config.mastering_bass_lfe_mode = args.mastering_bass_lfe_mode

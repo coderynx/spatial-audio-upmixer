@@ -234,6 +234,7 @@ _FIELD_MAP: dict[str, tuple[str, type]] = {
     "mastering_bass_unify_hz":       ("mastering_bass_unify_hz",       float),
     "mastering_bass_spread":         ("mastering_bass_spread",         str),
     "mastering_bass_punch":          ("mastering_bass_punch",          float),
+    "mastering_bass_harmonics":      ("mastering_bass_harmonics",      float),
     "mastering_bass_excite":         ("mastering_bass_excite",         bool),
     "mastering_bass_lfe_mode":       ("mastering_bass_lfe_mode",       str),
     "mastering_bass_lfe_send":       ("mastering_bass_lfe_send",       float),
