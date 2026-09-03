@@ -371,15 +371,14 @@ class StemUpmixPipeline:
         all_stems, n_samples = self._post_process_stems(sep, _progress)
 
         router = StemRouter(cfg, output_fmt, sep_sr, self._custom_routing)
-        objects: list[AdmObject] | None = [] if cfg.output_type == "adm-bwf" else None
-
         _progress("  Routing stems to channels...", 0.80)
-        channels = router.route(
+        programme = router.route(
             all_stems,
             n_samples,
             passthrough_channels=set(passthrough_resampled.keys()),
-            object_tracks=objects,
         )
+        channels = programme.bed
+        objects = programme.objects
 
         for ch_name, ch_audio in passthrough_resampled.items():
             if ch_name in channels:
@@ -388,9 +387,7 @@ class StemUpmixPipeline:
         ch_audio = None
 
         linked_channels = (
-            {str(index): obj.audio for index, obj in enumerate(objects)}
-            if objects
-            else None
+            {str(index): obj.audio for index, obj in enumerate(objects)} if objects else None
         )
 
         def _render_programme(bed: dict[str, np.ndarray]) -> dict[str, np.ndarray]:

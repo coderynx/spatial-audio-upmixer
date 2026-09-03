@@ -73,7 +73,7 @@ def test_rejects_non_profile_7_1_4_bed(tmp_path):
 
 
 def test_uses_default_dbmd_payload_when_not_supplied(tmp_path):
-    config = UpmixConfig(output_format="5.1")
+    config = UpmixConfig(output_format="5.1", output_type="adm-bwf")
     channels = {label.value: np.zeros(32) for label in FORMAT_MAP["5.1"].channels}
     output = tmp_path / "out.wav"
     AdmBwfWriter(str(output), 48_000, config).write(channels)
@@ -220,12 +220,10 @@ def test_rejects_invalid_audio_arrays(tmp_path, invalid):
 
 
 def test_adm_lead_vocal_stereo_objects_are_panned_left_and_right(tmp_path):
-    config = UpmixConfig(output_format="5.1")
+    config = UpmixConfig(output_format="5.1", output_type="adm-bwf")
     audio = np.column_stack([np.ones(32), -np.ones(32)])
-    objects: list[AdmObject] = []
-    bed = StemRouter(config, FORMAT_MAP["5.1"], 48_000).route(
-        {"Lead Vocals": audio}, len(audio), object_tracks=objects,
-    )
+    programme = StemRouter(config, FORMAT_MAP["5.1"], 48_000).route({"Lead Vocals": audio}, len(audio))
+    bed, objects = programme.bed, programme.objects
     output = tmp_path / "out.wav"
     AdmBwfWriter(str(output), 48_000, config).write(bed, objects=objects)
 

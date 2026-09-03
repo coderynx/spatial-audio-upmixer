@@ -47,6 +47,7 @@ def _routed_object(
     fmt = FORMAT_MAP["7.1.4"]
     config = UpmixConfig(
         output_format="7.1.4",
+        output_type="adm-bwf",
         stem_placement={"Vocals": {
             "azimuth_deg": azimuth_deg,
             "elevation_deg": elevation_deg,
@@ -55,10 +56,8 @@ def _routed_object(
         }},
         stem_object_metadata={"Vocals": {"gain": metadata_gain}},
     )
-    objects: list[AdmObject] = []
-    bed = StemRouter(config, fmt, _SR).route(
-        {"Vocals": audio}, len(audio), object_tracks=objects,
-    )
+    programme = StemRouter(config, fmt, _SR).route({"Vocals": audio}, len(audio))
+    bed, objects = programme.bed, programme.objects
     return render_adm_programme(bed, fmt, objects), objects
 
 

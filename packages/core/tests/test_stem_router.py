@@ -560,13 +560,12 @@ def test_adm_objects_keep_the_dry_stem_out_of_the_shared_bed():
     audio = _reverberant()
     config = UpmixConfig(
         output_format="7.1.4",
+        output_type="adm-bwf",
         spatial_render_model="bed",
         stem_ambient_rear={"Vocals": 0.8},
     )
-    objects = []
-    bed = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route(
-        {"Vocals": audio}, len(audio), object_tracks=objects,
-    )
+    programme = StemRouter(config, FORMAT_MAP["7.1.4"], 48000).route({"Vocals": audio}, len(audio))
+    bed, objects = programme.bed, programme.objects
 
     assert len(objects) == 2
     assert np.max(np.abs(bed["FL"])) < 1e-10
@@ -577,6 +576,7 @@ def test_adm_objects_carry_profile_rendering_metadata():
     audio = _audio()
     config = UpmixConfig(
         output_format="5.1",
+        output_type="adm-bwf",
         stem_object_metadata={
             "Vocals": {
                 "gain": 0.5,
@@ -586,10 +586,7 @@ def test_adm_objects_carry_profile_rendering_metadata():
             },
         },
     )
-    objects = []
-    StemRouter(config, FORMAT_MAP["5.1"], 48_000).route(
-        {"Vocals": audio}, len(audio), object_tracks=objects,
-    )
+    objects = StemRouter(config, FORMAT_MAP["5.1"], 48_000).route({"Vocals": audio}, len(audio)).objects
 
     assert len(objects) == 2
     assert all(obj.gain == 0.5 for obj in objects)

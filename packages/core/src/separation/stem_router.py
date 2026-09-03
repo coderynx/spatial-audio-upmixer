@@ -36,6 +36,7 @@ Channel assignment within each zone:
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 import upmixer_dsp
@@ -84,6 +85,29 @@ _VOCAL_STEM_NAMES: frozenset[str] = frozenset({
 _BED_STEM_NAMES: frozenset[str] = frozenset({
     "Bass", "Kick", "Snare", "Other", "Crowd", "Backing Vocals",
 })
+
+
+@dataclass
+class RoutedProgramme:
+    """Rendered speaker bed and authored ADM objects for one stem programme."""
+
+    bed: dict[str, np.ndarray]
+    objects: list[AdmObject]
+
+    def __getitem__(self, channel: str) -> np.ndarray:
+        return self.bed[channel]
+
+    def get(self, channel: str, default=None):
+        return self.bed.get(channel, default)
+
+    def __iter__(self):
+        return iter(self.bed)
+
+    def items(self):
+        return self.bed.items()
+
+    def values(self):
+        return self.bed.values()
 
 ZONE_ROUTING: dict[str, dict[str, dict[str, float]]] = {
     "front": {
@@ -549,16 +573,14 @@ class StemRouter:
         stems: dict[str, np.ndarray],
         n_samples: int,
         passthrough_channels: set[str] | None = None,
-        object_tracks: list[AdmObject] | None = None,
-    ) -> dict[str, np.ndarray]:
+    ) -> RoutedProgramme:
         """Mix stems into output channels.
 
         Args:
             stems: Dict "StemName[@zone]" → ndarray (n_samples, 2) stereo float.
             n_samples: Expected output length.
             passthrough_channels: Channel names to skip (injected directly by caller).
-        Returns:
-            Dict channel_name → 1D float64 array of length n_samples.
+        Returns the rendered bed and any authored ADM objects.
         """
         skip = passthrough_channels or set()
         channels: dict[str, np.ndarray] = {
@@ -566,6 +588,8 @@ class StemRouter:
             for label in self._fmt.channels
         }
         lfe_bus = np.zeros(n_samples, dtype=np.float64)
+        author_objects = self._config.output_type == "adm-bwf"
+        objects: list[AdmObject] = []
 
         for stem_key, audio in stems.items():
             if not self._is_enabled(stem_key):
@@ -678,7 +702,7 @@ class StemRouter:
                         if label.value in skip or label == ChannelLabel.LFE:
                             continue
                         gain = route.get(label.value, 0.0)
-                        if object_tracks is None:
+                        if not author_objects:
                             gain *= self._channel_gain(label)
                         if gain > 0.0:
                             direct_items.append((label, gain, signal))
@@ -703,10 +727,10 @@ class StemRouter:
                 route_items.append((label, gain, signal))
 
             route_scale = self._route_scale(route_items, input_L, input_R)
-            if object_tracks is not None and object_routes is not None:
-                object_tracks.extend(self._adm_objects_for(stem_key, stem_L, stem_R, route_scale))
+            if author_objects and object_routes is not None:
+                objects.extend(self._adm_objects_for(stem_key, stem_L, stem_R, route_scale))
                 route_items = route_items[len(direct_items):]
-            if self._config.spatial_downmix_lock and object_tracks is None:
+            if self._config.spatial_downmix_lock and not author_objects:
                 routed = {
                     label.value: np.zeros(n, dtype=np.float64) for label in self._fmt.channels
                 }
@@ -734,7 +758,7 @@ class StemRouter:
                 self._config.lfe_filter_order,
             )
 
-        return channels
+        return RoutedProgramme(channels, objects)
 
     def get_routing(self, stem_key: str) -> dict[str, float] | None:
         """Return effective routing dict for a stem key ("StemName" or "StemName@zone")."""
