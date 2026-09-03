@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 _STATE_FILE = "state.json"
 _SCHEMA = 1

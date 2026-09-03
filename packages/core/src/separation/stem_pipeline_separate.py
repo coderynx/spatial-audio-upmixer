@@ -29,7 +29,7 @@ from upmixer.separation.stem_plan import (
 from upmixer.separation.stem_zones import _as_stereo_pair, _extract_zones
 from upmixer.utils import preview_slice, itu_downmix_stereo
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -271,26 +271,21 @@ def separate(
     input_fmt = _resolve_input_format(reader, input_format_override)
     output_fmt = FORMAT_MAP[cfg.output_format]
 
-    _log.info("Input:  %s", input_path)
-    _log.info("  Format:        %s (%dch)", input_fmt.name, input_fmt.n_channels)
-    _log.info("  Sample rate:   %d Hz", sr)
-    _log.info("  Duration:      %.2fs", audio_full.shape[0] / sr)
-    _log.info("  Output format: %s (%dch)", output_fmt.name, output_fmt.n_channels)
     raw_stems = cfg.stems or []
     canonical = normalize_stems(raw_stems) if raw_stems else list(DEFAULT_STEMS)
     plan = resolve_separation_plan(canonical, cfg.stem_ensemble)
-    _log.info("  Stems:         %s", sorted(plan.requested_stems))
-    _log.info("  Models:        %s", [t.model for t in plan.tasks])
+    _log.info(
+        "separation_started input_format=%s input_channels=%d sample_rate=%d output_format=%s requested_stems=%s models=%s",
+        input_fmt.name, input_fmt.n_channels, sr, output_fmt.name,
+        sorted(plan.requested_stems), [task.model for task in plan.tasks],
+    )
 
     forced_stereo_array = False
     if cfg.preview:
         audio_full, t0_preview, t1_preview = preview_slice(
             audio_full, sr, cfg.preview_duration_s, cfg.preview_start_s
         )
-        _log.info(
-            "  Preview:       %.2fs–%.2fs (%.2fs window)",
-            t0_preview, t1_preview, audio_full.shape[0] / sr,
-        )
+        _log.debug("preview_window start_s=%.2f end_s=%.2f", t0_preview, t1_preview)
         forced_stereo_array = True
 
     stereo_folded_input = output_fmt.n_channels == 2 and input_fmt.n_channels > 2
@@ -302,7 +297,7 @@ def separate(
         )
         audio_full = np.column_stack([left, right]).astype(np.float32, copy=False)
         forced_stereo_array = True
-        _log.info("  Folded %s input to stereo for stereo delivery", input_fmt.name)
+        _log.info("input_folded_to_stereo input_format=%s", input_fmt.name)
 
     out_sr = _resolve_output_sample_rate(cfg, sr)
     sep_sr = out_sr
@@ -339,7 +334,7 @@ def separate(
         passthrough: dict[str, np.ndarray] = {}
         stereo_mode = True
         source_zones = {"front": _as_stereo_pair(audio_full)}
-        _log.info("  Mode: stereo — single zone, full-3D routing")
+        _log.info("separation_mode mode=stereo zones=%s", sorted(sep_zones))
     else:
         sep_zones, passthrough = _extract_zones(audio_full, input_fmt)
         stereo_mode = False
@@ -347,16 +342,16 @@ def separate(
             name: audio for name, audio in sep_zones.items()
             if isinstance(audio, np.ndarray)
         }
-        _log.info("  Mode: multichannel — zones: %s", sorted(sep_zones.keys()))
+        _log.info("separation_mode mode=multichannel zones=%s", sorted(sep_zones))
         if passthrough:
-            _log.info("  Passthrough: %s", sorted(passthrough.keys()))
+            _log.info("separation_passthrough channels=%s", sorted(passthrough))
 
     progress("  Separating stems...", 0.1)
 
     if cache_hit_stems is not None:
         all_stems = cache_hit_stems
         cache_hit_stems = None
-        _log.info("  Stem cache: using cached stems (separation skipped)")
+        _log.info("stem_cache_hit")
         progress("  Using cached stems...", 0.75)
     else:
         all_stems = _run_zone_separation(
@@ -389,7 +384,7 @@ def separate(
     n_samples = max(len(s) for s in all_stems.values())
     stem_summary = sorted({k.split("@")[0] for k in all_stems})
     _log.info(
-        "  Stems: %s  (%.2fs at %d Hz)",
+        "separation_completed stems=%s duration_s=%.3f sample_rate=%d",
         stem_summary, n_samples / sep_sr, sep_sr,
     )
 

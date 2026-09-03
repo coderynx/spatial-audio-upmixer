@@ -43,7 +43,7 @@ from ..eq import _apply_fir
 from .curve import build_curve_fir, compute_reference_curve
 from .spectrum import reference_integrated_loudness
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 MANIFEST_FIELDS = {
         "path":     ("config", "mastering_match_ref_path"),

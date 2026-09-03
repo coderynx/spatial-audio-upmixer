@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 import shutil
 from contextlib import ExitStack
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from upmixer_web.worker.manager import JobDeleting
 from upmixer_web.worker.subprocess import JobSubprocess, WorkItem
 
 _PROGRESS_LOG_LIMIT = 200
+_log = logging.getLogger(__name__)
 
 
 def _append_progress_log(project: Project, message: str, fraction: float) -> None:
@@ -71,6 +73,7 @@ class ProjectRunnerMixin:
                 manifest = copy.deepcopy(project.manifest)
                 requested_stems = list(project.requested_stems)
                 preview_quality = project.preview_quality
+            _log.info("project_preparation_started project_id=%s track_count=%d", project_id, len(track_ids))
 
             with ExitStack() as sources:
                 input_paths = [sources.enter_context(self.source.materialize(key)) for key in source_keys]
@@ -185,9 +188,12 @@ class ProjectRunnerMixin:
                 session.commit()
 
             self.schedule_reference_match(project_id)
+            _log.info("project_preparation_completed project_id=%s", project_id)
         except JobDeleting:
+            _log.info("project_deleted project_id=%s", project_id)
             self._delete_project(project_id)
         except Exception as exc:
+            _log.exception("project_preparation_failed project_id=%s", project_id)
             with self.sessions() as session:
                 project = session.get(Project, project_id)
                 if project:
@@ -206,6 +212,7 @@ class ProjectRunnerMixin:
             shutil.rmtree(work_dir, ignore_errors=True)
 
     def _delete_project(self, project_id: str) -> None:
+        _log.info("project_deleting project_id=%s", project_id)
         self.project_stems.delete_project(project_id)
         with self.sessions() as session:
             project = session.get(Project, project_id)

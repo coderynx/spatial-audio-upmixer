@@ -31,7 +31,7 @@ import logging
 
 import numpy as np
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 
 REBALANCE_PROFILES: dict[str, dict[str, float]] = {

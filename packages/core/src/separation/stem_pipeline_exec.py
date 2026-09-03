@@ -25,7 +25,7 @@ from upmixer.separation.stem_plan import (
 from upmixer.separation.stem_resume import ResumeStore
 from upmixer.separation.stem_workspace import StemWorkspace
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 GetSeparator = Callable[[str, int], StemSeparator]
 StageCallback = Callable[[int, int, str, frozenset[str]], None]

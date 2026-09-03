@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from .inference.device import DeviceManager
     from .inference.engine import SeparationEngine
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 _SUCCESSFUL_BATCHES: dict[tuple[str, str], int] = {}
 

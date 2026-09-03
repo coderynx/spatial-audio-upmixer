@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import zipfile
 from contextlib import ExitStack
@@ -16,6 +17,8 @@ from upmixer_web.shared.manifests import materialize_manifest
 from upmixer_web.shared.models import Artifact, Job, JobTrack
 from upmixer_web.worker.manager import JobDeleting, JobPaused
 from upmixer_web.worker.subprocess import JobSubprocess, WorkItem
+
+_log = logging.getLogger(__name__)
 
 
 class JobRunnerMixin:
@@ -66,6 +69,7 @@ class JobRunnerMixin:
                     if job.mastering_reference is not None
                     else None
                 )
+            _log.info("job_started job_id=%s track_count=%d", job_id, len(track_ids))
 
             with ExitStack() as sources:
                 input_paths = [
@@ -174,6 +178,7 @@ class JobRunnerMixin:
                                             size_bytes=downmix_size,
                                         ))
                                     session.commit()
+                                _log.info("job_track_completed job_id=%s track_id=%s", job_id, track_id)
                             elif kind in ("track_error", "crashed"):
                                 message = event[-1]
                                 raise RuntimeError(message)
@@ -189,10 +194,12 @@ class JobRunnerMixin:
                             job.status_message = "All outputs ready"
                             job.finished_at = datetime.now(timezone.utc)
                             session.commit()
+                    _log.info("job_completed job_id=%s", job_id)
                 finally:
                     if job_process is not None:
                         job_process.stop()
         except JobPaused:
+            _log.info("job_paused job_id=%s", job_id)
             with self.sessions() as session:
                 job = session.get(Job, job_id)
                 if job and job.status != "deleting":
@@ -203,8 +210,10 @@ class JobRunnerMixin:
                             track.status = "paused"
                     session.commit()
         except JobDeleting:
+            _log.info("job_deleted job_id=%s", job_id)
             self._delete_job(job_id)
         except Exception as exc:
+            _log.exception("job_failed job_id=%s", job_id)
             with self.sessions() as session:
                 job = session.get(Job, job_id)
                 if job:
@@ -245,8 +254,10 @@ class JobRunnerMixin:
                 size_bytes=size,
             ))
             session.commit()
+            _log.info("job_bundle_created job_id=%s artifact_count=%d", job_id, len(artifacts))
 
     def _delete_job(self, job_id: str) -> None:
+        _log.info("job_deleting job_id=%s", job_id)
         self.storage.delete_prefix(f"jobs/{job_id}")
         with self.sessions() as session:
             job = session.get(Job, job_id)

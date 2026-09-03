@@ -13,6 +13,21 @@ def test_local_storage_rejects_parent_path(tmp_path):
         storage.local_path("../escape.wav")
 
 
+def test_api_logs_completed_request_without_query_or_body(web_client, caplog):
+    caplog.set_level("INFO", logger="upmixer_web.api")
+    caplog.clear()
+
+    response = web_client.get("/api/v1/configuration?token=secret")
+
+    request_id = response.headers["x-request-id"]
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(
+        f"request_completed request_id={request_id} method=GET path=/api/v1/configuration status_code=200" in message
+        for message in messages
+    )
+    assert all("secret" not in message for message in messages)
+
+
 @pytest.mark.parametrize("origin", ["tauri://localhost", "http://localhost:5173"])
 def test_desktop_origin_can_reach_the_api(web_client, origin):
     response = web_client.options(

@@ -64,7 +64,7 @@ from upmixer.separation.stem_router import StemRouter
 from upmixer.separation.stem_zones import _resample_zones
 from upmixer.utils import itu_downmix_stereo
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 
 class PreMasterAbort(Exception):
@@ -344,10 +344,14 @@ class StemUpmixPipeline:
             raise ValueError("stem_source_anchor_strength must be between 0.0 and 1.0")
 
         def _progress(msg: str, frac: float) -> None:
-            _log.info(msg)
+            _log.debug("pipeline_progress stage=%s progress=%.3f", msg.strip(), frac)
             if progress_callback is not None:
                 progress_callback(msg, frac)
 
+        _log.info(
+            "upmix_started output_format=%s output_type=%s codec=%s",
+            cfg.output_format, cfg.output_type, cfg.output_codec,
+        )
         sep = self._separate(input_path, input_format_override, _progress)
         output_fmt = sep.output_fmt
         sr = sep.input_sr
@@ -448,7 +452,7 @@ class StemUpmixPipeline:
 
         _progress(f"Output: {output_path}", 1.0)
 
-        return UpmixResult(
+        result = UpmixResult(
             input_path=input_path,
             output_path=output_path,
             input_format=sep.input_fmt.name,
@@ -463,6 +467,12 @@ class StemUpmixPipeline:
             stems=sep.stem_summary,
             processing_time_seconds=time.monotonic() - t0,
         )
+        _log.info(
+            "upmix_completed output_format=%s output_channels=%d duration_s=%.3f processing_s=%.3f",
+            result.output_format, result.n_channels_out, result.duration_seconds,
+            result.processing_time_seconds,
+        )
+        return result
 
     def prepare_stems(
         self,
@@ -486,14 +496,15 @@ class StemUpmixPipeline:
         t0 = time.monotonic()
 
         def _progress(msg: str, frac: float) -> None:
-            _log.info(msg)
+            _log.debug("pipeline_progress stage=%s progress=%.3f", msg.strip(), frac)
             if progress_callback is not None:
                 progress_callback(msg, frac)
 
+        _log.info("stem_preparation_started")
         sep = self._separate(input_path, input_format_override, _progress)
         _progress("  Stems prepared", 1.0)
 
-        return UpmixResult(
+        result = UpmixResult(
             input_path=input_path,
             output_path="",
             input_format=sep.input_fmt.name,
@@ -507,6 +518,11 @@ class StemUpmixPipeline:
             stems=sep.stem_summary,
             processing_time_seconds=time.monotonic() - t0,
         )
+        _log.info(
+            "stem_preparation_completed stem_count=%d duration_s=%.3f processing_s=%.3f",
+            len(result.stems), result.duration_seconds, result.processing_time_seconds,
+        )
+        return result
 
 
 def _normalize_to_source(

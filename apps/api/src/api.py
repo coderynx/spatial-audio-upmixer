@@ -5,8 +5,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+import logging
+import time
+from uuid import uuid4
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -24,6 +27,8 @@ from upmixer_web.shared.models import Project
 from upmixer_web.shared.separation import separation_capability
 from upmixer_web.shared.storage import LocalObjectStorage, StorageAudioSink, StorageAudioSource
 from upmixer_web.worker import WorkerManager
+
+_log = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -45,9 +50,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         project_stems=ProjectStemStorage(settings.data_dir / "project-stems"),
         worker_count=settings.worker_count,
     )
+    _log.info("application_configured worker_count=%d", settings.worker_count)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        _log.info("application_starting")
         manager.start()
         # Sweep every project with a reference attached through the normal
         # signature-checked scheduling path, so a restart or a curve-algorithm
@@ -59,9 +66,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ]
         for project_id in stale_ids:
             manager.schedule_reference_match(project_id)
+        _log.info("application_started stale_reference_matches=%d", len(stale_ids))
         yield
+        _log.info("application_stopping")
         manager.stop()
         engine.dispose()
+        _log.info("application_stopped")
 
     app = FastAPI(
         title="Upmixer Web API",
@@ -79,6 +89,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.manager = manager
     app.state.project_stems = ProjectStemStorage(settings.data_dir / "project-stems")
     app.state.stem_capability = stem_capability
+
+    @app.middleware("http")
+    async def log_request(request: Request, call_next):
+        request_id = uuid4().hex
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            _log.exception(
+                "request_failed request_id=%s method=%s path=%s duration_ms=%.1f",
+                request_id, request.method, request.url.path,
+                (time.perf_counter() - started) * 1_000,
+            )
+            raise
+        response.headers["X-Request-ID"] = request_id
+        _log.info(
+            "request_completed request_id=%s method=%s path=%s status_code=%d duration_ms=%.1f",
+            request_id, request.method, request.url.path, response.status_code,
+            (time.perf_counter() - started) * 1_000,
+        )
+        return response
 
     if settings.allowed_origins:
         app.add_middleware(

@@ -11,6 +11,7 @@ project-specific execution.
 
 from __future__ import annotations
 
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,6 +23,8 @@ from upmixer_web.features.jobs.service import reset_incomplete_jobs
 from upmixer_web.features.projects.storage import ProjectStemStorage
 from upmixer_web.shared.models import Job, Project
 from upmixer_web.shared.storage import AudioSink, AudioSource, ObjectStorage
+
+_log = logging.getLogger(__name__)
 
 
 class JobPaused(Exception):
@@ -82,8 +85,10 @@ class _ManagerCore:
         self._refmatch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="upmixer-refmatch")
         self._dispatcher = threading.Thread(target=self._dispatch_loop, name="upmixer-dispatch", daemon=True)
         self._dispatcher.start()
+        _log.info("worker_manager_started worker_count=%d", self.worker_count)
 
     def stop(self) -> None:
+        _log.info("worker_manager_stopping")
         self._stop.set()
         self._wake.set()
         if self._dispatcher:
@@ -92,6 +97,7 @@ class _ManagerCore:
             self._executor.shutdown(wait=True, cancel_futures=True)
         if self._refmatch_executor:
             self._refmatch_executor.shutdown(wait=False, cancel_futures=True)
+        _log.info("worker_manager_stopped")
 
     def notify(self) -> None:
         self._wake.set()
@@ -132,6 +138,7 @@ class _ManagerCore:
                     continue
                 self._active.add(active_id)
             target = self._run_project if kind == "project" else self._run_job
+            _log.info("work_submitted kind=%s id=%s", kind, item_id)
             future = self._executor.submit(target, item_id)
             future.add_done_callback(lambda _future, value=active_id: self._finished(value))
 
@@ -139,6 +146,7 @@ class _ManagerCore:
         with self._lock:
             self._active.discard(active_id)
         self._wake.set()
+        _log.info("work_finished work=%s", active_id)
 
     def _control(self, job_id: str) -> None:
         with self.sessions() as session:

@@ -16,7 +16,7 @@ from .archs.tfc_tdf_v3 import TFC_TDF_net
 from .config import ModelConfig, load_model_config
 from .registry import ModelSpec, get_model_spec
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 
 def _build_arch(spec: ModelSpec, config: ModelConfig, device: torch.device) -> torch.nn.Module:

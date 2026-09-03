@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 DEFAULT_TARGET_LKFS = -18.0
 DEFAULT_MAX_TP_DBTP = -1.0

@@ -52,7 +52,7 @@ from pathlib import Path
 
 import numpy as np
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 _METADATA_FILE = "metadata.json"
 _MTIME_TOLERANCE = 2.0

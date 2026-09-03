@@ -17,7 +17,7 @@ def main() -> None:
     # otherwise silently dropped instead of reaching stdout.
     logging.basicConfig(
         level=os.getenv("UPMIXER_LOG_LEVEL", "INFO").upper(),
-        format="%(levelname)s %(name)s: %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s [%(process)d]: %(message)s",
     )
 
     uvicorn.run(

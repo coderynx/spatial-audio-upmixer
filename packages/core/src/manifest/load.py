@@ -12,7 +12,7 @@ from upmixer.codecs import DEFAULT_CODEC, codec_extension
 from upmixer.config import UpmixConfig
 from upmixer.manifest.schema import AssetJob, BlockMapping, ManifestMeta, MANIFEST_CATALOG, _FIELD_MAP
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

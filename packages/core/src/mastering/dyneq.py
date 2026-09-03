@@ -27,7 +27,7 @@ import logging
 import numpy as np
 import upmixer_dsp
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 MANIFEST_FIELDS = {
         "profile": ("config", "mastering_dyneq_profile"),

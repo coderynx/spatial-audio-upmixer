@@ -39,7 +39,7 @@ from upmixer.config import UpmixConfig
 from upmixer.execution import PreflightError, RunState, preflight_job
 from upmixer.result import UpmixResult
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 
 @dataclass

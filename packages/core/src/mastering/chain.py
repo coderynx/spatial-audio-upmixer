@@ -108,7 +108,7 @@ from .delivery import resolve_delivery_target
 from .foldqc import FoldQC, measure_folds
 from .limiter import LookAheadLimiter
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 MANIFEST_FIELDS = {
     "loudness": {

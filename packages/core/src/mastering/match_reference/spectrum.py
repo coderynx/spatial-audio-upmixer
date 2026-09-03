@@ -23,7 +23,7 @@ import upmixer_dsp
 from upmixer.formats import ChannelLabel, OutputFormat
 from upmixer.loudness import CHANNEL_WEIGHT, measure_integrated_loudness
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 _ABS_GATE_DB: float = -70.0
 _REL_GATE_OFFSET_DB: float = -10.0

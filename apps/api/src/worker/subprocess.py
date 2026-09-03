@@ -9,6 +9,7 @@ so only the offending job fails.
 """
 from __future__ import annotations
 
+import logging
 import multiprocessing
 import queue
 import signal
@@ -19,6 +20,7 @@ from upmixer.config import UpmixConfig
 from upmixer.separation.stem_pipeline import StemUpmixPipeline
 
 _CTX = multiprocessing.get_context("spawn")
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -75,6 +77,7 @@ def _run_work_items(items: list[WorkItem], progress_queue, cancel_event) -> None
                         progress_callback=_callback,
                     )
             except Exception as exc:
+                _log.exception("work_item_failed track_id=%s mode=%s", item.track_id, item.mode)
                 progress_queue.put(("track_error", item.track_id, str(exc)))
                 return
 

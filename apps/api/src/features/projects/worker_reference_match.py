@@ -20,7 +20,7 @@ from upmixer_web.features.projects.service import get_project
 from upmixer_web.features.projects.storage import ProjectStemStorage
 from upmixer_web.shared.models import Project
 
-_log = logging.getLogger("upmixer_web")
+_log = logging.getLogger(__name__)
 
 
 def project_layouts(project: Project) -> list[str]:

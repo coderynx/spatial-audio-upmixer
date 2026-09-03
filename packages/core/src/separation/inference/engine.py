@@ -20,7 +20,7 @@ from . import audio_io, demix
 from .config import ModelConfig
 from .device import DeviceManager
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 _ARCH_ROFORMER = frozenset({"bs_roformer", "mel_band_roformer"})
 _CROSSFADE_S = 1.0

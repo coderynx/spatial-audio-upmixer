@@ -35,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import upmixer_dsp
 
-_log = logging.getLogger("upmixer")
+_log = logging.getLogger(__name__)
 
 MANIFEST_FIELDS = {
         "profile":  ("config", "mastering_eq_profile"),
