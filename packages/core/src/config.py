@@ -224,6 +224,10 @@ class UpmixConfig:
     stem_drum_remask: bool = True
     stem_primary_remask: bool = True
 
+    # Fixed BS-Roformer-SW + SCNet average for Bass/Drums; delivery controls
+    # are intentionally deferred until the ensemble has a quality gate.
+    stem_ensemble: bool = False
+
     def resolve_fft_params(self, actual_sample_rate: int) -> tuple[int, int]:
         """Returns (fft_size, hop_size) after applying sample rate adaptation."""
         if self.auto_fft_size:

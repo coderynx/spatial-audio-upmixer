@@ -14,6 +14,8 @@ from upmixer.config import UpmixConfig
 from upmixer.separation.remask import share_parent_residual
 from upmixer.separation.separator import StemSeparator
 from upmixer.separation.stem_plan import (
+    ENSEMBLE_ALGORITHM,
+    MODEL_ENSEMBLE,
     MODEL_DEUX,
     MODEL_DRUMS,
     MODEL_PRIMARY,
@@ -108,6 +110,18 @@ def _write_float_atomic(path: str, audio: np.ndarray, sample_rate: int) -> None:
         _discard(temporary)
 
 
+def _stabilize_on_disk(on_disk: dict[str, str]) -> None:
+    """Move stage files out of a separator temp dir before model eviction."""
+    for name, path in list(on_disk.items()):
+        stable_path = temporary_wav_path("upmixer_intermediate_")
+        try:
+            os.replace(path, stable_path)
+        except OSError:
+            _discard(stable_path)
+            raise
+        on_disk[name] = stable_path
+
+
 def _cleanup_deux_stage(
     loaded: dict[str, np.ndarray],
     on_disk: dict[str, str],
@@ -190,10 +204,25 @@ def execute_plan(
                 sorted(all_loaded.keys() | all_disk.keys()) or "(nothing)",
             )
 
-    _run_stages(
-        get_separator, plan, sep_path, sep_sr, stage_callback, cfg,
-        all_loaded, all_disk, later_inputs, completed, resume,
-    )
+    try:
+        _run_stages(
+            get_separator, plan, sep_path, sep_sr, stage_callback, cfg,
+            all_loaded, all_disk, later_inputs, completed, resume,
+        )
+    except Exception:
+        # A failed logical stage must not leave newly-created intermediates
+        # behind. ResumeStore has already copied completed-stage files when
+        # configured; those checkpoint paths are deliberately retained.
+        checkpoint_root = (
+            os.path.abspath(str(resume.root)) if resume is not None else None
+        )
+        for path in all_disk.values():
+            absolute = os.path.abspath(path)
+            if checkpoint_root is None or not absolute.startswith(
+                checkpoint_root + os.sep
+            ):
+                _discard(path)
+        raise
 
     for name, path in all_disk.items():
         if not name.startswith("_") and name not in all_loaded:
@@ -250,6 +279,154 @@ def _run_stages(
             raise
 
 
+def _read_ensemble_stem(
+    loaded: dict[str, np.ndarray],
+    on_disk: dict[str, str],
+    name: str,
+    model: str,
+) -> np.ndarray:
+    """Read one selected ensemble output from memory or its temporary WAV."""
+    if name in loaded:
+        return np.asarray(loaded[name])
+    path = on_disk.get(name)
+    if path is None:
+        raise RuntimeError(
+            f"Ensemble model {model} did not produce required stem '{name}'"
+        )
+    try:
+        audio, _ = sf.read(path, dtype="float32", always_2d=True)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not read ensemble model {model} stem '{name}'"
+        ) from exc
+    return audio
+
+
+def _average_ensemble_stem(
+    name: str,
+    primary: np.ndarray,
+    partner: np.ndarray,
+) -> np.ndarray:
+    """Validate and average one pair without clipping or dtype promotion."""
+    primary = np.asarray(primary)
+    partner = np.asarray(partner)
+    if primary.shape != partner.shape:
+        raise ValueError(
+            f"Ensemble stem '{name}' shape mismatch: primary"
+            f" {primary.shape}, partner {partner.shape}"
+        )
+    if primary.dtype.kind not in "fiu" or partner.dtype.kind not in "fiu":
+        raise ValueError(f"Ensemble stem '{name}' outputs must be float-compatible")
+    try:
+        primary = primary.astype(np.float32, copy=False)
+        partner = partner.astype(np.float32, copy=False)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            f"Ensemble stem '{name}' outputs must be float-compatible"
+        ) from exc
+    if not np.isfinite(primary).all() or not np.isfinite(partner).all():
+        raise ValueError(f"Ensemble stem '{name}' outputs must be finite")
+    return np.add(
+        np.multiply(primary, np.float32(0.5), dtype=np.float32),
+        np.multiply(partner, np.float32(0.5), dtype=np.float32),
+        dtype=np.float32,
+    )
+
+
+def _run_ensemble_stage(
+    get_separator: GetSeparator,
+    task: SeparationTask,
+    input_path: str,
+    sep_sr: int,
+    keep_on_disk: frozenset[str],
+    stage_idx: int,
+    n_tasks: int,
+    stage_callback: StageCallback | None,
+) -> tuple[dict[str, np.ndarray], dict[str, str]]:
+    """Run the primary model and its fixed SCNet partner on one parent."""
+    if task.model != MODEL_PRIMARY:
+        raise ValueError("Only the BS-Roformer-SW stage supports ensembling")
+    if task.ensemble_models != (MODEL_ENSEMBLE,):
+        raise ValueError("The primary ensemble must contain the registered SCNet partner")
+    if not task.ensemble_stems:
+        raise ValueError("The primary ensemble must declare at least one stem")
+
+    primary = get_separator(task.model, sep_sr)
+    primary_loaded, primary_on_disk = primary.separate_to_file(
+        input_path,
+        keep_on_disk,
+        task.stem_overrides,
+        task.output_stems,
+    )
+    partner_loaded: dict[str, np.ndarray] = {}
+    partner_on_disk: dict[str, str] = {}
+    partner_ok = False
+    try:
+        # CPU model caching may evict/close the primary separator as soon as
+        # the SCNet instance is requested, so keep its files outside that
+        # separator's temporary directory first.
+        _stabilize_on_disk(primary_on_disk)
+        if stage_callback is not None:
+            stage_callback(
+                stage_idx, n_tasks, MODEL_ENSEMBLE, task.ensemble_stems
+            )
+        _log.info(
+            "  [stage %d/%d] ensemble model=%s  input=%s  stems=%s  algorithm=%s",
+            stage_idx + 1,
+            n_tasks,
+            MODEL_ENSEMBLE,
+            input_path,
+            sorted(task.ensemble_stems),
+            ENSEMBLE_ALGORITHM,
+        )
+        partner = get_separator(MODEL_ENSEMBLE, sep_sr)
+        # Partner outputs stay in memory; the fused Drums array is the only
+        # result materialized for a later drum-piece stage.
+        partner_loaded, partner_on_disk = partner.separate_to_file(
+            input_path,
+            frozenset(),
+            None,
+            task.ensemble_stems,
+        )
+
+        fused = {
+            name: _average_ensemble_stem(
+                name,
+                _read_ensemble_stem(
+                    primary_loaded, primary_on_disk, name, task.model
+                ),
+                _read_ensemble_stem(
+                    partner_loaded, partner_on_disk, name, MODEL_ENSEMBLE
+                ),
+            )
+            for name in sorted(task.ensemble_stems)
+        }
+
+        for name, audio in fused.items():
+            old_path = primary_on_disk.pop(name, None)
+            if old_path is not None:
+                _discard(old_path)
+            primary_loaded.pop(name, None)
+            if name in keep_on_disk:
+                fused_path = temporary_wav_path("upmixer_ensemble_")
+                try:
+                    sf.write(fused_path, audio, sep_sr, subtype="FLOAT")
+                except Exception:
+                    _discard(fused_path)
+                    raise
+                primary_on_disk[name] = fused_path
+            else:
+                primary_loaded[name] = audio
+        partner_ok = True
+        return primary_loaded, primary_on_disk
+    finally:
+        for path in partner_on_disk.values():
+            _discard(path)
+        if not partner_ok:
+            for path in primary_on_disk.values():
+                _discard(path)
+
+
 def _run_one_stage(
     get_separator: GetSeparator,
     task: SeparationTask,
@@ -295,30 +472,36 @@ def _run_one_stage(
 
     keep_on_disk = task.output_stems & later_inputs
 
-    sep = get_separator(task.model, sep_sr)
-    retain_parent = (
-        cfg is not None
-        and cfg.stem_bleed_reduction
-        and task.model == MODEL_DEUX
-    )
-    loaded, on_disk = sep.separate_to_file(
-        input_path_for_task,
-        keep_on_disk,
-        task.stem_overrides,
-        task.output_stems,
-        **({"retain_parent": True} if retain_parent else {}),
-    )
-    cleanup_parent = sep.take_last_parent() if retain_parent else None
+    if task.ensemble_models:
+        loaded, on_disk = _run_ensemble_stage(
+            get_separator,
+            task,
+            input_path_for_task,
+            sep_sr,
+            keep_on_disk,
+            stage_idx,
+            n_tasks,
+            stage_callback,
+        )
+        cleanup_parent = None
+    else:
+        sep = get_separator(task.model, sep_sr)
+        retain_parent = (
+            cfg is not None
+            and cfg.stem_bleed_reduction
+            and task.model == MODEL_DEUX
+        )
+        loaded, on_disk = sep.separate_to_file(
+            input_path_for_task,
+            keep_on_disk,
+            task.stem_overrides,
+            task.output_stems,
+            **({"retain_parent": True} if retain_parent else {}),
+        )
+        cleanup_parent = sep.take_last_parent() if retain_parent else None
 
-    for name, path in on_disk.items():
-        stable_path = temporary_wav_path("upmixer_intermediate_")
-        try:
-            os.replace(path, stable_path)
-        except OSError:
-            if os.path.exists(stable_path):
-                os.unlink(stable_path)
-            raise
-        on_disk[name] = stable_path
+    if not task.ensemble_models:
+        _stabilize_on_disk(on_disk)
 
     if _remasks(cfg, task.model) and task.input_source in all_disk:
         _log.info(

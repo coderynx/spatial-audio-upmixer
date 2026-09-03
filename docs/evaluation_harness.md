@@ -104,14 +104,15 @@ track list, which is copyrighted commercial music.
 
 **Scores without settings are noise.** Every `EvalReport` carries the exact
 `RunSettings` used to produce it: `model`, `sample_rate`, `segment_size`,
-`overlap`, `batch_size`, and (for future ensembling work) `ensemble_algorithm`
-/ `ensemble_models`. `format_report` always prints this block before the
-score tables. When comparing two runs, only settings that differ should be
-attributed as the cause of a score difference — everything else must match.
+`overlap`, `batch_size`, and, when the fixed primary-stem ensemble is enabled,
+`ensemble_algorithm` / `ensemble_models`. `format_report` always prints this
+block before the score tables. When comparing two runs, only settings that
+differ should be attributed as the cause of a score difference — everything
+else must match.
 
-`separate_for_eval` drives the real `upmixer.separation.separator.StemSeparator`
-— the same inference path production code uses — so harness scores measure
-what production actually does. `evaluate_corpus` takes a pluggable
+`separate_for_eval` drives the real `StemSeparator` for single-model runs and
+the production `StemUpmixPipeline` plan for the fixed ensemble, so harness
+scores measure what production actually does. `evaluate_corpus` takes a pluggable
 `separate_fn: Callable[[str], tuple[dict[str, np.ndarray], RunSettings]]`
 so tests can substitute a fast, deterministic stand-in without downloading
 model weights (`packages/core/tests/test_eval_metrics.py`); real evaluation runs bind
@@ -132,8 +133,10 @@ uv run pytest packages/core/tests -m perf -k eval -s
 
 This harness is the precondition for:
 
-- **Ensembling (roadmap 2.1)** — measuring whether an SW + Demucs_ft ensemble
-  actually improves shared stems before it becomes a default tier.
+- **Ensembling** — measuring the fixed BS-Roformer-SW + SCNet primary-stem
+  ensemble on Bass/Drums before making it a default tier. Synthetic-corpus
+  runs are a functional harness gate only; they are not musical quality
+  evidence.
 - **Phase-fix/debleed (roadmap 2.2)** — measuring bleedless gain vs. fullness
   cost of any in-house phase-fixer or debleed pass.
 - **Model swaps (roadmap 1.2, 2.3, 2.4)** — comparing a candidate model

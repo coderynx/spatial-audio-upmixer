@@ -132,6 +132,7 @@ def _load_cached_stems(
             cfg.stem_tta,
             cfg.stem_pitch_shift,
             cfg.stem_bleed_reduction,
+            cfg.stem_ensemble,
         )
     )
     cache = StemCache(cfg.stem_cache_dir)
@@ -277,7 +278,7 @@ def separate(
     _log.info("  Output format: %s (%dch)", output_fmt.name, output_fmt.n_channels)
     raw_stems = cfg.stems or []
     canonical = normalize_stems(raw_stems) if raw_stems else list(DEFAULT_STEMS)
-    plan = resolve_separation_plan(canonical)
+    plan = resolve_separation_plan(canonical, cfg.stem_ensemble)
     _log.info("  Stems:         %s", sorted(plan.requested_stems))
     _log.info("  Models:        %s", [t.model for t in plan.tasks])
 

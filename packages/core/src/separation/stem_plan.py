@@ -38,6 +38,12 @@ MODEL_CROWD = "mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt"
 
 MODEL_PRIMARY = "BS-Roformer-SW.ckpt"
 
+MODEL_SCNET = "model_scnet_ep_36_sdr_10.0891.ckpt"
+# Internal name retained for the fixed ensemble implementation.
+MODEL_ENSEMBLE = MODEL_SCNET
+ENSEMBLE_ALGORITHM = "avg_wave"
+ENSEMBLE_STEMS: frozenset[str] = frozenset({"Bass", "Drums"})
+
 MODEL_DEUX = "becruily_deux.ckpt"
 
 MODEL_DRUMS = "MDX23C-DrumSep-aufr33-jarredou.ckpt"
@@ -79,6 +85,13 @@ class SeparationTask:
     output_stems: frozenset[str]
     keep_stems: frozenset[str]
     stem_overrides: dict[str, str] | None = None
+    ensemble_models: tuple[str, ...] = ()
+    ensemble_stems: frozenset[str] = frozenset()
+
+    @property
+    def ensemble_model(self) -> str | None:
+        """Compatibility view for the single fixed partner model."""
+        return self.ensemble_models[0] if self.ensemble_models else None
 
 
 @dataclass
@@ -97,6 +110,27 @@ class SeparationPlan:
     requested_stems: frozenset[str]
     stems_hash: str
     inference_hash: str = ""
+
+    @property
+    def ensemble_algorithm(self) -> str | None:
+        """Fixed algorithm used by an enabled primary-stem ensemble."""
+        return ENSEMBLE_ALGORITHM if self.ensemble_models else None
+
+    @property
+    def ensemble_models(self) -> tuple[str, ...]:
+        """Models participating in the plan's fixed ensemble, if any."""
+        for task in self.tasks:
+            if task.ensemble_models:
+                return task.ensemble_models
+        return ()
+
+    @property
+    def ensemble_stems(self) -> frozenset[str]:
+        """Final/intermediate stems that the plan ensembles."""
+        for task in self.tasks:
+            if task.ensemble_stems:
+                return task.ensemble_stems
+        return frozenset()
 
 
 
@@ -136,6 +170,7 @@ def normalize_stems(stems: list[str]) -> list[str]:
 
 def resolve_separation_plan(
     canonical: list[str],
+    stem_ensemble: bool = False,
 ) -> SeparationPlan:
     """Build an ordered execution plan for the given canonical stem names.
 
@@ -153,6 +188,10 @@ def resolve_separation_plan(
 
     Returns:
         :class:`SeparationPlan` with tasks in correct execution order.
+
+        ``stem_ensemble`` enables the fixed primary-stage BS-Roformer-SW +
+        SCNet average for Bass and/or Drums. Drum-piece requests include the
+        intermediate Drums stem in that closure.
     """
     requested = frozenset(canonical) if canonical else frozenset(DEFAULT_STEMS)
 
@@ -178,6 +217,12 @@ def resolve_separation_plan(
     instrumental_needed = bool(requested & (PRIMARY_OUTPUT_STEMS - {"Vocals"}))
     primary_stage_needed = instrumental_needed or drum_sub_needed
 
+    ensemble_stems = frozenset()
+    if stem_ensemble and primary_stage_needed:
+        ensemble_stems = (requested & ENSEMBLE_STEMS) | (
+            {"Drums"} if drum_sub_needed else set()
+        )
+
     if deux_needed:
         deux_input = "_crowd_other" if crowd_needed else "original"
         tasks.append(SeparationTask(
@@ -199,6 +244,8 @@ def resolve_separation_plan(
             input_source="_deux_inst",
             output_stems=PRIMARY_INSTRUMENTAL_STEMS,
             keep_stems=requested & PRIMARY_INSTRUMENTAL_STEMS,
+            ensemble_models=((MODEL_ENSEMBLE,) if ensemble_stems else ()),
+            ensemble_stems=frozenset(ensemble_stems),
         ))
 
     if drum_sub_needed:
@@ -226,6 +273,12 @@ def resolve_separation_plan(
         inference_identity_parts.append(
             f"{task.model}:{task.input_source}:"
             f"{','.join(sorted(task.output_stems))}:{output_tag}"
+            + (
+                f"|ensemble={ENSEMBLE_ALGORITHM}:"
+                f"{','.join(task.ensemble_models)}:"
+                f"{','.join(sorted(task.ensemble_stems))}"
+                if task.ensemble_models else ""
+            )
         )
     inference_identity = "|".join(inference_identity_parts)
     inference_hash = hashlib.sha256(inference_identity.encode()).hexdigest()[:20]

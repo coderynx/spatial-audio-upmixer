@@ -19,6 +19,7 @@ from upmixer.eval.corpus import ReferenceCorpus
 from upmixer.eval.metrics import bleedless, fullness, sdr
 from upmixer.eval.report import EvalReport, StemScore
 from upmixer.separation.separator import DEFAULT_MODEL, StemSeparator
+from upmixer.separation.stem_plan import ENSEMBLE_ALGORITHM, MODEL_ENSEMBLE
 
 SeparateFn = Callable[[str], tuple[dict[str, np.ndarray], "RunSettings"]]
 
@@ -48,6 +49,8 @@ def separate_for_eval(
     batch_size: int | None = None,
     segment_size: int | None = None,
     chunk_duration_s: float | None = None,
+    overlap: int | None = None,
+    stem_ensemble: bool = False,
 ) -> tuple[dict[str, np.ndarray], RunSettings]:
     """Separate a mixture with the real ``StemSeparator`` and record settings.
 
@@ -56,29 +59,58 @@ def separate_for_eval(
         sample_rate:  Output sample rate for separated stems.
         model:        Model filename (registry name), defaults to the
                       package's default model.
-        batch_size, segment_size, chunk_duration_s: Forwarded to
+        batch_size, segment_size, chunk_duration_s, overlap: Forwarded to
             ``StemSeparator``; ``None`` selects its backend-aware defaults.
+        stem_ensemble: Run the production fixed BS-Roformer-SW + SCNet
+            primary-stem ensemble.
 
     Returns:
         (stems, settings) — canonical stem name -> (n_samples, 2) float32
         array, and the RunSettings actually used.
     """
-    separator = StemSeparator(
-        model=model,
-        sample_rate=sample_rate,
-        batch_size=batch_size,
-        segment_size=segment_size,
-        chunk_duration_s=chunk_duration_s,
-    )
-    try:
-        stems = separator.separate(mixture_path)
-    finally:
-        separator.close()
+    if stem_ensemble:
+        if model != DEFAULT_MODEL:
+            raise ValueError(
+                "stem_ensemble uses the registered BS-Roformer-SW primary model"
+            )
+        from upmixer.config import UpmixConfig
+        from upmixer.separation.stem_pipeline import StemUpmixPipeline
+
+        pipeline = StemUpmixPipeline(UpmixConfig(
+            output_sample_rate=sample_rate,
+            stem_batch_size=batch_size,
+            stem_segment_size=segment_size,
+            stem_chunk_duration_s=chunk_duration_s,
+            stem_overlap=overlap,
+            stem_ensemble=True,
+        ))
+        try:
+            stems = pipeline._separate(
+                mixture_path, None, lambda _message, _fraction: None
+            ).all_stems
+        finally:
+            pipeline.close()
+    else:
+        separator = StemSeparator(
+            model=model,
+            sample_rate=sample_rate,
+            batch_size=batch_size,
+            segment_size=segment_size,
+            chunk_duration_s=chunk_duration_s,
+            overlap=overlap,
+        )
+        try:
+            stems = separator.separate(mixture_path)
+        finally:
+            separator.close()
     settings = RunSettings(
         model=model,
         sample_rate=sample_rate,
         segment_size=segment_size,
         batch_size=batch_size,
+        overlap=overlap,
+        ensemble_algorithm=ENSEMBLE_ALGORITHM if stem_ensemble else None,
+        ensemble_models=(model, MODEL_ENSEMBLE) if stem_ensemble else None,
     )
     return stems, settings
 
