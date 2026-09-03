@@ -11,29 +11,10 @@ source code only; checkpoint licensing is not asserted here.
 from __future__ import annotations
 
 import math
-from contextlib import contextmanager
 
 import mlx.core as mx
 from mlx import nn
 from mlx_spectro import get_transform_mlx
-
-
-@contextmanager
-def exact_zero_safe_rfft():
-    """Run one MLX rFFT on CPU to avoid the Metal zero-frame artifact."""
-    original = mx.fft.rfft
-
-    def cpu_rfft(*args, **kwargs):
-        with mx.stream(mx.cpu):
-            result = original(*args, **kwargs)
-            mx.eval(result)
-        return result
-
-    mx.fft.rfft = cpu_rfft
-    try:
-        yield
-    finally:
-        mx.fft.rfft = original
 
 
 def _cf_to_cl(x):
@@ -266,7 +247,7 @@ class TrunkSTFT:
         )
 
     def stft(self, x):
-        with exact_zero_safe_rfft():
+        with mx.stream(mx.cpu):
             result = self._transform.stft(x.astype(mx.float32))
             mx.eval(result)
         return result
@@ -376,7 +357,7 @@ class FeatureConversion(nn.Module):
             imag = x[:, half:, :, :].astype(mx.float32)
             spec = real.astype(mx.complex64) + 1j * imag.astype(mx.complex64)
             return mx.fft.irfft(spec, axis=3, norm="ortho").astype(mx.float32)
-        with exact_zero_safe_rfft():
+        with mx.stream(mx.cpu):
             spec = mx.fft.rfft(x.astype(mx.float32), axis=3, norm="ortho")
             mx.eval(spec)
         return mx.concatenate([spec.real, spec.imag], axis=1).astype(mx.float32)

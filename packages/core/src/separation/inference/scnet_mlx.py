@@ -11,7 +11,6 @@ source code only; checkpoint licensing is not asserted here.
 from __future__ import annotations
 
 import re
-import threading
 from typing import Any
 
 import numpy as np
@@ -25,8 +24,6 @@ _CONV_MODULE_INDEX = {
     "6": "conv3",
 }
 _CONV1D_KEYS = frozenset(("conv1", "conv2", "conv3"))
-# ponytail: one global MLX lock; use per-model locks if concurrent jobs matter.
-_SCNET_MLX_LOCK = threading.Lock()
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -185,16 +182,32 @@ def load_converted_weights(model, mlx_weights: dict[str, Any]) -> None:
     """Load weights only when model and conversion keys match exactly."""
     from mlx.utils import tree_flatten
 
-    model_keys = {key for key, _ in tree_flatten(model.parameters())}
+    model_parameters = dict(tree_flatten(model.parameters()))
+    model_keys = set(model_parameters)
     weight_keys = set(mlx_weights)
     unmatched = sorted(model_keys - weight_keys)
     dropped = sorted(weight_keys - model_keys)
-    if unmatched or dropped:
+    shape_mismatches = sorted(
+        (
+            key,
+            tuple(model_parameters[key].shape),
+            tuple(mlx_weights[key].shape),
+        )
+        for key in model_keys & weight_keys
+        if tuple(model_parameters[key].shape) != tuple(mlx_weights[key].shape)
+    )
+    if unmatched or dropped or shape_mismatches:
         details = []
         if unmatched:
             details.append(f"{len(unmatched)} model parameters unmatched (e.g. {', '.join(unmatched[:5])})")
         if dropped:
             details.append(f"{len(dropped)} converted tensors dropped (e.g. {', '.join(dropped[:5])})")
+        if shape_mismatches:
+            sample = "; ".join(
+                f"{key}: model {model_shape} != converted {weight_shape}"
+                for key, model_shape, weight_shape in shape_mismatches[:5]
+            )
+            details.append(f"{len(shape_mismatches)} parameter shape mismatches (e.g. {sample})")
         raise ValueError("MLX SCNet weight conversion incomplete: " + ", ".join(details))
     model.load_weights(list(mlx_weights.items()), strict=False)
 
@@ -218,9 +231,8 @@ class SCNetMLXAdapter:
         if batch.device.type != "cpu":
             raise ValueError("SCNet MLX adapter expects a CPU torch.Tensor")
         audio = batch.detach().to(dtype=torch.float32).contiguous().numpy()
-        with _SCNET_MLX_LOCK:
-            output = self._model(mx.array(np.ascontiguousarray(audio, dtype=np.float32)))
-            mx.eval(output)
+        output = self._model(mx.array(np.ascontiguousarray(audio, dtype=np.float32)))
+        mx.eval(output)
         return torch.from_numpy(np.array(output, dtype=np.float32, copy=True))
 
     def eval(self):

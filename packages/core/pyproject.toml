@@ -85,6 +85,7 @@ upmixer = "src"
 upmixer = [
     "binaural/hrir/*.wav",
     "crosstalk/xtc/*.wav",
+    "separation/inference/archs/SCNET_MLX_LICENSE.txt",
     "separation/inference/configs/*.yaml",
 ]
 
