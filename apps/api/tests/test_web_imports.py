@@ -40,7 +40,7 @@ def test_album_import_preview_and_paused_job(web_client):
         "version": "1.0.0",
         "engine": {"mode": "stem"},
         "mixing": {"channel_layout": "5.1"},
-        "format": {"type": "wav", "subtype": "PCM_24", "sample_rate": 48000},
+        "format": {"type": "multichannel", "codec": "wav_pcm", "subtype": "PCM_24", "sample_rate": 48000},
     }
     response = web_client.post("/api/v1/jobs", json={
         "import_id": imported["id"],
@@ -104,7 +104,7 @@ def test_mastering_reference_upload_runs_and_rejects_client_path(web_client, in_
                 "max_db": 8.0,
             },
         },
-        "format": {"type": "wav", "subtype": "PCM_24", "sample_rate": 48000},
+        "format": {"type": "multichannel", "codec": "wav_pcm", "subtype": "PCM_24", "sample_rate": 48000},
     }
     response = web_client.post("/api/v1/jobs", json={
         "import_id": imported["id"],

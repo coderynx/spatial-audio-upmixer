@@ -12,29 +12,29 @@ from _helpers import _wav_bytes
 
 
 def test_separation_settings_detects_dsp_stem_cleanup_changes():
-    from upmixer_web.features.projects.service import _separation_settings
+    from upmixer_web.features.projects.configuration import separation_settings
 
     off = {"engine": {"mode": "stem"}}
     on = {"engine": {"mode": "stem", "stem_bleed_reduction": True}}
-    assert _separation_settings(off) != _separation_settings(on)
+    assert separation_settings(off) != separation_settings(on)
 
 
 def test_separation_settings_detects_ensemble_changes():
-    from upmixer_web.features.projects.service import _separation_settings
+    from upmixer_web.features.projects.configuration import separation_settings
 
     off = {"engine": {"mode": "stem", "stem_ensemble": False}}
     on = {"engine": {"mode": "stem", "stem_ensemble": True}}
-    assert _separation_settings(off) != _separation_settings(on)
+    assert separation_settings(off) != separation_settings(on)
 
 
 def test_separation_settings_treats_missing_keys_as_client_defaults():
     """A freshly-prepared project may omit separation defaults such as
     `engine.stem_ensemble`
-    (see `_normalized_project_manifest`), but the web client's
+    (see `normalize_project_manifest`), but the web client's
     `normalizeManifest` always sends the full `stem_*` default block on every
     save — these two shapes must compare equal, or the first settings save
     after preparation spuriously clears `prepared_stems` and re-separates."""
-    from upmixer_web.features.projects.service import _separation_settings
+    from upmixer_web.features.projects.configuration import separation_settings
 
     minimal = {"engine": {"mode": "stem", "stems": ["Vocals", "Bass"]}}
     client_defaults = {
@@ -51,7 +51,7 @@ def test_separation_settings_treats_missing_keys_as_client_defaults():
             "stem_bleed_reduction": False,
         }
     }
-    assert _separation_settings(minimal) == _separation_settings(client_defaults)
+    assert separation_settings(minimal) == separation_settings(client_defaults)
 
 
 def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch):
@@ -381,8 +381,8 @@ def test_settings_save_with_full_client_engine_block_does_not_reseparate(tmp_pat
     `prepared_stems` or requeue tracks — even though the web client always
     sends the full `engine.stem_*` default block while a freshly-prepared
     project's stored manifest carries only `engine.mode`/`engine.stems` (see
-    `_normalized_project_manifest`). Regression test for the spurious
-    re-separation this shape mismatch used to cause via `_separation_settings`."""
+    `normalize_project_manifest`). Regression test for the spurious
+    re-separation this shape mismatch used to cause via `separation_settings`."""
     from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
     from upmixer_web.shared.models import ImportBatch, MediaAsset, Project, ProjectTrack
 

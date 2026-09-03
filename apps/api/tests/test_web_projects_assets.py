@@ -530,27 +530,3 @@ def test_widening_the_layout_retargets_a_codec_it_cannot_carry(tmp_path, monkeyp
         })
         assert response.status_code == 200
         assert response.json()["manifest"]["format"]["codec"] == "wav_pcm"
-
-
-def test_a_legacy_wav_delivery_migrates_to_a_multichannel_codec_pair(tmp_path, monkeypatch):
-    settings = Settings(
-        data_dir=tmp_path,
-        database_url=f"sqlite:///{tmp_path / 'migrate_wav.db'}",
-        worker_count=1,
-    )
-    monkeypatch.setattr("upmixer_web.worker.WorkerManager.start", lambda _self: None)
-    monkeypatch.setattr("upmixer_web.worker.WorkerManager.stop", lambda _self: None)
-    with TestClient(create_app(settings)) as client:
-        created = client.post("/api/v1/projects", json={
-            "name": "Legacy delivery",
-            "manifest": {
-                "version": "1.0.0",
-                "engine": {"mode": "stem", "stems": ["Vocals"]},
-                "mixing": {"channel_layout": "7.1.4"},
-                "format": {"type": "wav", "subtype": "PCM_24", "sample_rate": 48000},
-            },
-        })
-        assert created.status_code == 201
-        format_block = created.json()["manifest"]["format"]
-        assert format_block["type"] == "multichannel"
-        assert format_block["codec"] == "wav_pcm"

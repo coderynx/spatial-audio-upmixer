@@ -39,6 +39,15 @@ Keep the public compatibility shims `mastering_comp.py`, `mastering_bass.py`, an
 See `AGENTS.md` for the full module map, the two pipelines, and the
 in-core inference boundary.
 
+### Core execution terms
+
+- **Manifest catalog**: accepted manifest fields, their resolved configuration
+  targets, and their owning domain declarations.
+- **Stem workspace**: private ownership of intermediate stems, their disk
+  lifetime, checkpoints, and cleanup during one SeparationPlan execution.
+- **Routed programme**: the rendered speaker bed plus authored ADM objects
+  produced from separated stems.
+
 ## Testing
 
 ```bash

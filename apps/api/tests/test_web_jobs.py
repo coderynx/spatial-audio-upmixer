@@ -73,7 +73,7 @@ def test_a_job_completes_and_downloads(web_client, in_process_jobs):
                 "channel_layout": "5.1",
             },
             "mastering": {"loudness": {"normalize": False}},
-            "format": {"type": "wav", "subtype": "PCM_24", "sample_rate": 48000},
+                "format": {"type": "multichannel", "codec": "wav_pcm", "subtype": "PCM_24", "sample_rate": 48000},
         },
         "start": True,
     })

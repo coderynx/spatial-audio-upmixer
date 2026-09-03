@@ -9,25 +9,26 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from upmixer.codecs import DEFAULT_CODEC
 from upmixer.config import UpmixConfig
-from upmixer.manifest import apply_asset_job, migrate_manifest, parse_manifest
-from upmixer.separation.stem_plan import normalize_stems
 from upmixer.formats import FORMAT_MAP
 from upmixer_web.features.jobs.service import create_job
+from upmixer_web.features.projects.configuration import (
+    normalize_project_manifest,
+    normalize_project_stems,
+    normalize_track_layout_block,
+    preparation_manifest,
+    resolve_scene_routing,
+    seed_layout_block,
+    separation_settings,
+)
 from upmixer_web.features.projects.layouts import (
-    delivery_codec_for_layout,
-    delivery_type_for_layout,
-    migrate_legacy_binaural_shape,
-    normalize_layout_mix,
     seed_balanced_mix,
     track_layouts,
     track_prepare_overrides,
 )
 from upmixer_web.features.projects.deletion import mark_project_deleting as _mark_project_deleting
-from upmixer_web.features.projects.routing import merge_scene, routing_for_scene
+from upmixer_web.features.projects.routing import merge_scene
 from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS, ProjectStemStorage
-from upmixer_web.shared.manifests import normalize_job_manifest
 from upmixer_web.shared.models import ImportBatch, Job, MasteringReference, Project, ProjectTrack
 
 
@@ -40,105 +41,12 @@ PROJECT_LOAD_OPTIONS = (
     selectinload(Project.mastering_reference),
 )
 
-_CHILD_STEMS = {
-    "Vocals": ("Lead Vocals", "Backing Vocals"),
-    "Drums": ("Kick", "Snare", "Toms", "Hi-Hat", "Ride", "Crash"),
-}
-
-_SEPARATION_ENGINE_KEYS = (
-    "stem_batch_size", "stem_segment_size", "stem_chunk_duration_s",
-    "stem_model_cache_size", "stem_silence_skip", "stem_silence_threshold_db",
-    "stem_silence_min_duration_s", "stem_silence_crossfade_ms", "stem_silence_pad_ms",
-    "stem_ensemble", "stem_bleed_reduction",
-    "stem_drum_remask", "stem_primary_remask",
-)
-
-_TRACK_ENGINE_OVERRIDE_KEYS = {
-    "stems",
-    "stem_bleed_reduction",
-}
-
-
 class ProjectStateConflict(ValueError):
     """A project cannot transition from its current status."""
 
 
 class TrackNotFoundError(ValueError):
     """A referenced project track does not exist."""
-
-
-def _separation_settings(manifest: dict[str, Any]) -> tuple[object, ...]:
-    """Resolve each separation-engine key against `UpmixConfig` defaults so a
-    minimal stored manifest (only ever `engine.mode`/`engine.stems`) compares
-    equal to a client save that always sends the full engine block — a
-    missing key and its default value must not look like a settings change.
-    """
-    engine = manifest.get("engine")
-    if not isinstance(engine, dict):
-        engine = {}
-    defaults = UpmixConfig()
-    values: list[object] = []
-    for key in _SEPARATION_ENGINE_KEYS:
-        value = engine.get(key, getattr(defaults, key))
-        values.append(value)
-    return tuple(values)
-
-
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    merged = copy.deepcopy(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge(merged[key], value)
-        else:
-            merged[key] = copy.deepcopy(value)
-    return merged
-
-
-def _validate_track_overrides(project: Project, overrides: dict[str, Any]) -> None:
-    allowed = {"engine", "mixing", "routing", "mastering", "format", "processing"}
-    unknown = set(overrides) - allowed
-    if unknown:
-        raise ValueError(f"Unknown track override blocks: {', '.join(sorted(unknown))}")
-    engine = overrides.get("engine", {})
-    if engine and (not isinstance(engine, dict) or set(engine) - _TRACK_ENGINE_OVERRIDE_KEYS):
-        raise ValueError(
-            "Track engine overrides may only set stems and bleed-reduction settings"
-        )
-    if isinstance(engine, dict) and "stems" in engine:
-        stems = _normalize_project_stems(engine["stems"])
-        if any(stem not in project.requested_stems for stem in stems):
-            raise ValueError("Track stems must be prepared project stems")
-    merged = _deep_merge(project.manifest, overrides)
-    normalize_job_manifest(merged)
-
-
-def _normalized_track_layout_block(
-    project: Project, layout: str, overrides: dict[str, Any], *, seed_balanced: bool = False
-) -> dict[str, Any]:
-    """Validate one layout's override block and pin it to that layout.
-
-    The same checks a track override has always had, plus the layout work the
-    project manifest already did for itself — which track overrides never ran,
-    so a per-track two-channel layout used to keep an unfolded multichannel
-    routing.
-    """
-    block = migrate_manifest(copy.deepcopy(overrides))
-    normalizer = seed_balanced_mix if seed_balanced else normalize_layout_mix
-    normalizer(block, layout, list(project.requested_stems))
-    _validate_track_overrides(project, block)
-    normalize_job_manifest(_deep_merge(project.manifest, block))
-    return block
-
-
-def _normalize_project_stems(stems: Iterable[str]) -> list[str]:
-    """Keep a parent stem only when none of its detailed stems is requested."""
-    normalized = normalize_stems(list(stems))
-    selected = set(normalized)
-    return [
-        stem
-        for stem in normalized
-        if not (stem in _CHILD_STEMS and any(child in selected for child in _CHILD_STEMS[stem]))
-    ]
 
 
 def get_project(session: Session, project_id: str) -> Project | None:
@@ -151,47 +59,6 @@ def list_projects(session: Session, limit: int = 100, offset: int = 0) -> list[P
     ).all())
 
 
-def _normalized_project_manifest(
-    manifest: dict[str, Any], *, seed_balanced: bool = True
-) -> tuple[dict[str, Any], list[str]]:
-    migrated = migrate_manifest(migrate_legacy_binaural_shape(manifest))
-    migrated_mixing = migrated.setdefault("mixing", {})
-    migrated_format = migrated.setdefault("format", {})
-    if isinstance(migrated_mixing, dict) and isinstance(migrated_format, dict):
-        layout = str(migrated_mixing.setdefault("channel_layout", "7.1.4"))
-        migrated_format["type"] = delivery_type_for_layout(
-            layout, str(migrated_format.get("type", "multichannel"))
-        )
-        migrated_format["codec"] = delivery_codec_for_layout(
-            layout,
-            migrated_format["type"],
-            str(migrated_format.get("codec", DEFAULT_CODEC)),
-            str(migrated_format.get("subtype", UpmixConfig.output_subtype)),
-        )
-    normalized = normalize_job_manifest(migrated)
-    engine = normalized.setdefault("engine", {})
-    engine["mode"] = "stem"
-    stems = _normalize_project_stems(engine.get("stems") or [])
-    engine["stems"] = stems
-    engine.setdefault("stem_ensemble", UpmixConfig().stem_ensemble)
-    mixing = normalized.setdefault("mixing", {})
-    if isinstance(mixing.get("stem_solo"), str):
-        mixing["stem_solo"] = [mixing["stem_solo"]]
-    mixing["stem_source_anchor_strength"] = mixing.get("stem_source_anchor_strength", 0.0)
-    format_block = normalized.setdefault("format", {})
-    format_block.setdefault("type", "multichannel")
-    format_block.setdefault("codec", DEFAULT_CODEC)
-    binaural = format_block.setdefault("binaural", {})
-    binaural.setdefault("profile", "studio")
-    transaural = format_block.setdefault("transaural", {})
-    transaural.setdefault("profile", "stereo")
-    normalizer = seed_balanced_mix if seed_balanced else normalize_layout_mix
-    normalizer(normalized, str(mixing.setdefault("channel_layout", "7.1.4")), stems)
-    normalized.setdefault("routing", {})
-    normalized.setdefault("processing", {})["preview"] = False
-    return normalized, stems
-
-
 def create_empty_project(
     session: Session,
     name: str,
@@ -201,7 +68,7 @@ def create_empty_project(
 ) -> Project:
     """Create a project with no tracks. Assets are added afterwards via
     ``add_project_assets``, one upload session at a time."""
-    normalized, stems = _normalized_project_manifest(manifest or {})
+    normalized, stems = normalize_project_manifest(manifest or {})
     project = Project(
         import_id=None,
         name=name,
@@ -249,7 +116,7 @@ def add_project_assets(
         if isinstance(engine, dict):
             added_stems.extend(engine.get("stems") or [])
     if added_stems:
-        project.requested_stems = _normalize_project_stems([*project.requested_stems, *added_stems])
+        project.requested_stems = normalize_project_stems([*project.requested_stems, *added_stems])
         project.manifest.setdefault("engine", {})["stems"] = project.requested_stems
 
     project_layout = str(project.manifest.get("mixing", {}).get("channel_layout", "7.1.4"))
@@ -266,7 +133,7 @@ def add_project_assets(
             asset_id=asset.id,
             name=asset.title or asset.filename,
             position=start_position + offset,
-            layout_overrides={layout: _normalized_track_layout_block(project, layout, overrides, seed_balanced=True)},
+            layout_overrides={layout: normalize_track_layout_block(project, layout, overrides, seed_balanced=True)},
         ))
     if project.import_id is None:
         project.import_id = import_batch.id
@@ -289,12 +156,12 @@ def update_project_settings(
     mastering_reference: MasteringReference | None = None,
     preview_quality: str | None = None,
 ) -> Project:
-    normalized, stems = _normalized_project_manifest(manifest, seed_balanced=False)
+    normalized, stems = normalize_project_manifest(manifest, seed_balanced=False)
     if stems != project.requested_stems:
         raise ValueError("Use the project stem expansion action to add extraction targets")
     if preview_quality is not None and preview_quality not in PREVIEW_QUALITY_LEVELS:
         raise ValueError(f"Unknown preview quality: {preview_quality}")
-    rebuild = _separation_settings(project.manifest) != _separation_settings(normalized)
+    rebuild = separation_settings(project.manifest) != separation_settings(normalized)
     if rebuild:
         seed_balanced_mix(
             normalized,
@@ -340,18 +207,6 @@ def _track_or_raise(project: Project, track_id: str) -> ProjectTrack:
     return track
 
 
-def _seed_layout_block(project: Project, layout: str, source: dict[str, Any]) -> dict[str, Any]:
-    """Start a new layout from the track's existing mix, minus the one thing
-    that cannot cross layouts: `stem_routing` is keyed by speaker name, so it
-    is dropped and rebuilt for the new layout's own channel set rather than
-    carried over half-valid."""
-    seed = copy.deepcopy(source)
-    mixing = seed.get("mixing")
-    if isinstance(mixing, dict):
-        mixing.pop("stem_routing", None)
-    return _normalized_track_layout_block(project, layout, seed, seed_balanced=True)
-
-
 def set_track_layouts(
     session: Session, project: Project, track_id: str, layouts: Iterable[str]
 ) -> Project:
@@ -370,7 +225,7 @@ def set_track_layouts(
     track.layout_overrides = {
         layout: copy.deepcopy(current[layout])
         if layout in current
-        else _seed_layout_block(project, layout, source)
+        else seed_layout_block(project, layout, source)
         for layout in wanted
     }
     project.revision += 1
@@ -393,7 +248,7 @@ def update_track_layout_settings(
         raise ValueError("Track does not have that speaker layout")
     track.layout_overrides = {
         **track.layout_overrides,
-        layout: _normalized_track_layout_block(project, layout, manifest_overrides),
+        layout: normalize_track_layout_block(project, layout, manifest_overrides),
     }
     track.scene_overrides = copy.deepcopy(scene_overrides)
     project.revision += 1
@@ -413,7 +268,7 @@ def update_project_track_name(session: Session, project: Project, track_id: str,
 
 def expand_project_stems(session: Session, project: Project, stems: Iterable[str]) -> Project:
     requested = list(project.requested_stems)
-    next_requested = _normalize_project_stems([*requested, *stems])
+    next_requested = normalize_project_stems([*requested, *stems])
     added = [stem for stem in next_requested if stem not in requested]
     if not added:
         return project
@@ -434,30 +289,6 @@ def expand_project_stems(session: Session, project: Project, stems: Iterable[str
     project.revision += 1
     session.commit()
     return get_project(session, project.id)  # type: ignore[return-value]
-
-
-def _resolve_track_routing(
-    manifest: dict[str, Any],
-    overrides: dict[str, Any],
-    requested_stems: list[str],
-    scene: dict[str, Any],
-) -> dict[str, dict[str, float]] | None:
-    """Derive the constant-power speaker routing for a track's positioned
-    stems, unless the merged manifest already sets `mixing.stem_routing`
-    explicitly — mirrors the precedence `StemRouter` itself applies (manifest
-    routing before any caller-supplied override)."""
-    probe = _deep_merge(manifest, overrides)
-    probe.setdefault("engine", {})["mode"] = "stem"
-    probe["engine"]["stems"] = list(requested_stems)
-    probe["assets"] = [{"input": "probe-in.wav", "output": "probe-out.wav"}]
-    _, asset_jobs = parse_manifest(probe)
-    asset_job = asset_jobs[0]
-    config = UpmixConfig()
-    apply_asset_job(config, asset_job)
-    if config.stem_routing is not None:
-        return None
-    config.stems = asset_job.engine.get("stems") or list(requested_stems)
-    return routing_for_scene(scene, config) or None
 
 
 def project_export_job(
@@ -495,7 +326,7 @@ def project_export_job(
     for track in tracks:
         overrides = copy.deepcopy(track.layout_overrides.get(layout, {}))
         scene = merge_scene(project.scene, track.scene_overrides)
-        routing = _resolve_track_routing(manifest, overrides, project.prepared_stems, scene)
+        routing = resolve_scene_routing(manifest, overrides, project.prepared_stems, scene)
         if routing:
             mixing_override = dict(overrides.get("mixing", {}))
             mixing_override.setdefault("stem_routing", routing)
@@ -538,21 +369,6 @@ def retry_project(session: Session, project: Project) -> Project:
     return project
 
 
-def _set_preparation_settings(
-    block: dict[str, Any], stems: list[str], stem_bleed_reduction: bool, layout: str,
-    stem_ensemble: bool | None = None,
-) -> dict[str, Any]:
-    updated = copy.deepcopy(block)
-    engine = updated.setdefault("engine", {})
-    engine.update({
-        "stems": stems,
-        "stem_bleed_reduction": stem_bleed_reduction,
-    })
-    if stem_ensemble is not None:
-        engine["stem_ensemble"] = stem_ensemble
-    return seed_balanced_mix(updated, layout, stems)
-
-
 def reprepare_project_stems(
     session: Session,
     project: Project,
@@ -576,7 +392,7 @@ def reprepare_project_stems(
         raise ProjectStateConflict("Project stem preparation is already in progress")
     if not project.tracks:
         raise ProjectStateConflict("Project has no tracks to prepare")
-    requested_stems = _normalize_project_stems(stems) if stems is not None else list(project.requested_stems)
+    requested_stems = normalize_project_stems(stems) if stems is not None else list(project.requested_stems)
     if not requested_stems:
         raise ValueError("Select at least one stem")
     engine = project.manifest.get("engine", {})
@@ -591,7 +407,7 @@ def reprepare_project_stems(
         else bool(engine.get("stem_ensemble", UpmixConfig().stem_ensemble))
     )
     layout = str(project.manifest.get("mixing", {}).get("channel_layout", "7.1.4"))
-    project.manifest = _set_preparation_settings(
+    project.manifest = preparation_manifest(
         project.manifest, requested_stems, cleanup, layout, ensemble
     )
     project.requested_stems = requested_stems
@@ -601,7 +417,7 @@ def reprepare_project_stems(
     project.status_message = "Waiting for worker"
     for track in project.tracks:
         track.layout_overrides = {
-            layout: _set_preparation_settings(overrides, requested_stems, cleanup, layout)
+            layout: preparation_manifest(overrides, requested_stems, cleanup, layout)
             for layout, overrides in track.layout_overrides.items()
         }
         track.status = "queued"

@@ -8,7 +8,6 @@ it into the write paths.
 
 from __future__ import annotations
 
-import copy
 from typing import Any
 
 from upmixer.codecs import DEFAULT_CODEC, validate_codec
@@ -52,34 +51,6 @@ def track_prepare_overrides(track: ProjectTrack) -> dict[str, Any]:
     answers for all.
     """
     return next(iter(track.layout_overrides.values()), {})
-
-
-def migrate_legacy_binaural_shape(manifest: dict[str, Any]) -> dict[str, Any]:
-    """Fold older stored shapes of the binaural render into the current one.
-
-    Binaural has moved twice: originally a ``mixing.channel_layout: binaural``
-    value with the real bed under ``mixing.binaural.bed``, then briefly an
-    independent ``mixing.binaural.enabled`` flag — it is now
-    ``format.type: binaural`` (a delivery format, alongside ``wav``/
-    ``adm-bwf``) with ``format.binaural.profile``. Migrate in place so
-    previously stored projects keep validating and round-tripping.
-    """
-    manifest = copy.deepcopy(manifest)
-    mixing = manifest.get("mixing")
-    if not isinstance(mixing, dict):
-        return manifest
-    legacy_binaural = mixing.pop("binaural", None)
-    if not isinstance(legacy_binaural, dict):
-        return manifest
-    was_binaural = mixing.get("channel_layout") == "binaural" or legacy_binaural.get("enabled") is True
-    if mixing.get("channel_layout") == "binaural":
-        mixing["channel_layout"] = legacy_binaural.get("bed", DEFAULT_LAYOUT)
-    if not was_binaural:
-        return manifest
-    format_block = manifest.setdefault("format", {})
-    format_block["type"] = "binaural"
-    format_block["binaural"] = {"profile": legacy_binaural.get("profile", "studio")}
-    return manifest
 
 
 def delivery_type_for_layout(channel_layout: str, output_type: str) -> str:
