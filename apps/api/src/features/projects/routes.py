@@ -110,11 +110,6 @@ def register_project_routes(
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        # Backfills waveform envelopes for projects catalogued before peaks
-        # existed. Safe to call on every read: `schedule_peaks` gates on
-        # `_peaks_needs_work` and coalesces, so a steady-state poll is a
-        # cheap metadata check, not a run.
-        manager.schedule_peaks(project_id)
         return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.put("/api/v1/projects/{project_id}/settings", response_model=ProjectView, tags=["projects"])

@@ -67,9 +67,6 @@ class _ManagerCore:
         self._refmatch_executor: ThreadPoolExecutor | None = None
         self._refmatch_pending: set[str] = set()
         self._refmatch_running: set[str] = set()
-        self._peaks_executor: ThreadPoolExecutor | None = None
-        self._peaks_pending: set[str] = set()
-        self._peaks_running: set[str] = set()
 
     def start(self) -> None:
         with self.sessions() as session:
@@ -83,7 +80,6 @@ class _ManagerCore:
             session.commit()
         self._executor = ThreadPoolExecutor(max_workers=self.worker_count, thread_name_prefix="upmixer-job")
         self._refmatch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="upmixer-refmatch")
-        self._peaks_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="upmixer-peaks")
         self._dispatcher = threading.Thread(target=self._dispatch_loop, name="upmixer-dispatch", daemon=True)
         self._dispatcher.start()
 
@@ -96,8 +92,6 @@ class _ManagerCore:
             self._executor.shutdown(wait=True, cancel_futures=True)
         if self._refmatch_executor:
             self._refmatch_executor.shutdown(wait=False, cancel_futures=True)
-        if self._peaks_executor:
-            self._peaks_executor.shutdown(wait=False, cancel_futures=True)
 
     def notify(self) -> None:
         self._wake.set()

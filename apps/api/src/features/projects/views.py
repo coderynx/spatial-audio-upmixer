@@ -25,7 +25,6 @@ def project_view(
     view = ProjectView.model_validate(project)
     if manager is not None:
         view.reference_match_pending = manager.reference_match_pending(project.id)
-        view.peaks_pending = manager.peaks_pending(project.id)
     stem_by_id = {stem.id: stem for stem in project.stems}
     # Each track's asset may belong to a different import batch than
     # project.import_id once assets are added to a project incrementally —

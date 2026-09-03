@@ -35,8 +35,7 @@ class ProjectRunnerMixin:
     ``project_stems`` attributes, and calls back into
     ``self._control_project`` — all set up by
     ``upmixer_web.worker.manager._ManagerCore``. Depends on
-    ``self.schedule_reference_match``/``self.schedule_peaks``, provided by
-    ``ReferenceMatchMixin``/``PeaksMixin``.
+    ``self.schedule_reference_match``, provided by ``ReferenceMatchMixin``.
     """
 
     def _run_project(self, project_id: str) -> None:
@@ -186,7 +185,6 @@ class ProjectRunnerMixin:
                 session.commit()
 
             self.schedule_reference_match(project_id)
-            self.schedule_peaks(project_id)
         except JobDeleting:
             self._delete_project(project_id)
         except Exception as exc:

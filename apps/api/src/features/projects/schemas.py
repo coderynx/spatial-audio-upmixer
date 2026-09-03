@@ -112,7 +112,6 @@ class ProjectView(ApiModel):
     # off the mixed bed, so it cannot be shared across layouts.
     reference_match: dict[str, ReferenceMatchAssetView] = Field(default_factory=dict)
     reference_match_pending: bool = False
-    peaks_pending: bool = False
 
 
 class CreateProjectRequest(BaseModel):

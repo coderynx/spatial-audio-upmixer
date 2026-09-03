@@ -34,8 +34,8 @@ apps/api/src/
     system/                 # health, configuration, stem-routing preview, artifact download
     imports/                 # upload ingestion, mastering-reference upload
     jobs/                     # job submission, control (pause/resume/delete), export execution
-    projects/                  # project editing, stem preparation, peaks, reference-match
-      routes.py schemas.py service.py views.py storage.py routing.py worker.py worker_peaks.py worker_reference_match.py
+    projects/                  # project editing, stem preparation, reference-match
+      routes.py schemas.py service.py views.py storage.py routing.py worker.py worker_reference_match.py
 ```
 
 Each feature package under `features/` holds:
@@ -127,7 +127,7 @@ composed from a dispatcher core plus one runner mixin per feature that has
 background work:
 
 ```python
-class WorkerManager(JobRunnerMixin, ProjectRunnerMixin, PeaksMixin, ReferenceMatchMixin, _ManagerCore):
+class WorkerManager(JobRunnerMixin, ProjectRunnerMixin, ReferenceMatchMixin, _ManagerCore):
     ...
 ```
 
@@ -140,16 +140,14 @@ class WorkerManager(JobRunnerMixin, ProjectRunnerMixin, PeaksMixin, ReferenceMat
 - `features/jobs/worker.py`'s `JobRunnerMixin` provides `_run_job` and the
   rest of durable-job execution (progress updates, bundling, deletion).
 - `features/projects/worker.py`'s `ProjectRunnerMixin` provides `_run_project`
-  (stem preparation). `features/projects/worker_peaks.py`'s `PeaksMixin` and
-  `features/projects/worker_reference_match.py`'s `ReferenceMatchMixin`
-  provide the two coalescing background-executor schedulers projects also
-  need (`schedule_peaks`, `schedule_reference_match`).
+  (stem preparation). `features/projects/worker_reference_match.py`'s
+  `ReferenceMatchMixin` provides the coalescing background-executor scheduler
+  for reference matching.
 
 A mixin reads and writes attributes set up by `_ManagerCore.__init__`/
 `start`/`stop` (`sessions`, `source`, `sink`, `work_root`, `stem_cache_dir`,
 `project_stems`, `storage`, `_lock`, the executors) rather than taking them as
-constructor arguments — the same convention the original `PeaksMixin`/
-`ReferenceMatchMixin` established. Adding background work for a new feature
+constructor arguments. Adding background work for a new feature
 means adding a new mixin there and composing it into `WorkerManager` in
 `worker/__init__.py`, not growing an existing mixin with an unrelated
 feature's logic.
