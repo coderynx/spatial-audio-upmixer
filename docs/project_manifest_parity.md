@@ -6,6 +6,13 @@ Projects are interactive manifest authors. Exports create ordinary jobs from an
 immutable manifest snapshot. CLI/API clients may skip projects and submit the
 same manifest blocks with their own assets.
 
+A **Project** is an editable spatial mix made from one or more imported
+**Tracks**, with its own mix settings and prepared stems. A **Track** is one
+imported asset as it participates in a Project, including its independent
+layout-specific mix realization. **Project configuration** is the
+Project-owned manifest, layout-specific Track overrides, and scene positions
+that realize that editable mix.
+
 `GET /api/v1/configuration` exposes `manifest_parameters`, the canonical
 machine-readable list of all processing parameters. It includes path, type,
 default, and asset-override support. `upmixer --manifest-keys` shows those
