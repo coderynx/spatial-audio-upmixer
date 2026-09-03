@@ -34,6 +34,50 @@ def test_low_memory_cpu_uses_small_segments_and_file_chunks():
     assert _automatic_cpu_tuning("cuda", 4.0) == (None, None)
 
 
+def test_scnet_mps_uses_cpu_tuning_and_device(tmp_path):
+    torch = pytest.importorskip("torch")
+
+    captured = {}
+
+    def fake_load_model(model_filename, device, model_dir):
+        captured.update(model_filename=model_filename, device=device, model_dir=model_dir)
+        return object(), object()
+
+    fake_spec = ModelSpec(
+        filename="model_scnet_ep_36_sdr_10.0891.ckpt",
+        arch="scnet",
+        config_name="unused",
+        weights_url="",
+    )
+    with (
+        patch("upmixer.separation.separator._detect_backend", return_value="mps"),
+        patch("upmixer.separation.separator._system_memory_gib", return_value=3.5),
+        patch("upmixer.separation.inference.loader.load_model", side_effect=fake_load_model),
+        patch("upmixer.separation.inference.registry.get_model_spec", return_value=fake_spec),
+    ):
+        separator = StemSeparator(
+            model="model_scnet_ep_36_sdr_10.0891.ckpt",
+            model_dir=str(tmp_path),
+        )
+        engine = separator._get_separator()
+        separator.close()
+
+    assert separator.backend == "cpu"
+    assert separator._batch_size == 1
+    assert separator._segment_size == 64
+    assert separator._chunk_duration_s == 120.0
+    assert captured["device"] == torch.device("cpu")
+    assert engine._device.backend == "cpu"
+
+    with patch("upmixer.separation.separator._detect_backend", return_value="mps"):
+        other = StemSeparator(model="BS-Roformer-SW.ckpt")
+    assert other.backend == "mps"
+    assert other._batch_size == 2
+    assert other._segment_size is None
+    assert other._chunk_duration_s is None
+    other.close()
+
+
 def test_only_actual_oom_is_retryable():
     assert _is_oom_error(RuntimeError("CUDA out of memory"))
     assert not _is_oom_error(RuntimeError("invalid model configuration"))

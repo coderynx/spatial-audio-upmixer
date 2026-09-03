@@ -134,6 +134,7 @@ def _is_oom_error(exc: BaseException) -> bool:
 
 
 DEFAULT_MODEL = "BS-Roformer-SW.ckpt"
+_SCNET_MPS_CPU_MODEL = "model_scnet_ep_36_sdr_10.0891.ckpt"
 
 STEM_NAME_MAP: dict[str, str] = {
     "Vocals": "Vocals",
@@ -243,7 +244,14 @@ class StemSeparator:
             Path.home() / ".cache" / "upmixer-models"
         )
         self._sample_rate = sample_rate
-        self._backend = _detect_backend()
+        detected_backend = _detect_backend()
+        if detected_backend == "mps" and model == _SCNET_MPS_CPU_MODEL:
+            _log.warning(
+                "SCNet XL IHF is not reliable on MPS; using CPU backend for %s",
+                model,
+            )
+            detected_backend = "cpu"
+        self._backend = detected_backend
         remembered = _SUCCESSFUL_BATCHES.get((model, self._backend))
         self._batch_size = (
             batch_size
