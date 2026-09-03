@@ -148,6 +148,6 @@ The API permits the packaged macOS app's `tauri://localhost` origin and its
 
 ## Local development
 
-Use Python 3.11, 3.12, or 3.13 for web stem jobs. Run `uv sync --all-packages --extra dev --extra web-dev --extra separation-cpu` from the repo root (see `AGENTS.md` Commands), then `uv run python -m upmixer_web`. The CPU extra also enables MPS acceleration on supported Apple Silicon Macs; reserve `separation-gpu` for NVIDIA CUDA hosts. In `apps/web/`, install packages and run `npm run dev`. Vite proxies `/api` to the backend.
+Use Python 3.11, 3.12, or 3.13 for web stem jobs. On Apple Silicon, run `uv sync --all-packages --extra dev --extra web-dev --extra separation-mlx` from the repo root (see `AGENTS.md` Commands); this enables MLX for SCNet and Torch for other separation models. Use `separation-cpu` on Intel/CPU-only systems and reserve `separation-gpu` for NVIDIA CUDA hosts. Then run `uv run python -m upmixer_web`. In `apps/web/`, install packages and run `npm run dev`. Vite proxies `/api` to the backend.
 
 For a GPU container, run `docker compose up --build`. The Compose configuration requests all available NVIDIA GPUs and persists database, imports, cache, and outputs in the `upmixer-data` volume.

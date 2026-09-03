@@ -16,15 +16,15 @@ For implementation references, use the [documentation map](docs/README.md).
 ## Web application
 
 The stack is two processes: the FastAPI server (`apps/api`) and the React client (`apps/web`). Stem separation
-needs Python 3.11, 3.12, or 3.13 and one of the `separation-cpu`/`separation-gpu` extras, chosen per platform below.
+needs Python 3.11, 3.12, or 3.13 and one of the `separation-cpu`/`separation-mlx`/`separation-gpu` extras, chosen per platform below.
 
 ### 1. Install the API
 
-Pick a CPU/GPU extra for your platform, then sync the workspace:
+Pick a separation extra for your platform, then sync the workspace:
 
 | Platform | Extra | Notes |
 |---|---|---|
-| macOS (Apple Silicon) | `separation-cpu` | The in-core inference engine selects MPS acceleration automatically — there is no separate "GPU" package for Apple Silicon. |
+| macOS (Apple Silicon) | `separation-mlx` | MLX runs SCNet; Torch remains available for other separation models. |
 | macOS (Intel) | `separation-cpu` | CPU only; no MPS or CUDA path exists on Intel Macs. |
 | Linux, NVIDIA GPU | `separation-gpu` | Install a CUDA-enabled `torch` build **first** (see below), then the extra. |
 | Linux, CPU only | `separation-cpu` | |
@@ -34,7 +34,10 @@ Pick a CPU/GPU extra for your platform, then sync the workspace:
 **uv (recommended):**
 
 ```bash
-# CPU / Apple Silicon MPS / macOS Intel:
+# Apple Silicon (MLX SCNet; Torch for other separation models):
+uv sync --all-packages --extra dev --extra web-dev --extra manifest --extra separation-mlx
+
+# CPU-only / macOS Intel:
 uv sync --all-packages --extra dev --extra web-dev --extra manifest --extra separation-cpu
 
 # NVIDIA CUDA (Linux/Windows) — install the matching CUDA torch build first,
@@ -48,7 +51,10 @@ uv sync --all-packages --extra dev --extra web-dev --extra manifest --extra sepa
 is not published):
 
 ```bash
-# CPU / Apple Silicon MPS / macOS Intel:
+# Apple Silicon (MLX SCNet; Torch for other separation models):
+python3 -m pip install -e "packages/core[separation-mlx]" -e apps/api
+
+# CPU-only / macOS Intel:
 python3 -m pip install -e "packages/core[separation-cpu]" -e apps/api
 
 # NVIDIA CUDA (Linux/Windows):
@@ -99,7 +105,7 @@ Open `http://localhost:5173`. API documentation is available at `http://localhos
 
 - Python 3.11, 3.12, or 3.13
 - WAV or FLAC input readable by [libsndfile](https://libsndfile.github.io/)
-- Additional CPU or GPU dependencies for stem separation
+- Additional CPU, MLX, or GPU dependencies for stem separation
 
 ## Installation
 
@@ -115,10 +121,11 @@ Or install just the library, without a CLI:
 python3 -m pip install upmixer
 ```
 
-Install stem separation support for CPU or GPU inference:
+Install stem separation support for CPU, Apple Silicon MLX, or GPU inference:
 
 ```bash
 python3 -m pip install "upmixer-cli[separation-cpu]"
+python3 -m pip install "upmixer-cli[separation-mlx]"  # Apple Silicon MLX SCNet + Torch
 python3 -m pip install "upmixer-cli[separation-gpu]"
 ```
 
@@ -169,7 +176,7 @@ saved run state to skip outputs whose input and settings still match.
 
 | Mode | Best for | How it works | Additional dependency |
 |---|---|---|---|
-| `stem` | Music, complex mixes, and deliberate instrument placement | Separates requested sources, analyzes each stem, routes it spatially, blends native source zones when requested, and masters the result | `separation-cpu`/`separation-gpu` extra |
+| `stem` | Music, complex mixes, and deliberate instrument placement | Separates requested sources, analyzes each stem, routes it spatially, blends native source zones when requested, and masters the result | `separation-cpu`/`separation-mlx`/`separation-gpu` extra |
 
 Stem mode separates every available stereo zone—front, surround, back, and height—rather than collapsing a
 multichannel source to stereo. Center and LFE material are retained as passthrough channels where applicable.
@@ -216,10 +223,11 @@ weights. Override these limits with `--stem-segment-size`, `--stem-chunk-duratio
 `--stem-model-cache-size`. For a 4-core, low-memory VM, keep `--cpu-priority auto`, batch size 1, and place
 `--stem-cache-dir` on the SSD.
 
-Stem separation runs on an in-core PyTorch inference engine
+Stem separation runs on an in-core inference engine
 (`upmixer/separation/inference/`) driving BS-RoFormer, Mel-Band RoFormer, and
 TFC-TDF (MDX23C) architectures directly, with model integration not tied to
-any third-party wrapper's supported-model list.
+any third-party wrapper's supported-model list. On Apple Silicon with
+`separation-mlx`, SCNet uses MLX while other models retain Torch.
 
 ## Supported Layouts
 

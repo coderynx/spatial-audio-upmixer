@@ -11,6 +11,12 @@ per chunk (see `archs/bs_roformer.py:498-564`, `archs/mel_band_roformer.py:388-4
 (`engine.py:205-211`). MLX has native complex64 GPU FFT, fused
 attention/RoPE kernels, and unified memory — it removes all of that.
 
+## Current status
+
+The broad MLX phases below remain parked. SCNet is an isolated implemented
+exception because Torch MPS is unreliable for this path and CPU inference is
+unusably slow. See the [SCNet-only MLX validation](../../reports/ensemble_separation.md#scnet-only-mlx-validation-2026-09-03).
+
 ## Phases
 
 Run in order. Each phase is a self-contained agent task with its own
