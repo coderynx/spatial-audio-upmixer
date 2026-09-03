@@ -10,6 +10,7 @@ from upmixer.separation.stem_router import (
     default_lfe_send,
     fold_route_to_stereo,
 )
+from upmixer.separation.prepared_stems import render_prepared_stem_bed
 
 __all__ = [
     "STEM_ROUTING_PRESET_NAMES",
@@ -18,4 +19,5 @@ __all__ = [
     "default_lfe_send",
     "fold_route_to_stereo",
     "resolve_placements",
+    "render_prepared_stem_bed",
 ]

@@ -10,11 +10,14 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP
+from upmixer.separation import render_prepared_stem_bed
 from upmixer.separation.stem_pipeline import PreMasterAbort, StemUpmixPipeline
+from upmixer.separation.stem_store import PlainStemStore
 
 _EXEC_PLAN = "upmixer.separation.stem_pipeline_exec.execute_plan"
 
@@ -45,6 +48,30 @@ def _make_pipeline(**cfg_kwargs) -> StemUpmixPipeline:
 
 
 class TestPreMasterHook:
+    def test_prepared_stem_renderer_matches_pipeline_pre_master_bed(self, tmp_path):
+        source = str(tmp_path / "in.wav")
+        output = str(tmp_path / "out.wav")
+        _write_source(source)
+        store = tmp_path / "stems"
+        PlainStemStore(str(store)).write(
+            {"Vocals": np.full((SR * 2, 2), 0.2, dtype=np.float32)}, SR,
+        )
+        pipeline = _make_pipeline(stem_input_dir=str(store))
+        captured: dict[str, np.ndarray] = {}
+
+        def hook(channels, _sample_rate, _output_fmt):
+            captured.update(channels)
+            raise PreMasterAbort()
+
+        with pytest.raises(PreMasterAbort):
+            pipeline.process_file(source, output, pre_master_hook=hook)
+        rendered, sample_rate = render_prepared_stem_bed(pipeline.config, source)
+
+        assert sample_rate == SR
+        assert rendered.keys() == captured.keys()
+        for name, audio in rendered.items():
+            np.testing.assert_allclose(audio, captured[name])
+
     def test_hook_receives_pre_mastering_bed(self, tmp_path):
         pipeline = _make_pipeline()
         source = str(tmp_path / "in.wav")

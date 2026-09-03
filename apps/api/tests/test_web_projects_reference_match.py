@@ -28,6 +28,7 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
     from unittest.mock import patch
 
     from upmixer.mastering.match_reference import ReferenceMatchProcessor
+    from upmixer.separation.stem_pipeline import StemUpmixPipeline
     from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
     from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
 
@@ -91,6 +92,11 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
             project_stems, project_id, track_id,
             {"Vocals": np.full((len(samples), 2), 0.2, dtype=np.float32)},
         )
+
+        def pipeline_must_not_run(*_args, **_kwargs):
+            raise AssertionError("reference-match preparation must not use StemUpmixPipeline")
+
+        monkeypatch.setattr(StemUpmixPipeline, "process_file", pipeline_must_not_run)
         manager.prepare_reference_match(project_id)
 
         meta = project_stems.read_reference_match_meta(project_id, "5.1")
@@ -185,12 +191,9 @@ def test_worker_prepare_reference_match_computes_and_serves_fir(tmp_path, monkey
 
 def test_worker_prepare_reference_match_applies_track_manifest_overrides(tmp_path, monkeypatch):
     """prepare_reference_match's asset job must carry a track's
-    manifest_overrides (e.g. engine.stem_batch_size, set from
-    StemsSection.tsx) into the config it builds, exactly like worker.py's
-    _run_project does for real preparation — otherwise a track-specific
-    tuning knob silently only applies at prepare time and not to the
-    reference-match precompute's own mix pass."""
-    from upmixer.separation.stem_pipeline import StemUpmixPipeline
+    manifest_overrides into its prepared-stem renderer, so the curve uses
+    the same track mix settings as export."""
+    from upmixer_web.features.projects import worker_reference_match
     from upmixer_web.shared.database import create_database_engine, create_session_factory, upgrade_database
     from upmixer_web.shared.models import ImportBatch, MasteringReference, MediaAsset, Project, ProjectTrack
 
@@ -203,14 +206,14 @@ def test_worker_prepare_reference_match_applies_track_manifest_overrides(tmp_pat
     engine = create_database_engine(database_url)
     factory = create_session_factory(engine)
 
-    captured_batch_sizes: list[int | None] = []
-    original_init = StemUpmixPipeline.__init__
+    captured_anchor_strengths: list[float] = []
+    original_render = worker_reference_match.render_prepared_stem_bed
 
-    def _capturing_init(self_inner, *args, **kwargs):
-        captured_batch_sizes.append(kwargs["config"].stem_batch_size)
-        return original_init(self_inner, *args, **kwargs)
+    def _capturing_render(config, input_path):
+        captured_anchor_strengths.append(config.stem_source_anchor_strength)
+        return original_render(config, input_path)
 
-    monkeypatch.setattr(StemUpmixPipeline, "__init__", _capturing_init)
+    monkeypatch.setattr(worker_reference_match, "render_prepared_stem_bed", _capturing_render)
 
     with TestClient(create_app(settings)) as client:
         storage = client.app.state.storage
@@ -253,7 +256,7 @@ def test_worker_prepare_reference_match_applies_track_manifest_overrides(tmp_pat
             )
             track = ProjectTrack(
                 project=project, asset=asset, position=0,
-                layout_overrides={"5.1": {"engine": {"stem_batch_size": 4}}},
+                layout_overrides={"5.1": {"mixing": {"stem_source_anchor_strength": 0.2}}},
             )
             session.add_all([batch, asset, reference, project, track])
             session.commit()
@@ -267,9 +270,9 @@ def test_worker_prepare_reference_match_applies_track_manifest_overrides(tmp_pat
 
         manager.prepare_reference_match(project_id)
 
-        assert captured_batch_sizes, "the reference-match pass should have built a pipeline config"
-        assert all(size == 4 for size in captured_batch_sizes), (
-            "track.manifest_overrides must reach the config the reference-match pass builds"
+        assert captured_anchor_strengths, "the reference-match pass should render the prepared stems"
+        assert all(strength == 0.2 for strength in captured_anchor_strengths), (
+            "track.manifest_overrides must reach the prepared-stem renderer"
         )
 
     engine.dispose()

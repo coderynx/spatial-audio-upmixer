@@ -11,9 +11,10 @@ from contextlib import ExitStack
 from pathlib import Path
 
 from upmixer.config import UpmixConfig
+from upmixer.formats import FORMAT_MAP
 from upmixer.manifest import apply_asset_job, parse_manifest
 from upmixer.mastering.match_reference import ReferenceMatchProcessor
-from upmixer.separation.stem_pipeline import PreMasterAbort, StemUpmixPipeline
+from upmixer.separation import render_prepared_stem_bed
 from upmixer_web.features.projects.layouts import project_default_layout, track_layouts
 from upmixer_web.features.projects.service import get_project
 from upmixer_web.features.projects.storage import ProjectStemStorage
@@ -318,49 +319,22 @@ class ReferenceMatchMixin:
                     )
                     return
 
-                captured: dict[str, object] = {}
-
-                def _capture_and_abort(channels, sr, output_fmt) -> None:
-                    # Both stages forced on regardless of the live manifest's
-                    # spectrum/rms toggles: those (plus strength/max_db) are
-                    # applied as client-side gates on top of this persisted
-                    # curve/gain, not baked into the precompute — see
-                    # `_reference_match_signature`'s docstring and Ledger D21.
-                    processor = ReferenceMatchProcessor(
-                        reference_path=str(reference_path),
-                        output_fmt=output_fmt,
-                        match_spectrum=True,
-                        match_rms=True,
-                        sample_rate=sr,
-                    )
-                    curve, rms_gain_db = processor.compute_curve(channels)
-                    captured["curve"] = curve
-                    captured["channels"] = [name for name in channels if name != "LFE"]
-                    captured["rms_gain_db"] = rms_gain_db
-                    captured["sample_rate"] = sr
-                    captured["n_taps"] = processor._n_taps
-                    raise PreMasterAbort()
-
-                pipeline = StemUpmixPipeline(config=config)
-                try:
-                    pipeline.process_file(
-                        str(input_path), asset_job.output,
-                        pre_master_hook=_capture_and_abort,
-                    )
-                except PreMasterAbort:
-                    pass
-                finally:
-                    pipeline.close()
-
-        if "curve" not in captured:
-            return
+                channels, sample_rate = render_prepared_stem_bed(config, str(input_path))
+                processor = ReferenceMatchProcessor(
+                    reference_path=str(reference_path),
+                    output_fmt=FORMAT_MAP[config.output_format],
+                    match_spectrum=True,
+                    match_rms=True,
+                    sample_rate=sample_rate,
+                )
+                curve, rms_gain_db = processor.compute_curve(channels)
         self.project_stems.write_reference_match(
             project_id,
             layout,
-            captured["curve"],
-            captured["channels"],
-            captured["rms_gain_db"],
-            captured["sample_rate"],
-            captured["n_taps"],
+            curve,
+            [name for name in channels if name != "LFE"],
+            rms_gain_db,
+            sample_rate,
+            processor._n_taps,
             target_signature,
         )
