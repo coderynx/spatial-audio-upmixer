@@ -47,7 +47,7 @@ from upmixer.manifest import register_block as _rb
 from upmixer.loudness import CHANNEL_WEIGHT, k_weighted_power
 from upmixer.separation.stem_placement import (
     STEM_ROUTING_PRESET_NAMES,
-    STEM_ROUTING_PRESETS,
+    STEM_ROUTING_PRESET_TREATMENTS,
     StemPlacement,
     preset_routing,
 )
@@ -314,7 +314,8 @@ class StemRouter:
             return None
         overrides = self._config.stem_placement or {}
         raw = overrides.get(stem_key, overrides.get(stem_name, {}))
-        default = STEM_ROUTING_PRESETS[DEFAULT_ROUTING_PRESET].get(stem_name)
+        treatment = STEM_ROUTING_PRESET_TREATMENTS[DEFAULT_ROUTING_PRESET].get(stem_name)
+        default = treatment.placement if treatment else None
         if not raw and default is None:
             return None
         placement = StemPlacement(

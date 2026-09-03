@@ -30,6 +30,15 @@ const fn placement(
 /// Preset names, in the order they are offered.
 pub const PRESET_NAMES: [&str; 6] = ["balanced", "intimate", "stage", "wide", "immersive", "live"];
 
+/// Everything a preset decides for one stem before layout realization.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PresetTreatment {
+    pub placement: StemPlacement,
+    pub ambient_rear: f64,
+    pub ambient_height: f64,
+    pub ambient_height_crossover_hz: f64,
+}
+
 const BALANCED_PLACEMENTS: [(&str, StemPlacement); 16] = [
     (
         "Lead Vocals",
@@ -225,14 +234,31 @@ fn preset_table(preset: &str) -> Option<&'static [(&'static str, StemPlacement)]
     }
 }
 
+/// The complete treatment a preset gives one stem. `None` when the preset or
+/// stem is unknown.
+pub fn preset_treatment(preset: &str, stem: &str) -> Option<PresetTreatment> {
+    let table = preset_table(preset)?;
+    let placement = table
+        .iter()
+        .find(|(name, _)| *name == stem)
+        .map(|(_, placement)| *placement)?;
+    let (_, rear_scale, height_scale) =
+        *AMBIENT_SCALE.iter().find(|(name, _, _)| *name == preset)?;
+    let (_, rear, height, crossover) = *AMBIENT_DEFAULTS
+        .iter()
+        .find(|(name, _, _, _)| *name == stem)?;
+    Some(PresetTreatment {
+        placement,
+        ambient_rear: (rear * rear_scale).min(AMBIENT_MAX),
+        ambient_height: (height * height_scale).min(AMBIENT_MAX),
+        ambient_height_crossover_hz: crossover,
+    })
+}
+
 /// The canonical placement a preset gives one stem, before any layout is
 /// applied. `None` when the preset or the stem is unknown.
 pub fn preset_placement(preset: &str, stem: &str) -> Option<StemPlacement> {
-    let table = preset_table(preset)?;
-    table
-        .iter()
-        .find(|(name, _)| *name == stem)
-        .map(|(_, placement)| *placement)
+    preset_treatment(preset, stem).map(|treatment| treatment.placement)
 }
 
 /// Every stem a preset names, in table order.
@@ -278,23 +304,12 @@ const AMBIENT_MAX: f64 = 0.9;
 /// A preset's default surround/height sends for one stem's ambient half.
 /// `None` when the preset or the stem is unknown.
 pub fn preset_ambient(preset: &str, stem: &str) -> Option<(f64, f64)> {
-    let (_, rear_scale, height_scale) =
-        *AMBIENT_SCALE.iter().find(|(name, _, _)| *name == preset)?;
-    let (_, rear, height, _) = *AMBIENT_DEFAULTS
-        .iter()
-        .find(|(name, _, _, _)| *name == stem)?;
-    Some((
-        (rear * rear_scale).min(AMBIENT_MAX),
-        (height * height_scale).min(AMBIENT_MAX),
-    ))
+    let treatment = preset_treatment(preset, stem)?;
+    Some((treatment.ambient_rear, treatment.ambient_height))
 }
 
 /// A preset's default height crossover for one stem, in Hz.
 /// `None` when the preset or the stem is unknown.
 pub fn preset_ambient_height_crossover(preset: &str, stem: &str) -> Option<f64> {
-    preset_table(preset)?;
-    AMBIENT_DEFAULTS
-        .iter()
-        .find(|(name, _, _, _)| *name == stem)
-        .map(|(_, _, _, crossover)| *crossover)
+    preset_treatment(preset, stem).map(|treatment| treatment.ambient_height_crossover_hz)
 }

@@ -25,6 +25,11 @@ export type PresetSends = {
   heightCrossoverHz: number;
 };
 
+export type PresetTreatment = {
+  placement: StemPlacement;
+  sends: PresetSends;
+};
+
 type PannerExports = {
   memory: WebAssembly.Memory;
   dsp_alloc(bytes: number): number;
@@ -38,8 +43,7 @@ type PannerExports = {
   dsp_preset_stem_count(preset: number): number;
   dsp_preset_stem_name_len(preset: number, stem: number): number;
   dsp_preset_stem_name_ptr(preset: number, stem: number): number;
-  dsp_preset_placement(preset: number, stem: number, out: number): number;
-  dsp_preset_ambient(preset: number, stem: number, out: number): number;
+  dsp_preset_treatment(preset: number, stem: number, out: number): number;
   dsp_placement_route(
     azimuth: number, elevation: number, width: number, spread: number,
     diversity: number, centerLevelDb: number, lfe: number,
@@ -122,12 +126,12 @@ export class Panner {
     return [...this.presetNames];
   }
 
-  /** Every stem a preset names, with its canonical placement. */
-  presetPlacements(preset: string): Record<string, StemPlacement> {
+  /** Every complete treatment a preset names. */
+  presetTreatments(preset: string): Record<string, PresetTreatment> {
     const index = this.presetNames.indexOf(preset);
     if (index < 0) return {};
-    const out: Record<string, StemPlacement> = {};
-    const bytes = 7 * 8;
+    const out: Record<string, PresetTreatment> = {};
+    const bytes = 10 * 8;
     const ptr = this.exports.dsp_alloc(bytes);
     try {
       for (let stem = 0; stem < this.exports.dsp_preset_stem_count(index); stem += 1) {
@@ -135,35 +139,15 @@ export class Panner {
           this.exports.dsp_preset_stem_name_ptr(index, stem),
           this.exports.dsp_preset_stem_name_len(index, stem),
         );
-        if (this.exports.dsp_preset_placement(index, stem, ptr) !== 0) continue;
-        const [azimuth_deg, elevation_deg, width_deg, object_size, , diversity, center_level_db] = this.read(ptr, 7);
-        out[name] = { azimuth_deg, elevation_deg, width_deg, object_size, diversity, center_level_db };
-      }
-    } finally {
-      this.exports.dsp_free(ptr, bytes);
-    }
-    return out;
-  }
-
-  /** A preset's per-stem sends: the LFE weight the placement carries, the
-   * ambient sends, and the height crossover. */
-  presetSends(preset: string): Record<string, PresetSends> {
-    const index = this.presetNames.indexOf(preset);
-    if (index < 0) return {};
-    const out: Record<string, PresetSends> = {};
-    const bytes = 7 * 8;
-    const ptr = this.exports.dsp_alloc(bytes);
-    try {
-      for (let stem = 0; stem < this.exports.dsp_preset_stem_count(index); stem += 1) {
-        const name = this.readString(
-          this.exports.dsp_preset_stem_name_ptr(index, stem),
-          this.exports.dsp_preset_stem_name_len(index, stem),
-        );
-        if (this.exports.dsp_preset_placement(index, stem, ptr) !== 0) continue;
-        const lfe = this.read(ptr, 5)[4];
-        if (this.exports.dsp_preset_ambient(index, stem, ptr) !== 0) continue;
-        const [rear, height, heightCrossoverHz] = this.read(ptr, 3);
-        out[name] = { lfe, rear, height, heightCrossoverHz };
+        if (this.exports.dsp_preset_treatment(index, stem, ptr) !== 0) continue;
+        const [
+          azimuth_deg, elevation_deg, width_deg, object_size, lfe, diversity,
+          center_level_db, rear, height, heightCrossoverHz,
+        ] = this.read(ptr, 10);
+        out[name] = {
+          placement: { azimuth_deg, elevation_deg, width_deg, object_size, diversity, center_level_db },
+          sends: { lfe, rear, height, heightCrossoverHz },
+        };
       }
     } finally {
       this.exports.dsp_free(ptr, bytes);

@@ -11,7 +11,7 @@ use upmixer_dsp_core::spatial::presets;
 
 type PlacementTuple = (f64, f64, f64, f64, f64);
 type PresetPlacementTuple = (f64, f64, f64, f64, f64, f64, f64);
-type PresetAmbientTuple = (f64, f64, f64);
+type PresetTreatmentTuple = (f64, f64, f64, f64, f64, f64, f64, f64, f64, f64);
 
 fn placement(values: PlacementTuple) -> StemPlacement {
     StemPlacement::new(values.0, values.1, values.2, values.3, values.4)
@@ -143,21 +143,27 @@ fn preset_names() -> Vec<&'static str> {
 }
 
 #[pyfunction]
-fn preset_placements(preset: &str) -> Vec<(String, PresetPlacementTuple)> {
-    presets::preset_stems(preset)
-        .iter()
-        .map(|(stem, value)| (stem.to_string(), unpack_preset(value)))
-        .collect()
-}
-
-#[pyfunction]
-fn preset_ambient(preset: &str) -> Vec<(String, PresetAmbientTuple)> {
+fn preset_treatments(preset: &str) -> Vec<(String, PresetTreatmentTuple)> {
     presets::preset_stems(preset)
         .iter()
         .filter_map(|(stem, _)| {
-            let (rear, height) = presets::preset_ambient(preset, stem)?;
-            let crossover = presets::preset_ambient_height_crossover(preset, stem)?;
-            Some((stem.to_string(), (rear, height, crossover)))
+            let treatment = presets::preset_treatment(preset, stem)?;
+            let placement = unpack_preset(&treatment.placement);
+            Some((
+                stem.to_string(),
+                (
+                    placement.0,
+                    placement.1,
+                    placement.2,
+                    placement.3,
+                    placement.4,
+                    placement.5,
+                    placement.6,
+                    treatment.ambient_rear,
+                    treatment.ambient_height,
+                    treatment.ambient_height_crossover_hz,
+                ),
+            ))
         })
         .collect()
 }
@@ -172,8 +178,7 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(build_stem_routing, m)?)?;
     m.add_function(wrap_pyfunction!(fold_route_to_stereo, m)?)?;
     m.add_function(wrap_pyfunction!(preset_names, m)?)?;
-    m.add_function(wrap_pyfunction!(preset_placements, m)?)?;
-    m.add_function(wrap_pyfunction!(preset_ambient, m)?)?;
+    m.add_function(wrap_pyfunction!(preset_treatments, m)?)?;
     m.add("VIRTUAL_SOURCE_STEP_DEG", panner::VIRTUAL_SOURCE_STEP_DEG)?;
     m.add("MINIMUM_SEND", panner::MINIMUM_SEND)?;
     m.add(

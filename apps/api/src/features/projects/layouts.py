@@ -14,7 +14,8 @@ from typing import Any
 from upmixer.codecs import DEFAULT_CODEC, validate_codec
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, validate_delivery
-from upmixer.separation import preset_ambient, resolve_placements
+from upmixer.separation import resolve_placements
+from upmixer.separation.stem_placement import STEM_ROUTING_PRESET_TREATMENTS
 from upmixer.separation.stem_router import (
     DEFAULT_ROUTING_PRESET,
     build_stem_routing,
@@ -159,7 +160,7 @@ def seed_balanced_mix(block: dict[str, Any], layout: str, stems: list[str]) -> d
         for stem, route in build_stem_routing(stems, FORMAT_MAP[layout]).items():
             stem_routing.setdefault(stem, route)
     placements = resolve_placements(DEFAULT_ROUTING_PRESET, layout)
-    ambient = preset_ambient(DEFAULT_ROUTING_PRESET)
+    treatments = STEM_ROUTING_PRESET_TREATMENTS[DEFAULT_ROUTING_PRESET]
     placement_map = mixing.setdefault("stem_placement", {})
     rear_map = mixing.setdefault("stem_ambient_rear", {})
     height_map = mixing.setdefault("stem_ambient_height", {})
@@ -177,11 +178,10 @@ def seed_balanced_mix(block: dict[str, Any], layout: str, stems: list[str]) -> d
             "diversity": placement.diversity,
             "center_level_db": placement.center_level_db,
         })
-        sends = ambient.get(base)
-        if sends is None:
+        treatment = treatments.get(base)
+        if treatment is None:
             continue
-        rear, height, crossover = sends
-        rear_map.setdefault(stem, rear)
-        height_map.setdefault(stem, height)
-        crossover_map.setdefault(stem, crossover)
+        rear_map.setdefault(stem, treatment.ambient_rear)
+        height_map.setdefault(stem, treatment.ambient_height)
+        crossover_map.setdefault(stem, treatment.ambient_height_crossover_hz)
     return block

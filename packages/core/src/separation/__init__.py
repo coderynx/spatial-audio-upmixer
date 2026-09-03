@@ -2,7 +2,6 @@
 
 from upmixer.separation.stem_placement import (
     STEM_ROUTING_PRESET_NAMES,
-    preset_ambient,
     resolve_placements,
 )
 from upmixer.separation.stem_router import (
@@ -18,6 +17,5 @@ __all__ = [
     "build_stem_routing",
     "default_lfe_send",
     "fold_route_to_stereo",
-    "preset_ambient",
     "resolve_placements",
 ]

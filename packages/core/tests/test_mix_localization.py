@@ -29,7 +29,7 @@ from upmixer.binaural.geometry import speaker_azimuth_elevation
 from upmixer.formats import FORMAT_MAP, ChannelLabel, OutputFormat
 from upmixer.separation.stem_placement import (
     SCENE_OBJECT_SIZE,
-    STEM_ROUTING_PRESETS,
+    STEM_ROUTING_PRESET_TREATMENTS,
     StemPlacement,
     placement_route,
 )
@@ -129,8 +129,9 @@ def test_localization_concentration() -> None:
         )
 
     rows = []
-    for preset, placements in STEM_ROUTING_PRESETS.items():
-        for stem, placement in placements.items():
+    for preset, treatments in STEM_ROUTING_PRESET_TREATMENTS.items():
+        for stem, treatment in treatments.items():
+            placement = treatment.placement
             if placement.azimuth_deg == 0.0:
                 continue
             fraction, speakers = _concentration(placement, FORMAT_MAP["7.1.4"])
@@ -178,7 +179,8 @@ def test_spread_linearity() -> None:
         )
 
     rows = []
-    for stem, placement in STEM_ROUTING_PRESETS["balanced"].items():
+    for stem, treatment in STEM_ROUTING_PRESET_TREATMENTS["balanced"].items():
+        placement = treatment.placement
         rows.append(
             (
                 stem,

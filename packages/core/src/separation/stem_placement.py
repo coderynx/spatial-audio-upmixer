@@ -59,24 +59,39 @@ class StemPlacement:
     center_level_db: float = 0.0
 
 
+@dataclass(frozen=True)
+class PresetTreatment:
+    """Everything a routing preset assigns one stem."""
+
+    placement: StemPlacement
+    ambient_rear: float
+    ambient_height: float
+    ambient_height_crossover_hz: float
+
+
 def _placement(values: tuple[float, float, float, float, float, float, float]) -> StemPlacement:
     return StemPlacement(*values)
 
 
+def _treatment(
+    values: tuple[float, float, float, float, float, float, float, float, float, float],
+) -> PresetTreatment:
+    return PresetTreatment(_placement(values[:7]), *values[7:])
+
+
 STEM_ROUTING_PRESET_NAMES: tuple[str, ...] = tuple(upmixer_dsp.preset_names())
 
-STEM_ROUTING_PRESETS: dict[str, dict[str, StemPlacement]] = {
-    preset: {stem: _placement(values) for stem, values in upmixer_dsp.preset_placements(preset)}
+STEM_ROUTING_PRESET_TREATMENTS: dict[str, dict[str, PresetTreatment]] = {
+    preset: {stem: _treatment(values) for stem, values in upmixer_dsp.preset_treatments(preset)}
     for preset in STEM_ROUTING_PRESET_NAMES
 }
-"""Every preset's canonical table, mirrored from the shared core."""
+"""Every preset's complete canonical table, mirrored from the shared core."""
 
 
-def preset_ambient(preset: str) -> dict[str, tuple[float, float, float]]:
-    """Return a preset's ambient rear, height, and crossover values."""
-    return dict(upmixer_dsp.preset_ambient(preset))
-
-BALANCED_PLACEMENTS: dict[str, StemPlacement] = STEM_ROUTING_PRESETS["balanced"]
+BALANCED_PLACEMENTS: dict[str, StemPlacement] = {
+    stem: treatment.placement
+    for stem, treatment in STEM_ROUTING_PRESET_TREATMENTS["balanced"].items()
+}
 """The reference table. Every other preset is a deliberate departure from it."""
 
 
@@ -86,7 +101,7 @@ def _channel_names(output_format: OutputFormat) -> list[str]:
 
 def resolve_placements(preset: str, layout: str) -> dict[str, StemPlacement]:
     """Return *preset*'s per-stem placements as realized on *layout*."""
-    if preset not in STEM_ROUTING_PRESETS:
+    if preset not in STEM_ROUTING_PRESET_TREATMENTS:
         raise ValueError(
             f"Unknown stem routing preset '{preset}'. Valid: {STEM_ROUTING_PRESET_NAMES}"
         )
@@ -107,7 +122,8 @@ def resolve_placements(preset: str, layout: str) -> dict[str, StemPlacement]:
             diversity=placement.diversity,
             center_level_db=placement.center_level_db,
         )
-        for stem, placement in STEM_ROUTING_PRESETS[preset].items()
+        for stem, treatment in STEM_ROUTING_PRESET_TREATMENTS[preset].items()
+        for placement in (treatment.placement,)
     }
 
 

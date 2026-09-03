@@ -83,20 +83,28 @@ pub extern "C" fn dsp_preset_stem_name_ptr(preset: usize, stem: usize) -> *const
     preset_stem(preset, stem).map_or(std::ptr::null(), |(name, _)| name.as_ptr())
 }
 
-/// Write one preset placement as `[azimuth, elevation, width, spread, lfe, diversity, center_level_db]`.
+/// Write one complete preset treatment as `[azimuth, elevation, width,
+/// object_size, lfe, diversity, center_level_db, rear, height, crossover]`.
 /// Returns 0 on success, -1 when the preset or stem is unknown.
 ///
 /// # Safety
-/// `out` must address 7 writable f64 values.
+/// `out` must address 10 writable f64 values.
 #[no_mangle]
-pub unsafe extern "C" fn dsp_preset_placement(preset: usize, stem: usize, out: *mut f64) -> i32 {
-    let Some((_, placement)) = preset_stem(preset, stem) else {
+pub unsafe extern "C" fn dsp_preset_treatment(preset: usize, stem: usize, out: *mut f64) -> i32 {
+    let Some(name) = presets::PRESET_NAMES.get(preset) else {
+        return -1;
+    };
+    let Some((stem_name, _)) = preset_stem(preset, stem) else {
+        return -1;
+    };
+    let Some(treatment) = presets::preset_treatment(name, stem_name) else {
         return -1;
     };
     if out.is_null() {
         return -1;
     }
-    let fields = [
+    let placement = treatment.placement;
+    std::slice::from_raw_parts_mut(out, 10).copy_from_slice(&[
         placement.azimuth_deg,
         placement.elevation_deg,
         placement.width_deg,
@@ -104,34 +112,10 @@ pub unsafe extern "C" fn dsp_preset_placement(preset: usize, stem: usize, out: *
         placement.lfe,
         placement.diversity,
         placement.center_level_db,
-    ];
-    std::slice::from_raw_parts_mut(out, fields.len()).copy_from_slice(&fields);
-    0
-}
-
-/// Write one preset's default ambient sends as `[rear, height, height_crossover_hz]`.
-/// Returns 0 on success, -1 when the preset or stem is unknown.
-///
-/// # Safety
-/// `out` must point to at least three writable `f64`.
-#[no_mangle]
-pub unsafe extern "C" fn dsp_preset_ambient(preset: usize, stem: usize, out: *mut f64) -> i32 {
-    let Some(name) = presets::PRESET_NAMES.get(preset) else {
-        return -1;
-    };
-    let Some((stem_name, _)) = preset_stem(preset, stem) else {
-        return -1;
-    };
-    let Some((rear, height)) = presets::preset_ambient(name, stem_name) else {
-        return -1;
-    };
-    let Some(crossover) = presets::preset_ambient_height_crossover(name, stem_name) else {
-        return -1;
-    };
-    if out.is_null() {
-        return -1;
-    }
-    std::slice::from_raw_parts_mut(out, 3).copy_from_slice(&[rear, height, crossover]);
+        treatment.ambient_rear,
+        treatment.ambient_height,
+        treatment.ambient_height_crossover_hz,
+    ]);
     0
 }
 

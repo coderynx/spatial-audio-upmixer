@@ -285,7 +285,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   const placementFor = React.useCallback(
     (stem: string): StemPlacement =>
       placements[stem]
-      ?? panner?.presetPlacements(preset)[stem.split("@", 1)[0]]
+      ?? panner?.presetTreatments(preset)[stem.split("@", 1)[0]]?.placement
       ?? NEUTRAL_PLACEMENT,
     [placements, panner, preset],
   );
@@ -392,8 +392,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   };
   const applyPreset = () => {
     if (!trackManifest || !stemNames.length || !panner) return;
-    const table = panner.presetPlacements(preset);
-    const sends = panner.presetSends(preset);
+    const treatments = panner.presetTreatments(preset);
     const nextPlacements: Record<string, StemPlacement> = {};
     const nextRouting: StemRouting = {};
     const nextRear = { ...trackManifest.mixing.stem_ambient_rear };
@@ -401,14 +400,14 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     const nextHeightCrossover = { ...trackManifest.mixing.stem_ambient_height_crossover_hz };
     for (const stem of stemNames) {
       const name = stem.split("@", 1)[0];
-      const placement = table[name];
-      if (!placement) continue;
-      const send = sends[name] ?? { lfe: 0, rear: 0, height: 0, heightCrossoverHz: 2000 };
+      const treatment = treatments[name];
+      if (!treatment) continue;
+      const { placement, sends } = treatment;
       nextPlacements[stem] = placement;
-      nextRouting[stem] = panner.placementRoute(placement, channels, send.lfe);
-      nextRear[stem] = send.rear;
-      nextHeight[stem] = send.height;
-      nextHeightCrossover[stem] = send.heightCrossoverHz;
+      nextRouting[stem] = panner.placementRoute(placement, channels, sends.lfe);
+      nextRear[stem] = sends.rear;
+      nextHeight[stem] = sends.height;
+      nextHeightCrossover[stem] = sends.heightCrossoverHz;
     }
     updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_placement: nextPlacements, stem_routing: nextRouting, stem_ambient_rear: nextRear, stem_ambient_height: nextHeight, stem_ambient_height_crossover_hz: nextHeightCrossover } });
   };

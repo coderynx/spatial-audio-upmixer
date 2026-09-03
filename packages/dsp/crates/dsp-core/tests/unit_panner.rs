@@ -290,19 +290,19 @@ fn cached_layout_matches_the_one_shot_panner() {
 
 #[test]
 fn preset_ambient_keeps_the_pulse_dry_and_scales_the_room_per_preset() {
-    use upmixer_dsp_core::spatial::presets::{
-        preset_ambient, preset_ambient_height_crossover, preset_stems, PRESET_NAMES,
-    };
+    use upmixer_dsp_core::spatial::presets::{preset_stems, preset_treatment, PRESET_NAMES};
 
     for preset in PRESET_NAMES {
         for (stem, _) in preset_stems(preset) {
-            let (rear, height) = preset_ambient(preset, stem).unwrap();
+            let treatment = preset_treatment(preset, stem).unwrap();
+            let rear = treatment.ambient_rear;
+            let height = treatment.ambient_height;
             assert!((0.0..=0.9).contains(&rear), "{preset}/{stem} rear {rear}");
             assert!(
                 (0.0..=0.9).contains(&height),
                 "{preset}/{stem} height {height}"
             );
-            let crossover = preset_ambient_height_crossover(preset, stem).unwrap();
+            let crossover = treatment.ambient_height_crossover_hz;
             assert!(
                 [500.0, 2000.0, 4000.0].contains(&crossover),
                 "{preset}/{stem}"
@@ -312,21 +312,30 @@ fn preset_ambient_keeps_the_pulse_dry_and_scales_the_room_per_preset() {
             }
         }
     }
-    let intimate = preset_ambient("intimate", "Crowd").unwrap();
-    let live = preset_ambient("live", "Crowd").unwrap();
-    assert!(live.0 > intimate.0 && live.1 > intimate.1);
-    assert!(preset_ambient("immersive", "Crowd").unwrap().1 > live.1);
-    assert!(preset_ambient("balanced", "nope").is_none());
-    assert!(preset_ambient("nope", "Crowd").is_none());
+    let intimate = preset_treatment("intimate", "Crowd").unwrap();
+    let live = preset_treatment("live", "Crowd").unwrap();
+    assert!(
+        live.ambient_rear > intimate.ambient_rear && live.ambient_height > intimate.ambient_height
+    );
+    assert!(
+        preset_treatment("immersive", "Crowd")
+            .unwrap()
+            .ambient_height
+            > live.ambient_height
+    );
+    assert!(preset_treatment("balanced", "nope").is_none());
+    assert!(preset_treatment("nope", "Crowd").is_none());
     assert_eq!(
-        preset_ambient_height_crossover("balanced", "Vocals"),
+        preset_treatment("balanced", "Vocals")
+            .map(|treatment| treatment.ambient_height_crossover_hz),
         Some(4000.0)
     );
     assert_eq!(
-        preset_ambient_height_crossover("balanced", "Guitar"),
+        preset_treatment("balanced", "Guitar")
+            .map(|treatment| treatment.ambient_height_crossover_hz),
         Some(2000.0)
     );
-    assert_eq!(preset_ambient_height_crossover("nope", "Crowd"), None);
+    assert_eq!(preset_treatment("nope", "Crowd"), None);
 }
 
 #[test]

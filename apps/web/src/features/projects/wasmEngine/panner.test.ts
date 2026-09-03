@@ -66,29 +66,23 @@ describe("wasm panner", () => {
     const instance = panner();
 
     expect(instance.presets).toEqual(["balanced", "intimate", "stage", "wide", "immersive", "live"]);
-    const balanced = instance.presetPlacements("balanced");
-    expect(balanced["Lead Vocals"]).toEqual({
+    const balanced = instance.presetTreatments("balanced");
+    expect(balanced["Lead Vocals"].placement).toEqual({
       azimuth_deg: 0, elevation_deg: 0, width_deg: 60, object_size: 0.1, diversity: 0, center_level_db: 1.5,
     });
-    expect(balanced.Crowd).toMatchObject({ diversity: 0.5, center_level_db: -3 });
+    expect(balanced.Crowd.placement).toMatchObject({ diversity: 0.5, center_level_db: -3 });
     // The `stage` preset is the one that places instruments off-centre.
-    expect(instance.presetPlacements("stage").Guitar.azimuth_deg).toBe(50);
-    expect(instance.presetPlacements("no-such-preset")).toEqual({});
-  });
+    expect(instance.presetTreatments("stage").Guitar.placement.azimuth_deg).toBe(50);
+    expect(instance.presetTreatments("no-such-preset")).toEqual({});
 
-  it("carries the preset's LFE weight and room sends alongside the placement", () => {
-    const instance = panner();
-    const balanced = instance.presetSends("balanced");
-
-    expect(balanced.Kick.lfe).toBeCloseTo(0.82, 9);
-    expect(balanced["Lead Vocals"]).toEqual({
+    expect(balanced.Kick.sends.lfe).toBeCloseTo(0.82, 9);
+    expect(balanced["Lead Vocals"].sends).toEqual({
       lfe: 0, rear: 0, height: 0, heightCrossoverHz: 4000,
     });
-    expect(balanced.Guitar.heightCrossoverHz).toBe(2000);
-    expect(balanced.Crowd.rear).toBeGreaterThan(balanced.Guitar.rear);
-    expect(instance.presetSends("intimate").Crowd.rear)
-      .toBeLessThan(instance.presetSends("live").Crowd.rear);
-    expect(instance.presetSends("no-such-preset")).toEqual({});
+    expect(balanced.Guitar.sends.heightCrossoverHz).toBe(2000);
+    expect(balanced.Crowd.sends.rear).toBeGreaterThan(balanced.Guitar.sends.rear);
+    expect(instance.presetTreatments("intimate").Crowd.sends.rear)
+      .toBeLessThan(instance.presetTreatments("live").Crowd.sends.rear);
   });
 
   it("reports the elevation a layout can reach", () => {

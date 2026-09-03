@@ -6,7 +6,7 @@ import pytest
 from upmixer.formats import FORMAT_MAP
 from upmixer.separation.stem_placement import (
     STEM_ROUTING_PRESET_NAMES,
-    STEM_ROUTING_PRESETS,
+    STEM_ROUTING_PRESET_TREATMENTS,
     StemPlacement,
     placement_route,
     preset_routing,
@@ -95,13 +95,17 @@ def test_preset_routes_are_nonnegative() -> None:
 
 
 def test_presets_define_stem_appropriate_bed_controls() -> None:
-    for placements in STEM_ROUTING_PRESETS.values():
-        for placement in placements.values():
+    for treatments in STEM_ROUTING_PRESET_TREATMENTS.values():
+        for treatment in treatments.values():
+            placement = treatment.placement
             assert 0.0 <= placement.diversity <= 1.0
             assert -6.0 <= placement.center_level_db <= 2.0
-        assert placements["Lead Vocals"].center_level_db > placements["Crowd"].center_level_db
+        assert treatments["Lead Vocals"].placement.center_level_db > treatments["Crowd"].placement.center_level_db
 
-    assert STEM_ROUTING_PRESETS["intimate"]["Other"].diversity < STEM_ROUTING_PRESETS["wide"]["Other"].diversity
+    assert (
+        STEM_ROUTING_PRESET_TREATMENTS["intimate"]["Other"].placement.diversity
+        < STEM_ROUTING_PRESET_TREATMENTS["wide"]["Other"].placement.diversity
+    )
 
 
 def test_unknown_preset_or_layout_is_rejected() -> None:
