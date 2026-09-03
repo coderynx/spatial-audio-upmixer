@@ -1,6 +1,7 @@
 """Backend-aware, full-precision stem separator optimization tests."""
 from __future__ import annotations
 
+import weakref
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -151,10 +152,19 @@ def test_mlx_get_separator_uses_mlx_loader(tmp_path):
 
 
 def test_close_clears_loaded_model_cache_once():
+    class LoadedEngine:
+        pass
+
     separator = StemSeparator(model="model.ckpt")
     manager = MagicMock()
     separator._device_manager = manager
-    separator._engine = object()
+    separator._engine = LoadedEngine()
+    engine_ref = weakref.ref(separator._engine)
+
+    def empty_cache():
+        assert engine_ref() is None
+
+    manager.empty_cache.side_effect = empty_cache
 
     separator.close()
     separator.close()
@@ -290,7 +300,18 @@ def test_terminal_oom_releases_engine_and_device_cache():
         def separate(self, _):
             raise MemoryError("out of memory")
 
-    with patch.object(separator, "_get_separator", return_value=FakeSeparator()):
+    failed_engine_holder = [FakeSeparator()]
+    failed_engine_ref = weakref.ref(failed_engine_holder[0])
+
+    def get_separator():
+        return failed_engine_holder.pop()
+
+    def empty_cache():
+        assert separator._engine is None
+        assert failed_engine_ref() is None
+
+    manager.empty_cache.side_effect = empty_cache
+    with patch.object(separator, "_get_separator", side_effect=get_separator):
         with pytest.raises(MemoryError):
             separator._separate_paths("input.wav")
 

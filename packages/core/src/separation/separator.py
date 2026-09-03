@@ -7,6 +7,7 @@ import os
 import platform
 import tempfile
 import time
+import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -366,6 +367,7 @@ class StemSeparator:
     ) -> list[str]:
         """Separate with progressively lower-memory retries after OOM."""
         while True:
+            engine = None
             try:
                 started = time.monotonic()
                 engine = self._get_separator()
@@ -407,6 +409,9 @@ class StemSeparator:
                     )
                 else:
                     self._engine = None
+                    engine = None
+                    traceback.clear_frames(exc.__traceback__)
+                    del exc
                     if self._device_manager is not None:
                         self._device_manager.empty_cache()
                     else:
@@ -423,6 +428,9 @@ class StemSeparator:
                     self._chunk_duration_s or "off",
                 )
                 self._engine = None
+                engine = None
+                traceback.clear_frames(exc.__traceback__)
+                del exc
                 if self._device_manager is not None:
                     self._device_manager.empty_cache()
                 else:
@@ -605,13 +613,13 @@ class StemSeparator:
 
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
             self._tmp_dir = None
-        loaded_model = self._engine
+        had_loaded_model = self._engine is not None
         device_manager = self._device_manager
         self._engine = None
         self._device_manager = None
         if device_manager is not None:
             device_manager.empty_cache()
-        elif loaded_model is not None:
+        elif had_loaded_model:
             gc.collect()
 
     def __enter__(self) -> "StemSeparator":
