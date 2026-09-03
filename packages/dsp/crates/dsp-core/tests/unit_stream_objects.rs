@@ -3,6 +3,7 @@ use std::sync::Arc;
 use upmixer_dsp_core::stream::engine::{PreviewEngine, StemSource};
 use upmixer_dsp_core::stream::measure::MeasurementPass;
 use upmixer_dsp_core::stream::params::EngineParams;
+use upmixer_dsp_core::stream::scale::RouteScalePass;
 
 const N: usize = 1024;
 
@@ -140,6 +141,17 @@ fn object_gain_scales_the_rendered_speakers() {
             .fold(0.0_f64, |max, sample| max.max(sample.abs()))
     };
     assert!((peak(0.25) / peak(1.0) - 0.25).abs() < 1e-12);
+
+    let route_scale = |gain| {
+        let engine = engine_at(true, "native", false, 0.0, gain);
+        let mut pass = RouteScalePass::new(&engine);
+        loop {
+            if let Some(scales) = pass.advance(128) {
+                return scales[0];
+            }
+        }
+    };
+    assert!((route_scale(0.25) - route_scale(1.0)).abs() < 1e-12);
 }
 
 #[test]

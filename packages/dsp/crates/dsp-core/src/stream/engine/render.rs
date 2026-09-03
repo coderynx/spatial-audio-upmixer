@@ -7,6 +7,7 @@
 //! exists, which is what lets both stages be the offline algorithm rather
 //! than a causal approximation of one.
 
+use super::mix::{assemble_stem_into, StemAssemblyPolicy};
 use super::{PreviewEngine, METER_WINDOW_FRAMES};
 use crate::mastering::clip::ClipCurve;
 use crate::spatial::downmix::{apply_stereo_downmix_lock, DownmixRole};
@@ -86,29 +87,16 @@ impl PreviewEngine {
             if !self.params.spatial_downmix_lock
                 || self.authored_channels > self.params.speakers.len()
             {
-                for i in 0..count {
-                    let gain = smoother.tick(target_gain);
-                    if let Some(objects) = &mix.objects {
-                        for object in objects {
-                            bed[object.authored_channel][i] += shaped[object.signal][i] * gain;
-                        }
-                    }
-                    if mix.lfe_weight != 0.0 {
-                        lfe_sum[i] +=
-                            shaped[shape_index(SendShape::Mono)][i] * mix.lfe_weight * gain;
-                    }
-                    for (channel, signal, weight) in &mix.regular {
-                        bed[*channel][i] += shaped[*signal][i]
-                            * weight
-                            * self.params.speakers[*channel].group_gain
-                            * gain;
-                    }
-                    if let Some(feeds) = ambient {
-                        for (channel, slot, weight) in feeds {
-                            bed[*channel][i] += shaped[*slot][i] * weight * gain;
-                        }
-                    }
-                }
+                assemble_stem_into(
+                    mix,
+                    route,
+                    &self.params.speakers,
+                    count,
+                    StemAssemblyPolicy::Render,
+                    &mut bed,
+                    Some(&mut lfe_sum),
+                    || smoother.tick(target_gain),
+                );
             } else {
                 let mut routed = vec![vec![0.0; count]; bed.len()];
                 let mut input_left = vec![0.0; count];
@@ -323,8 +311,7 @@ impl PreviewEngine {
             || self.params.output_mode == OutputMode::Native
             || self.authored_channels > self.params.speakers.len();
         let source_gain = if apply_source_gain
-            && (self.params.master.output_gain != 1.0
-                || !self.master_gain.is_settled(1.0))
+            && (self.params.master.output_gain != 1.0 || !self.master_gain.is_settled(1.0))
         {
             Some(
                 (0..end - start)

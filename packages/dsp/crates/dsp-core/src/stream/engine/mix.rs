@@ -1,6 +1,6 @@
 use crate::spatial::panner::{PannerLayout, StemPlacement};
-use crate::stream::params::{EngineParams, ObjectMode, SendShape, StemParams};
-use crate::stream::routing::{shape_index, AMBIENT_HEIGHT, AMBIENT_SURROUND};
+use crate::stream::params::{EngineParams, ObjectMode, SendShape, SpeakerParams, StemParams};
+use crate::stream::routing::{shape_index, StemRouteState, AMBIENT_HEIGHT, AMBIENT_SURROUND};
 
 use super::PreviewEngine;
 
@@ -20,6 +20,58 @@ pub(crate) struct ObjectMixRoute {
     pub signal: usize,
     pub speakers: Vec<(usize, f64)>,
     pub gain: f64,
+}
+
+/// Playback keeps authored objects in their authored channels; normalization
+/// projects them onto speakers using panning gains. Object metadata gain is
+/// applied later by the speaker renderer, outside this per-stem assembly.
+#[derive(Clone, Copy)]
+pub(crate) enum StemAssemblyPolicy {
+    Render,
+    Normalization,
+}
+
+/// Add one already-routed stem to a caller-owned bed. LFE remains outside this
+/// module because `LfeBus` owns its stateful contribution at bed level.
+pub(crate) fn assemble_stem_into(
+    mix: &StemMixRoute,
+    route: &StemRouteState,
+    speakers: &[SpeakerParams],
+    count: usize,
+    policy: StemAssemblyPolicy,
+    bed: &mut [Vec<f64>],
+    mut lfe_sum: Option<&mut [f64]>,
+    mut gain_at: impl FnMut() -> f64,
+) {
+    for i in 0..count {
+        let gain = gain_at();
+        if let Some(objects) = &mix.objects {
+            for object in objects {
+                let sample = route.signal(object.signal)[i] * gain;
+                match policy {
+                    StemAssemblyPolicy::Render => {
+                        bed[object.authored_channel][i] += sample;
+                    }
+                    StemAssemblyPolicy::Normalization => {
+                        for &(channel, weight) in &object.speakers {
+                            bed[channel][i] += sample * weight;
+                        }
+                    }
+                }
+            }
+        } else {
+            for &(channel, signal, weight) in &mix.regular {
+                bed[channel][i] +=
+                    route.signal(signal)[i] * weight * speakers[channel].group_gain * gain;
+            }
+        }
+        for &(channel, signal, weight) in &mix.ambient {
+            bed[channel][i] += route.signal(signal)[i] * weight * gain;
+        }
+        if let Some(lfe_sum) = lfe_sum.as_deref_mut() {
+            lfe_sum[i] += route.signal(shape_index(SendShape::Mono))[i] * mix.lfe_weight * gain;
+        }
+    }
 }
 
 pub(crate) fn build_stem_mix_routes(
@@ -165,34 +217,25 @@ fn ambient_feeds(params: &EngineParams, stem: &StemParams) -> Vec<(usize, usize,
 }
 
 impl PreviewEngine {
-    pub(crate) fn mixed_stem_speakers(&self, stem: usize, count: usize) -> Vec<Vec<f64>> {
-        let mut speakers = vec![vec![0.0; count]; self.params.speakers.len()];
+    pub(crate) fn assemble_stem_for_normalization_into(
+        &self,
+        stem: usize,
+        count: usize,
+        speakers: &mut [Vec<f64>],
+    ) {
         let Some(mix) = self.stem_mix_routes.get(stem) else {
-            return speakers;
+            return;
         };
         let route = &self.routes[stem];
-        if let Some(objects) = &mix.objects {
-            for object in objects {
-                let signal = route.signal(object.signal);
-                for &(channel, weight) in &object.speakers {
-                    for (output, sample) in speakers[channel].iter_mut().zip(signal) {
-                        *output += weight * sample;
-                    }
-                }
-            }
-        } else {
-            for &(channel, signal, weight) in &mix.regular {
-                let gain = weight * self.params.speakers[channel].group_gain;
-                for (output, sample) in speakers[channel].iter_mut().zip(route.signal(signal)) {
-                    *output += gain * sample;
-                }
-            }
-        }
-        for &(channel, signal, gain) in &mix.ambient {
-            for (output, sample) in speakers[channel].iter_mut().zip(route.signal(signal)) {
-                *output += gain * sample;
-            }
-        }
-        speakers
+        assemble_stem_into(
+            mix,
+            route,
+            &self.params.speakers,
+            count,
+            StemAssemblyPolicy::Normalization,
+            speakers,
+            None,
+            || 1.0,
+        );
     }
 }
