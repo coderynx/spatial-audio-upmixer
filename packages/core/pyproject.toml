@@ -47,6 +47,11 @@ separation-gpu = [
     # --index-url), then this extra to pull in the rest.
     "upmixer[separation]",
 ]
+separation-mlx = [
+    "upmixer[separation]",
+    "mlx>=0.31",
+    "mlx-spectro>=0.7",
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]

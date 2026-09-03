@@ -171,7 +171,7 @@ class StemUpmixPipeline:
                 pitch_shift=cfg.stem_pitch_shift,
             )
             cache_size = cfg.stem_model_cache_size
-            if cache_size is None and separator.backend == "cpu":
+            if cache_size is None and separator.backend in {"cpu", "mlx"}:
                 cache_size = 1
             while cache_size is not None and len(self._separators) >= cache_size:
                 old_model = next(iter(self._separators))

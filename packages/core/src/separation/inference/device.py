@@ -4,7 +4,8 @@ Backend detection (which accelerator, if any, is available) stays in
 ``separator.py`` (``_detect_backend``) since it also drives batch/segment
 auto-tuning there; this module only turns that backend string into a torch
 device and owns the actions specific to holding one (cache clearing, CPU
-thread bounds).
+thread bounds). The MLX backend uses a CPU Torch-facing adapter for the shared
+engine, so its ``torch_device`` intentionally remains CPU.
 """
 from __future__ import annotations
 
@@ -17,12 +18,12 @@ _TORCH_DEVICE_NAMES = {"cuda": "cuda", "mps": "mps"}
 
 
 class DeviceManager:
-    """Owns the torch device for one backend and its cleanup/tuning actions."""
+    """Owns the Torch device for one backend and its cleanup/tuning actions."""
 
     def __init__(self, backend: str) -> None:
         self.backend = backend
         self.torch_device = torch.device(_TORCH_DEVICE_NAMES.get(backend, "cpu"))
-        if backend in ("cpu", "mps", "cuda"):
+        if backend in ("cpu", "mps", "cuda", "mlx"):
             self._apply_thread_cap()
 
     def _apply_thread_cap(self) -> None:
@@ -46,3 +47,7 @@ class DeviceManager:
             torch.cuda.empty_cache()
         elif self.backend == "mps":
             torch.mps.empty_cache()
+        elif self.backend == "mlx":
+            import mlx.core as mx
+
+            mx.clear_cache()

@@ -1,7 +1,7 @@
 """Backend-aware, full-precision stem separator optimization tests."""
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,7 @@ from upmixer.separation.separator import (
 
 def test_cpu_batch_is_one():
     assert _automatic_batch_size("cpu") == 1
+    assert _automatic_batch_size("mlx") == 1
 
 
 def test_apple_accelerator_batch_is_two():
@@ -51,6 +52,7 @@ def test_scnet_mps_uses_cpu_tuning_and_device(tmp_path):
     )
     with (
         patch("upmixer.separation.separator._detect_backend", return_value="mps"),
+        patch("upmixer.separation.separator._mlx_scnet_available", return_value=False),
         patch("upmixer.separation.separator._system_memory_gib", return_value=3.5),
         patch("upmixer.separation.inference.loader.load_model", side_effect=fake_load_model),
         patch("upmixer.separation.inference.registry.get_model_spec", return_value=fake_spec),
@@ -76,6 +78,88 @@ def test_scnet_mps_uses_cpu_tuning_and_device(tmp_path):
     assert other._segment_size is None
     assert other._chunk_duration_s is None
     other.close()
+
+
+def test_scnet_selects_mlx_when_available():
+    with (
+        patch("upmixer.separation.separator._detect_backend", return_value="mps"),
+        patch("upmixer.separation.separator._mlx_scnet_available", return_value=True),
+    ):
+        separator = StemSeparator(model="model_scnet_ep_36_sdr_10.0891.ckpt")
+
+    assert separator.backend == "mlx"
+    assert separator._batch_size == 1
+    separator.close()
+
+
+def test_non_scnet_keeps_torch_backend_when_mlx_available():
+    with (
+        patch("upmixer.separation.separator._detect_backend", return_value="mps"),
+        patch("upmixer.separation.separator._mlx_scnet_available") as available,
+    ):
+        separator = StemSeparator(model="BS-Roformer-SW.ckpt")
+
+    assert separator.backend == "mps"
+    available.assert_not_called()
+    separator.close()
+
+
+def test_mlx_get_separator_uses_mlx_loader(tmp_path):
+    pytest.importorskip("mlx.core")
+    pytest.importorskip("mlx_spectro")
+    torch = pytest.importorskip("torch")
+
+    fake_model = object()
+    fake_config = object()
+    fake_spec = ModelSpec(
+        filename="model_scnet_ep_36_sdr_10.0891.ckpt",
+        arch="scnet",
+        config_name="unused",
+        weights_url="",
+    )
+    captured = {}
+
+    def fake_load_model(model_filename, model_dir):
+        captured.update(model=model_filename, model_dir=model_dir)
+        return fake_model, fake_config
+
+    with (
+        patch("upmixer.separation.separator._detect_backend", return_value="mps"),
+        patch("upmixer.separation.separator._mlx_scnet_available", return_value=True),
+        patch(
+            "upmixer.separation.inference.scnet_mlx.load_model",
+            side_effect=fake_load_model,
+        ),
+        patch(
+            "upmixer.separation.inference.registry.get_model_spec",
+            return_value=fake_spec,
+        ),
+    ):
+        separator = StemSeparator(
+            model=fake_spec.filename,
+            model_dir=str(tmp_path),
+        )
+        engine = separator._get_separator()
+        device = separator._device_manager
+        separator.close()
+
+    assert captured == {"model": fake_spec.filename, "model_dir": str(tmp_path)}
+    assert engine._model is fake_model
+    assert engine._config is fake_config
+    assert engine._device.backend == "mlx"
+    assert device.torch_device == torch.device("cpu")
+
+
+def test_close_clears_loaded_model_cache_once():
+    separator = StemSeparator(model="model.ckpt")
+    manager = MagicMock()
+    separator._device_manager = manager
+    separator._engine = object()
+
+    separator.close()
+    separator.close()
+
+    manager.empty_cache.assert_called_once_with()
 
 
 def test_only_actual_oom_is_retryable():

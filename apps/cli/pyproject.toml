@@ -29,6 +29,9 @@ separation-cpu = [
 separation-gpu = [
     "upmixer[separation-gpu]",
 ]
+separation-mlx = [
+    "upmixer[separation-mlx]",
+]
 
 [project.scripts]
 upmixer = "upmixer_cli.__main__:main"

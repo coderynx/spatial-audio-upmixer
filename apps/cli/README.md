@@ -10,6 +10,7 @@ python3 -m pip install upmixer-cli
 python3 -m pip install "upmixer-cli[manifest]"        # YAML manifests
 python3 -m pip install "upmixer-cli[separation-cpu]"  # CPU/MPS stem separation
 python3 -m pip install "upmixer-cli[separation-gpu]"  # CUDA stem separation
+python3 -m pip install "upmixer-cli[separation-mlx]"  # Apple silicon SCNet separation
 ```
 
 For local development against this workspace, install from the repository root with `uv sync`.

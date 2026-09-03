@@ -31,8 +31,8 @@ class SeparationEngine:
     """Runs one loaded model's demix over one audio file.
 
     Args:
-        model: Loaded architecture, already on ``device.torch_device`` and
-            in eval mode (see ``loader.load_model``).
+        model: Loaded Torch architecture or Torch-facing MLX adapter, already
+            on ``device.torch_device`` and in eval mode.
         config: The model's parsed :class:`ModelConfig`.
         arch: Architecture family — selects the Roformer, TFC-TDF, or SCNet demix loop.
         model_filename: Original checkpoint filename, used to build output

@@ -11,6 +11,7 @@ source code only; checkpoint licensing is not asserted here.
 from __future__ import annotations
 
 import re
+import threading
 from typing import Any
 
 import numpy as np
@@ -24,6 +25,8 @@ _CONV_MODULE_INDEX = {
     "6": "conv3",
 }
 _CONV1D_KEYS = frozenset(("conv1", "conv2", "conv3"))
+# ponytail: one global MLX lock; use per-model locks if concurrent jobs matter.
+_SCNET_MLX_LOCK = threading.Lock()
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -215,8 +218,9 @@ class SCNetMLXAdapter:
         if batch.device.type != "cpu":
             raise ValueError("SCNet MLX adapter expects a CPU torch.Tensor")
         audio = batch.detach().to(dtype=torch.float32).contiguous().numpy()
-        output = self._model(mx.array(np.ascontiguousarray(audio, dtype=np.float32)))
-        mx.eval(output)
+        with _SCNET_MLX_LOCK:
+            output = self._model(mx.array(np.ascontiguousarray(audio, dtype=np.float32)))
+            mx.eval(output)
         return torch.from_numpy(np.array(output, dtype=np.float32, copy=True))
 
     def eval(self):

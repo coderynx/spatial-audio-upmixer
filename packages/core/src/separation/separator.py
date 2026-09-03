@@ -1,9 +1,10 @@
-"""In-core PyTorch stem separation engine (BS-RoFormer / Mel-Band RoFormer / TFC-TDF)."""
+"""In-core stem separation engine (Torch models plus an MLX SCNet adapter)."""
 from __future__ import annotations
 
 import gc
 import logging
 import os
+import platform
 import tempfile
 import time
 from pathlib import Path
@@ -50,7 +51,7 @@ def _detect_backend() -> str:
 
 
 def _automatic_batch_size(backend: str) -> int:
-    """Choose safe full-precision MDXC inference batching."""
+    """Choose safe full-precision inference batching for each backend."""
     if backend == "cuda":
         try:
             import torch
@@ -66,6 +67,18 @@ def _automatic_batch_size(backend: str) -> int:
     if backend in {"mps", "coreml"}:
         return 2
     return 1
+
+
+def _mlx_scnet_available() -> bool:
+    """Return whether the MLX SCNet backend is usable on this host."""
+    if platform.system().lower() != "darwin" or platform.machine().lower() != "arm64":
+        return False
+    try:
+        import mlx.core  # noqa: F401
+        import mlx_spectro  # noqa: F401
+    except (ImportError, RuntimeError):
+        return False
+    return True
 
 
 def _system_memory_gib() -> float | None:
@@ -178,7 +191,7 @@ MODEL_STEM_OVERRIDES: dict[str, dict[str, str]] = {
 
 
 class StemSeparator:
-    """Separates an audio file into instrument stems using an in-core torch engine.
+    """Separates an audio file into instrument stems using the in-core engine.
 
     Separation is file-based (stems are written to a temp directory as they
     are produced, then loaded back as numpy arrays) to match the disk-backed
@@ -245,12 +258,16 @@ class StemSeparator:
         )
         self._sample_rate = sample_rate
         detected_backend = _detect_backend()
-        if detected_backend == "mps" and model == _SCNET_MPS_CPU_MODEL:
-            _log.warning(
-                "SCNet XL IHF is not reliable on MPS; using CPU backend for %s",
-                model,
-            )
-            detected_backend = "cpu"
+        if model == _SCNET_MPS_CPU_MODEL:
+            if _mlx_scnet_available():
+                _log.info("MLX backend available for SCNet model %s", model)
+                detected_backend = "mlx"
+            elif detected_backend == "mps":
+                _log.warning(
+                    "SCNet XL IHF is not reliable on MPS; using CPU backend for %s",
+                    model,
+                )
+                detected_backend = "cpu"
         self._backend = detected_backend
         remembered = _SUCCESSFUL_BATCHES.get((model, self._backend))
         self._batch_size = (
@@ -277,7 +294,7 @@ class StemSeparator:
 
     @property
     def backend(self) -> str:
-        """Inference backend selected for this model (cuda/mps/cpu)."""
+        """Inference backend selected for this model (cuda/mps/mlx/cpu)."""
         return self._backend
 
     def _ensure_tmp_dir(self) -> str:
@@ -292,7 +309,7 @@ class StemSeparator:
         Always uses the persistent _tmp_dir so the output_dir never changes
         between calls — avoids stale path issues after temp-dir cleanup.
 
-        Torch and the rest of the inference stack are imported lazily here
+        Torch, MLX, and the rest of the inference stack are imported lazily here
         (not at module scope) so that importing this module — and building
         ``StemUpmixPipeline`` or probing ``.backend`` — does not require the
         optional ``separation`` extra to be installed.
@@ -301,16 +318,22 @@ class StemSeparator:
             _check_import()
             from .inference.device import DeviceManager
             from .inference.engine import SeparationEngine
-            from .inference.loader import load_model
             from .inference.registry import get_model_spec
 
             if self._device_manager is None:
                 self._device_manager = DeviceManager(self._backend)
 
             spec = get_model_spec(self._model)
-            model, config = load_model(
-                self._model, self._device_manager.torch_device, self._model_dir
-            )
+            if self._backend == "mlx":
+                from .inference.scnet_mlx import load_model
+
+                model, config = load_model(self._model, self._model_dir)
+            else:
+                from .inference.loader import load_model
+
+                model, config = load_model(
+                    self._model, self._device_manager.torch_device, self._model_dir
+                )
 
             _log.info(
                 "  Separator backend=%s batch=%d segment=%s chunk=%s precision=float32",
@@ -579,7 +602,10 @@ class StemSeparator:
         had_loaded_model = self._engine is not None
         self._engine = None
         if had_loaded_model:
-            gc.collect()
+            if self._device_manager is not None:
+                self._device_manager.empty_cache()
+            else:
+                gc.collect()
 
     def __enter__(self) -> "StemSeparator":
         return self

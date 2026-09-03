@@ -10,6 +10,7 @@ API consumed by [`apps/cli`](../../apps/cli) and [`apps/api`](../../apps/api).
 python3 -m pip install upmixer
 python3 -m pip install "upmixer[separation-cpu]"   # CPU/MPS stem separation
 python3 -m pip install "upmixer[separation-gpu]"   # CUDA stem separation
+python3 -m pip install "upmixer[separation-mlx]"  # Apple silicon SCNet separation
 python3 -m pip install "upmixer[manifest]"         # YAML manifest support
 ```
 

@@ -100,6 +100,25 @@ class TestSeparatorReuse:
         assert list(pipeline._separators) == ["second.ckpt"]
         pipeline.close()
 
+    def test_mlx_model_releases_mps_model_by_default(self):
+        from upmixer.separation.stem_pipeline import StemUpmixPipeline
+
+        scnet = "model_scnet_ep_36_sdr_10.0891.ckpt"
+        with (
+            patch(
+                "upmixer.separation.separator._detect_backend", return_value="mps",
+            ),
+            patch(
+                "upmixer.separation.separator._mlx_scnet_available", return_value=True,
+            ),
+        ):
+            pipeline = StemUpmixPipeline(UpmixConfig())
+            pipeline._get_or_create_separator("BS-Roformer-SW.ckpt", 48000)
+            pipeline._get_or_create_separator(scnet, 48000)
+
+        assert list(pipeline._separators) == [scnet]
+        pipeline.close()
+
     def test_explicit_model_cache_size_retains_multiple_cpu_models(self):
         from upmixer.separation.stem_pipeline import StemUpmixPipeline
 
