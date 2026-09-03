@@ -9,6 +9,7 @@ from typing import Any
 from upmixer.codecs import DEFAULT_CODEC, codec_extension
 from upmixer.manifest import parse_manifest, validate_manifest
 from upmixer_web.shared.models import Job
+from upmixer_web.shared.project_snapshot import ProjectExportSnapshot
 
 # Import-time side effect: registers manifest block keys. MasteringChain only
 # imports these lazily inside process(), so without this validate_manifest
@@ -61,17 +62,12 @@ def materialize_manifest(
 ) -> dict[str, Any]:
     """Inject server-owned paths into a stored manifest.
 
-    A project export's ``job.project_snapshot["tracks"]`` (keyed by asset id
-    — see ``features.projects.service.project_export_job``) carries plain
-    per-track data baked in at export time: `stem_input_dir` points at the
-    project's own already-separated stems instead of the shared stem cache,
-    and `manifest_overrides` is deep-merged over this asset's blocks. An
-    ordinary (non-project) job has no snapshot and uses the shared
-    `stem_cache_dir` as before.
+    A Project export snapshot selects its prepared stem directory and
+    manifest overrides by asset id. Ordinary jobs use the shared stem cache.
     """
     data = copy.deepcopy(job.manifest)
     root_codec = (data.get("format") or {}).get("codec", DEFAULT_CODEC)
-    track_snapshots = (job.project_snapshot or {}).get("tracks", {})
+    snapshot = ProjectExportSnapshot.from_data(job.project_snapshot)
     assets = []
     # Read each source through the JobTrack's own asset FK rather than a
     # positional zip against import_batch.assets — a project export's tracks
@@ -80,10 +76,10 @@ def materialize_manifest(
     for track, input_path in zip(job.tracks, input_paths, strict=True):
         asset = track.asset
         asset_data: dict[str, Any] = {"input": str(input_path)}
-        snapshot = track_snapshots.get(track.asset_id)
-        if snapshot:
-            asset_data["stem_input_dir"] = snapshot["stem_input_dir"]
-            for block, value in snapshot.get("manifest_overrides", {}).items():
+        track_snapshot = snapshot.track_for(track.asset_id)
+        if track_snapshot:
+            asset_data["stem_input_dir"] = track_snapshot.stem_input_dir
+            for block, value in track_snapshot.manifest_overrides.items():
                 if isinstance(value, dict) and value:
                     asset_data[block] = copy.deepcopy(value)
         else:

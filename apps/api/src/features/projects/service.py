@@ -30,6 +30,7 @@ from upmixer_web.features.projects.deletion import mark_project_deleting as _mar
 from upmixer_web.features.projects.routing import merge_scene
 from upmixer_web.features.projects.storage import PREVIEW_QUALITY_LEVELS, ProjectStemStorage
 from upmixer_web.shared.models import ImportBatch, Job, MasteringReference, Project, ProjectTrack
+from upmixer_web.shared.project_snapshot import ProjectExportSnapshot, ProjectExportTrack
 
 
 PROJECT_LOAD_OPTIONS = (
@@ -322,7 +323,7 @@ def project_export_job(
         "measure_binaural", False
     )
 
-    tracks_snapshot: dict[str, dict[str, Any]] = {}
+    snapshot_tracks: dict[str, ProjectExportTrack] = {}
     for track in tracks:
         overrides = copy.deepcopy(track.layout_overrides.get(layout, {}))
         scene = merge_scene(project.scene, track.scene_overrides)
@@ -331,10 +332,9 @@ def project_export_job(
             mixing_override = dict(overrides.get("mixing", {}))
             mixing_override.setdefault("stem_routing", routing)
             overrides["mixing"] = mixing_override
-        tracks_snapshot[track.asset_id] = {
-            "manifest_overrides": overrides,
-            "stem_input_dir": str(project_stems.stem_dir(project.id, track.id)),
-        }
+        snapshot_tracks[track.asset_id] = ProjectExportTrack(
+            overrides, str(project_stems.stem_dir(project.id, track.id))
+        )
 
     # A project's tracks may not all share project.import_batch (or it may be
     # None, for an empty-created project) once assets are added incrementally
@@ -348,7 +348,7 @@ def project_export_job(
     )
     job.project_id = project.id
     job.project_revision = project.revision
-    job.project_snapshot = {"tracks": tracks_snapshot}
+    job.project_snapshot = ProjectExportSnapshot(snapshot_tracks).to_data()
     session.commit()
     return job
 
