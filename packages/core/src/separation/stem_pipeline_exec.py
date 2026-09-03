@@ -23,6 +23,7 @@ from upmixer.separation.stem_plan import (
     SeparationTask,
 )
 from upmixer.separation.stem_resume import ResumeStore
+from upmixer.separation.stem_workspace import StemWorkspace
 
 _log = logging.getLogger("upmixer")
 
@@ -181,63 +182,29 @@ def execute_plan(
 
     Returns a dict of canonical_name → ndarray for all requested stems.
     """
-    all_loaded: dict[str, np.ndarray] = {}
-    all_disk: dict[str, str] = {}
-
-    later_inputs: frozenset[str] = frozenset(
-        t.input_source for t in plan.tasks if t.input_source != "original"
-    )
-
     n_tasks = len(plan.tasks)
-    resume = ResumeStore.open(
-        cfg.stem_cache_dir if cfg is not None else None, resume_key, sep_sr
+    workspace = StemWorkspace.open(
+        plan, cfg.stem_cache_dir if cfg is not None else None, resume_key, sep_sr
     )
-    completed = 0
-    if resume is not None:
-        restored = resume.restore()
-        if restored is not None:
-            completed, all_loaded, all_disk = restored
+    if workspace.completed:
             _log.info(
                 "  Resuming after stage %d/%d — %s already separated",
-                completed,
+                workspace.completed,
                 n_tasks,
-                sorted(all_loaded.keys() | all_disk.keys()) or "(nothing)",
+                sorted(workspace.loaded.keys() | workspace.on_disk.keys()) or "(nothing)",
             )
 
     try:
         _run_stages(
             get_separator, plan, sep_path, sep_sr, stage_callback, cfg,
-            all_loaded, all_disk, later_inputs, completed, resume,
+            workspace,
         )
     except Exception:
-        # A failed logical stage must not leave newly-created intermediates
-        # behind. ResumeStore has already copied completed-stage files when
-        # configured; those checkpoint paths are deliberately retained.
-        checkpoint_root = (
-            os.path.abspath(str(resume.root)) if resume is not None else None
-        )
-        for path in all_disk.values():
-            absolute = os.path.abspath(path)
-            if checkpoint_root is None or not absolute.startswith(
-                checkpoint_root + os.sep
-            ):
-                _discard(path)
+        workspace.fail()
         raise
-
-    for name, path in all_disk.items():
-        if not name.startswith("_") and name not in all_loaded:
-            audio, _ = sf.read(path, dtype="float32", always_2d=True)
-            if audio.shape[1] == 1:
-                audio = np.concatenate([audio, audio], axis=1)
-            all_loaded[name] = audio
-
-    for path in all_disk.values():
-        _discard(path)
-    if resume is not None:
-        resume.clear()
-
-    _log.info("  All stages complete. Produced stems: %s", sorted(all_loaded.keys()))
-    return all_loaded
+    stems = workspace.finish()
+    _log.info("  All stages complete. Produced stems: %s", sorted(stems))
+    return stems
 
 
 def _run_stages(
@@ -247,11 +214,7 @@ def _run_stages(
     sep_sr: int,
     stage_callback: StageCallback | None,
     cfg: UpmixConfig | None,
-    all_loaded: dict[str, np.ndarray],
-    all_disk: dict[str, str],
-    later_inputs: frozenset[str],
-    completed: int,
-    resume: "ResumeStore | None",
+    workspace: StemWorkspace,
 ) -> None:
     """Run the plan's stages from ``completed`` onward, mutating both dicts.
 
@@ -261,7 +224,7 @@ def _run_stages(
     """
     n_tasks = len(plan.tasks)
     for stage_idx, task in enumerate(plan.tasks):
-        if stage_idx < completed:
+        if stage_idx < workspace.completed:
             _log.info(
                 "  [stage %d/%d] model=%s — restored from checkpoint",
                 stage_idx + 1, n_tasks, task.model,
@@ -270,12 +233,10 @@ def _run_stages(
         try:
             _run_one_stage(
                 get_separator, task, stage_idx, n_tasks, sep_path,
-                sep_sr, stage_callback, cfg, all_loaded, all_disk,
-                later_inputs,
+                sep_sr, stage_callback, cfg, workspace,
             )
         except Exception:
-            if resume is not None:
-                resume.checkpoint(stage_idx, all_loaded, all_disk)
+            workspace.checkpoint(stage_idx)
             raise
 
 
@@ -436,9 +397,7 @@ def _run_one_stage(
     sep_sr: int,
     stage_callback: StageCallback | None,
     cfg: UpmixConfig | None,
-    all_loaded: dict[str, np.ndarray],
-    all_disk: dict[str, str],
-    later_inputs: frozenset[str],
+    workspace: StemWorkspace,
 ) -> None:
     """Run one model stage, merging its outputs into the run's two dicts."""
     if stage_callback is not None:
@@ -449,28 +408,11 @@ def _run_one_stage(
         n_tasks,
         task.model,
         task.input_source,
-        sorted(task.output_stems & later_inputs) or "(none)",
+        sorted(workspace.keep(task.output_stems)) or "(none)",
     )
 
-    if task.input_source != "original" and task.input_source not in all_disk:
-        available = sorted(all_disk.keys()) or ["(none)"]
-        raise RuntimeError(
-            f"Stage {stage_idx + 1} needs intermediate stem "
-            f"'{task.input_source}' on disk, but it was not produced by "
-            f"any previous stage.\n"
-            f"Available on-disk stems: {available}\n"
-            f"Likely cause: the model that should produce "
-            f"'{task.input_source}' outputs a different filename tag — "
-            f"run with --verbose (-v) to see raw output filenames and "
-            f"update STEM_NAME_MAP in separator.py if needed."
-        )
-
-    input_path_for_task = (
-        sep_path if task.input_source == "original"
-        else all_disk[task.input_source]
-    )
-
-    keep_on_disk = task.output_stems & later_inputs
+    input_path_for_task = workspace.input_path(task.input_source, sep_path, stage_idx + 1)
+    keep_on_disk = workspace.keep(task.output_stems)
 
     if task.ensemble_models:
         loaded, on_disk = _run_ensemble_stage(
@@ -501,25 +443,20 @@ def _run_one_stage(
         cleanup_parent = sep.take_last_parent() if retain_parent else None
 
     if not task.ensemble_models:
-        _stabilize_on_disk(on_disk)
+        workspace.stabilize(on_disk, temporary_wav_path)
 
-    if _remasks(cfg, task.model) and task.input_source in all_disk:
+    if _remasks(cfg, task.model) and task.input_source in workspace.on_disk:
         _log.info(
             "  [stage %d/%d] sharing the remainder of parent %s",
             stage_idx + 1,
             n_tasks,
             task.input_source,
         )
-        _remask_stage(
-            loaded,
-            on_disk,
-            all_disk[task.input_source],
-            task.output_stems,
-        )
+        workspace.remask(loaded, on_disk, workspace.on_disk[task.input_source], task.output_stems)
 
     if cleanup_parent is not None:
         _log.info("  [stage %d/%d] applying DSP stem cleanup", stage_idx + 1, n_tasks)
-        _cleanup_deux_stage(loaded, on_disk, cleanup_parent, sep_sr)
+        workspace.cleanup_deux(loaded, on_disk, cleanup_parent, sep_sr)
 
     _log.info(
         "  [stage %d/%d] produced: loaded=%s  on_disk=%s",
@@ -529,17 +466,7 @@ def _run_one_stage(
         sorted(on_disk.keys()) or "(none)",
     )
 
-    for name, audio in loaded.items():
-        if not name.startswith("_"):
-            all_loaded[name] = audio
-
-    # A later stage may re-emit a stem an earlier one left on disk.
-    for name in loaded.keys() | on_disk.keys():
-        superseded = all_disk.pop(name, None)
-        if superseded is not None and superseded != on_disk.get(name):
-            _discard(superseded)
-
-    all_disk.update(on_disk)
+    workspace.commit(loaded, on_disk)
 
 
 def execute_plan_with_silence_skip(

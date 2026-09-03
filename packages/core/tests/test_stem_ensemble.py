@@ -215,7 +215,7 @@ def test_primary_remask_runs_once_after_fusion(tmp_path, monkeypatch):
         return children
 
     monkeypatch.setattr(
-        "upmixer.separation.stem_pipeline_exec.share_parent_residual", remask
+        "upmixer.separation.stem_workspace.share_parent_residual", remask
     )
     plan = resolve_separation_plan(["Bass"], True)
     stems = execute_plan(
