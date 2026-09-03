@@ -5,10 +5,9 @@ from __future__ import annotations
 import numpy as np
 from scipy.signal import freqz
 
-import upmixer.mastering.match_reference  # noqa: F401 — triggers register_block_keys for mastering.match_reference
 from upmixer.config import UpmixConfig
 from upmixer.formats import ChannelLabel, SURROUND_51
-from upmixer.manifest import _BLOCK_REGISTRY, _FIELD_MAP, apply_asset_job, AssetJob, parse_manifest
+from upmixer.manifest import MANIFEST_CATALOG, _FIELD_MAP, apply_asset_job, AssetJob, parse_manifest
 from upmixer.mastering.eq import _apply_fir
 from upmixer.mastering.match_reference import (
     ReferenceMatchProcessor,
@@ -480,7 +479,7 @@ class TestConfigFields:
 
 class TestManifestMatchReferenceIntegration:
     def test_match_reference_in_registry(self):
-        assert "match_reference" in _BLOCK_REGISTRY.get("mastering", {})
+        assert "match_reference" in MANIFEST_CATALOG["mastering"]
 
     def test_flat_key_path_applies(self):
         job = AssetJob(input="x", output="y",

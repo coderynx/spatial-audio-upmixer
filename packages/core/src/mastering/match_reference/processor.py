@@ -45,9 +45,7 @@ from .spectrum import reference_integrated_loudness
 
 _log = logging.getLogger("upmixer")
 
-from upmixer.manifest import register_block_keys as _rbk
-_rbk("mastering", {
-    "match_reference": {
+MANIFEST_FIELDS = {
         "path":     ("config", "mastering_match_ref_path"),
         "strength": ("config", "mastering_match_ref_strength"),
         "spectrum": ("config", "mastering_match_ref_spectrum"),
@@ -56,9 +54,7 @@ _rbk("mastering", {
         "smooth_octaves": ("config", "mastering_match_ref_smooth_oct"),
         "low_hz":   ("config", "mastering_match_ref_low_hz"),
         "high_hz":  ("config", "mastering_match_ref_high_hz"),
-    },
-})
-del _rbk
+}
 
 _RMS_CLAMP_DB: float = 6.0
 _LOUDNESS_SILENCE_LKFS: float = -69.9

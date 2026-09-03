@@ -1,24 +1,16 @@
-"""Tests for upmixer.manifest — asset overrides, job application, registries."""
+"""Tests for upmixer.manifest — asset overrides and job application."""
 from __future__ import annotations
 
 import pytest
 
-import upmixer.mastering.bass  # noqa: F401
-import upmixer.mastering.chain  # noqa: F401
-import upmixer.mastering.compressor  # noqa: F401
-# Import domain modules so their register_block_keys calls execute before tests.
-import upmixer.mastering.eq  # noqa: F401
-import upmixer.mastering.match_reference  # noqa: F401
-import upmixer.separation.stem_router  # noqa: F401
 from upmixer.config import UpmixConfig
 from upmixer.manifest import (
-    _BLOCK_REGISTRY,
+    MANIFEST_CATALOG,
     _FIELD_MAP,
     AssetJob,
     ManifestError,
     apply_asset_job,
     list_manifest_keys,
-    migrate_manifest,
     parse_manifest,
     manifest_parameter_schema,
     validate_manifest,
@@ -368,37 +360,19 @@ class TestListManifestKeys:
         assert "mastering_eq_match_strength" not in _FIELD_MAP
 
 
-class TestBlockRegistry:
-    def test_core_blocks_registered(self):
+class TestManifestCatalog:
+    def test_core_blocks_declared(self):
         for block in ("engine", "format", "mixing", "processing"):
-            assert block in _BLOCK_REGISTRY
+            assert block in MANIFEST_CATALOG
 
-    def test_routing_registered_by_stem_router(self):
-        assert "routing" in _BLOCK_REGISTRY
-        assert "center_gain" in _BLOCK_REGISTRY["routing"]
+    def test_routing_is_declared(self):
+        assert "routing" in MANIFEST_CATALOG
+        assert "center_gain" in MANIFEST_CATALOG["routing"]
 
-    def test_mastering_registered_by_modules(self):
-        assert "mastering" in _BLOCK_REGISTRY
-        m = _BLOCK_REGISTRY["mastering"]
+    def test_mastering_is_declared(self):
+        m = MANIFEST_CATALOG["mastering"]
         for sub in ("eq", "compressor", "bass", "loudness", "match_reference"):
-            assert sub in m, f"mastering.{sub} not registered"
-
-    def test_register_block_adds_new_section(self):
-        from upmixer.manifest import register_block
-        register_block("_test_plugin", {
-            "enabled": ("config", "_test_enabled"),
-        })
-        assert "_test_plugin" in _BLOCK_REGISTRY
-        del _BLOCK_REGISTRY["_test_plugin"]  # clean up
-
-    def test_register_block_keys_extends_section(self):
-        from upmixer.manifest import register_block_keys
-        register_block_keys("_test_section2", {
-            "foo": ("config", "_test_foo"),
-        })
-        assert "_test_section2" in _BLOCK_REGISTRY
-        assert "foo" in _BLOCK_REGISTRY["_test_section2"]
-        del _BLOCK_REGISTRY["_test_section2"]  # clean up
+            assert sub in m, f"mastering.{sub} not declared"
 
 
 class TestValidateCodecDelivery:
@@ -440,62 +414,6 @@ class TestValidateCodecDelivery:
     def test_rejects_an_unknown_codec(self):
         with pytest.raises(ManifestError):
             validate_manifest(_minimal(format={"codec": "mp3"}))
-
-
-class TestMigrateFormatBlock:
-    def test_rewrites_the_legacy_wav_type_and_seeds_a_codec(self):
-        migrated = migrate_manifest({"format": {"type": "wav", "subtype": "PCM_24"}})
-        assert migrated["format"] == {
-            "type": "multichannel", "codec": "wav_pcm", "subtype": "PCM_24",
-        }
-
-    def test_migrates_per_asset_format_overrides(self):
-        migrated = migrate_manifest({
-            "assets": [{"input": "a.flac", "output": "a.wav", "format": {"type": "wav"}}],
-        })
-        assert migrated["assets"][0]["format"] == {"type": "multichannel", "codec": "wav_pcm"}
-
-    def test_leaves_an_explicit_codec_alone(self):
-        migrated = migrate_manifest({"format": {"type": "binaural", "codec": "flac"}})
-        assert migrated["format"]["codec"] == "flac"
-
-    def test_does_not_mutate_its_input(self):
-        original = {"format": {"type": "wav"}}
-        migrate_manifest(original)
-        assert original == {"format": {"type": "wav"}}
-
-    def test_a_migrated_legacy_manifest_validates_and_parses(self):
-        migrated = migrate_manifest(_minimal(format={"type": "wav"}))
-        validate_manifest(migrated)
-        _meta, jobs = parse_manifest(migrated)
-        config = UpmixConfig()
-        apply_asset_job(config, jobs[0])
-        assert config.output_type == "multichannel"
-        assert config.output_codec == "wav_pcm"
-
-    def test_removes_retired_cleanup_fields_from_root_and_assets(self):
-        retired = {
-            "stem_phase_fix": {"*": True},
-            "stem_phase_fix_low_hz": 500.0,
-            "stem_phase_fix_high_hz": 5000.0,
-            "stem_phase_fix_scale": 0.8,
-            "stem_phase_fix_reference_model": "old.ckpt",
-            "stem_debleed": {"Bass": True},
-            "stem_debleed_model": "old.ckpt",
-        }
-        migrated = migrate_manifest({
-            "engine": {"stem_bleed_reduction": True, **retired},
-            "assets": [{
-                "input": "in.wav",
-                "output": "out.wav",
-                "engine": {"stem_bleed_reduction": False, **retired},
-            }],
-        })
-
-        assert migrated["engine"] == {"stem_bleed_reduction": True}
-        assert migrated["assets"][0]["engine"] == {
-            "stem_bleed_reduction": False
-        }
 
 
 class TestValidateStereoDelivery:

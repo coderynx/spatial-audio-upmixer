@@ -110,8 +110,7 @@ from .limiter import LookAheadLimiter
 
 _log = logging.getLogger("upmixer")
 
-from upmixer.manifest import register_block_keys as _rbk
-_rbk("mastering", {
+MANIFEST_FIELDS = {
     "loudness": {
         "normalize":     ("config", "loudness_normalize"),
         "target_preset": ("config", "loudness_target_preset"),
@@ -121,8 +120,7 @@ _rbk("mastering", {
     "qc": {
         "measure_binaural": ("config", "qc_measure_binaural"),
     },
-})
-del _rbk
+}
 
 
 @dataclass

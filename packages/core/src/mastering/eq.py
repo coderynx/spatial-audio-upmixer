@@ -37,14 +37,10 @@ import upmixer_dsp
 
 _log = logging.getLogger("upmixer")
 
-from upmixer.manifest import register_block_keys as _rbk
-_rbk("mastering", {
-    "eq": {
+MANIFEST_FIELDS = {
         "profile":  ("config", "mastering_eq_profile"),
         "strength": ("config", "mastering_eq_strength"),
-    },
-})
-del _rbk
+}
 
 _PC_FIR_CACHE: dict[tuple[str, int, int], np.ndarray] = {}
 

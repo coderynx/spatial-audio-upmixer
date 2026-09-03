@@ -29,14 +29,10 @@ import upmixer_dsp
 
 _log = logging.getLogger("upmixer")
 
-from upmixer.manifest import register_block_keys as _rbk
-_rbk("mastering", {
-    "dynamic_eq": {
+MANIFEST_FIELDS = {
         "profile": ("config", "mastering_dyneq_profile"),
         "bands":   ("config", "mastering_dyneq_bands"),
-    },
-})
-del _rbk
+}
 
 BAND_FIELDS: tuple[str, ...] = (
     "freq_hz",

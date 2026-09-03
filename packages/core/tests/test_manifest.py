@@ -9,7 +9,6 @@ import pytest
 import upmixer.mastering.bass  # noqa: F401
 import upmixer.mastering.chain  # noqa: F401
 import upmixer.mastering.compressor  # noqa: F401
-# Import domain modules so their register_block_keys calls execute before tests.
 import upmixer.mastering.eq  # noqa: F401
 import upmixer.mastering.match_reference  # noqa: F401
 import upmixer.separation.stem_router  # noqa: F401

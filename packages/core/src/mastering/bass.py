@@ -64,9 +64,7 @@ import upmixer_dsp
 
 _log = logging.getLogger("upmixer")
 
-from upmixer.manifest import register_block_keys as _rbk
-_rbk("mastering", {
-    "bass": {
+MANIFEST_FIELDS = {
         "enabled":     ("config", "mastering_bass_enabled"),
         "profile":     ("config", "mastering_bass_profile"),
         "sub_gain_db": ("config", "mastering_bass_sub_gain_db"),
@@ -80,9 +78,7 @@ _rbk("mastering", {
         "lfe_send":    ("config", "mastering_bass_lfe_send"),
         "lfe_gain_db": ("config", "mastering_bass_lfe_gain_db"),
         "decorrelate": ("config", "mastering_bass_decorrelate"),
-    },
-})
-del _rbk
+}
 
 
 BASS_PROFILES: dict[str, dict] = {

@@ -23,15 +23,11 @@ import upmixer_dsp
 
 _log = logging.getLogger("upmixer")
 
-from upmixer.manifest import register_block_keys as _rbk
-_rbk("mastering", {
-    "clip": {
+MANIFEST_FIELDS = {
         "enabled": ("config", "mastering_clip_enabled"),
         "clip_db": ("config", "mastering_clip_db"),
         "knee":    ("config", "mastering_clip_knee"),
-    },
-})
-del _rbk
+}
 
 
 def apply_soft_clip(

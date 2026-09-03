@@ -49,29 +49,14 @@ Versioning
 ``version`` must match ``MAJOR.MINOR`` or ``MAJOR.MINOR.PATCH`` (SemVer-like).
 Missing or malformed versions raise :class:`ManifestError`.
 
-Extensibility
--------------
-Modules can register their own YAML block keys without modifying this file::
-
-    from upmixer.manifest import register_block_keys
-
-    register_block_keys('mixing', {
-        'reverb': {
-            'room_size': ('config', 'reverb_room_size'),
-            'wet':       ('config', 'reverb_wet'),
-        }
-    })
-
-See :func:`register_block` and :func:`register_block_keys`.
-
 Priority
 --------
 CLI flags > per-asset manifest values > global manifest values > UpmixConfig defaults.
 
 Package layout
 --------------
-This is a package, not a single module: ``schema.py`` holds the block
-registry and dataclasses, ``validate.py`` validates a raw manifest dict, and
+This is a package, not a single module: ``schema.py`` holds the catalog and
+dataclasses, ``validate.py`` validates a raw manifest dict, and
 ``load.py`` loads/parses/applies one. Every name below is re-exported here so
 ``from upmixer.manifest import X`` keeps working regardless of which
 sub-module actually defines ``X``.
@@ -81,7 +66,6 @@ from __future__ import annotations
 from upmixer.manifest.load import (  # noqa: F401
     apply_asset_job,
     load_manifest,
-    migrate_manifest,
     parse_manifest,
 )
 from upmixer.manifest.schema import (  # noqa: F401
@@ -89,11 +73,9 @@ from upmixer.manifest.schema import (  # noqa: F401
     BlockMapping,
     ManifestError,
     ManifestMeta,
-    _BLOCK_REGISTRY,
+    MANIFEST_CATALOG,
     _FIELD_MAP,
     list_manifest_keys,
     manifest_parameter_schema,
-    register_block,
-    register_block_keys,
 )
 from upmixer.manifest.validate import validate_manifest  # noqa: F401

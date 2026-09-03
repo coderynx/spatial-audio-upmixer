@@ -1,24 +1,20 @@
-"""Manifest block registry, dataclasses, and schema introspection.
-
-Modules can register their own YAML block keys without modifying this file::
-
-    from upmixer.manifest import register_block_keys
-
-    register_block_keys('mixing', {
-        'reverb': {
-            'room_size': ('config', 'reverb_room_size'),
-            'wet':       ('config', 'reverb_wet'),
-        }
-    })
-
-See :func:`register_block` and :func:`register_block_keys`.
-"""
+"""Manifest declaration, resolved-job data, and schema introspection."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from upmixer.config import UpmixConfig
+from upmixer.mastering.bass import MANIFEST_FIELDS as BASS_FIELDS
+from upmixer.mastering.chain import MANIFEST_FIELDS as CHAIN_FIELDS
+from upmixer.mastering.clip import MANIFEST_FIELDS as CLIP_FIELDS
+from upmixer.mastering.compressor import MANIFEST_FIELDS as COMPRESSOR_FIELDS
+from upmixer.mastering.dyneq import MANIFEST_FIELDS as DYNEQ_FIELDS
+from upmixer.mastering.eq import MANIFEST_FIELDS as EQ_FIELDS
+from upmixer.mastering.head import MANIFEST_FIELDS as HEAD_FIELDS
+from upmixer.mastering.limiter import MANIFEST_FIELDS as LIMITER_FIELDS
+from upmixer.mastering.match_reference.processor import MANIFEST_FIELDS as MATCH_REFERENCE_FIELDS
+from upmixer.separation.stem_router import MANIFEST_FIELDS as ROUTING_FIELDS
 
 
 class ManifestError(ValueError):
@@ -54,7 +50,7 @@ class AssetJob:
 
 BlockMapping = dict[str, Any]
 
-_BLOCK_REGISTRY: dict[str, BlockMapping] = {
+MANIFEST_CATALOG: dict[str, BlockMapping] = {
     "engine": {
         "mode":           ("engine", "mode"),
         # stem_model removed — model selection is now automatic based on stems
@@ -135,52 +131,14 @@ _BLOCK_REGISTRY: dict[str, BlockMapping] = {
         "normalize_output": ("config", "normalize_output"),
     },
 
-    # routing: and mastering: blocks are populated at import time by domain modules
+    "routing": ROUTING_FIELDS,
+    "mastering": {
+        **LIMITER_FIELDS, **CHAIN_FIELDS, "eq": EQ_FIELDS,
+        "match_reference": MATCH_REFERENCE_FIELDS, "bass": BASS_FIELDS,
+        "clip": CLIP_FIELDS, "compressor": COMPRESSOR_FIELDS,
+        "dynamic_eq": DYNEQ_FIELDS, "highpass": HEAD_FIELDS,
+    },
 }
-
-
-def register_block(name: str, mapping: BlockMapping) -> None:
-    """Register a new top-level YAML block.
-
-    Use this to add a completely new section (e.g. a reverb or dynamics plugin
-    that has its own top-level key in the manifest).
-
-    Args:
-        name:    The YAML key name (e.g. ``'reverb'``).
-        mapping: Dict mapping YAML sub-keys to ``(bucket, flat_key)`` leaf
-                 tuples or nested sub-section dicts.
-
-    Example::
-
-        register_block('reverb', {
-            'room_size': ('config', 'reverb_room_size'),
-            'wet':       ('config', 'reverb_wet'),
-        })
-    """
-    _BLOCK_REGISTRY[name] = mapping
-
-
-def register_block_keys(section: str, keys: BlockMapping) -> None:
-    """Add or update keys within an existing block section.
-
-    Use this to extend an existing section like ``'mixing'`` or ``'mastering'``
-    with new sub-keys contributed by a module.
-
-    Args:
-        section: Existing block name (e.g. ``'mixing'``, ``'mastering'``).
-        keys:    Dict of new or updated entries (same format as
-                 :func:`register_block`).
-
-    Example::
-
-        register_block_keys('mastering', {
-            'reverb': {
-                'room_size': ('config', 'reverb_room_size'),
-                'wet':       ('config', 'reverb_wet'),
-            }
-        })
-    """
-    _BLOCK_REGISTRY.setdefault(section, {}).update(keys)
 
 
 _FIELD_MAP: dict[str, tuple[str, type]] = {
@@ -329,7 +287,7 @@ def manifest_parameter_schema() -> list[dict[str, object]]:
                 "asset_override": True,
             })
 
-    for block_name, mapping in _BLOCK_REGISTRY.items():
+    for block_name, mapping in MANIFEST_CATALOG.items():
         visit(mapping, block_name)
     return sorted(result, key=lambda item: str(item["path"]))
 

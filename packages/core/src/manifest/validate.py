@@ -8,7 +8,7 @@ from upmixer.codecs import CODECS, WAV_SUBTYPES, validate_codec
 from upmixer.config import UpmixConfig
 from upmixer.formats import FORMAT_MAP, ChannelLabel, validate_delivery
 from upmixer.io.writer import DITHER_MODES
-from upmixer.manifest.schema import _BLOCK_REGISTRY, BlockMapping, ManifestError, _leaf_type
+from upmixer.manifest.schema import MANIFEST_CATALOG, BlockMapping, ManifestError, _leaf_type
 from upmixer.separation.stem_plan import MANIFEST_TO_CANONICAL
 
 _SEMVER_RE = re.compile(r"^\d+\.\d+(\.\d+)?$")
@@ -226,11 +226,11 @@ def validate_manifest(data: dict) -> None:
             'Must be MAJOR.MINOR or MAJOR.MINOR.PATCH (e.g. "1.0" or "1.0.0").'
         )
 
-    allowed_root = {"version", "metadata", "assets", *_BLOCK_REGISTRY}
+    allowed_root = {"version", "metadata", "assets", *MANIFEST_CATALOG}
     for key in data:
         if key not in allowed_root and not key.startswith("_"):
             raise ManifestError(f"Unknown manifest block '{key}'.")
-    for block_name, mapping in _BLOCK_REGISTRY.items():
+    for block_name, mapping in MANIFEST_CATALOG.items():
         block = data.get(block_name)
         if block is not None:
             if not isinstance(block, dict):
@@ -255,11 +255,11 @@ def validate_manifest(data: dict) -> None:
             raise ManifestError(
                 f"assets[{i}] needs 'input'+'output' or 'input_dir'+'output_dir'."
             )
-        allowed_asset = _ASSET_NON_BLOCK_KEYS | set(_BLOCK_REGISTRY)
+        allowed_asset = _ASSET_NON_BLOCK_KEYS | set(MANIFEST_CATALOG)
         for key in asset:
             if key not in allowed_asset and not key.startswith("_"):
                 raise ManifestError(f"Unknown manifest field 'assets[{i}].{key}'.")
-        for block_name, mapping in _BLOCK_REGISTRY.items():
+        for block_name, mapping in MANIFEST_CATALOG.items():
             block = asset.get(block_name)
             if block is not None:
                 if not isinstance(block, dict):

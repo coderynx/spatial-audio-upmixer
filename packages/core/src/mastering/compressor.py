@@ -43,9 +43,7 @@ import upmixer_dsp
 
 _log = logging.getLogger("upmixer")
 
-from upmixer.manifest import register_block_keys as _rbk
-_rbk("mastering", {
-    "compressor": {
+MANIFEST_FIELDS = {
         "profile":      ("config", "mastering_comp_profile"),
         "threshold_db": ("config", "mastering_comp_threshold_db"),
         "ratio":        ("config", "mastering_comp_ratio"),
@@ -54,9 +52,7 @@ _rbk("mastering", {
         "knee_db":      ("config", "mastering_comp_knee_db"),
         "makeup_db":    ("config", "mastering_comp_makeup_db"),
         "sidechain_hpf_hz": ("config", "mastering_comp_sidechain_hpf_hz"),
-    },
-})
-del _rbk
+}
 
 
 COMP_PROFILES: dict[str, dict] = {

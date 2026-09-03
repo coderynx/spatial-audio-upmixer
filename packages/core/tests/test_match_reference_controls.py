@@ -10,7 +10,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import upmixer.mastering.match_reference  # noqa: F401 — triggers register_block_keys for mastering.match_reference
 from upmixer.config import UpmixConfig
 from upmixer.formats import SURROUND_51
 from upmixer.manifest import ManifestError, apply_asset_job, parse_manifest

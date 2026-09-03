@@ -70,14 +70,10 @@ import upmixer_dsp
 
 _log = logging.getLogger("upmixer")
 
-from upmixer.manifest import register_block_keys as _rbk
-_rbk("mastering", {
-    "limiter": {
+MANIFEST_FIELDS = {
         "lookahead_ms": ("config", "limiter_lookahead_ms"),
         "release_ms":   ("config", "limiter_release_ms"),
-    },
-})
-del _rbk
+}
 
 # Extra internal headroom folded into the gain-computation ceiling only;
 # see "Gain-modulation edge effect" above.

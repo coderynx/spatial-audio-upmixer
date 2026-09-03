@@ -21,14 +21,10 @@ import upmixer_dsp
 
 _log = logging.getLogger("upmixer")
 
-from upmixer.manifest import register_block_keys as _rbk
-_rbk("mastering", {
-    "highpass": {
+MANIFEST_FIELDS = {
         "enabled":   ("config", "mastering_highpass_enabled"),
         "cutoff_hz": ("config", "mastering_highpass_hz"),
-    },
-})
-del _rbk
+}
 
 
 def apply_chain_head(

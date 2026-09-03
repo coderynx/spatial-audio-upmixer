@@ -10,7 +10,7 @@ from typing import Any
 
 from upmixer.codecs import DEFAULT_CODEC, codec_extension
 from upmixer.config import UpmixConfig
-from upmixer.manifest.schema import AssetJob, BlockMapping, ManifestMeta, _BLOCK_REGISTRY, _FIELD_MAP
+from upmixer.manifest.schema import AssetJob, BlockMapping, ManifestMeta, MANIFEST_CATALOG, _FIELD_MAP
 
 _log = logging.getLogger("upmixer")
 
@@ -50,98 +50,18 @@ def _expand_mapping(
 def _expand_blocks(blocks: dict) -> tuple[dict, dict]:
     """Expand merged config blocks into ``(config_flat, engine_params)``.
 
-    Only block names present in :data:`_BLOCK_REGISTRY` are processed.
+    Only block names present in :data:`MANIFEST_CATALOG` are processed.
     Unrecognised block names are silently ignored (may belong to a module
     that has not yet registered its keys).
     """
     config_out: dict = {}
     engine_out: dict = {}
     for block_name, block_data in blocks.items():
-        mapping = _BLOCK_REGISTRY.get(block_name)
+        mapping = MANIFEST_CATALOG.get(block_name)
         if mapping is None or not isinstance(block_data, dict):
             continue
         _expand_mapping(block_data, mapping, config_out, engine_out)
     return config_out, engine_out
-
-
-def _migrate_format(block: Any) -> Any:
-    if not isinstance(block, dict):
-        return block
-    migrated = dict(block)
-    # ``wav`` used to mean both "a multichannel bed" and "a WAV container";
-    # those are now format.type and format.codec.
-    if migrated.get("type") == "wav":
-        migrated["type"] = "multichannel"
-    migrated.setdefault("codec", DEFAULT_CODEC)
-    return migrated
-
-
-# Blocks and keys the pipeline no longer has. A stored project or manifest
-# written while they existed still carries them, and validation rejects an
-# unknown field, so they are dropped rather than allowed to fail a load.
-_RETIRED_FIELDS: dict[str, set[str]] = {
-    "engine": {
-        "stem_phase_fix",
-        "stem_phase_fix_low_hz",
-        "stem_phase_fix_high_hz",
-        "stem_phase_fix_scale",
-        "stem_phase_fix_reference_model",
-        "stem_debleed",
-        "stem_debleed_model",
-    },
-    "mixing": {"spatial"},
-    "routing": {
-        "center_extraction_gain",
-        "center_attenuation",
-        "content_mix_strength",
-        "content_hf_analysis_hz",
-    },
-    "processing": {"block_size"},
-}
-
-
-def _migrate_blocks(data: dict) -> dict:
-    migrated = dict(data)
-    mixing = migrated.get("mixing")
-    if isinstance(mixing, dict) and isinstance(mixing.get("stem_placement"), dict):
-        placements = {}
-        for stem, placement in mixing["stem_placement"].items():
-            if not isinstance(placement, dict):
-                placements[stem] = placement
-                continue
-            value = dict(placement)
-            if "spread_deg" in value:
-                value.pop("spread_deg")
-                value.setdefault("object_size", 0.0)
-            placements[stem] = value
-        migrated["mixing"] = {**mixing, "stem_placement": placements}
-    if "format" in migrated:
-        migrated["format"] = _migrate_format(migrated["format"])
-    for block_name, retired in _RETIRED_FIELDS.items():
-        block = migrated.get(block_name)
-        if isinstance(block, dict) and retired.intersection(block):
-            migrated[block_name] = {k: v for k, v in block.items() if k not in retired}
-    engine = migrated.get("engine")
-    if isinstance(engine, dict) and engine.get("mode") == "realtime":
-        migrated["engine"] = {**engine, "mode": "stem"}
-    return migrated
-
-
-def migrate_manifest(data: dict) -> dict:
-    """Fold retired manifest shapes into the current one.
-
-    Applied to the root and to every asset override before validation, so
-    manifests and stored projects written before codecs existed — or before
-    the realtime pipeline was removed — keep loading.
-    """
-    migrated = _migrate_blocks(data)
-    assets = migrated.get("assets")
-    if isinstance(assets, list):
-        migrated["assets"] = [
-            _migrate_blocks(asset) if isinstance(asset, dict) else asset
-            for asset in assets
-        ]
-    return migrated
 
 
 def _with_downmix_path(config: dict, output: str) -> dict:
@@ -156,9 +76,9 @@ def _with_downmix_path(config: dict, output: str) -> dict:
 
 
 def parse_manifest(data: dict) -> tuple[ManifestMeta | None, list[AssetJob]]:
-    """Parse a validated manifest dict into ``(ManifestMeta, list[AssetJob])``.
+    """Validate and parse a manifest dict into ``(ManifestMeta, list[AssetJob])``.
 
-    Call :func:`validate_manifest` first.  Each :class:`AssetJob` has a
+    Each :class:`AssetJob` has a
     ``config`` dict of flat UpmixConfig-ready keys (global defaults deep-merged
     with any asset-level overrides) and an ``engine`` dict for job-level params.
 
@@ -168,6 +88,9 @@ def parse_manifest(data: dict) -> tuple[ManifestMeta | None, list[AssetJob]]:
     Returns:
         Tuple of optional :class:`ManifestMeta` and list of :class:`AssetJob`.
     """
+    from upmixer.manifest.validate import validate_manifest
+
+    validate_manifest(data)
     meta: ManifestMeta | None = None
     meta_raw = data.get("metadata")
     if isinstance(meta_raw, dict):
@@ -177,7 +100,7 @@ def parse_manifest(data: dict) -> tuple[ManifestMeta | None, list[AssetJob]]:
             description=meta_raw.get("description"),
         )
 
-    all_block_keys = set(_BLOCK_REGISTRY.keys())
+    all_block_keys = set(MANIFEST_CATALOG)
     global_blocks: dict[str, dict] = {
         k: v for k, v in data.items()
         if k in all_block_keys and isinstance(v, dict)
