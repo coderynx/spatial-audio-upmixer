@@ -9,6 +9,7 @@ import torch
 
 from .archs.bs_roformer import BSRoformer
 from .archs.mel_band_roformer import MelBandRoformer
+from .archs.scnet import SCNet
 from .archs.tfc_tdf_v3 import TFC_TDF_net
 from .config import ModelConfig, load_model_config
 from .registry import ModelSpec, get_model_spec
@@ -23,6 +24,8 @@ def _build_arch(spec: ModelSpec, config: ModelConfig, device: torch.device) -> t
         return MelBandRoformer(**config.model)
     if spec.arch == "tfc_tdf_v3":
         return TFC_TDF_net(config.as_namespace(), device=device)
+    if spec.arch == "scnet":
+        return SCNet(**config.model)
     raise ValueError(f"Unknown architecture '{spec.arch}'")
 
 
@@ -79,10 +82,12 @@ def _load_state_dict(path: str) -> dict:
         # These are pinned checkpoint files (registry.py), not arbitrary
         # user input, so the unsafe reload is acceptable here.
         state = torch.load(path, map_location="cpu", weights_only=False)
-    if isinstance(state, dict) and "state_dict" in state and not any(
-        isinstance(v, torch.Tensor) for v in state.values()
-    ):
-        state = state["state_dict"]
+    if isinstance(state, dict):
+        for key in ("state_dict", "model_state_dict", "state"):
+            nested = state.get(key)
+            if isinstance(nested, dict):
+                state = nested
+                break
     return state
 
 
@@ -96,6 +101,13 @@ def load_model(
     """
     spec = get_model_spec(model_filename)
     config = load_model_config(spec.config_name)
+
+    if model_filename == "model_scnet_ep_36_sdr_10.0891.ckpt" and device.type == "mps":
+        _log.warning(
+            "SCNet XL IHF is not reliable on MPS; falling back to CPU for %s",
+            model_filename,
+        )
+        device = torch.device("cpu")
 
     weights_path = _ensure_weights(spec, model_dir)
     model = _build_arch(spec, config, device)

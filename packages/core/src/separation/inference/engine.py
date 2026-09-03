@@ -34,7 +34,7 @@ class SeparationEngine:
         model: Loaded architecture, already on ``device.torch_device`` and
             in eval mode (see ``loader.load_model``).
         config: The model's parsed :class:`ModelConfig`.
-        arch: Architecture family — selects the Roformer or TFC-TDF demix loop.
+        arch: Architecture family — selects the Roformer, TFC-TDF, or SCNet demix loop.
         model_filename: Original checkpoint filename, used to build output
             filenames in python-audio-separator's convention.
         device: DeviceManager the model was loaded onto.
@@ -216,6 +216,27 @@ class SeparationEngine:
         return {name: total / len(variants) for name, total in totals.items()}
 
     def _demix_arch(self, mix: np.ndarray) -> dict[str, np.ndarray]:
+        torch_device = self._model_device()
+        if self._arch == "scnet":
+            scnet_chunk_size = (
+                self._segment_size * self._config.hop_length
+                if self._segment_size is not None
+                else self._config.chunk_size
+            )
+            return demix.demix_scnet(
+                self._model,
+                mix,
+                self._config,
+                torch_device,
+                chunk_size=scnet_chunk_size,
+                overlap=(
+                    self._overlap
+                    if self._overlap is not None
+                    else self._config.num_overlap
+                ),
+                batch_size=self._batch_size,
+            )
+
         segment_size = self._resolved_segment_size()
         overlap = self._overlap
         if self._arch in _ARCH_ROFORMER:
@@ -224,13 +245,13 @@ class SeparationEngine:
             # memory with the OS and stays at 1 — batch=2 on MPS froze a real
             # M3 Pro (unified-memory pressure, not a catchable OOM).
             roformer_batch_size = (
-                self._batch_size if self._device.torch_device.type == "cuda" else 1
+                self._batch_size if torch_device.type == "cuda" else 1
             )
             return demix.demix_roformer(
                 self._model,
                 mix,
                 self._config,
-                self._device.torch_device,
+                torch_device,
                 segment_size=segment_size,
                 overlap=overlap if overlap is not None else 2,
                 batch_size=roformer_batch_size,
@@ -239,11 +260,18 @@ class SeparationEngine:
             self._model,
             mix,
             self._config,
-            self._device.torch_device,
+            torch_device,
             segment_size=segment_size,
             overlap=overlap if overlap is not None else 8,
             batch_size=self._batch_size,
         )
+
+    def _model_device(self) -> torch.device:
+        """Use the model's actual placement when loading selected fallbacks."""
+        try:
+            return next(self._model.parameters()).device
+        except StopIteration:
+            return self._device.torch_device
 
     def _resolved_segment_size(self) -> int | None:
         if self._segment_size is not None or self._default_chunk_samples is None:

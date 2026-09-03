@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-Arch = Literal["bs_roformer", "mel_band_roformer", "tfc_tdf_v3"]
+Arch = Literal["bs_roformer", "mel_band_roformer", "tfc_tdf_v3", "scnet"]
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,16 @@ class ModelSpec:
 
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
+    "model_scnet_ep_36_sdr_10.0891.ckpt": ModelSpec(
+        filename="model_scnet_ep_36_sdr_10.0891.ckpt",
+        arch="scnet",
+        config_name="config_musdb18_scnet_xl_more_wide_v5",
+        weights_url=(
+            "https://github.com/ZFTurbo/Music-Source-Separation-Training/"
+            "releases/download/v1.0.15/model_scnet_ep_36_sdr_10.0891.ckpt"
+        ),
+        default_chunk_samples=485100,
+    ),
     "BS-Roformer-SW.ckpt": ModelSpec(
         filename="BS-Roformer-SW.ckpt",
         arch="bs_roformer",

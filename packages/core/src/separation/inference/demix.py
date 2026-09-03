@@ -1,4 +1,4 @@
-"""Chunked overlap-add inference loops for the two production model families.
+"""Chunked overlap-add inference loops for the production model families.
 
 Adapted from python-audio-separator's ``MDXCSeparator.demix`` (MIT license),
 targeting the vendored archs in ``inference/archs/`` and this engine's
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import numpy as np
 import torch
+from torch.nn import functional as F
 from scipy import signal
 
 from .config import ModelConfig
@@ -35,6 +36,98 @@ def match_length(source: np.ndarray, n_samples: int) -> np.ndarray:
         return source[..., :n_samples]
     pad_width = [(0, 0)] * (source.ndim - 1) + [(0, n_samples - current)]
     return np.pad(source, pad_width)
+
+
+def _scnet_window(size: int, fade: int) -> torch.Tensor:
+    window = torch.ones(size, dtype=torch.float32)
+    if fade:
+        window[:fade] = torch.linspace(0.0, 1.0, fade)
+        window[-fade:] = torch.linspace(1.0, 0.0, fade)
+    return window
+
+
+@torch.inference_mode()
+def demix_scnet(
+    model: torch.nn.Module,
+    mix: np.ndarray,
+    config: ModelConfig,
+    device: torch.device,
+    chunk_size: int | None = None,
+    overlap: int | None = None,
+    batch_size: int = 1,
+) -> dict[str, np.ndarray]:
+    """Run SCNet's sample-domain overlap-add inference.
+
+    SCNet emits ``(batch, sources, channels, samples)`` and uses a longer
+    sample chunk than the Roformer/TFC-TDF frame-based loops.  The padding,
+    fade, and border handling mirror the published MSST inference path.
+    """
+    if mix.ndim != 2:
+        raise ValueError(f"SCNet expects channel-first audio, got shape {mix.shape}")
+    if not config.instruments:
+        raise ValueError("SCNet config must declare at least one instrument")
+
+    mix_t = torch.as_tensor(mix, dtype=torch.float32)
+    original_length = mix_t.shape[-1]
+    chunk_size = chunk_size or config.chunk_size
+    overlap = overlap or config.num_overlap
+    if chunk_size < 1 or overlap < 1:
+        raise ValueError("SCNet chunk_size and overlap must be at least 1")
+    step = max(1, chunk_size // overlap)
+    border = chunk_size - step
+    fade = chunk_size // 10
+    window = _scnet_window(chunk_size, fade)
+
+    if original_length > 2 * border and border:
+        mix_t = F.pad(mix_t, (border, border), mode="reflect")
+
+    result = torch.zeros(
+        (len(config.instruments), *mix_t.shape), dtype=torch.float32
+    )
+    counter = torch.zeros_like(result)
+    batches: list[torch.Tensor] = []
+    locations: list[tuple[int, int]] = []
+    position = 0
+
+    while position < mix_t.shape[-1]:
+        part = mix_t[:, position : position + chunk_size]
+        segment_length = part.shape[-1]
+        mode = "reflect" if segment_length > chunk_size // 2 else "constant"
+        part = F.pad(part, (0, chunk_size - segment_length), mode=mode)
+        batches.append(part)
+        locations.append((position, segment_length))
+        position += step
+
+        if len(batches) < max(1, batch_size) and position < mix_t.shape[-1]:
+            continue
+        estimated = model(torch.stack(batches).to(device))
+        if (
+            estimated.ndim != 4
+            or estimated.shape[1] != len(config.instruments)
+            or estimated.shape[2] != mix_t.shape[0]
+        ):
+            raise ValueError(
+                "SCNet output must have shape (batch, instruments, channels, samples)"
+            )
+        for index, (start, segment_length) in enumerate(locations):
+            output = estimated[index, ..., :segment_length].cpu()
+            if output.shape[-1] != segment_length:
+                output = F.pad(output, (0, segment_length - output.shape[-1]))
+            fade_window = window[:segment_length].clone()
+            if start == 0:
+                fade_window[:fade] = 1.0
+            if start + segment_length == mix_t.shape[-1]:
+                fade_window[-fade:] = 1.0
+            result[..., start : start + segment_length] += output * fade_window
+            counter[..., start : start + segment_length] += fade_window
+        batches.clear()
+        locations.clear()
+
+    estimated = (result / counter.clamp(min=1e-10)).numpy()
+    if original_length > 2 * border and border:
+        estimated = estimated[..., border:-border]
+    estimated = estimated[..., :original_length]
+    return dict(zip(config.instruments, estimated))
 
 
 @torch.inference_mode()

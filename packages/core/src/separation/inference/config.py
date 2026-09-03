@@ -93,7 +93,22 @@ class ModelConfig:
     @property
     def hop_length(self) -> int:
         """TFC-TDF chunking hop length, from the ``audio`` section."""
-        return int(self.audio["hop_length"])
+        return int(self.audio.get("hop_length", self.model.get("hop_size", 1)))
+
+    @property
+    def chunk_size(self) -> int:
+        """SCNet input chunk length in samples."""
+        configured = self.audio.get("chunk_size")
+        return int(
+            configured
+            if configured is not None
+            else self.default_segment_size * self.hop_length
+        )
+
+    @property
+    def num_overlap(self) -> int:
+        """SCNet overlap count for its sample-domain overlap-add loop."""
+        return int(self.inference.get("num_overlap", 1))
 
     def as_namespace(self) -> SimpleNamespace:
         """Full nested namespace view, for the vendored ``TFC_TDF_net``."""
