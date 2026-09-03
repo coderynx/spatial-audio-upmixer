@@ -49,7 +49,7 @@ _SEPARATION_ENGINE_KEYS = (
     "stem_batch_size", "stem_segment_size", "stem_chunk_duration_s",
     "stem_model_cache_size", "stem_silence_skip", "stem_silence_threshold_db",
     "stem_silence_min_duration_s", "stem_silence_crossfade_ms", "stem_silence_pad_ms",
-    "stem_bleed_reduction",
+    "stem_ensemble", "stem_bleed_reduction",
     "stem_drum_remask", "stem_primary_remask",
 )
 
@@ -173,6 +173,7 @@ def _normalized_project_manifest(
     engine["mode"] = "stem"
     stems = _normalize_project_stems(engine.get("stems") or [])
     engine["stems"] = stems
+    engine.setdefault("stem_ensemble", UpmixConfig().stem_ensemble)
     mixing = normalized.setdefault("mixing", {})
     if isinstance(mixing.get("stem_solo"), str):
         mixing["stem_solo"] = [mixing["stem_solo"]]
@@ -538,13 +539,17 @@ def retry_project(session: Session, project: Project) -> Project:
 
 
 def _set_preparation_settings(
-    block: dict[str, Any], stems: list[str], stem_bleed_reduction: bool, layout: str
+    block: dict[str, Any], stems: list[str], stem_bleed_reduction: bool, layout: str,
+    stem_ensemble: bool | None = None,
 ) -> dict[str, Any]:
     updated = copy.deepcopy(block)
-    updated.setdefault("engine", {}).update({
+    engine = updated.setdefault("engine", {})
+    engine.update({
         "stems": stems,
         "stem_bleed_reduction": stem_bleed_reduction,
     })
+    if stem_ensemble is not None:
+        engine["stem_ensemble"] = stem_ensemble
     return seed_balanced_mix(updated, layout, stems)
 
 
@@ -553,10 +558,11 @@ def reprepare_project_stems(
     project: Project,
     stems: Iterable[str] | None = None,
     stem_bleed_reduction: bool | None = None,
+    stem_ensemble: bool | None = None,
 ) -> Project:
     """Force a full stem re-separation for a project that already has
-    prepared stems, optionally replacing its extraction targets and cleanup
-    setting for every track.
+    prepared stems, optionally replacing its extraction targets, cleanup, and
+    ensemble setting for every track.
 
     Unlike `retry_project` (only for a failed run), this is for a `ready`
     project whose on-disk stems now miss the separation engine's cache
@@ -579,8 +585,15 @@ def reprepare_project_stems(
         if stem_bleed_reduction is not None
         else bool(engine.get("stem_bleed_reduction", UpmixConfig().stem_bleed_reduction))
     )
+    ensemble = (
+        stem_ensemble
+        if stem_ensemble is not None
+        else bool(engine.get("stem_ensemble", UpmixConfig().stem_ensemble))
+    )
     layout = str(project.manifest.get("mixing", {}).get("channel_layout", "7.1.4"))
-    project.manifest = _set_preparation_settings(project.manifest, requested_stems, cleanup, layout)
+    project.manifest = _set_preparation_settings(
+        project.manifest, requested_stems, cleanup, layout, ensemble
+    )
     project.requested_stems = requested_stems
     project.status = "expanding" if project.prepared_stems else "queued"
     project.progress = 0.0

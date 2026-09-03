@@ -138,11 +138,15 @@ export function useProjectState(projectId: string | undefined, onFirstLoad: (pro
     if (shouldApplyProject(seq)) setProject(updated);
   }, [projectId, nextSeq, shouldApplyProject]);
 
-  const reprepareStems = React.useCallback(async (stems: string[], stemBleedReduction: boolean) => {
+  const reprepareStems = React.useCallback(async (stems: string[], stemBleedReduction: boolean, stemEnsemble: boolean) => {
     if (!projectId) return;
     const seq = nextSeq();
     try {
-      const updated = await api.reprepareProjectStems(projectId, { stems, stem_bleed_reduction: stemBleedReduction });
+      const updated = await api.reprepareProjectStems(projectId, {
+        stems,
+        stem_bleed_reduction: stemBleedReduction,
+        stem_ensemble: stemEnsemble,
+      });
       if (shouldApplyProject(seq)) setProject(updated);
     } catch (reason) {
       setError((reason as Error).message);

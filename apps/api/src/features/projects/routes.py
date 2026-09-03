@@ -265,6 +265,7 @@ def register_project_routes(
                 session, project,
                 stems=request.stems if request else None,
                 stem_bleed_reduction=request.stem_bleed_reduction if request else None,
+                stem_ensemble=request.stem_ensemble if request else None,
             )
         except ProjectStateConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

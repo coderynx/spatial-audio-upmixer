@@ -151,6 +151,19 @@ class TestApplyAssetJob:
         assert cfg.loudness_normalize is False
         assert cfg.loudness_target_lkfs == pytest.approx(-23.0)
 
+    @pytest.mark.parametrize("value", [False, True])
+    def test_stem_ensemble_manifest_maps_to_config(self, value):
+        data = _minimal(engine={"stem_ensemble": value})
+        validate_manifest(data)
+        _, jobs = parse_manifest(data)
+        cfg = UpmixConfig()
+        apply_asset_job(cfg, jobs[0])
+        assert cfg.stem_ensemble is value
+
+    def test_stem_ensemble_manifest_requires_a_boolean(self):
+        with pytest.raises(ManifestError, match="engine.stem_ensemble"):
+            validate_manifest(_minimal(engine={"stem_ensemble": "true"}))
+
     def test_null_value_skipped(self):
         job = AssetJob(input="x", output="y", config={"lfe_cutoff": None})
         cfg = UpmixConfig()
@@ -329,8 +342,16 @@ class TestListManifestKeys:
 
     def test_engine_params_present(self):
         keys = list_manifest_keys()
-        for k in ("engine.mode", "engine.stems", "engine.stem_model_dir", "engine.input_format"):
+        for k in (
+            "engine.mode", "engine.stems", "engine.stem_model_dir", "engine.input_format",
+            "engine.stem_ensemble",
+        ):
             assert k in keys
+
+    def test_stem_ensemble_manifest_parameter_has_config_default(self):
+        parameter = next(item for item in manifest_parameter_schema() if item["path"] == "engine.stem_ensemble")
+        assert parameter["type"] == "bool"
+        assert parameter["default"] is False
 
     def test_mastering_flat_keys_present(self):
         keys = list_manifest_keys()

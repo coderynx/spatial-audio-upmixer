@@ -19,8 +19,17 @@ def test_separation_settings_detects_dsp_stem_cleanup_changes():
     assert _separation_settings(off) != _separation_settings(on)
 
 
+def test_separation_settings_detects_ensemble_changes():
+    from upmixer_web.features.projects.service import _separation_settings
+
+    off = {"engine": {"mode": "stem", "stem_ensemble": False}}
+    on = {"engine": {"mode": "stem", "stem_ensemble": True}}
+    assert _separation_settings(off) != _separation_settings(on)
+
+
 def test_separation_settings_treats_missing_keys_as_client_defaults():
-    """A freshly-prepared project stores only `engine.mode`/`engine.stems`
+    """A freshly-prepared project may omit separation defaults such as
+    `engine.stem_ensemble`
     (see `_normalized_project_manifest`), but the web client's
     `normalizeManifest` always sends the full `stem_*` default block on every
     save — these two shapes must compare equal, or the first settings save
@@ -38,6 +47,7 @@ def test_separation_settings_treats_missing_keys_as_client_defaults():
             "stem_silence_min_duration_s": 2,
             "stem_silence_crossfade_ms": 10,
             "stem_silence_pad_ms": 200,
+            "stem_ensemble": False,
             "stem_bleed_reduction": False,
         }
     }
@@ -77,6 +87,7 @@ def test_project_lifecycle_persists_settings_and_expansion(tmp_path, monkeypatch
         project = response.json()
         assert project["status"] == "queued"
         assert project["manifest"]["engine"]["mode"] == "stem"
+        assert project["manifest"]["engine"]["stem_ensemble"] is False
         assert project["requested_stems"] == ["Vocals", "Kick"]
         assert len(project["tracks"]) == 1
         assert project["tracks"][0]["name"] == "tone"
@@ -306,6 +317,7 @@ def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(
         response = client.post(f"/api/v1/projects/{ready_id}/stems/reprepare", json={
             "stems": ["Vocals", "Bass"],
             "stem_bleed_reduction": True,
+            "stem_ensemble": True,
         })
         assert response.status_code == 200
         body = response.json()
@@ -313,6 +325,7 @@ def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(
         assert body["progress"] == 0.0
         assert body["requested_stems"] == ["Vocals", "Bass"]
         assert body["manifest"]["engine"]["stem_bleed_reduction"] is True
+        assert body["manifest"]["engine"]["stem_ensemble"] is True
         assert body["tracks"][0]["layout_overrides"]["7.1.4"]["engine"] == {
             "stems": ["Vocals", "Bass"],
             "stem_bleed_reduction": True,
@@ -331,6 +344,24 @@ def test_reprepare_project_stems_requeues_a_ready_project_and_rejects_in_flight(
             ):
                 assert set(mixing[field]) == {"Vocals", "Bass"}
         assert all(track["status"] == "queued" for track in body["tracks"])
+
+        # A legacy caller that omits the new optional field keeps the
+        # project's existing ensemble setting.
+        with factory() as session:
+            row = session.get(Project, ready_id)
+            assert row is not None
+            row.status = "ready"
+            row.prepared_stems = ["Vocals", "Bass"]
+            for track in row.tracks:
+                track.status = "ready"
+                track.progress = 1.0
+            session.commit()
+        omitted = client.post(f"/api/v1/projects/{ready_id}/stems/reprepare", json={
+            "stems": ["Vocals", "Bass"],
+            "stem_bleed_reduction": True,
+        })
+        assert omitted.status_code == 200
+        assert omitted.json()["manifest"]["engine"]["stem_ensemble"] is True
 
         conflict = client.post(f"/api/v1/projects/{expanding_id}/stems/reprepare")
         assert conflict.status_code == 409
@@ -400,6 +431,7 @@ def test_settings_save_with_full_client_engine_block_does_not_reseparate(tmp_pat
                 "stem_silence_min_duration_s": 2,
                 "stem_silence_crossfade_ms": 10,
                 "stem_silence_pad_ms": 200,
+                "stem_ensemble": False,
                 "stem_bleed_reduction": False,
             },
             "mixing": {"channel_layout": "5.1.4", "stem_routing": {}},

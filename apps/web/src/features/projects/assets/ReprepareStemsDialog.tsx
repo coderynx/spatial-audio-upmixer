@@ -17,6 +17,7 @@ import { normalizeStemHierarchy } from "@/lib/stemHierarchy";
 export type ReprepareSettings = {
   stems: string[];
   stemBleedReduction: boolean;
+  stemEnsemble: boolean;
 };
 
 export function ReprepareStemsDialog({
@@ -34,6 +35,7 @@ export function ReprepareStemsDialog({
 }) {
   const [stems, setStems] = React.useState(project.requested_stems);
   const [stemBleedReduction, setStemBleedReduction] = React.useState(defaultManifest.engine.stem_bleed_reduction);
+  const [stemEnsemble, setStemEnsemble] = React.useState(defaultManifest.engine.stem_ensemble);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const availableStems = configuration?.choices.stems || fallbackStems;
@@ -47,6 +49,11 @@ export function ReprepareStemsDialog({
         ? engine.stem_bleed_reduction
         : defaultManifest.engine.stem_bleed_reduction,
     );
+    setStemEnsemble(
+      typeof engine?.stem_ensemble === "boolean"
+        ? engine.stem_ensemble
+        : defaultManifest.engine.stem_ensemble,
+    );
     setError(null);
   }, [open, project]);
 
@@ -55,7 +62,7 @@ export function ReprepareStemsDialog({
     setBusy(true);
     setError(null);
     try {
-      await onReprepare({ stems, stemBleedReduction });
+      await onReprepare({ stems, stemBleedReduction, stemEnsemble });
       onOpenChange(false);
     } catch (reason) {
       setError((reason as Error).message);
@@ -75,6 +82,12 @@ export function ReprepareStemsDialog({
         </DialogHeader>
         <div className="space-y-3 p-3">
           <StemSelectorGrid available={availableStems} selected={stems} onChange={setStems} />
+          <ToggleField
+            label="Ensemble separation"
+            description="Download another model for a slower separation pass."
+            checked={stemEnsemble}
+            onChange={setStemEnsemble}
+          />
           <details className="rounded-md border">
             <summary className="cursor-pointer px-3 py-2 text-[13px] font-medium">DSP stem cleanup</summary>
             <div className="border-t p-3">

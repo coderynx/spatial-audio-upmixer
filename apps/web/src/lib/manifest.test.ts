@@ -9,6 +9,7 @@ describe("normalizeManifest", () => {
     });
     expect(manifest.engine.mode).toBe("stem");
     expect(manifest.engine.stems).toEqual(defaultManifest.engine.stems);
+    expect(manifest.engine.stem_ensemble).toBe(false);
     expect(manifest.mixing.stem_source_anchor_strength).toBe(0.35);
     expect(manifest.mixing.bed_trim_db).toBe(2.5);
     expect(manifest.mixing.stem_routing).toEqual(defaultManifest.mixing.stem_routing);

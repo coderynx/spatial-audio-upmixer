@@ -93,4 +93,15 @@ describe("StemsSection", () => {
     await user.click(screen.getByRole("button", { name: "Crowd" }));
     expect(screen.getByText(/This job keeps Crowd only/)).toBeInTheDocument();
   });
+
+  it("toggles ensemble separation in the performance controls", async () => {
+    const user = userEvent.setup();
+    render(<StemHarness />);
+
+    await user.click(screen.getByText("Separation performance"));
+    const toggle = screen.getByRole("switch", { name: "Ensemble separation" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
 });

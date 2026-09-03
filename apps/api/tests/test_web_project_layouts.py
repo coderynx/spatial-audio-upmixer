@@ -201,6 +201,15 @@ def test_saving_a_layout_the_track_does_not_have_is_rejected(layouts_client):
     assert response.status_code == 422
 
 
+def test_ensemble_separation_is_project_wide_not_a_track_override(layouts_client):
+    project_id, track_id = _project_with_track(layouts_client)
+    response = layouts_client.put(
+        f"/api/v1/projects/{project_id}/tracks/{track_id}/layouts/7.1.4/settings",
+        json={"manifest_overrides": {"engine": {"stem_ensemble": True}}, "scene_overrides": {}},
+    )
+    assert response.status_code == 422
+
+
 def test_export_renders_one_layout_and_only_the_tracks_that_have_it(tmp_path, monkeypatch):
     """One export is one layout. A track mixed only for stereo has nothing to
     contribute to a 5.1 render and must not be silently exported at a layout

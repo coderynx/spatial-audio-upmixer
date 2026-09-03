@@ -305,7 +305,7 @@ export const api = {
   expandProjectStems: (id: string, stems: string[]) =>
     request<Project>(`/api/v1/projects/${id}/stems`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stems }) }),
   retryProject: (id: string) => request<Project>(`/api/v1/projects/${id}/retry`, { method: "POST" }),
-  reprepareProjectStems: (id: string, payload: { stems: string[]; stem_bleed_reduction: boolean }) =>
+  reprepareProjectStems: (id: string, payload: { stems: string[]; stem_bleed_reduction: boolean; stem_ensemble: boolean }) =>
     request<Project>(`/api/v1/projects/${id}/stems/reprepare`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
   exportProject: (id: string, layout: string) =>
     request<Job>(`/api/v1/projects/${id}/exports`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ layout }) }),

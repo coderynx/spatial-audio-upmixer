@@ -228,6 +228,8 @@ def _apply_cli_flags(config: UpmixConfig, args: argparse.Namespace, sample_rate_
         config.stem_silence_pad_ms = args.stem_silence_pad_ms
     if args.stem_source_anchor_strength is not None:
         config.stem_source_anchor_strength = args.stem_source_anchor_strength
+    if args.stem_ensemble is not None:
+        config.stem_ensemble = args.stem_ensemble
     if args.stem_bleed_reduction is not None:
         config.stem_bleed_reduction = args.stem_bleed_reduction
     if args.stem_drum_remask is not None:

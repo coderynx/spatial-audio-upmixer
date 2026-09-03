@@ -217,6 +217,17 @@ def add_stem_args(parser: argparse.ArgumentParser) -> None:
     )
 
     parser.add_argument(
+        "--stem-ensemble",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        dest="stem_ensemble",
+        help=(
+            "Average the fixed primary and SCNet separation models for Bass/Drums. "
+            "Downloads another model and runs slower."
+        ),
+    )
+
+    parser.add_argument(
         "--stem-bleed-reduction",
         action=argparse.BooleanOptionalAction,
         default=None,

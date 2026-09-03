@@ -244,6 +244,17 @@ export function StemsSection({
               })
             }
           />
+          <ToggleField
+            label="Ensemble separation"
+            description="Download another model for a slower separation pass. Changing it re-separates stems."
+            checked={manifest.engine.stem_ensemble}
+            onChange={(stem_ensemble) =>
+              setManifest({
+                ...manifest,
+                engine: { ...manifest.engine, stem_ensemble },
+              })
+            }
+          />
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             <NumberField
               label="Batch size"

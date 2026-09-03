@@ -128,10 +128,11 @@ describe("ProjectDetailPage tabs", () => {
     expect(screen.getByRole("dialog", { name: "Re-prepare stems" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Bass" }));
+    await user.click(screen.getByRole("switch", { name: "Ensemble separation" }));
     await user.click(screen.getByRole("button", { name: "Re-prepare stems" }));
 
     await waitFor(() => expect(api.reprepareProjectStems).toHaveBeenCalledWith("project-1", {
-      stems: ["Vocals", "Bass"], stem_bleed_reduction: false,
+      stems: ["Vocals", "Bass"], stem_bleed_reduction: false, stem_ensemble: true,
     }));
   });
 

@@ -50,6 +50,7 @@ export type Manifest = {
     stem_silence_min_duration_s: number;
     stem_silence_crossfade_ms: number;
     stem_silence_pad_ms: number;
+    stem_ensemble: boolean;
     stem_bleed_reduction: boolean;
   };
   mixing: {
@@ -187,6 +188,7 @@ export const defaultManifest: Manifest = {
     stem_silence_min_duration_s: 2,
     stem_silence_crossfade_ms: 10,
     stem_silence_pad_ms: 200,
+    stem_ensemble: false,
     stem_bleed_reduction: false,
   },
   mixing: {

@@ -36,6 +36,12 @@ def test_configuration_lists_every_stem_and_runtime_capability(web_client):
         "Lead Vocals", "Backing Vocals",
     ]
     assert "vocal-presence" in configuration["choices"]["stem_eq_profiles"]
+    assert configuration["manifest_keys"]["engine.stem_ensemble"] == "bool"
+    ensemble_parameter = next(
+        item for item in configuration["manifest_parameters"]
+        if item["path"] == "engine.stem_ensemble"
+    )
+    assert ensemble_parameter["default"] is False
     assert "stem_phase_fix_reference_models" not in configuration["choices"]
     assert "stem_debleed_models" not in configuration["choices"]
     capability = configuration["capabilities"]["stem_separation"]
