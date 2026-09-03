@@ -1,9 +1,11 @@
 """Weight loading and architecture instantiation for the inference engine."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import ssl
+import tempfile
 
 import torch
 
@@ -47,30 +49,75 @@ def _https_context() -> ssl.SSLContext:
         return ssl.create_default_context()
 
 
+def _validate_weights(path: str, spec: ModelSpec) -> None:
+    """Validate a checkpoint against any integrity metadata in its spec."""
+    expected_size = spec.expected_size_bytes
+    expected_sha256 = spec.expected_sha256
+    if expected_size is None and expected_sha256 is None:
+        return
+
+    actual_size = os.path.getsize(path)
+    if expected_size is not None and actual_size != expected_size:
+        raise ValueError(
+            f"Model weights '{spec.filename}' failed integrity check: "
+            f"expected {expected_size} bytes, found {actual_size} bytes at {path}."
+        )
+
+    if expected_sha256 is not None:
+        digest = hashlib.sha256()
+        with open(path, "rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        actual_sha256 = digest.hexdigest()
+        if actual_sha256 != expected_sha256.lower():
+            raise ValueError(
+                f"Model weights '{spec.filename}' failed integrity check: "
+                f"expected sha256 {expected_sha256}, found {actual_sha256} at {path}."
+            )
+
+
 def _ensure_weights(spec: ModelSpec, model_dir: str) -> str:
     """Return the local path to the checkpoint, downloading if necessary."""
     local_path = os.path.join(model_dir, spec.filename)
     if os.path.exists(local_path):
+        _validate_weights(local_path, spec)
         return local_path
 
     os.makedirs(model_dir, exist_ok=True)
+    temp_path: str | None = None
     try:
         import shutil
         import urllib.request
 
         _log.info("Downloading model weights: %s from %s", spec.filename, spec.weights_url)
         with urllib.request.urlopen(spec.weights_url, context=_https_context()) as response:
-            with open(local_path, "wb") as out_file:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                dir=model_dir,
+                prefix=f".{spec.filename}.",
+                suffix=".tmp",
+                delete=False,
+            ) as out_file:
+                temp_path = out_file.name
                 shutil.copyfileobj(response, out_file)
+        _validate_weights(temp_path, spec)
+        os.replace(temp_path, local_path)
+        temp_path = None
         return local_path
+    except ValueError:
+        raise
     except Exception as exc:
-        if os.path.exists(local_path):
-            os.unlink(local_path)
         raise FileNotFoundError(
             f"Model weights '{spec.filename}' not found in {model_dir} and "
             f"automatic download failed ({exc}). Download the checkpoint "
             f"manually from {spec.weights_url} and place it at {local_path}."
         ) from exc
+    finally:
+        if temp_path is not None:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 def _load_state_dict(path: str) -> dict:

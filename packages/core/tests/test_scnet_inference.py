@@ -1,9 +1,13 @@
 """Offline SCNet registry, architecture, and demix smoke coverage."""
 from __future__ import annotations
 
+import hashlib
+import io
 import logging
 import os
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -13,10 +17,21 @@ torch = pytest.importorskip("torch")
 from upmixer.separation.inference import demix, loader
 from upmixer.separation.inference.archs.scnet import SCNet
 from upmixer.separation.inference.config import ModelConfig, load_model_config
-from upmixer.separation.inference.registry import get_model_spec
+from upmixer.separation.inference.registry import ModelSpec, get_model_spec
 
 
 MODEL_FILENAME = "model_scnet_ep_36_sdr_10.0891.ckpt"
+
+
+def _integrity_spec(payload: bytes) -> ModelSpec:
+    return ModelSpec(
+        filename="weights.ckpt",
+        arch="scnet",
+        config_name="unused",
+        weights_url="https://example.invalid/weights.ckpt",
+        expected_size_bytes=len(payload),
+        expected_sha256=hashlib.sha256(payload).hexdigest(),
+    )
 
 
 def _tiny_model() -> SCNet:
@@ -54,6 +69,10 @@ def test_scnet_registry_pins_v1015_artifact_and_config():
     assert spec.config_name == "config_musdb18_scnet_xl_more_wide_v5"
     assert spec.weights_url.endswith(
         "/releases/download/v1.0.15/model_scnet_ep_36_sdr_10.0891.ckpt"
+    )
+    assert spec.expected_size_bytes == 214_063_778
+    assert spec.expected_sha256 == (
+        "ac25975f0f5704f3d1a3c3c251505b7a0f417a22eafe82773440ee4f7e14b74f"
     )
 
     config = load_model_config(spec.config_name)
@@ -94,6 +113,67 @@ def test_scnet_loader_accepts_training_checkpoint_wrapper(tmp_path):
     torch.save({"model_state_dict": state, "epoch": 36}, checkpoint)
     loaded = loader._load_state_dict(str(checkpoint))
     assert torch.equal(loaded["weight"], state["weight"])
+
+
+def test_loader_accepts_valid_existing_checkpoint(tmp_path):
+    payload = b"valid checkpoint"
+    checkpoint = tmp_path / "weights.ckpt"
+    checkpoint.write_bytes(payload)
+    spec = _integrity_spec(payload)
+
+    assert loader._ensure_weights(spec, str(tmp_path)) == str(checkpoint)
+
+
+def test_loader_rejects_mismatched_existing_checkpoint_without_deleting(tmp_path):
+    payload = b"custom checkpoint"
+    checkpoint = tmp_path / "weights.ckpt"
+    checkpoint.write_bytes(payload)
+    spec = replace(
+        _integrity_spec(payload),
+        expected_sha256=hashlib.sha256(b"x" * len(payload)).hexdigest(),
+    )
+
+    with pytest.raises(ValueError, match="failed integrity check"):
+        loader._ensure_weights(spec, str(tmp_path))
+    assert checkpoint.read_bytes() == payload
+
+
+def test_loader_downloads_atomically(tmp_path):
+    payload = b"downloaded checkpoint"
+    spec = _integrity_spec(payload)
+    replacements = []
+    original_replace = os.replace
+
+    def record_replace(source, destination):
+        replacements.append((source, destination))
+        return original_replace(source, destination)
+
+    with (
+        patch("urllib.request.urlopen", return_value=io.BytesIO(payload)),
+        patch.object(loader.os, "replace", side_effect=record_replace),
+    ):
+        path = loader._ensure_weights(spec, str(tmp_path))
+
+    assert Path(path).read_bytes() == payload
+    assert len(replacements) == 1
+    source, destination = replacements[0]
+    assert Path(source).parent == tmp_path
+    assert source != destination
+    assert destination == str(tmp_path / spec.filename)
+    assert not Path(source).exists()
+
+
+def test_loader_cleans_invalid_download_without_touching_target(tmp_path):
+    payload = b"invalid download"
+    expected = b"expected checkpoint"
+    spec = _integrity_spec(expected)
+
+    with patch("urllib.request.urlopen", return_value=io.BytesIO(payload)):
+        with pytest.raises(ValueError, match="failed integrity check"):
+            loader._ensure_weights(spec, str(tmp_path))
+
+    assert not (tmp_path / spec.filename).exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_scnet_demix_maps_canonical_sources_and_preserves_channels():

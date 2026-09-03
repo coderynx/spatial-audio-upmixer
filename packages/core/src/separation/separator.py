@@ -406,6 +406,11 @@ class StemSeparator:
                         _MIN_CPU_CHUNK_DURATION_S, current / 2.0
                     )
                 else:
+                    self._engine = None
+                    if self._device_manager is not None:
+                        self._device_manager.empty_cache()
+                    else:
+                        gc.collect()
                     raise
                 _log.warning(
                     "  Separator OOM at batch=%d segment=%s chunk=%s; "
@@ -595,17 +600,19 @@ class StemSeparator:
 
     def close(self) -> None:
         """Remove the persistent temp directory and release the loaded model."""
-        import shutil
         if self._tmp_dir and os.path.exists(self._tmp_dir):
+            import shutil
+
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
             self._tmp_dir = None
-        had_loaded_model = self._engine is not None
+        loaded_model = self._engine
+        device_manager = self._device_manager
         self._engine = None
-        if had_loaded_model:
-            if self._device_manager is not None:
-                self._device_manager.empty_cache()
-            else:
-                gc.collect()
+        self._device_manager = None
+        if device_manager is not None:
+            device_manager.empty_cache()
+        elif loaded_model is not None:
+            gc.collect()
 
     def __enter__(self) -> "StemSeparator":
         return self

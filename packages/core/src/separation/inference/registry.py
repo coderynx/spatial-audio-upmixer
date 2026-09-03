@@ -37,6 +37,10 @@ class ModelSpec:
                      ``dim_t`` default. Only applied when the caller leaves
                      ``segment_size`` unset (see ``docs/`` model catalogs in
                      ``upmixer-knowledge`` for provenance).
+        expected_size_bytes: Expected checkpoint size, when the upstream
+                     artifact is pinned.
+        expected_sha256: Expected lowercase SHA-256 digest, when the
+                     upstream artifact is pinned.
     """
 
     filename: str
@@ -44,6 +48,8 @@ class ModelSpec:
     config_name: str
     weights_url: str
     default_chunk_samples: int | None = None
+    expected_size_bytes: int | None = None
+    expected_sha256: str | None = None
 
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
@@ -56,6 +62,8 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
             "releases/download/v1.0.15/model_scnet_ep_36_sdr_10.0891.ckpt"
         ),
         default_chunk_samples=485100,
+        expected_size_bytes=214_063_778,
+        expected_sha256="ac25975f0f5704f3d1a3c3c251505b7a0f417a22eafe82773440ee4f7e14b74f",
     ),
     "BS-Roformer-SW.ckpt": ModelSpec(
         filename="BS-Roformer-SW.ckpt",

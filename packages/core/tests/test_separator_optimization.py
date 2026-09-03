@@ -162,6 +162,17 @@ def test_close_clears_loaded_model_cache_once():
     manager.empty_cache.assert_called_once_with()
 
 
+def test_close_clears_device_manager_without_loaded_model():
+    separator = StemSeparator(model="model.ckpt")
+    manager = MagicMock()
+    separator._device_manager = manager
+
+    separator.close()
+    separator.close()
+
+    manager.empty_cache.assert_called_once_with()
+
+
 def test_only_actual_oom_is_retryable():
     assert _is_oom_error(RuntimeError("CUDA out of memory"))
     assert not _is_oom_error(RuntimeError("invalid model configuration"))
@@ -263,6 +274,28 @@ def test_cpu_oom_propagates_after_minimum_settings():
             pass
         else:
             raise AssertionError("minimum-memory CPU OOM must propagate")
+
+
+def test_terminal_oom_releases_engine_and_device_cache():
+    separator = StemSeparator(
+        model="model.ckpt", batch_size=1,
+        segment_size=64, chunk_duration_s=60.0,
+    )
+    separator._backend = "cpu"
+    manager = MagicMock()
+    separator._device_manager = manager
+    separator._engine = object()
+
+    class FakeSeparator:
+        def separate(self, _):
+            raise MemoryError("out of memory")
+
+    with patch.object(separator, "_get_separator", return_value=FakeSeparator()):
+        with pytest.raises(MemoryError):
+            separator._separate_paths("input.wav")
+
+    assert separator._engine is None
+    manager.empty_cache.assert_called_once_with()
 
 
 def test_explicit_batch_does_not_replace_learned_auto_value():
