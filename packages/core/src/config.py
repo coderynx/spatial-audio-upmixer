@@ -224,8 +224,7 @@ class UpmixConfig:
     stem_drum_remask: bool = True
     stem_primary_remask: bool = True
 
-    # Fixed BS-Roformer-SW + SCNet average for Bass/Drums; delivery controls
-    # are intentionally deferred until the ensemble has a quality gate.
+    # Fixed BS-Roformer-SW + SCNet average for Bass/Drums.
     stem_ensemble: bool = False
 
     def resolve_fft_params(self, actual_sample_rate: int) -> tuple[int, int]:
