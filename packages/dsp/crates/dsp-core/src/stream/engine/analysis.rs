@@ -116,11 +116,13 @@ impl PreviewEngine {
             })
             .collect();
         self.meters.stem_dynamics_gr_db = self
+            .graph
             .routes
             .iter()
             .map(crate::stream::routing::StemRouteState::dynamics_gain_reduction_db)
             .collect();
         self.meters.stem_dynamic_eq_gr_db = self
+            .graph
             .routes
             .iter()
             .map(crate::stream::routing::StemRouteState::dynamic_eq_gain_reduction_db)
@@ -131,6 +133,7 @@ impl PreviewEngine {
             .saturating_sub(self.post.base);
         let meter_end = self.emitted.saturating_sub(self.post.base);
         self.meters.channels = self
+            .graph
             .rendered_channels
             .iter()
             .enumerate()
@@ -167,7 +170,7 @@ impl PreviewEngine {
     }
 
     pub fn measurement_weights(&self, fallback: &[f64]) -> Vec<f64> {
-        if self.authored_channels > self.params.speakers.len() {
+        if self.graph.authored_channels > self.params.speakers.len() {
             return self
                 .params
                 .speakers
@@ -194,7 +197,7 @@ impl PreviewEngine {
     /// no longer describes); true peak stays on the delivered channels, which
     /// are what the ceiling applies to.
     pub fn measure(&mut self, weights: &[f64]) -> (f64, f64) {
-        if self.authored_channels > self.params.speakers.len()
+        if self.graph.authored_channels > self.params.speakers.len()
             && self.params.output_mode != OutputMode::Native
         {
             return self.fork().measure(weights);

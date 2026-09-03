@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 use upmixer_dsp_core::stream::engine::{PreviewEngine, StemSource};
-use upmixer_dsp_core::stream::params::EngineParams;
+use upmixer_dsp_core::stream::params::{EngineParams, SendShape};
 use upmixer_dsp_core::stream::scale::RouteScalePass;
 
 const SR: u32 = 48_000;
@@ -176,6 +176,26 @@ fn a_measurement_belongs_to_the_mix_it_was_measured_on() {
     params.stems[0].routing[0].1 = 0.8;
     engine.update_params(params);
     assert!((engine.route_scale(0) - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn topology_update_rebuilds_the_graph_and_clears_route_scales() {
+    let mut engine = engine(r#"[["FL", 0.5], ["FR", 0.5]]"#);
+    engine.set_route_scales(&[0.8]);
+    let mut scratch = vec![0.0; 4 * 128];
+    assert_eq!(engine.render(&mut scratch, 128), 128);
+
+    let mut params = engine.params().clone();
+    let mut center = params.speakers[0].clone();
+    center.name = "C".into();
+    center.azimuth_rad = 0.0;
+    params.speakers.push(center);
+    params.shapes.push(SendShape::Mono);
+    engine.update_params(params);
+
+    assert_eq!(engine.output_channels(), 5);
+    assert!(!engine.has_route_scales());
+    assert!(engine.is_seeking());
 }
 
 #[test]

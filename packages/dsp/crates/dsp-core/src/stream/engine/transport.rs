@@ -27,8 +27,9 @@ impl PreviewEngine {
         // Rebuilt at the landing frame: their band splits carry a forward
         // pass and `rewind` left one starting at the top of the programme.
         let n_channels = self.params.speakers.len();
-        self.unifier = build_unifier(self.sample_rate, n_channels, &self.params, target);
-        self.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params, target);
+        self.graph.unifier = build_unifier(self.sample_rate, n_channels, &self.params, target);
+        self.graph.decorrelator =
+            build_decorrelator(self.sample_rate, n_channels, &self.params, target);
         // A cold jump has rendered nothing at the new position yet, so the
         // last render's levels are stale — reset them rather than reporting
         // whatever was playing before the jump. `seek`'s own preroll render

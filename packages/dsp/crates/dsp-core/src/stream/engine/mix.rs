@@ -223,10 +223,10 @@ impl PreviewEngine {
         count: usize,
         speakers: &mut [Vec<f64>],
     ) {
-        let Some(mix) = self.stem_mix_routes.get(stem) else {
+        let Some(mix) = self.graph.stem_mix_routes.get(stem) else {
             return;
         };
-        let route = &self.routes[stem];
+        let route = &self.graph.routes[stem];
         assemble_stem_into(
             mix,
             route,

@@ -1,14 +1,9 @@
 //! Live parameter edits and the rebuilds a topology change forces.
 
 use super::mix::build_stem_mix_routes;
-use super::{
-    build_decorrelator, build_output, build_unifier, mastering_topology, PreviewEngine,
-    GAIN_RAMP_MS,
-};
+use super::{build_decorrelator, build_unifier, graph::EngineGraph, PreviewEngine, GAIN_RAMP_MS};
 use crate::mastering::dyneq::DynamicEq;
-use crate::spatial::panner::PannerLayout;
 use crate::stream::limiter::StreamingLimiter;
-use crate::stream::master::CausalChain;
 use crate::stream::params::{EngineParams, SendParams, StemParams};
 use crate::stream::routing::StemRouteState;
 use crate::stream::state::{OnePole, StreamingCompressor};
@@ -20,7 +15,13 @@ pub(crate) fn build_route(
     sends: &SendParams,
     stem: &StemParams,
 ) -> StemRouteState {
-    let mut route = StemRouteState::new(sample_rate, sends, stem.eq.clone(), stem.dynamic_eq.clone(), stem.dynamics);
+    let mut route = StemRouteState::new(
+        sample_rate,
+        sends,
+        stem.eq.clone(),
+        stem.dynamic_eq.clone(),
+        stem.dynamics,
+    );
     route.set_ambient(
         sample_rate,
         sends,
@@ -127,7 +128,7 @@ impl PreviewEngine {
             return;
         }
         stem.eq_fir = taps;
-        if let Some(route) = self.routes.get_mut(index) {
+        if let Some(route) = self.graph.routes.get_mut(index) {
             route.retune(
                 self.sample_rate,
                 &self.params.sends,
@@ -149,7 +150,7 @@ impl PreviewEngine {
             return;
         }
         self.params.master.eq_fir = taps;
-        for chain in &mut self.causal {
+        for chain in &mut self.graph.causal {
             chain.set_eq_fir(&self.params.master.eq_fir);
         }
     }
@@ -160,7 +161,7 @@ impl PreviewEngine {
             return;
         }
         self.params.master.reference_fir = taps;
-        for chain in &mut self.causal {
+        for chain in &mut self.graph.causal {
             chain.set_reference_fir(&self.params.master.reference_fir);
         }
     }
@@ -193,18 +194,21 @@ impl PreviewEngine {
             || object_topology(&old) != object_topology(&self.params);
         if topology_changed {
             let position = self.emitted;
+            self.clear_route_scales();
             self.rebuild_for_new_topology();
             self.begin_seek(position);
             return;
         }
 
-        if self.routes.len() != self.params.stems.len() {
+        if self.graph.routes.len() != self.params.stems.len() {
             self.rebuild_routes();
         }
 
         let sends_changed = old.sends != self.params.sends;
         if sends_changed {
-            self.lfe_bus.retune(self.sample_rate, &self.params.sends);
+            self.graph
+                .lfe_bus
+                .retune(self.sample_rate, &self.params.sends);
         }
         // A measured route scale belongs to the mix it was measured on. Every
         // input the routing reads is compared here rather than the whole
@@ -215,9 +219,10 @@ impl PreviewEngine {
             self.clear_route_scales();
         }
         if routes_changed {
-            self.stem_mix_routes = build_stem_mix_routes(&self.params, &self.panner_layout);
+            self.graph.stem_mix_routes =
+                build_stem_mix_routes(&self.params, &self.graph.panner_layout);
         }
-        for (i, route) in self.routes.iter_mut().enumerate() {
+        for (i, route) in self.graph.routes.iter_mut().enumerate() {
             let new_eq = self.params.stems.get(i).and_then(|s| s.eq.clone());
             let old_eq = old.stems.get(i).and_then(|s| s.eq.clone());
             let eq_changed = new_eq != old_eq;
@@ -254,16 +259,17 @@ impl PreviewEngine {
             }
         }
 
-        let authored = self.authored_channels;
+        let authored = self.graph.authored_channels;
         let speakers = self.params.speakers.len();
         // Rebuilt only when the band list actually moved: a rebuild restarts
         // every detector envelope cold.
         if !self
+            .graph
             .dyn_eq
             .as_ref()
             .is_some_and(|s| s.matches(&self.params.master.dynamic_eq))
         {
-            self.dyn_eq = if authored > speakers {
+            self.graph.dyn_eq = if authored > speakers {
                 DynamicEq::new_linked(
                     self.sample_rate,
                     authored,
@@ -282,11 +288,11 @@ impl PreviewEngine {
             };
         }
         match self.params.master.compressor {
-            None => self.compressor = None,
-            Some(c) => match &mut self.compressor {
+            None => self.graph.compressor = None,
+            Some(c) => match &mut self.graph.compressor {
                 Some(existing) => existing.retune(c, self.sample_rate),
                 None => {
-                    self.compressor = Some(StreamingCompressor::new(
+                    self.graph.compressor = Some(StreamingCompressor::new(
                         c,
                         self.sample_rate,
                         if authored > speakers {
@@ -305,22 +311,24 @@ impl PreviewEngine {
         let new_unifier_active =
             new_unify_hz.is_some() && !self.params.master.lf_targets.is_empty();
         if !new_unifier_active {
-            self.unifier = None;
+            self.graph.unifier = None;
         } else if old_unifier_active && old_unify_hz == new_unify_hz {
-            if let (Some(unifier), Some(bass)) = (&mut self.unifier, self.params.master.bass) {
+            if let (Some(unifier), Some(bass)) = (&mut self.graph.unifier, self.params.master.bass)
+            {
                 unifier.retune(bass, self.params.master.lf_targets.clone());
             } else {
-                self.unifier =
+                self.graph.unifier =
                     build_unifier(self.sample_rate, speakers, &self.params, self.unify_done);
             }
         } else {
-            self.unifier = build_unifier(self.sample_rate, speakers, &self.params, self.unify_done);
+            self.graph.unifier =
+                build_unifier(self.sample_rate, speakers, &self.params, self.unify_done);
         }
         if decorrelator_topology_changed(old.master.bass, self.params.master.bass) {
-            self.decorrelator =
+            self.graph.decorrelator =
                 build_decorrelator(self.sample_rate, speakers, &self.params, self.unify_done);
         } else if let (Some(decorrelator), Some(bass)) =
-            (&mut self.decorrelator, self.params.master.bass)
+            (&mut self.graph.decorrelator, self.params.master.bass)
         {
             decorrelator.retune_amount(bass.decorrelate);
         } else if self
@@ -329,9 +337,9 @@ impl PreviewEngine {
             .bass
             .is_some_and(|bass| bass.decorrelate > 0.0)
         {
-            self.decorrelator =
+            self.graph.decorrelator =
                 build_decorrelator(self.sample_rate, speakers, &self.params, self.unify_done);
-            if let Some(decorrelator) = &mut self.decorrelator {
+            if let Some(decorrelator) = &mut self.graph.decorrelator {
                 decorrelator.fade_in();
             }
         }
@@ -339,7 +347,7 @@ impl PreviewEngine {
         if (firs_changed && old.master != self.params.master)
             || (!firs_changed && master_changed_without_firs(&old.master, &self.params.master))
         {
-            for chain in &mut self.causal {
+            for chain in &mut self.graph.causal {
                 chain.retune(
                     self.sample_rate,
                     &old.master,
@@ -350,12 +358,12 @@ impl PreviewEngine {
         }
 
         match self.params.master.limiter {
-            None => self.limiter = None,
-            Some(l) if self.limiter.is_none() || old.master.limiter != Some(l) => {
-                self.limiter = Some(StreamingLimiter::new(
+            None => self.graph.limiter = None,
+            Some(l) if self.graph.limiter.is_none() || old.master.limiter != Some(l) => {
+                self.graph.limiter = Some(StreamingLimiter::new(
                     l,
                     self.sample_rate,
-                    self.rendered_channels.iter().max().map_or(0, |i| i + 1),
+                    self.graph.post_channels(),
                     self.params.lfe_index,
                 ));
             }
@@ -367,7 +375,7 @@ impl PreviewEngine {
             || old.voicing != self.params.voicing
             || old.soft_limit_threshold != self.params.soft_limit_threshold
         {
-            self.output.retune(self.sample_rate, &self.params);
+            self.graph.output.retune(self.sample_rate, &self.params);
         }
 
         if old.speakers != self.params.speakers
@@ -378,73 +386,16 @@ impl PreviewEngine {
         }
     }
 
-    /// Full rebuild for a channel-count/LFE-position change — every stage
-    /// keyed by `n_channels` has to move, so there is nothing cheaper to do
-    /// than what [`Self::new`] would build fresh. `pre`/`post`/`causal`/
-    /// `output`/`limiter`/`emitted` are left to the `seek` call the caller
-    /// makes right after this, whose `rewind` already rebuilds them at the
-    /// new topology.
+    /// Rebuild every topology-dependent stage through the same constructor
+    /// as a new engine, then let the caller seek and warm its transport.
     fn rebuild_for_new_topology(&mut self) {
-        let n_channels = self.params.speakers.len();
-        self.collapsed = vec![Vec::new(); n_channels.max(2)];
-        let speaker_names: Vec<&str> = self
-            .params
-            .speakers
-            .iter()
-            .map(|speaker| speaker.name.as_str())
-            .collect();
-        self.panner_layout = PannerLayout::new(&speaker_names);
-        self.rebuild_routes();
-        let (authored, rendered, _) =
-            mastering_topology(n_channels, self.params.lfe_index, &self.stem_mix_routes);
-        self.authored_channels = authored;
-        self.rendered_channels = rendered;
-        self.causal = (0..authored)
-            .map(|i| {
-                CausalChain::new(
-                    self.sample_rate,
-                    &self.params.master,
-                    self.params.lfe_index == Some(i),
-                )
-            })
-            .collect();
-        self.lfe_bus.retune(self.sample_rate, &self.params.sends);
-        self.dyn_eq = if authored > n_channels {
-            DynamicEq::new_linked(
-                self.sample_rate,
-                authored,
-                self.params.lfe_index,
-                n_channels,
-                self.params.lfe_index,
-                &self.params.master.dynamic_eq,
-            )
-        } else {
-            DynamicEq::new(
-                self.sample_rate,
-                n_channels,
-                self.params.lfe_index,
-                &self.params.master.dynamic_eq,
-            )
-        };
-        self.compressor = self.params.master.compressor.map(|c| {
-            StreamingCompressor::new(
-                c,
-                self.sample_rate,
-                if authored > n_channels {
-                    n_channels
-                } else {
-                    authored
-                },
-            )
-        });
-        self.unifier = build_unifier(self.sample_rate, n_channels, &self.params, self.unify_done);
-        self.decorrelator =
-            build_decorrelator(self.sample_rate, n_channels, &self.params, self.unify_done);
-        self.output = build_output(
+        self.collapsed = vec![Vec::new(); self.params.speakers.len().max(2)];
+        self.graph = EngineGraph::new(
             self.sample_rate,
             &self.params,
-            &self.decode_taps_override,
-            &self.xtc_taps_override,
+            self.decode_taps_override.as_deref(),
+            self.xtc_taps_override.as_deref(),
+            self.unify_done,
         );
         self.prime_output(128);
     }
@@ -453,7 +404,7 @@ impl PreviewEngine {
     /// `self.params.stems` — used when a stem was added or removed, where
     /// there is no previous per-index state to retune.
     fn rebuild_routes(&mut self) {
-        self.routes = self
+        self.graph.routes = self
             .params
             .stems
             .iter()
@@ -472,6 +423,6 @@ impl PreviewEngine {
                 OnePole::new_at(GAIN_RAMP_MS, self.sample_rate as f64, target)
             })
             .collect();
-        self.stem_mix_routes = build_stem_mix_routes(&self.params, &self.panner_layout);
+        self.graph.stem_mix_routes = build_stem_mix_routes(&self.params, &self.graph.panner_layout);
     }
 }

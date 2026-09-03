@@ -5,6 +5,7 @@
 //! and the look-ahead queues that feed it live in [`render`].
 
 mod analysis;
+mod graph;
 mod mix;
 mod params_update;
 pub(crate) mod render;
@@ -15,20 +16,17 @@ use std::sync::Arc;
 use crate::kernels::fft::RealFft;
 use crate::kernels::stft::hann_periodic;
 use crate::loudness_stream::WindowLoudnessMeter;
-use crate::mastering::dyneq::DynamicEq;
 use crate::spatial::downmix::FoldTo51;
-use crate::spatial::panner::PannerLayout;
 
-use crate::stream::limiter::StreamingLimiter;
 use crate::stream::master::{
-    CausalChain, LfUnifier, StreamingDecorrelator, DECORR_HORIZON_MS, UNIFY_HORIZON_MS,
+    LfUnifier, StreamingDecorrelator, DECORR_HORIZON_MS, UNIFY_HORIZON_MS,
 };
 use crate::stream::meters::Meters;
 use crate::stream::output::OutputStage;
 use crate::stream::params::EngineParams;
-use crate::stream::routing::{LfeBus, StemRouteState};
-use crate::stream::state::{OnePole, StreamingCompressor};
-use mix::{build_stem_mix_routes, StemMixRoute};
+use crate::stream::state::OnePole;
+use graph::EngineGraph;
+use mix::StemMixRoute;
 
 /// Frames the LF unifier advances per call. Larger amortizes its zero-phase
 /// context further but raises the worst-case cost of a single render.
@@ -98,25 +96,12 @@ pub struct PreviewEngine {
     sample_rate: u32,
     params: EngineParams,
     stems: Vec<Arc<StemSource>>,
-    routes: Vec<StemRouteState>,
-    panner_layout: PannerLayout,
-    stem_mix_routes: Vec<StemMixRoute>,
-    authored_channels: usize,
-    rendered_channels: Vec<usize>,
-    speaker_render_scratch: Vec<Vec<f64>>,
     /// Per-stem route normalization once `RouteScalePass` has measured it.
     /// Empty until then, and cleared whenever a parameter the routing reads
     /// moves, so the host's estimate stands in rather than a stale
     /// measurement of a mix that no longer exists.
     measured_scales: Vec<Option<f64>>,
-    lfe_bus: LfeBus,
-    causal: Vec<CausalChain>,
-    dyn_eq: Option<DynamicEq>,
-    compressor: Option<StreamingCompressor>,
-    unifier: Option<LfUnifier>,
-    decorrelator: Option<StreamingDecorrelator>,
-    limiter: Option<StreamingLimiter>,
-    output: OutputStage,
+    graph: EngineGraph,
     /// Set once the host ships the decode/XTC banks over their own binary
     /// channel (`set_decode_taps`/`set_xtc_taps`); overrides whatever
     /// `params.decode_taps`/`xtc_taps` carries. `None` falls back to the
@@ -202,7 +187,7 @@ pub(super) fn build_decorrelator(
     StreamingDecorrelator::new(sample_rate, n_channels, params.lfe_index, &bass, base)
 }
 
-fn build_output(
+pub(super) fn build_output(
     sample_rate: u32,
     params: &EngineParams,
     decode_override: &Option<Vec<f64>>,
@@ -216,7 +201,7 @@ fn build_output(
     )
 }
 
-fn mastering_topology(
+pub(super) fn mastering_topology(
     n_speakers: usize,
     lfe: Option<usize>,
     routes: &[StemMixRoute],
@@ -250,57 +235,10 @@ fn mastering_topology(
 impl PreviewEngine {
     pub fn new(sample_rate: u32, params: EngineParams, stems: Vec<Arc<StemSource>>) -> Self {
         let n_channels = params.speakers.len();
-        let speaker_names: Vec<&str> = params
-            .speakers
-            .iter()
-            .map(|speaker| speaker.name.as_str())
-            .collect();
-        let panner_layout = PannerLayout::new(&speaker_names);
-        let stem_mix_routes = build_stem_mix_routes(&params, &panner_layout);
-        let (authored_channels, rendered_channels, post_channels) =
-            mastering_topology(n_channels, params.lfe_index, &stem_mix_routes);
-        let routes = params
-            .stems
-            .iter()
-            .map(|s| params_update::build_route(sample_rate, &params.sends, s))
-            .collect();
-        let causal = (0..authored_channels)
-            .map(|i| CausalChain::new(sample_rate, &params.master, params.lfe_index == Some(i)))
-            .collect();
-        let dyn_eq = if authored_channels > n_channels {
-            DynamicEq::new_linked(
-                sample_rate,
-                authored_channels,
-                params.lfe_index,
-                n_channels,
-                params.lfe_index,
-                &params.master.dynamic_eq,
-            )
-        } else {
-            DynamicEq::new(
-                sample_rate,
-                n_channels,
-                params.lfe_index,
-                &params.master.dynamic_eq,
-            )
-        };
-        let compressor = params.master.compressor.map(|c| {
-            StreamingCompressor::new(
-                c,
-                sample_rate,
-                if authored_channels > n_channels {
-                    n_channels
-                } else {
-                    authored_channels
-                },
-            )
-        });
-        let unifier = build_unifier(sample_rate, n_channels, &params, 0);
-        let decorrelator = build_decorrelator(sample_rate, n_channels, &params, 0);
-        let limiter = params
-            .master
-            .limiter
-            .map(|l| StreamingLimiter::new(l, sample_rate, post_channels, params.lfe_index));
+        let graph = EngineGraph::new(sample_rate, &params, None, None, 0);
+        let authored_channels = graph.authored_channels;
+        let post_channels = graph.post_channels();
+        let object_sources = authored_channels > n_channels;
         let total_frames = stems.iter().map(|s| s.len()).max().unwrap_or(0);
 
         let stem_gain = params
@@ -323,43 +261,22 @@ impl PreviewEngine {
             params.master.monitor_output_gain,
         );
 
-        let decode_taps_override = None;
-        let xtc_taps_override = None;
-        let output = build_output(
-            sample_rate,
-            &params,
-            &decode_taps_override,
-            &xtc_taps_override,
-        );
         let mut engine = Self {
             sample_rate,
-            lfe_bus: LfeBus::new(sample_rate, &params.sends),
             collapsed: vec![Vec::new(); n_channels.max(2)],
             stem_gain,
             master_gain,
             monitor_gain,
-            output,
-            decode_taps_override,
-            xtc_taps_override,
+            graph,
+            decode_taps_override: None,
+            xtc_taps_override: None,
             params,
             stems,
-            routes,
-            panner_layout,
-            stem_mix_routes,
-            authored_channels,
-            rendered_channels,
-            speaker_render_scratch: vec![Vec::new(); n_channels],
             measured_scales: Vec::new(),
-            causal,
-            dyn_eq,
-            compressor,
-            unifier,
-            decorrelator,
-            limiter,
             pre: Queue::new(authored_channels),
             post: Queue::new(post_channels),
             comp_gr: Queue::new(1),
-            unify_stride: if authored_channels > n_channels {
+            unify_stride: if object_sources {
                 UNIFY_STRIDE / 2
             } else {
                 UNIFY_STRIDE
@@ -397,7 +314,7 @@ impl PreviewEngine {
     /// One stem's routing state, for a caller reading the signals
     /// [`Self::route_stem_block`] just produced.
     pub fn route(&self, index: usize) -> &crate::stream::routing::StemRouteState {
-        &self.routes[index]
+        &self.graph.routes[index]
     }
 
     /// Stems that have both a source and a parameter block, which is what a
@@ -446,7 +363,7 @@ impl PreviewEngine {
     pub fn fork(&self) -> Self {
         let mut params = self.params.clone();
         params.master.output_gain = 1.0;
-        if self.authored_channels > params.speakers.len() {
+        if self.graph.authored_channels > params.speakers.len() {
             params.output_mode = crate::stream::params::OutputMode::Native;
         }
         for speaker in &mut params.speakers {
@@ -466,7 +383,7 @@ impl PreviewEngine {
     }
 
     pub(crate) fn measurement_monitor_stage(&self) -> Option<OutputStage> {
-        if self.authored_channels <= self.params.speakers.len()
+        if self.graph.authored_channels <= self.params.speakers.len()
             || self.params.output_mode == crate::stream::params::OutputMode::Native
         {
             return None;
@@ -485,7 +402,7 @@ impl PreviewEngine {
     /// temporary f64 block for every worklet callback.
     pub fn render_f32(&mut self, out: &mut [f32], n_frames: usize) -> usize {
         let mut scratch = std::mem::take(&mut self.render_scratch);
-        scratch.resize(self.output.output_channels() * n_frames, 0.0);
+        scratch.resize(self.graph.output.output_channels() * n_frames, 0.0);
         let written = self.render(&mut scratch, n_frames);
         for (dst, source) in out.iter_mut().zip(&scratch) {
             *dst = *source as f32;
@@ -500,7 +417,7 @@ impl PreviewEngine {
     /// spatial profile does, unlike the rest of the mix.
     pub fn set_decode_taps(&mut self, taps: Vec<f64>) {
         self.decode_taps_override = Some(taps);
-        self.output = build_output(
+        self.graph.output = build_output(
             self.sample_rate,
             &self.params,
             &self.decode_taps_override,
@@ -512,7 +429,7 @@ impl PreviewEngine {
     /// Replace the crosstalk-cancellation matrix. See `set_decode_taps`.
     pub fn set_xtc_taps(&mut self, taps: Vec<f64>) {
         self.xtc_taps_override = Some(taps);
-        self.output = build_output(
+        self.graph.output = build_output(
             self.sample_rate,
             &self.params,
             &self.decode_taps_override,
@@ -527,7 +444,7 @@ impl PreviewEngine {
 
     /// Channels the collapse writes, which is two for every mode but native.
     pub fn output_channels(&self) -> usize {
-        self.output.output_channels()
+        self.graph.output.output_channels()
     }
 
     pub fn position(&self) -> usize {
@@ -539,7 +456,7 @@ impl PreviewEngine {
     }
 
     fn non_lfe(&self) -> Vec<usize> {
-        (0..self.authored_channels)
+        (0..self.graph.authored_channels)
             .filter(|i| self.params.lfe_index != Some(*i))
             .collect()
     }
@@ -547,28 +464,33 @@ impl PreviewEngine {
     /// Reset transport and every filter state to the top of the programme.
     pub fn rewind(&mut self) {
         self.seek_target = None;
-        for route in &mut self.routes {
+        for route in &mut self.graph.routes {
             route.reset();
         }
-        self.lfe_bus.reset();
-        if let Some(dyn_eq) = &mut self.dyn_eq {
+        self.graph.lfe_bus.reset();
+        if let Some(dyn_eq) = &mut self.graph.dyn_eq {
             dyn_eq.reset();
         }
-        if let Some(comp) = &mut self.compressor {
+        if let Some(comp) = &mut self.graph.compressor {
             comp.reset();
         }
         let n_channels = self.params.speakers.len();
-        self.unifier = build_unifier(self.sample_rate, n_channels, &self.params, 0);
-        self.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params, 0);
-        for chain in &mut self.causal {
+        self.graph.unifier = build_unifier(self.sample_rate, n_channels, &self.params, 0);
+        self.graph.decorrelator = build_decorrelator(self.sample_rate, n_channels, &self.params, 0);
+        for chain in &mut self.graph.causal {
             chain.reset();
         }
-        let post_channels = self.rendered_channels.iter().max().map_or(0, |i| i + 1);
-        self.limiter = self.params.master.limiter.map(|l| {
-            StreamingLimiter::new(l, self.sample_rate, post_channels, self.params.lfe_index)
+        let post_channels = self.graph.post_channels();
+        self.graph.limiter = self.params.master.limiter.map(|limiter| {
+            crate::stream::limiter::StreamingLimiter::new(
+                limiter,
+                self.sample_rate,
+                post_channels,
+                self.params.lfe_index,
+            )
         });
-        self.output.reset();
-        self.pre = Queue::new(self.authored_channels);
+        self.graph.output.reset();
+        self.pre = Queue::new(self.graph.authored_channels);
         self.post = Queue::new(post_channels);
         self.comp_gr = Queue::new(1);
         self.limiter_gr.clear();
