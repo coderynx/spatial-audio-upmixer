@@ -20,10 +20,10 @@ from upmixer_web.features.jobs.schemas import JobView
 from upmixer_web.features.jobs.views import job_view
 from upmixer_web.features.projects.archive import (
     export_project_archive,
-    import_project_archive,
     iter_track_stems_zip,
     safe_component,
 )
+from upmixer_web.features.projects.mutations import ProjectMutations
 from upmixer_web.features.projects.schemas import (
     AddProjectAssetsRequest,
     CreateProjectRequest,
@@ -40,20 +40,8 @@ from upmixer_web.features.projects.schemas import (
 from upmixer_web.features.projects.service import (
     ProjectStateConflict,
     TrackNotFoundError,
-    add_project_assets,
-    create_empty_project,
-    expand_project_stems,
     get_project,
     list_projects,
-    mark_project_deleting,
-    project_export_job,
-    reprepare_project_stems,
-    retry_project,
-    set_track_layouts,
-    update_project_settings,
-    update_project_track_name,
-    update_project_view_state,
-    update_track_layout_settings,
 )
 from upmixer_web.features.projects.views import project_view
 from upmixer_web.settings import Settings
@@ -79,6 +67,8 @@ def register_project_routes(
     database_session: Callable[[], Iterator[Session]],
     sessions: sessionmaker[Session],
 ) -> None:
+    mutations = ProjectMutations(storage, app.state.project_stems, manager)
+
     @app.post("/api/v1/projects", response_model=ProjectView, status_code=status.HTTP_201_CREATED, tags=["projects"])
     def create_project_route(request: CreateProjectRequest, session: Session = Depends(database_session)) -> ProjectView:
         try:
@@ -88,7 +78,7 @@ def register_project_routes(
                 "mode": "stem",
             }
             ensure_stem_separation_available(project_manifest, stem_capability)
-            project = create_empty_project(session, request.name, request.notes, request.manifest, request.scene)
+            project = mutations.create(session, request.name, request.notes, request.manifest, request.scene)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return project_view(project, settings.root_path, app.state.project_stems, manager)
@@ -102,10 +92,9 @@ def register_project_routes(
         if not batch:
             raise HTTPException(status_code=404, detail="Import not found")
         try:
-            project = add_project_assets(session, project, batch, request.per_asset_overrides)
+            project = mutations.add_assets(session, project, batch, request.per_asset_overrides)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        manager.notify()
         return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.get("/api/v1/projects", response_model=list[ProjectView], tags=["projects"])
@@ -133,38 +122,18 @@ def register_project_routes(
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        previous_preview_quality = project.preview_quality
         try:
             reference = (
                 resolve_project_mastering_reference(session, project, request.mastering_reference_id)
                 if "mastering_reference_id" in request.model_fields_set
                 else project.mastering_reference
             )
-            project = update_project_settings(
-                session, project, request.manifest, request.scene, request.name,
-                notes=request.notes,
-                mastering_reference=reference,
-                preview_quality=request.preview_quality,
+            project = mutations.update_settings(
+                session, project, request.manifest, request.scene, request.name, request.notes,
+                reference, request.preview_quality,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        # Previews are only encoded once per stem (see `catalogue_track`'s
-        # if-not-exists guard), so a quality change on an already-prepared
-        # project needs an explicit re-encode rather than waiting on the
-        # normal pipeline to naturally pick up the new setting.
-        if (
-            request.preview_quality is not None
-            and request.preview_quality != previous_preview_quality
-            and project.prepared_stems
-        ):
-            app.state.project_stems.regenerate_previews(project, project.preview_quality, storage)
-            session.commit()
-        # Backgrounded: the mix+PSD pass is heavy and settings saves debounce
-        # at 350ms, so inline would fire one full-song pass per slider tick
-        # (see docs/contracts/preview_export_parity.md Ledger D12).
-        manager.schedule_reference_match(project_id)
-        if project.status == "queued":
-            manager.notify()
         return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.put("/api/v1/projects/{project_id}/view-state", status_code=status.HTTP_204_NO_CONTENT, tags=["projects"])
@@ -172,7 +141,7 @@ def register_project_routes(
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        update_project_view_state(session, project, request.model_dump())
+        mutations.update_view_state(session, project, request.model_dump())
 
     @app.put("/api/v1/projects/{project_id}/tracks/{track_id}/layouts", response_model=ProjectView, tags=["projects"])
     def save_project_track_layouts(project_id: str, track_id: str, request: SetTrackLayoutsRequest, session: Session = Depends(database_session)) -> ProjectView:
@@ -180,7 +149,7 @@ def register_project_routes(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            project = set_track_layouts(session, project, track_id, request.layouts)
+            project = mutations.set_track_layouts(session, project, track_id, request.layouts)
         except TrackNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -193,7 +162,7 @@ def register_project_routes(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            project = update_project_track_name(session, project, track_id, request.name)
+            project = mutations.rename_track(session, project, track_id, request.name)
         except TrackNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -206,7 +175,7 @@ def register_project_routes(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            project = update_track_layout_settings(
+            project = mutations.update_track_layout(
                 session, project, track_id, layout, request.manifest_overrides, request.scene_overrides
             )
         except TrackNotFoundError as exc:
@@ -221,10 +190,9 @@ def register_project_routes(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            project = expand_project_stems(session, project, request.stems)
+            project = mutations.expand_stems(session, project, request.stems)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        manager.notify()
         return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.post("/api/v1/projects/{project_id}/exports", response_model=JobView, status_code=status.HTTP_201_CREATED, tags=["projects"])
@@ -233,10 +201,9 @@ def register_project_routes(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            job = project_export_job(session, project, app.state.project_stems, request.layout)
+            job = mutations.export(session, project, request.layout)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        manager.notify()
         return job_view(job, settings.root_path)
 
     @app.post("/api/v1/projects/{project_id}/retry", response_model=ProjectView, tags=["projects"])
@@ -245,10 +212,9 @@ def register_project_routes(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            retry_project(session, project)
+            project = mutations.retry(session, project)
         except ProjectStateConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        manager.notify()
         return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.post("/api/v1/projects/{project_id}/stems/reprepare", response_model=ProjectView, tags=["projects"])
@@ -261,7 +227,7 @@ def register_project_routes(
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         try:
-            reprepare_project_stems(
+            project = mutations.reprepare(
                 session, project,
                 stems=request.stems if request else None,
                 stem_bleed_reduction=request.stem_bleed_reduction if request else None,
@@ -271,7 +237,6 @@ def register_project_routes(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        manager.notify()
         return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.get("/api/v1/projects/{project_id}/archive", tags=["projects"])
@@ -308,12 +273,11 @@ def register_project_routes(
         try:
             with staging.open("wb") as handle:
                 shutil.copyfileobj(file.file, handle)
-            project = import_project_archive(session, storage, app.state.project_stems, manager.work_root, staging)
+            project = mutations.import_archive(session, staging)
         except (ValueError, KeyError) as exc:
             raise HTTPException(status_code=422, detail=f"Invalid project archive: {exc}") from exc
         finally:
             staging.unlink(missing_ok=True)
-        manager.notify()
         return project_view(project, settings.root_path, app.state.project_stems, manager)
 
     @app.delete("/api/v1/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["projects"])
@@ -321,10 +285,7 @@ def register_project_routes(
         project = get_project(session, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
-        if mark_project_deleting(session, project):
-            session.close()
-            manager.delete_now_project(project_id)
-        manager.notify()
+        mutations.delete(session, project)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.get("/api/v1/projects/{project_id}/tracks/{track_id}/stems/{stem_id}/audio", tags=["projects"])
