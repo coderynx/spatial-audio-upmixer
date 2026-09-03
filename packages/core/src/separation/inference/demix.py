@@ -13,7 +13,10 @@ single-element stem axis. The accumulator is sized to match that squeeze
 directly, and the untrained second stem is recovered as the residual
 against the original mix, matching upstream's ``orig_mix - primary`` rule.
 """
+
 from __future__ import annotations
+
+from collections.abc import Callable
 
 import numpy as np
 import torch
@@ -55,6 +58,7 @@ def demix_scnet(
     chunk_size: int | None = None,
     overlap: int | None = None,
     batch_size: int = 1,
+    progress_callback: Callable[[float], None] | None = None,
 ) -> dict[str, np.ndarray]:
     """Run SCNet's sample-domain overlap-add inference.
 
@@ -81,13 +85,13 @@ def demix_scnet(
     if original_length > 2 * border and border:
         mix_t = F.pad(mix_t, (border, border), mode="reflect")
 
-    result = torch.zeros(
-        (len(config.instruments), *mix_t.shape), dtype=torch.float32
-    )
+    result = torch.zeros((len(config.instruments), *mix_t.shape), dtype=torch.float32)
     counter = torch.zeros_like(result)
     batches: list[torch.Tensor] = []
     locations: list[tuple[int, int]] = []
     position = 0
+    completed = 0
+    total = (mix_t.shape[-1] + step - 1) // step
 
     while position < mix_t.shape[-1]:
         part = mix_t[:, position : position + chunk_size]
@@ -120,8 +124,11 @@ def demix_scnet(
                 fade_window[-fade:] = 1.0
             result[..., start : start + segment_length] += output * fade_window
             counter[..., start : start + segment_length] += fade_window
+        completed += len(locations)
         batches.clear()
         locations.clear()
+        if progress_callback is not None:
+            progress_callback(min(1.0, completed / total))
 
     estimated = (result / counter.clamp(min=1e-10)).numpy()
     if original_length > 2 * border and border:
@@ -139,6 +146,7 @@ def demix_roformer(
     segment_size: int | None,
     overlap: int = 2,
     batch_size: int = 1,
+    progress_callback: Callable[[float], None] | None = None,
 ) -> dict[str, np.ndarray]:
     """Chunked inference for BS-Roformer / Mel-Band Roformer models.
 
@@ -211,14 +219,23 @@ def demix_roformer(
             if safe_len > 0:
                 result[..., s : s + safe_len] += out[..., :safe_len] * window[:safe_len]
                 counter[..., s : s + safe_len] += window[:safe_len]
+        if progress_callback is not None:
+            progress_callback(min(1.0, (batch_start + len(batch_starts)) / len(starts)))
 
     inferenced = (result / counter.clamp(min=1e-10)).numpy()
 
     if num_stems == 1:
         primary = match_length(inferenced, orig_n_samples)
-        return {config.target_instrument: primary, _secondary_name(config): mix - primary}
+        return {
+            config.target_instrument: primary,
+            _secondary_name(config): mix - primary,
+        }
 
-    trimmed = match_length(inferenced, orig_n_samples) if n_samples != orig_n_samples else inferenced
+    trimmed = (
+        match_length(inferenced, orig_n_samples)
+        if n_samples != orig_n_samples
+        else inferenced
+    )
     return dict(zip(config.instruments, trimmed))
 
 
@@ -231,6 +248,7 @@ def demix_tfc_tdf(
     segment_size: int | None,
     overlap: int = 8,
     batch_size: int = 1,
+    progress_callback: Callable[[float], None] | None = None,
 ) -> dict[str, np.ndarray]:
     """Chunked inference for TFC-TDF v3 (MDX23C) models.
 
@@ -273,19 +291,28 @@ def demix_tfc_tdf(
     chunks = padded.unfold(1, chunk_size, hop_size).transpose(0, 1)
     num_stems = config.num_stems
     accumulated = (
-        torch.zeros(num_stems, *padded.shape) if num_stems > 1 else torch.zeros_like(padded)
+        torch.zeros(num_stems, *padded.shape)
+        if num_stems > 1
+        else torch.zeros_like(padded)
     )
 
     count = 0
     for start in range(0, len(chunks), batch_size):
-        batch = chunks[start : start + batch_size].to(device, non_blocking=use_async_transfer)
+        batch = chunks[start : start + batch_size].to(
+            device, non_blocking=use_async_transfer
+        )
         output = model(batch)
         for single in output:
-            accumulated[..., count * hop_size : count * hop_size + chunk_size] += single.cpu()
+            accumulated[..., count * hop_size : count * hop_size + chunk_size] += (
+                single.cpu()
+            )
             count += 1
+        if progress_callback is not None:
+            progress_callback(min(1.0, (start + len(batch)) / len(chunks)))
 
     inferenced = (
-        accumulated[..., chunk_size - hop_size : -(pad_size + chunk_size - hop_size)] / overlap
+        accumulated[..., chunk_size - hop_size : -(pad_size + chunk_size - hop_size)]
+        / overlap
     ).numpy()
 
     if num_stems > 1:
@@ -293,5 +320,8 @@ def demix_tfc_tdf(
 
     primary = match_length(inferenced, n_samples)
     if config.target_instrument:
-        return {config.target_instrument: primary, _secondary_name(config): mix - primary}
+        return {
+            config.target_instrument: primary,
+            _secondary_name(config): mix - primary,
+        }
     return {config.instruments[0]: primary}

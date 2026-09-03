@@ -5,11 +5,13 @@ output WAV file paths out) so ``separator.py`` only needs to swap what
 builds the "separator" object — stem-name parsing and the pipeline's
 disk-chaining in ``stem_pipeline.py`` are unchanged.
 """
+
 from __future__ import annotations
 
 import logging
 import os
 import time
+from collections.abc import Callable
 from fractions import Fraction
 
 import numpy as np
@@ -98,7 +100,12 @@ class SeparationEngine:
         self._pitch_shift = pitch_shift
         self._last_parent: np.ndarray | None = None
 
-    def separate(self, audio_path: str, retain_parent: bool = False) -> list[str]:
+    def separate(
+        self,
+        audio_path: str,
+        retain_parent: bool = False,
+        progress_callback: Callable[[float], None] | None = None,
+    ) -> list[str]:
         """Separate ``audio_path``, writing one WAV per stem to output_dir.
 
         Stems are written in the input file's level domain — the pre-demix
@@ -114,9 +121,11 @@ class SeparationEngine:
         mix, input_scale = audio_io.normalize(mix)
 
         started = time.monotonic()
-        sources = self._demix_with_chunking(mix)
+        sources = self._demix_with_chunking(mix, progress_callback)
         _log.debug(
-            "  Engine model=%s demix=%.2fs", self._model_filename, time.monotonic() - started
+            "  Engine model=%s demix=%.2fs",
+            self._model_filename,
+            time.monotonic() - started,
         )
 
         audio_base = os.path.splitext(os.path.basename(audio_path))[0]
@@ -138,22 +147,47 @@ class SeparationEngine:
         self._last_parent = None
         return parent
 
-    def _demix_with_chunking(self, mix: np.ndarray) -> dict[str, np.ndarray]:
+    def _demix_with_chunking(
+        self, mix: np.ndarray, progress_callback: Callable[[float], None] | None = None
+    ) -> dict[str, np.ndarray]:
         n_samples = mix.shape[1]
         if self._chunk_duration_s is None:
-            return self._demix_one(mix)
+            return (
+                self._demix_one(mix)
+                if progress_callback is None
+                else self._demix_one(mix, progress_callback)
+            )
         window = int(self._chunk_duration_s * self._sample_rate)
         if n_samples <= window:
-            return self._demix_one(mix)
+            return (
+                self._demix_one(mix)
+                if progress_callback is None
+                else self._demix_one(mix, progress_callback)
+            )
 
         crossfade = min(int(_CROSSFADE_S * self._sample_rate), window // 4)
         hop = window - crossfade
 
         segments: list[tuple[int, int, dict[str, np.ndarray]]] = []
         start = 0
+        total_segments = 1 + (n_samples - window + hop - 1) // hop
         while True:
             end = min(start + window, n_samples)
-            segments.append((start, end, self._demix_one(mix[:, start:end])))
+            segment_index = len(segments)
+            segments.append(
+                (
+                    start,
+                    end,
+                    self._demix_one(
+                        mix[:, start:end],
+                        None
+                        if progress_callback is None
+                        else lambda fraction: progress_callback(
+                            (segment_index + fraction) / total_segments
+                        ),
+                    ),
+                )
+            )
             if end == n_samples:
                 break
             start += hop
@@ -167,39 +201,60 @@ class SeparationEngine:
                 length = end - start
                 fade = np.ones(length, dtype=np.float32)
                 if start > 0:
-                    fade[:crossfade] *= np.linspace(0.0, 1.0, crossfade, dtype=np.float32)
+                    fade[:crossfade] *= np.linspace(
+                        0.0, 1.0, crossfade, dtype=np.float32
+                    )
                 if end < n_samples:
-                    fade[-crossfade:] *= np.linspace(1.0, 0.0, crossfade, dtype=np.float32)
+                    fade[-crossfade:] *= np.linspace(
+                        1.0, 0.0, crossfade, dtype=np.float32
+                    )
                 acc[:, start:end] += seg[name] * fade
                 weight[start:end] += fade
             result[name] = acc / np.clip(weight, 1e-10, None)
         return result
 
-    def _demix_one(self, mix: np.ndarray) -> dict[str, np.ndarray]:
+    def _demix_one(
+        self, mix: np.ndarray, progress_callback: Callable[[float], None] | None = None
+    ) -> dict[str, np.ndarray]:
         if self._pitch_shift is not None:
-            return self._demix_with_pitch(mix)
-        return self._demix_with_tta(mix)
+            return self._demix_with_pitch(mix, progress_callback)
+        return self._demix_with_tta(mix, progress_callback)
 
-    def _demix_with_pitch(self, mix: np.ndarray) -> dict[str, np.ndarray]:
+    def _demix_with_pitch(
+        self, mix: np.ndarray, progress_callback: Callable[[float], None] | None = None
+    ) -> dict[str, np.ndarray]:
         # Fake-sample-rate rescue trick: resampling by a rational factor
         # moves the mix into a register the model was trained on (pitch
         # down for sopranos/high material, up for deep vocals) and is fully
         # reversible, unlike a true pitch shift.
         n_samples = mix.shape[1]
-        ratio = Fraction(self._pitch_shift).limit_denominator(_PITCH_SHIFT_MAX_DENOMINATOR)
+        ratio = Fraction(self._pitch_shift).limit_denominator(
+            _PITCH_SHIFT_MAX_DENOMINATOR
+        )
         up, down = ratio.numerator, ratio.denominator
         shifted = signal.resample_poly(mix, up, down, axis=-1).astype(np.float32)
-        stems = self._demix_with_tta(shifted)
+        stems = (
+            self._demix_with_tta(shifted)
+            if progress_callback is None
+            else self._demix_with_tta(shifted, progress_callback)
+        )
         return {
             name: demix.match_length(
-                signal.resample_poly(stem, down, up, axis=-1).astype(np.float32), n_samples
+                signal.resample_poly(stem, down, up, axis=-1).astype(np.float32),
+                n_samples,
             )
             for name, stem in stems.items()
         }
 
-    def _demix_with_tta(self, mix: np.ndarray) -> dict[str, np.ndarray]:
+    def _demix_with_tta(
+        self, mix: np.ndarray, progress_callback: Callable[[float], None] | None = None
+    ) -> dict[str, np.ndarray]:
         if not self._tta:
-            return self._demix_arch(mix)
+            return (
+                self._demix_arch(mix)
+                if progress_callback is None
+                else self._demix_arch(mix, progress_callback)
+            )
         # Averaging invertible variants (polarity, channel order) is a cheap
         # approximation of proper TTA — each variant is fed through the same
         # model and its stems un-transformed before averaging.
@@ -209,13 +264,27 @@ class SeparationEngine:
             (np.ascontiguousarray(mix[::-1]), lambda s: s[::-1]),
         )
         totals: dict[str, np.ndarray] = {}
-        for variant_mix, inverse in variants:
-            for name, stem in self._demix_arch(variant_mix).items():
+        for index, (variant_mix, inverse) in enumerate(variants):
+            callback = (
+                None
+                if progress_callback is None
+                else lambda fraction: progress_callback(
+                    (index + fraction) / len(variants)
+                )
+            )
+            stems = (
+                self._demix_arch(variant_mix)
+                if callback is None
+                else self._demix_arch(variant_mix, callback)
+            )
+            for name, stem in stems.items():
                 restored = inverse(stem)
                 totals[name] = totals.get(name, 0.0) + restored
         return {name: total / len(variants) for name, total in totals.items()}
 
-    def _demix_arch(self, mix: np.ndarray) -> dict[str, np.ndarray]:
+    def _demix_arch(
+        self, mix: np.ndarray, progress_callback: Callable[[float], None] | None = None
+    ) -> dict[str, np.ndarray]:
         torch_device = self._model_device()
         if self._arch == "scnet":
             scnet_chunk_size = (
@@ -235,6 +304,7 @@ class SeparationEngine:
                     else self._config.num_overlap
                 ),
                 batch_size=self._batch_size,
+                progress_callback=progress_callback,
             )
 
         segment_size = self._resolved_segment_size()
@@ -244,9 +314,7 @@ class SeparationEngine:
             # use the tuned/caller batch size. Every other backend shares
             # memory with the OS and stays at 1 — batch=2 on MPS froze a real
             # M3 Pro (unified-memory pressure, not a catchable OOM).
-            roformer_batch_size = (
-                self._batch_size if torch_device.type == "cuda" else 1
-            )
+            roformer_batch_size = self._batch_size if torch_device.type == "cuda" else 1
             return demix.demix_roformer(
                 self._model,
                 mix,
@@ -255,6 +323,7 @@ class SeparationEngine:
                 segment_size=segment_size,
                 overlap=overlap if overlap is not None else 2,
                 batch_size=roformer_batch_size,
+                progress_callback=progress_callback,
             )
         return demix.demix_tfc_tdf(
             self._model,
@@ -264,6 +333,7 @@ class SeparationEngine:
             segment_size=segment_size,
             overlap=overlap if overlap is not None else 8,
             batch_size=self._batch_size,
+            progress_callback=progress_callback,
         )
 
     def _model_device(self) -> torch.device:

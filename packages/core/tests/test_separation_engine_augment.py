@@ -1,4 +1,5 @@
 """TTA, pitch-shift, and per-model chunk-size resolution on SeparationEngine."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -95,6 +96,17 @@ def test_default_chunk_samples_resolves_to_segment_size():
     # hop=100 here (test config) stands in for the real per-arch hop;
     # dim_t = round(samples / hop) + 1, matching demix's chunk_size formula.
     assert engine._resolved_segment_size() == round(882000 / 100) + 1
+
+
+def test_demix_reports_progress_for_each_chunk_batch():
+    engine = _make_engine()
+    progress: list[float] = []
+
+    engine._demix_one(np.ones((2, 1_500), dtype=np.float32), progress.append)
+
+    assert len(progress) > 1
+    assert progress == sorted(progress)
+    assert progress[-1] == 1.0
 
 
 def test_explicit_segment_size_overrides_registry_default():

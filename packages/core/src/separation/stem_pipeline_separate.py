@@ -1,4 +1,5 @@
 """Read, zone-split, separate, and cache stems — no routing or mastering."""
+
 from __future__ import annotations
 
 import logging
@@ -11,7 +12,13 @@ import numpy as np
 import soundfile as sf
 
 from upmixer.config import UpmixConfig
-from upmixer.formats import FORMAT_MAP, INPUT_FORMAT_MAP, InputFormat, OutputFormat, detect_input_format
+from upmixer.formats import (
+    FORMAT_MAP,
+    INPUT_FORMAT_MAP,
+    InputFormat,
+    OutputFormat,
+    detect_input_format,
+)
 from upmixer.io.reader import AudioReader
 from upmixer.separation.stem_identity import stem_cache_identity
 from upmixer.separation.stem_pipeline_exec import (
@@ -50,14 +57,15 @@ class SeparationResult:
     stem_summary: list[str]
 
 
-
 def _resolve_output_sample_rate(cfg: UpmixConfig, sr: int) -> int:
     out_sr = cfg.output_sample_rate or sr
     if cfg.output_type == "adm-bwf":
         if cfg.output_sample_rate is None:
             out_sr = 48_000
         if out_sr not in (48_000, 96_000):
-            raise ValueError("Dolby ADM-BWF requires a 48 kHz or 96 kHz output sample rate")
+            raise ValueError(
+                "Dolby ADM-BWF requires a 48 kHz or 96 kHz output sample rate"
+            )
         if cfg.output_subtype != "PCM_24":
             raise ValueError("Dolby ADM-BWF requires output_subtype='PCM_24'")
     return out_sr
@@ -124,7 +132,8 @@ def _load_cached_stems(
 
     silence_kwargs = _cache_key_kwargs(cfg)
     custom_inference_tuning = any(
-        value not in (None, False) for value in (
+        value not in (None, False)
+        for value in (
             cfg.stem_batch_size,
             cfg.stem_segment_size,
             cfg.stem_chunk_duration_s,
@@ -160,7 +169,11 @@ def _save_cached_stems(
 
     cache_started = time.monotonic()
     StemCache(cfg.stem_cache_dir).save(
-        input_path, cache_identity, sep_sr, all_stems, sep_sr,
+        input_path,
+        cache_identity,
+        sep_sr,
+        all_stems,
+        sep_sr,
         is_preview=cfg.preview,
         preview_duration=cfg.preview_duration_s,
         preview_start=cfg.preview_start_s,
@@ -203,11 +216,14 @@ def _run_zone_separation(
                 n_tasks: int,
                 model: str,
                 output_stems: frozenset[str],
+                stage_progress: float = 0.0,
                 zone_name: str = zone_name,
                 zone_frac: float = zone_frac,
                 next_zone_frac: float = next_zone_frac,
             ) -> None:
-                stage_frac = zone_frac + (next_zone_frac - zone_frac) * (stage_idx / n_tasks)
+                stage_frac = zone_frac + (next_zone_frac - zone_frac) * (
+                    (stage_idx + stage_progress) / n_tasks
+                )
                 stems_desc = ", ".join(sorted(output_stems)) or model
                 progress(
                     f"    Extracting {stems_desc} (zone {zone_name}, model {model})...",
@@ -225,7 +241,12 @@ def _run_zone_separation(
                     zone_audio = pair_src
                     original_path = None
                 zone_stems = execute_plan_with_silence_skip(
-                    get_separator, plan, zone_audio, sr, sep_sr, cfg,
+                    get_separator,
+                    plan,
+                    zone_audio,
+                    sr,
+                    sep_sr,
+                    cfg,
                     original_path=original_path,
                     stage_callback=_stage_callback,
                     resume_key=zone_resume_key,
@@ -239,7 +260,12 @@ def _run_zone_separation(
                     sep_path = tmp
                     tmp_files.append(tmp)
                 zone_stems = execute_plan(
-                    get_separator, plan, sep_path, sep_sr, _stage_callback, cfg,
+                    get_separator,
+                    plan,
+                    sep_path,
+                    sep_sr,
+                    _stage_callback,
+                    cfg,
                     zone_resume_key,
                 )
 
@@ -276,8 +302,12 @@ def separate(
     plan = resolve_separation_plan(canonical, cfg.stem_ensemble)
     _log.info(
         "separation_started input_format=%s input_channels=%d sample_rate=%d output_format=%s requested_stems=%s models=%s",
-        input_fmt.name, input_fmt.n_channels, sr, output_fmt.name,
-        sorted(plan.requested_stems), [task.model for task in plan.tasks],
+        input_fmt.name,
+        input_fmt.n_channels,
+        sr,
+        output_fmt.name,
+        sorted(plan.requested_stems),
+        [task.model for task in plan.tasks],
     )
 
     forced_stereo_array = False
@@ -291,7 +321,10 @@ def separate(
     stereo_folded_input = output_fmt.n_channels == 2 and input_fmt.n_channels > 2
     if stereo_folded_input:
         left, right = itu_downmix_stereo(
-            {label.value: audio_full[:, i] for i, label in enumerate(input_fmt.channels)},
+            {
+                label.value: audio_full[:, i]
+                for i, label in enumerate(input_fmt.channels)
+            },
             surround_coeff=cfg.surround_downmix_coeff,
             height_coeff=cfg.height_downmix_coeff,
         )
@@ -306,6 +339,7 @@ def separate(
     cache_hit_stems: dict[str, np.ndarray] | None = None
     if cfg.stem_input_dir:
         from upmixer.separation.stem_store import PlainStemStore
+
         stem_input_result = PlainStemStore(cfg.stem_input_dir).load()
         if stem_input_result is not None:
             cache_hit_stems = stem_input_result[0]
@@ -339,7 +373,8 @@ def separate(
         sep_zones, passthrough = _extract_zones(audio_full, input_fmt)
         stereo_mode = False
         source_zones = {
-            name: audio for name, audio in sep_zones.items()
+            name: audio
+            for name, audio in sep_zones.items()
             if isinstance(audio, np.ndarray)
         }
         _log.info("separation_mode mode=multichannel zones=%s", sorted(sep_zones))
@@ -355,8 +390,15 @@ def separate(
         progress("  Using cached stems...", 0.75)
     else:
         all_stems = _run_zone_separation(
-            get_separator, cfg, plan, sep_zones, audio_full, sr, sep_sr,
-            stereo_mode, progress,
+            get_separator,
+            cfg,
+            plan,
+            sep_zones,
+            audio_full,
+            sr,
+            sep_sr,
+            stereo_mode,
+            progress,
             _resume_key(cfg, input_path, cache_identity, sep_sr),
         )
 
@@ -365,6 +407,7 @@ def separate(
 
         if cfg.stem_output_dir and all_stems:
             from upmixer.separation.stem_store import PlainStemStore
+
             PlainStemStore(cfg.stem_output_dir).write(all_stems, sep_sr)
 
     del sep_zones
@@ -372,7 +415,8 @@ def separate(
     # Models often emit more stems than requested. Cache those free outputs,
     # then keep only requested stems out of routing and mixing.
     all_stems = {
-        key: audio for key, audio in all_stems.items()
+        key: audio
+        for key, audio in all_stems.items()
         if key.split("@", 1)[0] in plan.requested_stems
     }
 
@@ -385,7 +429,9 @@ def separate(
     stem_summary = sorted({k.split("@")[0] for k in all_stems})
     _log.info(
         "separation_completed stems=%s duration_s=%.3f sample_rate=%d",
-        stem_summary, n_samples / sep_sr, sep_sr,
+        stem_summary,
+        n_samples / sep_sr,
+        sep_sr,
     )
 
     return SeparationResult(

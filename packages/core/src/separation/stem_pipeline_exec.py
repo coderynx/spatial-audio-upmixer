@@ -1,4 +1,5 @@
 """Separation-plan execution: staged model runs and silence-skipped runs."""
+
 from __future__ import annotations
 
 import logging
@@ -22,13 +23,12 @@ from upmixer.separation.stem_plan import (
     SeparationPlan,
     SeparationTask,
 )
-from upmixer.separation.stem_resume import ResumeStore
 from upmixer.separation.stem_workspace import StemWorkspace
 
 _log = logging.getLogger(__name__)
 
 GetSeparator = Callable[[str, int], StemSeparator]
-StageCallback = Callable[[int, int, str, frozenset[str]], None]
+StageCallback = Callable[[int, int, str, frozenset[str], float], None]
 
 
 def temporary_wav_path(prefix: str) -> str:
@@ -99,8 +99,10 @@ def _remask_stage(
 
 def _write_float_atomic(path: str, audio: np.ndarray, sample_rate: int) -> None:
     handle = tempfile.NamedTemporaryFile(
-        suffix=".wav", prefix="upmixer_cleanup_",
-        dir=os.path.dirname(path), delete=False,
+        suffix=".wav",
+        prefix="upmixer_cleanup_",
+        dir=os.path.dirname(path),
+        delete=False,
     )
     temporary = handle.name
     handle.close()
@@ -136,9 +138,7 @@ def _cleanup_deux_stage(
         if name in loaded:
             children[name] = loaded[name]
         elif name in on_disk:
-            children[name], _ = sf.read(
-                on_disk[name], dtype="float32", always_2d=True
-            )
+            children[name], _ = sf.read(on_disk[name], dtype="float32", always_2d=True)
         else:
             raise RuntimeError(f"DSP stem cleanup requires the {name} estimate")
 
@@ -171,7 +171,7 @@ def execute_plan(
 
     Args:
         stage_callback: Optional callable ``(stage_idx, n_tasks, model,
-            output_stems)`` invoked before each model stage runs.
+            output_stems, fraction)`` invoked during each model stage.
         cfg: Configuration for stage-local DSP passes: parent remainder
             sharing and optional two-child stem cleanup. ``None`` runs none.
         resume_key: Identity of this run, enabling the crash checkpoint in
@@ -187,16 +187,21 @@ def execute_plan(
         plan, cfg.stem_cache_dir if cfg is not None else None, resume_key, sep_sr
     )
     if workspace.completed:
-            _log.info(
-                "  Resuming after stage %d/%d — %s already separated",
-                workspace.completed,
-                n_tasks,
-                sorted(workspace.loaded.keys() | workspace.on_disk.keys()) or "(nothing)",
-            )
+        _log.info(
+            "  Resuming after stage %d/%d — %s already separated",
+            workspace.completed,
+            n_tasks,
+            sorted(workspace.loaded.keys() | workspace.on_disk.keys()) or "(nothing)",
+        )
 
     try:
         _run_stages(
-            get_separator, plan, sep_path, sep_sr, stage_callback, cfg,
+            get_separator,
+            plan,
+            sep_path,
+            sep_sr,
+            stage_callback,
+            cfg,
             workspace,
         )
     except Exception:
@@ -227,13 +232,22 @@ def _run_stages(
         if stage_idx < workspace.completed:
             _log.info(
                 "  [stage %d/%d] model=%s — restored from checkpoint",
-                stage_idx + 1, n_tasks, task.model,
+                stage_idx + 1,
+                n_tasks,
+                task.model,
             )
             continue
         try:
             _run_one_stage(
-                get_separator, task, stage_idx, n_tasks, sep_path,
-                sep_sr, stage_callback, cfg, workspace,
+                get_separator,
+                task,
+                stage_idx,
+                n_tasks,
+                sep_path,
+                sep_sr,
+                stage_callback,
+                cfg,
+                workspace,
             )
         except Exception:
             workspace.checkpoint(stage_idx)
@@ -308,16 +322,24 @@ def _run_ensemble_stage(
     if task.model != MODEL_PRIMARY:
         raise ValueError("Only the BS-Roformer-SW stage supports ensembling")
     if task.ensemble_models != (MODEL_ENSEMBLE,):
-        raise ValueError("The primary ensemble must contain the registered SCNet partner")
+        raise ValueError(
+            "The primary ensemble must contain the registered SCNet partner"
+        )
     if not task.ensemble_stems:
         raise ValueError("The primary ensemble must declare at least one stem")
 
     primary = get_separator(task.model, sep_sr)
+    primary_options = {}
+    if stage_callback is not None:
+        primary_options["progress_callback"] = lambda fraction: stage_callback(
+            stage_idx, n_tasks, task.model, task.output_stems, fraction * 0.5
+        )
     primary_loaded, primary_on_disk = primary.separate_to_file(
         input_path,
         keep_on_disk,
         task.stem_overrides,
         task.output_stems,
+        **primary_options,
     )
     partner_loaded: dict[str, np.ndarray] = {}
     partner_on_disk: dict[str, str] = {}
@@ -328,9 +350,7 @@ def _run_ensemble_stage(
         # separator's temporary directory first.
         _stabilize_on_disk(primary_on_disk)
         if stage_callback is not None:
-            stage_callback(
-                stage_idx, n_tasks, MODEL_ENSEMBLE, task.ensemble_stems
-            )
+            stage_callback(stage_idx, n_tasks, MODEL_ENSEMBLE, task.ensemble_stems, 0.5)
         _log.info(
             "  [stage %d/%d] ensemble model=%s  input=%s  stems=%s  algorithm=%s",
             stage_idx + 1,
@@ -343,19 +363,23 @@ def _run_ensemble_stage(
         partner = get_separator(MODEL_ENSEMBLE, sep_sr)
         # Partner outputs stay in memory; the fused Drums array is the only
         # result materialized for a later drum-piece stage.
+        partner_options = {}
+        if stage_callback is not None:
+            partner_options["progress_callback"] = lambda fraction: stage_callback(
+                stage_idx,
+                n_tasks,
+                MODEL_ENSEMBLE,
+                task.ensemble_stems,
+                0.5 + fraction * 0.5,
+            )
         partner_loaded, partner_on_disk = partner.separate_to_file(
-            input_path,
-            frozenset(),
-            None,
-            task.ensemble_stems,
+            input_path, frozenset(), None, task.ensemble_stems, **partner_options
         )
 
         fused = {
             name: _average_ensemble_stem(
                 name,
-                _read_ensemble_stem(
-                    primary_loaded, primary_on_disk, name, task.model
-                ),
+                _read_ensemble_stem(primary_loaded, primary_on_disk, name, task.model),
                 _read_ensemble_stem(
                     partner_loaded, partner_on_disk, name, MODEL_ENSEMBLE
                 ),
@@ -401,7 +425,7 @@ def _run_one_stage(
 ) -> None:
     """Run one model stage, merging its outputs into the run's two dicts."""
     if stage_callback is not None:
-        stage_callback(stage_idx, n_tasks, task.model, task.output_stems)
+        stage_callback(stage_idx, n_tasks, task.model, task.output_stems, 0.0)
     _log.info(
         "  [stage %d/%d] model=%s  input=%s  keep_on_disk=%s",
         stage_idx + 1,
@@ -411,7 +435,9 @@ def _run_one_stage(
         sorted(workspace.keep(task.output_stems)) or "(none)",
     )
 
-    input_path_for_task = workspace.input_path(task.input_source, sep_path, stage_idx + 1)
+    input_path_for_task = workspace.input_path(
+        task.input_source, sep_path, stage_idx + 1
+    )
     keep_on_disk = workspace.keep(task.output_stems)
 
     if task.ensemble_models:
@@ -429,16 +455,21 @@ def _run_one_stage(
     else:
         sep = get_separator(task.model, sep_sr)
         retain_parent = (
-            cfg is not None
-            and cfg.stem_bleed_reduction
-            and task.model == MODEL_DEUX
+            cfg is not None and cfg.stem_bleed_reduction and task.model == MODEL_DEUX
         )
+        options = {}
+        if retain_parent:
+            options["retain_parent"] = True
+        if stage_callback is not None:
+            options["progress_callback"] = lambda fraction: stage_callback(
+                stage_idx, n_tasks, task.model, task.output_stems, fraction
+            )
         loaded, on_disk = sep.separate_to_file(
             input_path_for_task,
             keep_on_disk,
             task.stem_overrides,
             task.output_stems,
-            **({"retain_parent": True} if retain_parent else {}),
+            **options,
         )
         cleanup_parent = sep.take_last_parent() if retain_parent else None
 
@@ -452,7 +483,9 @@ def _run_one_stage(
             n_tasks,
             task.input_source,
         )
-        workspace.remask(loaded, on_disk, workspace.on_disk[task.input_source], task.output_stems)
+        workspace.remask(
+            loaded, on_disk, workspace.on_disk[task.input_source], task.output_stems
+        )
 
     if cleanup_parent is not None:
         _log.info("  [stage %d/%d] applying DSP stem cleanup", stage_idx + 1, n_tasks)
@@ -525,8 +558,13 @@ def execute_plan_with_silence_skip(
         if original_path is not None:
             _log.debug("  Silence-skip: full-active fast path uses source file")
             return execute_plan(
-                get_separator, plan, original_path, sep_sr, stage_callback,
-                cfg, resume_key,
+                get_separator,
+                plan,
+                original_path,
+                sep_sr,
+                stage_callback,
+                cfg,
+                resume_key,
             )
         tmp = temporary_wav_path("upmixer_full_")
         try:
@@ -542,8 +580,7 @@ def execute_plan_with_silence_skip(
     fade_samples = max(0, int(cfg.stem_silence_crossfade_ms / 1000.0 * sep_sr))
     stem_names = cacheable_plan_stems(plan)
     result = {
-        stem_name: np.zeros((n_sep, 2), dtype=np.float32)
-        for stem_name in stem_names
+        stem_name: np.zeros((n_sep, 2), dtype=np.float32) for stem_name in stem_names
     }
 
     for span_idx, (s_start, s_end) in enumerate(spans):
@@ -552,13 +589,15 @@ def execute_plan_with_silence_skip(
         try:
             sf.write(tmp, span_audio, sr, subtype="FLOAT")
             outputs = execute_plan(
-                get_separator, plan, tmp, sep_sr, stage_callback, cfg,
+                get_separator,
+                plan,
+                tmp,
+                sep_sr,
+                stage_callback,
+                cfg,
                 None if resume_key is None else f"{resume_key}|span{span_idx}",
             )
-            sep_start = (
-                int(round(s_start * sep_sr / sr))
-                if sep_sr != sr else s_start
-            )
+            sep_start = int(round(s_start * sep_sr / sr)) if sep_sr != sr else s_start
             out_len = max((len(v) for v in outputs.values()), default=0)
         finally:
             if os.path.exists(tmp):
@@ -573,8 +612,11 @@ def execute_plan_with_silence_skip(
         for stem_name, output in outputs.items():
             if stem_name in result:
                 write_crossfaded_span(
-                    result[stem_name], sep_start, sep_start + out_len,
-                    output, fade_samples,
+                    result[stem_name],
+                    sep_start,
+                    sep_start + out_len,
+                    output,
+                    fade_samples,
                 )
         del outputs
         output = None

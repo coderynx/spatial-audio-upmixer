@@ -7,12 +7,14 @@ are not catchable Python exceptions, so running it in-process would take
 down the whole web server. This module runs it in a child process instead,
 so only the offending job fails.
 """
+
 from __future__ import annotations
 
 import logging
 import multiprocessing
 import queue
 import signal
+import time
 from dataclasses import dataclass
 from typing import Literal
 
@@ -56,8 +58,23 @@ def _run_work_items(items: list[WorkItem], progress_queue, cancel_event) -> None
             if cancel_event.is_set():
                 return
 
-            def _callback(message: str, fraction: float, tid: str = item.track_id) -> None:
+            last_progress_at = 0.0
+            last_message = ""
+
+            def _callback(
+                message: str, fraction: float, tid: str = item.track_id
+            ) -> None:
+                nonlocal last_progress_at, last_message
+                now = time.monotonic()
+                if (
+                    fraction < 1.0
+                    and message == last_message
+                    and now - last_progress_at < 0.25
+                ):
+                    return
                 progress_queue.put(("progress", tid, message, fraction))
+                last_progress_at = now
+                last_message = message
 
             try:
                 if stem_pipeline is None:
@@ -77,7 +94,9 @@ def _run_work_items(items: list[WorkItem], progress_queue, cancel_event) -> None
                         progress_callback=_callback,
                     )
             except Exception as exc:
-                _log.exception("work_item_failed track_id=%s mode=%s", item.track_id, item.mode)
+                _log.exception(
+                    "work_item_failed track_id=%s mode=%s", item.track_id, item.mode
+                )
                 progress_queue.put(("track_error", item.track_id, str(exc)))
                 return
 

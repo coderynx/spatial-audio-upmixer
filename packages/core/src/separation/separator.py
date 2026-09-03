@@ -1,4 +1,5 @@
 """In-core stem separation engine (Torch models plus an MLX SCNet adapter)."""
+
 from __future__ import annotations
 
 import gc
@@ -8,6 +9,7 @@ import platform
 import tempfile
 import time
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,9 +32,13 @@ def _detect_backend() -> str:
     """Return accelerator used by torch models without requiring torch."""
     try:
         import torch
+
         if torch.cuda.is_available():
             if getattr(torch.version, "hip", None):
-                _log.debug("ROCm build detected (torch.version.hip=%s); using cuda backend path", torch.version.hip)
+                _log.debug(
+                    "ROCm build detected (torch.version.hip=%s); using cuda backend path",
+                    torch.version.hip,
+                )
             return "cuda"
         mps = getattr(torch.backends, "mps", None)
         if mps is not None and mps.is_available():
@@ -41,6 +47,7 @@ def _detect_backend() -> str:
         pass
     try:
         import onnxruntime as ort
+
         providers = ort.get_available_providers()
         if "CUDAExecutionProvider" in providers:
             return "cuda"
@@ -56,8 +63,9 @@ def _automatic_batch_size(backend: str) -> int:
     if backend == "cuda":
         try:
             import torch
+
             free_bytes, _ = torch.cuda.mem_get_info()
-            free_gib = free_bytes / (1024 ** 3)
+            free_gib = free_bytes / (1024**3)
             if free_gib >= 12.0:
                 return 4
             if free_gib >= 8.0:
@@ -108,7 +116,7 @@ def _system_memory_gib() -> float | None:
 
     if not limits:
         return None
-    return min(limits) / (1024 ** 3)
+    return min(limits) / (1024**3)
 
 
 def _automatic_cpu_tuning(
@@ -163,15 +171,15 @@ STEM_NAME_MAP: dict[str, str] = {
     "No Vocals": "Instrumental",
     "Reverb": "Other",
     "No Reverb": "Vocals",
-    "Kick":   "Kick",
-    "Snare":  "Snare",
-    "Toms":   "Toms",
-    "HH":     "Hi-Hat",   # some models abbreviate hi-hat as "HH"
+    "Kick": "Kick",
+    "Snare": "Snare",
+    "Toms": "Toms",
+    "HH": "Hi-Hat",  # some models abbreviate hi-hat as "HH"
     "Hi-Hat": "Hi-Hat",
-    "Ride":   "Ride",
-    "Crash":  "Crash",
-    "Crowd":    "Crowd",
-    "No Crowd": "_crowd_other",   # kept as fallback in case model config changes
+    "Ride": "Ride",
+    "Crash": "Crash",
+    "Crowd": "Crowd",
+    "No Crowd": "_crowd_other",  # kept as fallback in case model config changes
 }
 
 
@@ -254,9 +262,7 @@ class StemSeparator:
         if pitch_shift is not None and pitch_shift <= 0:
             raise ValueError("pitch_shift must be greater than 0")
         self._model = model
-        self._model_dir = model_dir or str(
-            Path.home() / ".cache" / "upmixer-models"
-        )
+        self._model_dir = model_dir or str(Path.home() / ".cache" / "upmixer-models")
         self._sample_rate = sample_rate
         detected_backend = _detect_backend()
         if model == _SCNET_MPS_CPU_MODEL:
@@ -272,17 +278,13 @@ class StemSeparator:
         self._backend = detected_backend
         remembered = _SUCCESSFUL_BATCHES.get((model, self._backend))
         self._batch_size = (
-            batch_size
-            or remembered
-            or _automatic_batch_size(self._backend)
+            batch_size or remembered or _automatic_batch_size(self._backend)
         )
         self._batch_size_is_auto = batch_size is None
         auto_segment, auto_chunk = _automatic_cpu_tuning(
             self._backend, _system_memory_gib()
         )
-        self._segment_size = (
-            segment_size if segment_size is not None else auto_segment
-        )
+        self._segment_size = segment_size if segment_size is not None else auto_segment
         self._chunk_duration_s = (
             chunk_duration_s if chunk_duration_s is not None else auto_chunk
         )
@@ -363,7 +365,10 @@ class StemSeparator:
         return self._engine
 
     def _separate_paths(
-        self, audio_path: str, retain_parent: bool = False
+        self,
+        audio_path: str,
+        retain_parent: bool = False,
+        progress_callback: Callable[[float], None] | None = None,
     ) -> list[str]:
         """Separate with progressively lower-memory retries after OOM."""
         while True:
@@ -371,16 +376,22 @@ class StemSeparator:
             try:
                 started = time.monotonic()
                 engine = self._get_separator()
-                paths = (
-                    engine.separate(audio_path, retain_parent=True)
-                    if retain_parent
-                    else engine.separate(audio_path)
-                )
+                if progress_callback is not None:
+                    paths = engine.separate(
+                        audio_path,
+                        retain_parent=retain_parent,
+                        progress_callback=progress_callback,
+                    )
+                elif retain_parent:
+                    paths = engine.separate(audio_path, retain_parent=True)
+                else:
+                    paths = engine.separate(audio_path)
                 if self._batch_size_is_auto:
                     _SUCCESSFUL_BATCHES[(self._model, self._backend)] = self._batch_size
                 _log.info(
                     "  Separator model=%s inference+output=%.2fs",
-                    self._model, time.monotonic() - started,
+                    self._model,
+                    time.monotonic() - started,
                 )
                 return paths
             except Exception as exc:
@@ -468,7 +479,9 @@ class StemSeparator:
             except Exception as exc:
                 _log.warning(
                     "Skipping stem '%s' — could not read '%s': %s",
-                    stem_name, os.path.basename(full_path), exc,
+                    stem_name,
+                    os.path.basename(full_path),
+                    exc,
                 )
                 try:
                     os.unlink(full_path)
@@ -492,6 +505,7 @@ class StemSeparator:
         stem_overrides: dict[str, str] | None = None,
         wanted: frozenset[str] | None = None,
         retain_parent: bool = False,
+        progress_callback: Callable[[float], None] | None = None,
     ) -> tuple[dict[str, np.ndarray], dict[str, str]]:
         """Separate audio, keeping specified stems as on-disk WAV files.
 
@@ -523,7 +537,9 @@ class StemSeparator:
               ``on_disk`` — canonical_name → absolute WAV path for kept stems.
         """
         tmp_dir = self._ensure_tmp_dir()
-        output_paths = self._separate_paths(audio_path, retain_parent=retain_parent)
+        output_paths = self._separate_paths(
+            audio_path, retain_parent=retain_parent, progress_callback=progress_callback
+        )
 
         _log.debug(
             "[separator] model=%s produced %d output file(s): %s",
@@ -579,7 +595,9 @@ class StemSeparator:
             except Exception as exc:
                 _log.warning(
                     "Skipping stem '%s' — could not read '%s': %s",
-                    stem_name, os.path.basename(full), exc,
+                    stem_name,
+                    os.path.basename(full),
+                    exc,
                 )
                 try:
                     os.unlink(full)
