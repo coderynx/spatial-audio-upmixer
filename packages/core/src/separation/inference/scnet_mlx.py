@@ -231,9 +231,15 @@ class SCNetMLXAdapter:
         if batch.device.type != "cpu":
             raise ValueError("SCNet MLX adapter expects a CPU torch.Tensor")
         audio = batch.detach().to(dtype=torch.float32).contiguous().numpy()
-        output = self._model(mx.array(np.ascontiguousarray(audio, dtype=np.float32)))
-        mx.eval(output)
-        return torch.from_numpy(np.array(output, dtype=np.float32, copy=True))
+        output = None
+        try:
+            output = self._model(mx.array(np.ascontiguousarray(audio, dtype=np.float32)))
+            mx.eval(output)
+            result = torch.from_numpy(np.array(output, dtype=np.float32, copy=True))
+        finally:
+            output = None
+            mx.clear_cache()
+        return result
 
     def eval(self):
         self._model.eval()

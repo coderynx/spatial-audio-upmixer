@@ -105,7 +105,7 @@ def test_scnet_weight_conversion_rejects_shape_mismatch():
         load_converted_weights(mlx_model, weights)
 
 
-def test_scnet_mlx_adapter_matches_demix_scnet():
+def test_scnet_mlx_adapter_matches_demix_scnet(monkeypatch):
     torch_model, mlx_model = _models()
     config = ModelConfig(
         audio={"sample_rate": 44100, "chunk_size": 32, "num_channels": 2},
@@ -124,6 +124,15 @@ def test_scnet_mlx_adapter_matches_demix_scnet():
         overlap=2,
         batch_size=1,
     )
+    clear_calls = 0
+    clear_cache = mx.clear_cache
+
+    def track_clear_cache():
+        nonlocal clear_calls
+        clear_calls += 1
+        clear_cache()
+
+    monkeypatch.setattr(mx, "clear_cache", track_clear_cache)
     mlx_stems = demix_scnet(
         SCNetMLXAdapter(mlx_model).eval(),
         audio,
@@ -144,6 +153,7 @@ def test_scnet_mlx_adapter_matches_demix_scnet():
     assert np.max(np.abs(difference)) <= 1e-3
     snr_db = 20.0 * np.log10(np.linalg.norm(reference) / max(np.linalg.norm(difference), 1e-20))
     assert snr_db >= 60.0
+    assert clear_calls == 5
 
 
 @pytest.mark.perf
