@@ -88,6 +88,11 @@ group: `engine.stems`/`engine.stem_silence_skip`/`engine.stem_ensemble` (stem se
 
 ## Parity Matrix
 
+**Track Layout Realization** is one Track's independent editable mix for one
+speaker layout. Its effective manifest is the Project manifest merged with
+that Track and layout's override, with the layout pinned. Avoid calling it a
+"Project Layout" or "layout state".
+
 | Manifest group | Project representation | Serialization/job behavior | Severity | Decision |
 |---|---|---|---|---|
 | `engine.mode` | Derived stem-only project | Always `stem` | Low | Project behavior |

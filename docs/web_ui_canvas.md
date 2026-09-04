@@ -13,6 +13,9 @@ and `SceneView`: device-pixel sizing, resize coalescing, frame scheduling,
 wake, and post-playback settling. Each view supplies its projection, drawing,
 and speaker hit targets; it must not recreate that lifecycle.
 
+**Spatial Canvas Lifecycle** is that one display loop. Avoid calling the
+per-view projection, drawing, or hit targets canvas state or a view loop.
+
 Use the shared `plotField` → `plotFieldCore` field gradient and a faint blue
 wash across the full canvas, never only the padded plot area. Motion trails
 paint the field with alpha. Keep the wash low enough that stem hues remain

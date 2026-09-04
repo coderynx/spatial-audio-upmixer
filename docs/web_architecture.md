@@ -84,6 +84,11 @@ EQ, mastering, speaker mute, output mode, spatial and transaural profile —
 resolves to one parameter block and one message. There is no per-control
 rewiring, because there is no graph to rewire.
 
+**Preview Programme** is one fully resolved Track Layout Realization ready for
+a local preview host: prepared stems, speaker layout, source preview, mixing,
+routing, and mastering. Monitor choices and transport are not part of it;
+avoid calling them preview state or preview configuration.
+
 **Engine constants.** The client holds no hardcoded copy of the tunable DSP
 values; it fetches them from `GET /api/v1/configuration`'s `constants` block
 (the `apps/api` system slice's `engine_constants()`).
