@@ -9,6 +9,7 @@ import {
 } from "@/lib/canvasTheme";
 import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
+import { startSpatialCanvas } from "./spatialCanvas";
 import {
   speakerCoordinates,
   speakerDisplayLabel,
@@ -89,7 +90,6 @@ function ElevationViewImpl({
   const blurCanvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const smoothed = React.useRef<Map<string, SmoothedVoice>>(new Map());
   const speakerHitTargets = React.useRef<SpeakerHitTarget[]>([]);
-  const frame = React.useRef<number | null>(null);
   const initializedSize = React.useRef(false);
   const propsRef = React.useRef({
     channels,
@@ -113,7 +113,6 @@ function ElevationViewImpl({
   };
   const activeRef = React.useRef(active);
   activeRef.current = active;
-  const idleFrames = React.useRef(0);
   const wakeRef = React.useRef<() => void>(() => {});
 
   React.useEffect(() => {
@@ -134,36 +133,8 @@ function ElevationViewImpl({
     if (!blurCtx) return;
     let lastBlurTime = -Infinity;
 
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const width = container.clientWidth;
-      const height = container.clientHeight;
-      canvas.width = Math.max(1, Math.round(width * dpr));
-      canvas.height = Math.max(1, Math.round(height * dpr));
-      blobCanvas.width = canvas.width;
-      blobCanvas.height = canvas.height;
-      blurCanvas.width = canvas.width;
-      blurCanvas.height = canvas.height;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      blobCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      blurCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      lastBlurTime = -Infinity;
-      initializedSize.current = false;
-    };
-    resize();
-    let resizeFrame: number | null = null;
-    const observer = new ResizeObserver(() => {
-      if (resizeFrame !== null) return;
-      resizeFrame = window.requestAnimationFrame(() => {
-        resizeFrame = null;
-        resize();
-        wakeRef.current();
-      });
-    });
-    observer.observe(container);
-
     let lastTime = performance.now();
-    const draw = (time: number) => {
+    const draw = (time: number, { width, height }: { width: number; height: number }) => {
       const delta = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
       const {
@@ -176,8 +147,6 @@ function ElevationViewImpl({
         speakerSolo: currentSolo,
         intensity: currentIntensity,
       } = propsRef.current;
-      const width = canvas.width / (window.devicePixelRatio || 1);
-      const height = canvas.height / (window.devicePixelRatio || 1);
       // padTop solves (padTop - 8) - chipBottom = pad, so the gap above the
       // topmost label matches `pad` on the other three sides exactly, not an
       // eyeballed number. CHIP_TOP/CHIP_HEIGHT mirror IntensitySlider's actual
@@ -497,29 +466,28 @@ function ElevationViewImpl({
       ctx.drawImage(blurCanvas, 0, 0, width, height);
       ctx.restore();
 
-      idleFrames.current =
-        !activeRef.current && resolved.length === 0
-          ? idleFrames.current + 1
-          : 0;
-      if (activeRef.current || idleFrames.current < SETTLE_FRAMES) {
-        frame.current = window.requestAnimationFrame(draw);
-      } else {
-        frame.current = null;
-      }
+      return resolved.length === 0;
     };
-    frame.current = window.requestAnimationFrame(draw);
-    wakeRef.current = () => {
-      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
-      frame.current = null;
-      idleFrames.current = 0;
-      draw(performance.now());
-    };
-
-    return () => {
-      observer.disconnect();
-      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
-      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
-    };
+    const lifecycle = startSpatialCanvas({
+      canvas,
+      container,
+      active: activeRef,
+      draw,
+      settleFrames: SETTLE_FRAMES,
+      resize: ({ dpr }) => {
+        blobCanvas.width = canvas.width;
+        blobCanvas.height = canvas.height;
+        blurCanvas.width = canvas.width;
+        blurCanvas.height = canvas.height;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        blobCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        blurCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        lastBlurTime = -Infinity;
+        initializedSize.current = false;
+      },
+    });
+    wakeRef.current = lifecycle.wake;
+    return lifecycle.dispose;
   }, [stemSpectrum]);
 
   React.useEffect(() => {

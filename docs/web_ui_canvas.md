@@ -8,6 +8,11 @@ Canvas contracts for `apps/web`. Read [UI design](web_ui_design.md) first.
 instrument displays. They use `lib/canvasTheme.ts` and remain dark in both app
 themes. Add their literals there, not inline.
 
+`spatialCanvas.ts` owns the lifecycle shared by the three spatial instruments
+and `SceneView`: device-pixel sizing, resize coalescing, frame scheduling,
+wake, and post-playback settling. Each view supplies its projection, drawing,
+and speaker hit targets; it must not recreate that lifecycle.
+
 Use the shared `plotField` → `plotFieldCore` field gradient and a faint blue
 wash across the full canvas, never only the padded plot area. Motion trails
 paint the field with alpha. Keep the wash low enough that stem hues remain

@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import type { MeterLevel, StemSpectrum } from "./audioEngine";
 import { IntensitySlider } from "./IntensitySlider";
 import { drawSpeakerPoint } from "./speakerMarker";
+import { startSpatialCanvas } from "./spatialCanvas";
 
 const DEFAULT_CAMERA = {
   yaw: (35 * Math.PI) / 180,
@@ -205,8 +206,6 @@ function SceneViewImpl({
   const camera = React.useRef<Camera>({ ...DEFAULT_CAMERA });
   const levels = React.useRef(new Map<string, number>());
   const speakerHits = React.useRef<SpeakerHitTarget[]>([]);
-  const frame = React.useRef<number | null>(null);
-  const idleFrames = React.useRef(0);
   const wakeRef = React.useRef<() => void>(() => {});
   const drag = React.useRef<{ x: number; y: number; moved: boolean } | null>(
     null,
@@ -254,31 +253,6 @@ function SceneViewImpl({
     if (!blurCtx) return;
     let lastBlurTime = -Infinity;
 
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.max(1, Math.round(container.clientWidth * dpr));
-      canvas.height = Math.max(1, Math.round(container.clientHeight * dpr));
-      blobCanvas.width = canvas.width;
-      blobCanvas.height = canvas.height;
-      blurCanvas.width = canvas.width;
-      blurCanvas.height = canvas.height;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      blobCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      blurCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      lastBlurTime = -Infinity;
-    };
-    resize();
-    let resizeFrame: number | null = null;
-    const observer = new ResizeObserver(() => {
-      if (resizeFrame !== null) return;
-      resizeFrame = window.requestAnimationFrame(() => {
-        resizeFrame = null;
-        resize();
-        wakeRef.current();
-      });
-    });
-    observer.observe(container);
-
     let lastTime = performance.now();
     const drawLine = (from: Vec3, to: Vec3, width: number, height: number) => {
       const a = projectScenePoint(from, width, height, camera.current);
@@ -288,11 +262,9 @@ function SceneViewImpl({
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
     };
-    const draw = (time: number) => {
+    const draw = (time: number, { width, height }: { width: number; height: number }) => {
       const delta = Math.min(0.1, (time - lastTime) / 1000);
       lastTime = time;
-      const width = canvas.width / (window.devicePixelRatio || 1);
-      const height = canvas.height / (window.devicePixelRatio || 1);
       const {
         channels: currentChannels,
         routing: currentRouting,
@@ -618,25 +590,27 @@ function SceneViewImpl({
         ctx.fill();
       }
 
-      const quiet = resolved.every(({ level }) => !isSceneObjectAudible(level));
-      idleFrames.current =
-        !activeRef.current && quiet ? idleFrames.current + 1 : 0;
-      if (activeRef.current || idleFrames.current < SETTLE_FRAMES)
-        frame.current = window.requestAnimationFrame(draw);
-      else frame.current = null;
+      return resolved.every(({ level }) => !isSceneObjectAudible(level));
     };
-    frame.current = window.requestAnimationFrame(draw);
-    wakeRef.current = () => {
-      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
-      frame.current = null;
-      idleFrames.current = 0;
-      draw(performance.now());
-    };
-    return () => {
-      observer.disconnect();
-      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
-      if (frame.current !== null) window.cancelAnimationFrame(frame.current);
-    };
+    const lifecycle = startSpatialCanvas({
+      canvas,
+      container,
+      active: activeRef,
+      draw,
+      settleFrames: SETTLE_FRAMES,
+      resize: ({ dpr }) => {
+        blobCanvas.width = canvas.width;
+        blobCanvas.height = canvas.height;
+        blurCanvas.width = canvas.width;
+        blurCanvas.height = canvas.height;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        blobCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        blurCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        lastBlurTime = -Infinity;
+      },
+    });
+    wakeRef.current = lifecycle.wake;
+    return lifecycle.dispose;
   }, [stemSpectrum, channelLevels]);
 
   React.useEffect(() => {
