@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import soundfile as sf
 
+from .inference.scnet_worker import SCNetWorker
+
 if TYPE_CHECKING:
     from .inference.device import DeviceManager
     from .inference.engine import SeparationEngine
@@ -153,6 +155,20 @@ def _is_oom_error(exc: BaseException) -> bool:
         or "cuda oom" in message
         or "mps backend out of memory" in message
     )
+
+
+def _remove_empty_output_dirs(paths: list[str], root: str) -> None:
+    root_path = Path(root)
+    parents = {
+        Path(path if os.path.isabs(path) else os.path.join(root, path)).parent
+        for path in paths
+    }
+    for parent in parents:
+        if parent.parent == root_path:
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
 
 
 DEFAULT_MODEL = "BS-Roformer-SW.ckpt"
@@ -293,6 +309,7 @@ class StemSeparator:
         self._pitch_shift = pitch_shift
         self._device_manager: DeviceManager | None = None
         self._engine: SeparationEngine | None = None
+        self._scnet_worker: SCNetWorker | None = None
         self._tmp_dir: str | None = None
 
     @property
@@ -364,10 +381,17 @@ class StemSeparator:
 
         return self._engine
 
+    def _get_scnet_worker(self) -> SCNetWorker:
+        """Return the persistent MLX SCNet worker for this separator."""
+        if self._scnet_worker is None:
+            self._scnet_worker = SCNetWorker(self._model, self._model_dir)
+        return self._scnet_worker
+
     def _separate_paths(
         self,
         audio_path: str,
         retain_parent: bool = False,
+        wanted: frozenset[str] | None = None,
         progress_callback: Callable[[float], None] | None = None,
     ) -> list[str]:
         """Separate with progressively lower-memory retries after OOM."""
@@ -375,17 +399,36 @@ class StemSeparator:
             engine = None
             try:
                 started = time.monotonic()
-                engine = self._get_separator()
-                if progress_callback is not None:
-                    paths = engine.separate(
+                if (
+                    self._backend == "mlx"
+                    and self._model == _SCNET_MPS_CPU_MODEL
+                    and self._engine is None
+                ):
+                    worker = self._get_scnet_worker()
+                    paths = worker.separate(
                         audio_path,
+                        self._ensure_tmp_dir(),
+                        sample_rate=self._sample_rate,
+                        batch_size=self._batch_size,
+                        segment_size=self._segment_size,
+                        chunk_duration_s=self._chunk_duration_s,
+                        overlap=self._overlap,
+                        tta=self._tta,
+                        pitch_shift=self._pitch_shift,
                         retain_parent=retain_parent,
+                        wanted=wanted,
                         progress_callback=progress_callback,
                     )
-                elif retain_parent:
-                    paths = engine.separate(audio_path, retain_parent=True)
                 else:
-                    paths = engine.separate(audio_path)
+                    engine = self._get_separator()
+                    kwargs: dict[str, object] = {}
+                    if retain_parent:
+                        kwargs["retain_parent"] = True
+                    if progress_callback is not None:
+                        kwargs["progress_callback"] = progress_callback
+                    if wanted is not None:
+                        kwargs["wanted"] = wanted
+                    paths = engine.separate(audio_path, **kwargs)
                 if self._batch_size_is_auto:
                     _SUCCESSFUL_BATCHES[(self._model, self._backend)] = self._batch_size
                 _log.info(
@@ -421,6 +464,10 @@ class StemSeparator:
                 else:
                     self._engine = None
                     engine = None
+                    worker = self._scnet_worker
+                    self._scnet_worker = None
+                    if worker is not None:
+                        worker.terminate()
                     traceback.clear_frames(exc.__traceback__)
                     del exc
                     if self._device_manager is not None:
@@ -496,6 +543,7 @@ class StemSeparator:
             except OSError:
                 pass
 
+        _remove_empty_output_dirs(output_paths, tmp_dir)
         return stems
 
     def separate_to_file(
@@ -538,7 +586,10 @@ class StemSeparator:
         """
         tmp_dir = self._ensure_tmp_dir()
         output_paths = self._separate_paths(
-            audio_path, retain_parent=retain_parent, progress_callback=progress_callback
+            audio_path,
+            retain_parent=retain_parent,
+            wanted=wanted,
+            progress_callback=progress_callback,
         )
 
         _log.debug(
@@ -613,6 +664,7 @@ class StemSeparator:
             except OSError:
                 pass
 
+        _remove_empty_output_dirs(output_paths, tmp_dir)
         _log.debug(
             "[separator] stage done — loaded=%s  on_disk=%s",
             sorted(loaded.keys()),
@@ -622,10 +674,16 @@ class StemSeparator:
 
     def take_last_parent(self) -> np.ndarray:
         """Return the last separation input at the engine's working rate."""
+        if self._scnet_worker is not None and self._engine is None:
+            return self._scnet_worker.take_last_parent(self._ensure_tmp_dir())
         return self._get_separator().take_last_parent()
 
     def close(self) -> None:
         """Remove the persistent temp directory and release the loaded model."""
+        worker = self._scnet_worker
+        self._scnet_worker = None
+        if worker is not None:
+            worker.close()
         if self._tmp_dir and os.path.exists(self._tmp_dir):
             import shutil
 

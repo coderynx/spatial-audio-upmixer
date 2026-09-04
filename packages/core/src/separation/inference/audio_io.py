@@ -6,10 +6,12 @@ The mix is peak-normalized before demix because the models are trained that
 way; :func:`normalize` reports the scale it applied so the caller can undo it
 on the stems, keeping the written stems in the input's level domain.
 """
+
 from __future__ import annotations
 
 import os
 import re
+import tempfile
 
 import librosa
 import numpy as np
@@ -65,3 +67,69 @@ def stem_output_path(
 def write_stem(path: str, stem: np.ndarray, sample_rate: int) -> None:
     """Write a ``(2, n_samples)`` stem array to ``path`` as a float32 WAV."""
     sf.write(path, stem.T, sample_rate, subtype="FLOAT")
+
+
+class AtomicWavWriter:
+    """Append channel-first float32 frames, publishing the WAV on commit."""
+
+    def __init__(self, path: str, sample_rate: int, channels: int) -> None:
+        self.path = path
+        self._temporary_path: str | None = None
+        self._file: sf.SoundFile | None = None
+        if channels < 1:
+            raise ValueError("WAV writer requires at least one channel")
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        descriptor, temporary_path = tempfile.mkstemp(
+            prefix=f".{os.path.basename(path)}.",
+            suffix=".tmp",
+            dir=os.path.dirname(path) or ".",
+        )
+        os.close(descriptor)
+        self._temporary_path = temporary_path
+        try:
+            self._file = sf.SoundFile(
+                temporary_path,
+                mode="w",
+                samplerate=sample_rate,
+                channels=channels,
+                format="WAV",
+                subtype="FLOAT",
+            )
+        except Exception:
+            self.abort()
+            raise
+
+    def write(self, stem: np.ndarray) -> None:
+        """Append a channel-first block to the temporary WAV."""
+        if self._file is None:
+            raise RuntimeError("WAV writer is closed")
+        block = np.asarray(stem, dtype=np.float32)
+        if block.ndim != 2 or block.shape[0] != self._file.channels:
+            raise ValueError(
+                f"Expected ({self._file.channels}, samples) audio, got {block.shape}"
+            )
+        self._file.write(block.T)
+
+    def close(self) -> None:
+        """Close the temporary WAV without publishing it."""
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+    def commit(self) -> None:
+        """Publish the completed temporary WAV at its final path."""
+        self.close()
+        if self._temporary_path is None:
+            raise RuntimeError("WAV writer has already been finalized")
+        os.replace(self._temporary_path, self.path)
+        self._temporary_path = None
+
+    def abort(self) -> None:
+        """Close and remove the unpublished temporary WAV."""
+        self.close()
+        if self._temporary_path is not None:
+            try:
+                os.unlink(self._temporary_path)
+            except OSError:
+                pass
+            self._temporary_path = None

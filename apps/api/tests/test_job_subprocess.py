@@ -1,4 +1,5 @@
 """Tests for isolating pipeline processing in a child process."""
+
 from __future__ import annotations
 
 import os
@@ -44,7 +45,13 @@ class _FakePipeline:
     def __init__(self, config=None) -> None:
         self.config = config
 
-    def process_file(self, input_path, output_path, input_format_override=None, progress_callback=None):
+    def process_file(
+        self,
+        input_path,
+        output_path,
+        input_format_override=None,
+        progress_callback=None,
+    ):
         _FakePipeline.calls.append(input_path)
         if progress_callback is not None:
             progress_callback("working", 0.5)
@@ -139,7 +146,9 @@ def test_job_subprocess_relays_progress_and_completion(monkeypatch):
 
 
 def test_job_subprocess_stop_terminates_blocked_child(monkeypatch):
-    monkeypatch.setattr(job_subprocess, "_run_work_items", _block_until_cancelled_target)
+    monkeypatch.setattr(
+        job_subprocess, "_run_work_items", _block_until_cancelled_target
+    )
     proc = JobSubprocess([_item("t1", "a.wav")])
     proc.start()
 
@@ -152,4 +161,21 @@ def test_job_subprocess_stop_terminates_blocked_child(monkeypatch):
     assert saw_timeout
     proc.stop(grace_seconds=2.0)
     proc._process.join(timeout=1.0)
+    assert proc._process.exitcode is not None
+
+
+def test_scnet_job_subprocess_terminates_after_inactivity(monkeypatch):
+    monkeypatch.setattr(
+        job_subprocess, "_run_work_items", _block_until_cancelled_target
+    )
+    monkeypatch.setattr(job_subprocess, "_SCNET_INACTIVITY_TIMEOUT_S", 0.1)
+    item = _item("t1", "a.wav")
+    item.config.stem_ensemble = True
+    proc = JobSubprocess([item])
+    proc.start()
+
+    events = list(proc.events(poll_interval=0.02))
+
+    assert events[-1][0] == "crashed"
+    assert "stalled without progress" in events[-1][1]
     assert proc._process.exitcode is not None

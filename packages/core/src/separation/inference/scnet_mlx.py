@@ -24,6 +24,8 @@ _CONV_MODULE_INDEX = {
     "6": "conv3",
 }
 _CONV1D_KEYS = frozenset(("conv1", "conv2", "conv3"))
+_MLX_CACHE_LIMIT_BYTES = 512 * 1024**2
+_MLX_MEMORY_LIMIT_BYTES = 8 * 1024**3
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -251,9 +253,14 @@ class SCNetMLXAdapter:
 
 def load_model(model_filename: str, model_dir: str):
     """Load the registered SCNet checkpoint through the MLX backend."""
+    import mlx.core as mx
+
     from .config import load_model_config
     from .loader import _ensure_weights, _load_state_dict
     from .registry import get_model_spec
+
+    mx.set_memory_limit(_MLX_MEMORY_LIMIT_BYTES)
+    mx.set_cache_limit(_MLX_CACHE_LIMIT_BYTES)
 
     spec = get_model_spec(model_filename)
     if spec.arch != "scnet":

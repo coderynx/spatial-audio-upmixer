@@ -16,7 +16,7 @@ against the original mix, matching upstream's ``orig_mix - primary`` rule.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 
 import numpy as np
 import torch
@@ -47,6 +47,183 @@ def _scnet_window(size: int, fade: int) -> torch.Tensor:
         window[:fade] = torch.linspace(0.0, 1.0, fade)
         window[-fade:] = torch.linspace(1.0, 0.0, fade)
     return window
+
+
+def _scnet_selected_instruments(
+    config: ModelConfig, wanted: Collection[str] | None
+) -> tuple[tuple[int, str], ...]:
+    """Return configured SCNet stems selected by an optional canonical set."""
+    if wanted is None:
+        requested = None
+    else:
+        requested = {str(name).casefold() for name in wanted}
+    return tuple(
+        (index, name)
+        for index, name in enumerate(config.instruments)
+        if requested is None or name.casefold() in requested
+    )
+
+
+@torch.inference_mode()
+def demix_scnet_stream(
+    model: torch.nn.Module,
+    mix: np.ndarray,
+    config: ModelConfig,
+    device: torch.device,
+    chunk_size: int | None = None,
+    overlap: int | None = None,
+    batch_size: int = 1,
+    wanted: Collection[str] | None = None,
+    frame_callback: Callable[[str, np.ndarray], None] | None = None,
+    progress_callback: Callable[[float], None] | None = None,
+) -> tuple[str, ...]:
+    """Run SCNet overlap-add while emitting finalized frames in order.
+
+    The model still returns every trained source, but only ``wanted`` sources
+    are accumulated and emitted.  ``frame_callback`` receives channel-first
+    float32 blocks; the final block sequence is trimmed to the unpadded input.
+    """
+    if mix.ndim != 2:
+        raise ValueError(f"SCNet expects channel-first audio, got shape {mix.shape}")
+    if not config.instruments:
+        raise ValueError("SCNet config must declare at least one instrument")
+
+    mix_t = torch.as_tensor(mix, dtype=torch.float32)
+    original_length = mix_t.shape[-1]
+    chunk_size = chunk_size or config.chunk_size
+    overlap = overlap or config.num_overlap
+    if chunk_size < 1 or overlap < 1:
+        raise ValueError("SCNet chunk_size and overlap must be at least 1")
+    selected = _scnet_selected_instruments(config, wanted)
+    selected_names = tuple(name for _, name in selected)
+    if not selected:
+        if progress_callback is not None:
+            progress_callback(1.0)
+        return ()
+    if frame_callback is None:
+        raise ValueError("frame_callback is required for streaming SCNet inference")
+
+    step = max(1, chunk_size // overlap)
+    border = chunk_size - step
+    fade = chunk_size // 10
+    window = _scnet_window(chunk_size, fade)
+
+    if original_length > 2 * border and border:
+        mix_t = F.pad(mix_t, (border, border), mode="reflect")
+        trim_start = border
+    else:
+        trim_start = 0
+    padded_length = mix_t.shape[-1]
+    trim_end = trim_start + original_length
+
+    # The ring holds exactly one model chunk.  Once a new chunk starts, all
+    # samples before that start have received their final overlap contribution.
+    result = torch.zeros(
+        (len(selected), mix_t.shape[0], chunk_size), dtype=torch.float32
+    )
+    weight = torch.zeros(chunk_size, dtype=torch.float32)
+    head = 0
+    buffer_start = 0
+
+    def _ring_slice(offset: int, length: int) -> list[tuple[int, int]]:
+        physical = (head + offset) % chunk_size
+        first = min(length, chunk_size - physical)
+        parts = [(physical, first)]
+        if first < length:
+            parts.append((0, length - first))
+        return parts
+
+    def _flush(end: int) -> None:
+        nonlocal head, buffer_start
+        if end < buffer_start or end - buffer_start > chunk_size:
+            raise RuntimeError("SCNet streaming buffer advanced out of bounds")
+        length = end - buffer_start
+        if length == 0:
+            return
+        emit_start = max(buffer_start, trim_start)
+        emit_end = min(end, trim_end)
+        if emit_start < emit_end:
+            offset = emit_start - buffer_start
+            emit_length = emit_end - emit_start
+            emitted = 0
+            for physical, part_length in _ring_slice(offset, emit_length):
+                values = (
+                    result[..., physical : physical + part_length]
+                    / weight[physical : physical + part_length].clamp(min=1e-10)
+                ).numpy()
+                for selected_index, (_, name) in enumerate(selected):
+                    frame_callback(
+                        name, np.asarray(values[selected_index], dtype=np.float32)
+                    )
+                emitted += part_length
+            if emitted != emit_length:
+                raise RuntimeError("SCNet streaming flush emitted an incomplete block")
+
+        for physical, part_length in _ring_slice(0, length):
+            result[..., physical : physical + part_length].zero_()
+            weight[physical : physical + part_length].zero_()
+        head = (head + length) % chunk_size
+        buffer_start = end
+
+    batches: list[torch.Tensor] = []
+    locations: list[tuple[int, int]] = []
+    position = 0
+    completed = 0
+    total = (padded_length + step - 1) // step
+    step_size = max(1, batch_size)
+
+    while position < padded_length:
+        part = mix_t[:, position : position + chunk_size]
+        segment_length = part.shape[-1]
+        mode = "reflect" if segment_length > chunk_size // 2 else "constant"
+        part = F.pad(part, (0, chunk_size - segment_length), mode=mode)
+        batches.append(part)
+        locations.append((position, segment_length))
+        position += step
+
+        if len(batches) < step_size and position < padded_length:
+            continue
+        estimated = model(torch.stack(batches).to(device))
+        if (
+            estimated.ndim != 4
+            or estimated.shape[1] != len(config.instruments)
+            or estimated.shape[2] != mix_t.shape[0]
+        ):
+            raise ValueError(
+                "SCNet output must have shape (batch, instruments, channels, samples)"
+            )
+        for index, (start, segment_length) in enumerate(locations):
+            if start > buffer_start:
+                _flush(start)
+            output = estimated[index, ..., :segment_length].cpu()
+            if output.shape[-1] != segment_length:
+                output = F.pad(output, (0, segment_length - output.shape[-1]))
+            fade_window = window[:segment_length].clone()
+            if start == 0:
+                fade_window[:fade] = 1.0
+            if start + segment_length == padded_length:
+                fade_window[-fade:] = 1.0
+            offset = 0
+            for physical, part_length in _ring_slice(0, segment_length):
+                part_fade = fade_window[offset : offset + part_length]
+                for selected_index, (source_index, _) in enumerate(selected):
+                    result[selected_index, ..., physical : physical + part_length] += (
+                        output[source_index, ..., offset : offset + part_length]
+                        * part_fade
+                    )
+                weight[physical : physical + part_length] += part_fade
+                offset += part_length
+            next_start = (
+                locations[index + 1][0] if index + 1 < len(locations) else position
+            )
+            _flush(min(next_start, padded_length))
+        completed += len(locations)
+        batches.clear()
+        locations.clear()
+        if progress_callback is not None:
+            progress_callback(min(1.0, completed / total))
+
+    return selected_names
 
 
 @torch.inference_mode()

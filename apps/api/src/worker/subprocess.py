@@ -22,6 +22,7 @@ from upmixer.config import UpmixConfig
 from upmixer.separation.stem_pipeline import StemUpmixPipeline
 
 _CTX = multiprocessing.get_context("spawn")
+_SCNET_INACTIVITY_TIMEOUT_S = 120.0
 _log = logging.getLogger(__name__)
 
 
@@ -122,6 +123,11 @@ class JobSubprocess:
             args=(items, self._queue, self._cancel_event),
             daemon=True,
         )
+        self._inactivity_timeout_s = (
+            _SCNET_INACTIVITY_TIMEOUT_S
+            if any(item.config.stem_ensemble for item in items)
+            else None
+        )
 
     def start(self) -> None:
         self._process.start()
@@ -134,6 +140,7 @@ class JobSubprocess:
         ``("crashed", message)`` if the child process exits without ever
         reporting ``("job_done",)``.
         """
+        last_event_at = time.monotonic()
         while True:
             try:
                 event = self._queue.get(timeout=poll_interval)
@@ -144,8 +151,20 @@ class JobSubprocess:
                     if exitcode not in (0, None):
                         yield ("crashed", _describe_exit(exitcode))
                     return
+                if (
+                    self._inactivity_timeout_s is not None
+                    and time.monotonic() - last_event_at >= self._inactivity_timeout_s
+                ):
+                    self.stop()
+                    yield (
+                        "crashed",
+                        "SCNet job subprocess stalled without progress for "
+                        f"{self._inactivity_timeout_s:g} seconds",
+                    )
+                    return
                 yield None
                 continue
+            last_event_at = time.monotonic()
             yield event
             if event[0] == "job_done":
                 return

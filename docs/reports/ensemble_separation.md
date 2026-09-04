@@ -60,3 +60,48 @@ deselected**. It was not rerun after implementation because the user reported
 a machine freeze, and no full ensemble/evaluation corpus was rerun. These
 checks make no new quality claim: numerical parity supports backend
 equivalence only.
+
+## Bounded SCNet architecture (2026-09-04)
+
+Production remains on the exact XL-IHF checkpoint, float32 inference, the
+485,100-sample model chunk, and overlap 4. The MLX loader now applies an 8 GiB
+allocator limit and a 512 MiB cache limit before model construction. The
+adapter releases inactive allocations after each forward. Five consecutive
+real-checkpoint chunks took 2.793–2.854 seconds each; MLX peak allocation held
+at 5.291 GiB, active allocation returned to 0.201 GiB, and cached allocation
+returned to zero after every chunk.
+
+Default SCNet runs now overlap-add into a one-chunk rolling buffer and stream
+finalized float32 frames to atomic WAV outputs. Only the stems requested by the
+stage are accumulated and written. The prior in-memory function remains for
+TTA, pitch-shift, and explicit outer-chunk modes. Synthetic padding, chunk-edge,
+and batched-chunk tests matched the prior overlap-add output bit for bit.
+
+On ordinary callers, one persistent `spawn` worker owns MLX and the checkpoint,
+reports per-chunk progress, and is terminated when its inactivity watchdog
+expires. API jobs already run in daemonized subprocesses, which cannot create a
+child process, so they use the same bounded engine in that existing isolation
+boundary; their outer supervisor terminates an ensemble job after 120 seconds
+without progress. Request outputs are published by directory rename only after
+every stem succeeds.
+
+### Direct MPSGraph gate
+
+The native prototype used exact float32 production activation shapes for all
+eight dual-path blocks (16 bidirectional LSTMs). Representative activation
+parity passed at max error `2.67e-6` and 126.7 dB SNR. The recurrent core took
+approximately 2.1–2.6 seconds; with the measured 0.53-second non-core work, the
+projected full forward was 2.6–3.1 seconds versus approximately 2.79 seconds
+for MLX. Four native blocks already reached 6.5–7.2 GiB RSS.
+
+The gate required at least 1.5x throughput and a proven peak below 8 GiB.
+MPSGraph failed the throughput gate and did not establish full-graph memory or
+waveform parity, so no native backend or PyObjC dependency ships.
+
+Validation after integration: **1343 passed / 38 deselected** across core, API,
+and CLI tests. A real-checkpoint public-path smoke test ran two isolated
+separations of a one-second stereo float32 WAV in 5.21 and 5.52 seconds and
+passed full-precision output comparison. An opt-in real-checkpoint five-chunk
+regression matched streaming and legacy overlap-add bit for bit. These changes
+alter resource use and failure containment, not the separation model or quality
+settings.

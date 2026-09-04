@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from fractions import Fraction
 
 import numpy as np
@@ -105,6 +105,7 @@ class SeparationEngine:
         audio_path: str,
         retain_parent: bool = False,
         progress_callback: Callable[[float], None] | None = None,
+        wanted: Collection[str] | None = None,
     ) -> list[str]:
         """Separate ``audio_path``, writing one WAV per stem to output_dir.
 
@@ -114,6 +115,7 @@ class SeparationEngine:
 
         When ``retain_parent`` is true, :meth:`take_last_parent` exposes the
         exact resampled input in its original level domain after the run.
+        ``wanted`` optionally limits which configured stems are written.
         Returns the list of written file paths.
         """
         mix = audio_io.load_audio(audio_path, self._sample_rate)
@@ -121,6 +123,22 @@ class SeparationEngine:
         mix, input_scale = audio_io.normalize(mix)
 
         started = time.monotonic()
+        audio_base = os.path.splitext(os.path.basename(audio_path))[0]
+        if self._can_stream_scnet():
+            paths = self._separate_scnet_stream(
+                mix,
+                input_scale,
+                audio_base,
+                wanted,
+                progress_callback,
+            )
+            _log.debug(
+                "  Engine model=%s demix=%.2fs",
+                self._model_filename,
+                time.monotonic() - started,
+            )
+            return paths
+
         sources = self._demix_with_chunking(mix, progress_callback)
         _log.debug(
             "  Engine model=%s demix=%.2fs",
@@ -128,16 +146,99 @@ class SeparationEngine:
             time.monotonic() - started,
         )
 
-        audio_base = os.path.splitext(os.path.basename(audio_path))[0]
         os.makedirs(self._output_dir, exist_ok=True)
         paths = []
+        requested = None
+        if self._arch == "scnet" and wanted is not None:
+            requested = {str(name).casefold() for name in wanted}
         for stem_name, stem_audio in sources.items():
+            if requested is not None and stem_name.casefold() not in requested:
+                continue
             path = audio_io.stem_output_path(
                 self._output_dir, audio_base, stem_name, self._model_filename
             )
             audio_io.write_stem(path, stem_audio / input_scale, self._sample_rate)
             paths.append(path)
         return paths
+
+    def _can_stream_scnet(self) -> bool:
+        """Return whether this run can use the bounded SCNet writer path."""
+        return (
+            self._arch == "scnet"
+            and not self._tta
+            and self._pitch_shift is None
+            and self._chunk_duration_s is None
+        )
+
+    def _scnet_parameters(self) -> tuple[int, int]:
+        chunk_size = (
+            self._segment_size * self._config.hop_length
+            if self._segment_size is not None
+            else self._config.chunk_size
+        )
+        overlap = (
+            self._overlap if self._overlap is not None else self._config.num_overlap
+        )
+        return chunk_size, overlap
+
+    def _separate_scnet_stream(
+        self,
+        mix: np.ndarray,
+        input_scale: float,
+        audio_base: str,
+        wanted: Collection[str] | None,
+        progress_callback: Callable[[float], None] | None,
+    ) -> list[str]:
+        requested = (
+            None if wanted is None else {str(name).casefold() for name in wanted}
+        )
+        stem_names = tuple(
+            name
+            for name in self._config.instruments
+            if requested is None or name.casefold() in requested
+        )
+        if not stem_names:
+            if progress_callback is not None:
+                progress_callback(1.0)
+            return []
+
+        os.makedirs(self._output_dir, exist_ok=True)
+        paths = {
+            name: audio_io.stem_output_path(
+                self._output_dir, audio_base, name, self._model_filename
+            )
+            for name in stem_names
+        }
+        writers: dict[str, audio_io.AtomicWavWriter] = {}
+        try:
+            for name, path in paths.items():
+                writers[name] = audio_io.AtomicWavWriter(
+                    path, self._sample_rate, mix.shape[0]
+                )
+
+            def write_frame(name: str, frame: np.ndarray) -> None:
+                writers[name].write(np.asarray(frame / input_scale, dtype=np.float32))
+
+            chunk_size, overlap = self._scnet_parameters()
+            demix.demix_scnet_stream(
+                self._model,
+                mix,
+                self._config,
+                self._model_device(),
+                chunk_size=chunk_size,
+                overlap=overlap,
+                batch_size=self._batch_size,
+                wanted=stem_names,
+                frame_callback=write_frame,
+                progress_callback=progress_callback,
+            )
+            for writer in writers.values():
+                writer.commit()
+        except Exception:
+            for writer in writers.values():
+                writer.abort()
+            raise
+        return list(paths.values())
 
     def take_last_parent(self) -> np.ndarray:
         """Return and release the exact resampled input of the last run."""
@@ -287,22 +388,14 @@ class SeparationEngine:
     ) -> dict[str, np.ndarray]:
         torch_device = self._model_device()
         if self._arch == "scnet":
-            scnet_chunk_size = (
-                self._segment_size * self._config.hop_length
-                if self._segment_size is not None
-                else self._config.chunk_size
-            )
+            scnet_chunk_size, scnet_overlap = self._scnet_parameters()
             return demix.demix_scnet(
                 self._model,
                 mix,
                 self._config,
                 torch_device,
                 chunk_size=scnet_chunk_size,
-                overlap=(
-                    self._overlap
-                    if self._overlap is not None
-                    else self._config.num_overlap
-                ),
+                overlap=scnet_overlap,
                 batch_size=self._batch_size,
                 progress_callback=progress_callback,
             )

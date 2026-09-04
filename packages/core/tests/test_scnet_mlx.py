@@ -4,6 +4,7 @@ from __future__ import annotations
 import gc
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -12,16 +13,22 @@ torch = pytest.importorskip("torch")
 mx = pytest.importorskip("mlx.core")
 pytest.importorskip("mlx_spectro")
 
-from upmixer.separation.inference.archs.scnet import SCNet
-from upmixer.separation.inference.archs.scnet_mlx import SCNetMLX
-from upmixer.separation.inference.scnet_mlx import (
+from upmixer.separation.inference.archs.scnet import SCNet  # noqa: E402
+from upmixer.separation.inference.archs.scnet_mlx import SCNetMLX  # noqa: E402
+from upmixer.separation.inference.scnet_mlx import (  # noqa: E402
+    _MLX_CACHE_LIMIT_BYTES,
+    _MLX_MEMORY_LIMIT_BYTES,
     SCNetMLXAdapter,
     convert_torch_to_mlx_weights,
     load_converted_weights,
+    load_model,
 )
-from upmixer.separation.inference.config import ModelConfig, load_model_config
-from upmixer.separation.inference.demix import demix_scnet
-from upmixer.separation.inference.registry import get_model_spec
+from upmixer.separation.inference.config import (  # noqa: E402
+    ModelConfig,
+    load_model_config,
+)
+from upmixer.separation.inference.demix import demix_scnet  # noqa: E402
+from upmixer.separation.inference.registry import get_model_spec  # noqa: E402
 
 
 _MODEL_CONFIG = dict(
@@ -154,6 +161,56 @@ def test_scnet_mlx_adapter_matches_demix_scnet(monkeypatch):
     snr_db = 20.0 * np.log10(np.linalg.norm(reference) / max(np.linalg.norm(difference), 1e-20))
     assert snr_db >= 60.0
     assert clear_calls == 5
+
+
+def test_scnet_mlx_loader_bounds_allocator_before_model_load(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeModel:
+        def eval(self):
+            return self
+
+    monkeypatch.setattr(
+        mx, "set_memory_limit", lambda value: calls.append(("memory", value))
+    )
+    monkeypatch.setattr(
+        mx, "set_cache_limit", lambda value: calls.append(("cache", value))
+    )
+    monkeypatch.setattr(
+        "upmixer.separation.inference.registry.get_model_spec",
+        lambda _filename: SimpleNamespace(arch="scnet", config_name="fake"),
+    )
+    monkeypatch.setattr(
+        "upmixer.separation.inference.config.load_model_config",
+        lambda _name: SimpleNamespace(model={}),
+    )
+    monkeypatch.setattr(
+        "upmixer.separation.inference.loader._ensure_weights",
+        lambda _spec, _directory: str(tmp_path / "model.ckpt"),
+    )
+    monkeypatch.setattr(
+        "upmixer.separation.inference.loader._load_state_dict",
+        lambda _path: {},
+    )
+    monkeypatch.setattr(
+        "upmixer.separation.inference.archs.scnet_mlx.SCNetMLX",
+        lambda **_kwargs: FakeModel(),
+    )
+    monkeypatch.setattr(
+        "upmixer.separation.inference.scnet_mlx.convert_torch_to_mlx_weights",
+        lambda _state: {},
+    )
+    monkeypatch.setattr(
+        "upmixer.separation.inference.scnet_mlx.load_converted_weights",
+        lambda _model, _weights: None,
+    )
+
+    load_model("model.ckpt", str(tmp_path))
+
+    assert calls == [
+        ("memory", _MLX_MEMORY_LIMIT_BYTES),
+        ("cache", _MLX_CACHE_LIMIT_BYTES),
+    ]
 
 
 @pytest.mark.perf
