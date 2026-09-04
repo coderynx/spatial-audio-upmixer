@@ -11,7 +11,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, type Configuration, type ProjectTrack, type StemRouting } from "@/api";
+import { api, type Configuration, type StemRouting } from "@/api";
 import { useHeaderTitle } from "@/app/HeaderSlot";
 import { EmptyState } from "@/app/EmptyState";
 import { InspectorGroup } from "@/app/InspectorRow";
@@ -21,7 +21,7 @@ import { Button } from "@/components/ui/button";
 import { SwitchRow } from "@/components/forms/fields";
 import { MasteringSection } from "@/features/composer/sections/MasteringSection";
 import { isStereoLayout, outputModeForLayoutSwitch } from "@/lib/layouts";
-import { normalizeManifest, type Manifest, type StemDynamicEqSettings, type StemDynamicsSettings, type StemEqSettings } from "@/lib/manifest";
+import { type Manifest, type StemDynamicEqSettings, type StemDynamicsSettings, type StemEqSettings } from "@/lib/manifest";
 import { isBedStem } from "@/lib/stems";
 import { useRuntime } from "@/runtime";
 import { cn } from "@/lib/utils";
@@ -43,7 +43,6 @@ import {
   trackRailStorageKey,
 } from "./projectDetailLayout";
 import { useColumnLayout } from "./useColumnLayout";
-import { useEditHistory } from "./useEditHistory";
 import { useKeyCommands } from "./useKeyCommands";
 import { useLayoutSelection } from "./useLayoutSelection";
 import { usePaneLayout } from "./usePaneLayout";
@@ -53,8 +52,9 @@ import { useProjectState } from "./useProjectState";
 import { StemControls, StemProcessingControls } from "./StemControls";
 import { BedPannerWindow } from "./BedPannerWindow";
 import { ObjectPannerWindow } from "./ObjectPannerWindow";
-import { loadPanner, NEUTRAL_PLACEMENT, type Panner, type StemPlacement } from "./wasmEngine/panner";
+import type { StemPlacement } from "./wasmEngine/panner";
 import { useTrackPeaks } from "./useTrackPeaks";
+import { useTrackLayoutRealization } from "./useTrackLayoutRealization";
 
 type Stage = "assets" | "mixing" | "mastering" | "delivery";
 
@@ -64,11 +64,6 @@ const STAGES = [
   { value: "mastering" as const, label: "Mastering", icon: AudioWaveform },
   { value: "delivery" as const, label: "Delivery", icon: Package },
 ];
-
-// Matches `projectViewState.ts`'s save debounce: long enough that a drag's
-// continuous ticks never individually reach the backend, short enough that
-// stopping the drag feels like it saved immediately.
-const COMMIT_DEBOUNCE_MS = 350;
 
 export function ProjectDetailPage({ configuration }: { configuration: Configuration | null }) {
   const { projectId } = useParams();
@@ -85,65 +80,20 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   } = useProjectState(projectId, (next) => {
     if (next.tracks.length === 0 || !next.prepared_stems.length) setActiveTab("assets");
   });
-  const history = useEditHistory(projectId);
   const { selection, setSelection } = useLayoutSelection(projectId, project);
   const selectedTrack = selection?.trackId || null;
   const selectedLayout = selection?.layout || "7.1.4";
   const selected = project?.tracks.find((track) => track.id === selectedTrack) || null;
-  const serverTrackManifest = React.useMemo(() => {
-    if (!manifest || !selected) return manifest;
-    const overrides = (selected.layout_overrides[selectedLayout] || {}) as Partial<Manifest>;
-    return normalizeManifest({
-      ...manifest,
-      ...overrides,
-      engine: { ...manifest.engine, ...overrides.engine },
-      mixing: { ...manifest.mixing, ...overrides.mixing, channel_layout: selectedLayout },
-      routing: { ...manifest.routing, ...overrides.routing },
-      mastering: { ...manifest.mastering, ...overrides.mastering },
-      processing: { ...manifest.processing, ...overrides.processing },
-      format: { ...manifest.format, ...overrides.format },
-    });
-  }, [manifest, selected, selectedLayout]);
-  // A drag/wheel/keyboard edit shows its result instantly from here, without
-  // waiting on the network — `saveTrack` only fires after COMMIT_DEBOUNCE_MS
-  // of quiescence (see `updateTrackManifest`), so mid-drag ticks must not
-  // depend on a server round-trip to be visible.
-  const [pendingManifest, setPendingManifest] = React.useState<Manifest | null>(null);
-  const trackManifest = pendingManifest ?? serverTrackManifest;
-  const pendingSaveRef = React.useRef<{ track: ProjectTrack; layout: string; value: Manifest } | null>(null);
-  const saveTimerRef = React.useRef<number | null>(null);
-  // Flushes whatever edit is still pending — on track/layout switch (so the
-  // newly selected manifest isn't shadowed by a stale override) and on
-  // unmount (so navigating away mid-drag doesn't drop the edit entirely).
-  const resetPendingSave = React.useCallback(() => {
-    if (saveTimerRef.current) { window.clearTimeout(saveTimerRef.current); saveTimerRef.current = null; }
-    const pending = pendingSaveRef.current;
-    pendingSaveRef.current = null;
-    setPendingManifest(null);
-    if (pending) void saveTrack(pending.track, pending.layout, pending.value);
-  }, [saveTrack]);
-  React.useEffect(() => resetPendingSave, [selectedTrack, selectedLayout, resetPendingSave]);
-  // `merge` collapses consecutive calls carrying the same manifest field into
-  // one undo step (a fader drag) — see `useEditHistory`. Network commits are
-  // debounced separately here so a drag's continuous ticks never each reach
-  // the backend — only the value in place once the user stops.
-  const updateTrackManifest = React.useCallback((next: Manifest, merge?: boolean) => {
-    if (!selected || !trackManifest) return;
-    const track = selected;
-    const layout = selectedLayout;
-    history.record(trackManifest, next, (value) => {
-      setPendingManifest(value);
-      pendingSaveRef.current = { track, layout, value };
-      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = window.setTimeout(() => {
-        saveTimerRef.current = null;
-        pendingSaveRef.current = null;
-        void saveTrack(track, layout, value).then(() => {
-          setPendingManifest((current) => (current === value ? null : current));
-        });
-      }, COMMIT_DEBOUNCE_MS);
-    }, merge);
-  }, [selected, selectedLayout, trackManifest, saveTrack, history]);
+  const channels = React.useMemo(
+    () => configuration?.choices.layout_channels?.[selectedLayout] ?? [],
+    [configuration, selectedLayout],
+  );
+  const realization = useTrackLayoutRealization({
+    projectId, projectManifest: manifest, track: selected, layout: selectedLayout, channels, save: saveTrack, onError: setError,
+  });
+  const trackManifest = realization.manifest;
+  const updateTrackManifest = realization.update;
+  const history = realization.history;
   const previewStems = selected?.stems.filter((stem) => project?.prepared_stems.includes(stem.stem_key.split("@", 1)[0])) || [];
   const stemChannelCounts = React.useMemo(() => {
     const source = selected?.stems || project?.tracks[0]?.stems || [];
@@ -153,10 +103,6 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
   }, [selected, project]);
   const routingLayout = trackManifest?.mixing.channel_layout || "7.1.4";
   const stereoLayout = isStereoLayout(routingLayout);
-  const channels = React.useMemo(
-    () => configuration?.choices.layout_channels?.[routingLayout] ?? [],
-    [configuration, routingLayout],
-  );
   const { viewState, ready: viewStateReady, patchViewState } = useProjectViewState(projectId, project);
   const outputMode = viewState.outputMode;
   const spatialProfile = viewState.spatialProfile;
@@ -270,25 +216,8 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     [trackManifest],
   );
   const objectStems = React.useMemo(() => new Set(Object.keys(placements)), [placements]);
-  const [panner, setPanner] = React.useState<Panner | null>(null);
-  React.useEffect(() => {
-    let live = true;
-    loadPanner().then((loaded) => { if (live) setPanner(loaded); }).catch((reason) => setError((reason as Error).message));
-    return () => { live = false; };
-  }, [setError]);
-  const maxElevationDeg = React.useMemo(
-    () => (panner && channels.length ? panner.maxElevationDeg(channels) : 0),
-    [panner, channels],
-  );
-  /** A stem with no stored placement falls back to the preset's, so the first
-   * edit rotates the image it already had instead of a point at the front. */
-  const placementFor = React.useCallback(
-    (stem: string): StemPlacement =>
-      placements[stem]
-      ?? panner?.presetTreatments(preset)[stem.split("@", 1)[0]]?.placement
-      ?? NEUTRAL_PLACEMENT,
-    [placements, panner, preset],
-  );
+  const maxElevationDeg = realization.maxElevationDeg;
+  const placementFor = React.useCallback((stem: string): StemPlacement => realization.placementFor(stem, preset), [preset, realization]);
   const updateRoute = (stem: string, patch: Record<string, number>) => {
     if (!trackManifest) return;
     updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_routing: { ...routing, [stem]: { ...routing[stem], ...patch } } } }, true);
@@ -324,20 +253,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       stem_object_mode: { ...trackManifest.mixing.stem_object_mode, [stem]: mode },
     } }, true);
   };
-  /** The placement is what the user edits; the gain table is derived from it
-   * here so the manifest the export reads never lags behind the UI. */
-  const updatePlacement = (stem: string, placement: StemPlacement) => {
-    if (!trackManifest || !panner) return;
-    const route = panner.placementRoute(placement, channels, routing[stem]?.LFE ?? 0);
-    updateTrackManifest({
-      ...trackManifest,
-      mixing: {
-        ...trackManifest.mixing,
-        stem_placement: { ...placements, [stem]: placement },
-        stem_routing: { ...routing, [stem]: route },
-      },
-    }, true);
-  };
+  const updatePlacement = realization.setPlacement;
   const objectPannerForStem = (stem: string, ariaLabel = "Object panner") => {
     if (!trackManifest || isBedStem(stem)) return null;
     return <ObjectPannerWindow key={`panner-${stem}`} stemName={stem} placement={placementFor(stem)} maxElevationDeg={maxElevationDeg} objectMode={trackManifest.mixing.stem_object_mode[stem] ?? "linked-stereo"} route={routing[stem] || {}} channels={channels} ambientRear={trackManifest.mixing.stem_ambient_rear[stem] ?? 0} ambientHeight={trackManifest.mixing.stem_ambient_height[stem] ?? 0} ambientHeightCrossoverHz={trackManifest.mixing.stem_ambient_height_crossover_hz[stem] ?? 2000} ariaLabel={ariaLabel} onPlacement={(next) => updatePlacement(stem, next)} onObjectMode={(mode) => setStemObjectMode(stem, mode)} onRoute={(patch) => updateRoute(stem, patch)} onAmbient={(patch) => updateAmbient(stem, patch)} />;
@@ -390,27 +306,7 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
       : objectPannerForStem(stem, ariaLabel);
     return <div className="flex w-full flex-col items-center gap-1.5">{stemProcessingFor(stem)}{pannerControl}</div>;
   };
-  const applyPreset = () => {
-    if (!trackManifest || !stemNames.length || !panner) return;
-    const treatments = panner.presetTreatments(preset);
-    const nextPlacements: Record<string, StemPlacement> = {};
-    const nextRouting: StemRouting = {};
-    const nextRear = { ...trackManifest.mixing.stem_ambient_rear };
-    const nextHeight = { ...trackManifest.mixing.stem_ambient_height };
-    const nextHeightCrossover = { ...trackManifest.mixing.stem_ambient_height_crossover_hz };
-    for (const stem of stemNames) {
-      const name = stem.split("@", 1)[0];
-      const treatment = treatments[name];
-      if (!treatment) continue;
-      const { placement, sends } = treatment;
-      nextPlacements[stem] = placement;
-      nextRouting[stem] = panner.placementRoute(placement, channels, sends.lfe);
-      nextRear[stem] = sends.rear;
-      nextHeight[stem] = sends.height;
-      nextHeightCrossover[stem] = sends.heightCrossoverHz;
-    }
-    updateTrackManifest({ ...trackManifest, mixing: { ...trackManifest.mixing, stem_placement: nextPlacements, stem_routing: nextRouting, stem_ambient_rear: nextRear, stem_ambient_height: nextHeight, stem_ambient_height_crossover_hz: nextHeightCrossover } });
-  };
+  const applyPreset = () => realization.applyPreset(preset, stemNames);
   const toggleEnabled = React.useCallback((stem: string) => {
     if (!trackManifest) return;
     const current = trackManifest.mixing.stem_enabled[stem] !== false;
@@ -556,7 +452,10 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
         />
       </Transport>
     )}
-    {error && <p className="flex-none border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</p>}
+    {error && <div className="flex flex-none items-center gap-2 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+      <span className="min-w-0 flex-1">{error}</span>
+      {realization.saveFailed && <><Button size="sm" variant="outline" onClick={realization.retry}>Retry save</Button><Button size="sm" variant="ghost" onClick={realization.discard}>Discard changes</Button></>}
+    </div>}
     {(preview.fallbackReason || (outputMode === "apple_spatial" && !runtime.isTauri)) && (
       <p className="flex-none border-b border-warning/30 bg-warning/10 px-3 py-2 text-xs text-warning">
         {preview.fallbackReason
@@ -723,9 +622,9 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
             <ProjectDeliverySection manifest={trackManifest} configuration={configuration} onChange={updateTrackManifest} />
           </div>
           <div className="shrink-0 space-y-1.5 border-t p-2">
-            <Button className="w-full" disabled={exporting} onClick={() => void exportProject()}>
+            <Button className="w-full" disabled={exporting || realization.hasUncommittedChanges} onClick={() => void exportProject()}>
               <Download />
-              {exporting ? "Queueing" : `Export project · ${project.tracks.length} track${project.tracks.length === 1 ? "" : "s"}`}
+              {exporting ? "Queueing" : realization.hasUncommittedChanges ? "Save changes before exporting" : `Export project · ${project.tracks.length} track${project.tracks.length === 1 ? "" : "s"}`}
             </Button>
             <p className="text-center text-[11px] text-muted-foreground">
               Renders every track with its own master{project.tracks.length > 1 ? ", bundled into one download" : ""}.

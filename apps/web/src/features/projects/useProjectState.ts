@@ -106,8 +106,14 @@ export function useProjectState(projectId: string | undefined, onFirstLoad: (pro
         mastering: next.mastering, processing: next.processing, format: next.format,
       },
       scene_overrides: track.scene_overrides,
-    }).then((updated) => { if (shouldApplyProject(seq)) setProject(updated); })
-      .catch((reason) => setError((reason as Error).message));
+    }).then((updated) => {
+      if (shouldApplyProject(seq)) setProject(updated);
+      setError(null);
+    })
+      .catch((reason) => {
+        setError((reason as Error).message);
+        throw reason;
+      });
   }, [projectId, nextSeq, shouldApplyProject]);
 
   const saveProjectTrackName = React.useCallback((trackId: string, name: string) => {

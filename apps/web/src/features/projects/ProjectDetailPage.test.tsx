@@ -71,7 +71,10 @@ function channelCount() {
 
 // Saves are debounced, so calls recorded by one test would otherwise still be
 // the newest entry when the next test inspects `saveProject.mock.calls`.
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(api.getProject).mockResolvedValue(project);
+});
 afterEach(() => {
   try { window.localStorage.clear(); } catch { /* storage unavailable */ }
 });

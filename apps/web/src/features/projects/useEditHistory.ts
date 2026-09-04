@@ -53,15 +53,23 @@ function diffKey(prev: unknown, next: unknown): string | null {
  * write (e.g. a PUT bound to the track it was recorded against), not
  * something that re-enters `record`. The `applying` guard exists only to
  * make a caller mistake inert rather than corrupt the stack. */
-export function useEditHistory(projectId: string | undefined) {
-  const past = React.useRef<HistoryEntry[]>([]);
-  const future = React.useRef<HistoryEntry[]>([]);
+export function useEditHistory(projectId: string | undefined, realizationKey = projectId) {
+  const stacks = React.useRef(new Map<string, { past: HistoryEntry[]; future: HistoryEntry[] }>());
   const applying = React.useRef(false);
   const [, bump] = React.useReducer((n: number) => n + 1, 0);
 
+  const stack = React.useCallback(() => {
+    if (!realizationKey) return { past: [], future: [] };
+    let current = stacks.current.get(realizationKey);
+    if (!current) {
+      current = { past: [], future: [] };
+      stacks.current.set(realizationKey, current);
+    }
+    return current;
+  }, [realizationKey]);
+
   React.useEffect(() => {
-    past.current = [];
-    future.current = [];
+    stacks.current.clear();
     bump();
   }, [projectId]);
 
@@ -71,35 +79,46 @@ export function useEditHistory(projectId: string | undefined) {
     const key = diffKey(prev, next);
     if (key === null) return;
     const now = Date.now();
-    const top = past.current[past.current.length - 1];
+    const { past, future } = stack();
+    const top = past[past.length - 1];
     if (merge && top && top.key === key && now - top.at < MERGE_WINDOW_MS) {
       top.redo = () => apply(next);
       top.at = now;
     } else {
-      past.current.push({ undo: () => apply(prev), redo: () => apply(next), key, at: now });
-      if (past.current.length > MAX_ENTRIES) past.current.shift();
+      past.push({ undo: () => apply(prev), redo: () => apply(next), key, at: now });
+      if (past.length > MAX_ENTRIES) past.shift();
     }
-    future.current = [];
+    future.length = 0;
     bump();
-  }, []);
+  }, [stack]);
 
   const undo = React.useCallback(() => {
-    const entry = past.current.pop();
+    const { past, future } = stack();
+    const entry = past.pop();
     if (!entry) return;
     applying.current = true;
     try { entry.undo(); } finally { applying.current = false; }
-    future.current.push(entry);
+    future.push(entry);
     bump();
-  }, []);
+  }, [stack]);
 
   const redo = React.useCallback(() => {
-    const entry = future.current.pop();
+    const { past, future } = stack();
+    const entry = future.pop();
     if (!entry) return;
     applying.current = true;
     try { entry.redo(); } finally { applying.current = false; }
-    past.current.push(entry);
+    past.push(entry);
     bump();
-  }, []);
+  }, [stack]);
 
-  return { record, undo, redo, canUndo: past.current.length > 0, canRedo: future.current.length > 0 };
+  const clear = React.useCallback(() => {
+    const { past, future } = stack();
+    past.length = 0;
+    future.length = 0;
+    bump();
+  }, [stack]);
+
+  const { past, future } = stack();
+  return { record, undo, redo, clear, canUndo: past.length > 0, canRedo: future.length > 0 };
 }

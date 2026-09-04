@@ -102,4 +102,19 @@ describe("useEditHistory", () => {
     expect(result.current.canUndo).toBe(false);
     expect(result.current.canRedo).toBe(false);
   });
+
+  it("keeps history with its realization when another one is selected", () => {
+    const { result, rerender } = renderHook(({ realization }) => useEditHistory("p1", realization), { initialProps: { realization: "track-a:7.1.4" } });
+    const applyA = vi.fn();
+    const applyB = vi.fn();
+
+    act(() => result.current.record("a", "b", applyA, false));
+    rerender({ realization: "track-b:stereo" });
+    act(() => result.current.record("x", "y", applyB, false));
+    rerender({ realization: "track-a:7.1.4" });
+
+    act(() => result.current.undo());
+    expect(applyA).toHaveBeenLastCalledWith("a");
+    expect(applyB).toHaveBeenCalledTimes(1);
+  });
 });
