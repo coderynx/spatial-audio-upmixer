@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectStem } from "@/api";
 import { applyTruePeakCeiling, useStemPreview } from "./useStemPreview";
 import { TEST_ENGINE_CONSTANTS } from "./engineConstants.fixture";
+import { createPreviewProgramme } from "./previewProgramme";
 
 // The preview's DSP now runs in the shared Rust core inside the worklet, so
 // there is no node graph left to inspect here. What this file covers is the
@@ -117,18 +118,20 @@ const STEMS: ProjectStem[] = [
 ];
 
 function Harness(props: Record<string, unknown>) {
-  const preview = useStemPreview(
-    (props.stems as ProjectStem[]) ?? STEMS,
-    { stems: {} },
-    (props.noManifest ? undefined : props.mix ?? {}) as never,
-    null,
-    props.mastering as never,
-    (props.layoutChannels as string[]) ?? ["FL", "FR", "C", "LFE", "SL", "SR"],
-    (props.outputMode as never) ?? "binaural",
-    (props.spatialProfile as never) ?? "studio",
-    (props.transauralProfile as never) ?? "stereo",
-    (props.constants ?? TEST_ENGINE_CONSTANTS) as never,
-  );
+  const programme = props.noManifest ? null : createPreviewProgramme({
+    stems: (props.stems as ProjectStem[]) ?? STEMS,
+    scene: { stems: {} },
+    mix: (props.mix ?? {}) as never,
+    sourcePreviewUrl: null,
+    mastering: props.mastering as never,
+    layoutChannels: (props.layoutChannels as string[]) ?? ["FL", "FR", "C", "LFE", "SL", "SR"],
+  });
+  const preview = useStemPreview(programme, {
+    outputMode: (props.outputMode as never) ?? "binaural",
+    spatialProfile: (props.spatialProfile as never) ?? "studio",
+    transauralProfile: (props.transauralProfile as never) ?? "stereo",
+    constants: (props.constants ?? TEST_ENGINE_CONSTANTS) as never,
+  });
   (globalThis as Record<string, unknown>).preview = preview;
   return null;
 }

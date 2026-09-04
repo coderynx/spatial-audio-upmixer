@@ -7,11 +7,10 @@
 // translates the project's mix into the core's parameter block.
 //
 // Framework-free by design, so it stays testable headless and
-// `useStemPreview.ts` can remain a thin React binding: sync the latest
-// props/state onto the public fields each render, then call the matching
-// method from the appropriate effect.
+// `useStemPreview.ts` can remain a thin React binding: it supplies one
+// prepared programme plus monitor state, then calls the matching host method.
 
-import type { ProjectStem, StemScene } from "@/api";
+import type { ProjectStem } from "@/api";
 import { isTauriRuntime } from "@/runtime";
 import {
   applyTruePeakCeiling,
@@ -31,8 +30,8 @@ import {
   resolveDyneqBands,
   resolveDeliveryTarget,
 } from "./masteringProfiles";
-import type { MasterPreview } from "./masterPreview";
 import { NativePreviewClient, type NativePreviewAssets, type NativeRenderer } from "./nativePreviewClient";
+import { createPreviewMonitor, type PreviewMonitor, type PreviewProgramme } from "./previewProgramme";
 import { DspEngineClient } from "./wasmEngine/engineClient";
 import { buildEngineParams } from "./wasmEngine/engineParams";
 import { LoudnessCalibration } from "./wasmEngine/calibration";
@@ -75,36 +74,15 @@ export type { MasterMeters, MeterLevel, StemSpectrum } from "./wasmEngine/meters
 
 const CONTEXT_SAMPLE_RATE = 48000;
 
-export class PreviewAudioEngine {
+export class PreviewHost {
   readonly supported = isTauriRuntime || Boolean(
     window.AudioContext ||
       (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext,
   );
 
-  stems: ProjectStem[] = [];
-  scene: { stems?: StemScene } = {};
-  mix?: MixPreview;
-  sourcePreviewUrl: string | null = null;
-  mastering?: MasterPreview;
-  /** The manifest's `routing` block, in its manifest shape — the per-track
-      send values the served constants only supply defaults for. */
-  routing?: { height_directional_band_gain?: number };
-  layoutChannels: string[] = POSITIONAL_CHANNELS;
-  outputMode: OutputMode = "binaural";
-  spatialProfile: SpatialProfile = "studio";
-  transauralProfile: TransauralProfile = "stereo";
-  appleHeadTracking = true;
-  constants!: EngineConstants;
-  positionalChannels: string[] = [];
-  speakerEnabled: Record<string, boolean> = {};
-  /** Transport A/B. The bypassed programme is measured on its own and
-   * monitored at the mastered side's loudness — see `matchDb`. */
-  masteringBypassed = false;
-  /** Stage-scoped A/B for the reference matcher alone, on the same
-   * measure-then-match machinery. Ignored while the whole chain is bypassed,
-   * which already strips the matcher. */
-  matchBypassed = false;
-  programKey = "";
+  private programme: PreviewProgramme | null = null;
+  private monitor: PreviewMonitor = createPreviewMonitor();
+  private constants!: EngineConstants;
 
   volume = 1;
   muted = false;
@@ -158,6 +136,35 @@ export class PreviewAudioEngine {
   readonly currentTimeRef: EngineRef<number> = engineRef(0);
 
   constructor(private readonly callbacks: EngineCallbacks) {}
+
+  setProgramme(programme: PreviewProgramme | null) {
+    this.programme = programme;
+  }
+
+  setMonitor(monitor: PreviewMonitor) {
+    this.monitor = monitor;
+  }
+
+  setConstants(constants: EngineConstants) {
+    this.constants = constants;
+  }
+
+  private get stems() { return this.programme?.stems ?? []; }
+  private get scene() { return this.programme?.scene ?? {}; }
+  private get mix() { return this.programme?.mix; }
+  private get mastering() { return this.programme?.mastering; }
+  private get routing() { return this.programme?.routing; }
+  private get layoutChannels() { return this.programme?.layoutChannels ?? POSITIONAL_CHANNELS; }
+  private get outputMode() { return this.monitor.outputMode; }
+  private get spatialProfile() { return this.monitor.spatialProfile; }
+  private get transauralProfile() { return this.monitor.transauralProfile; }
+  private get appleHeadTracking() { return this.monitor.appleHeadTracking; }
+  private get speakerEnabled() { return this.monitor.speakerEnabled; }
+  private get masteringBypassed() { return this.monitor.masteringBypassed; }
+  private get matchBypassed() { return this.monitor.matchBypassed; }
+  private get programKey() {
+    return `${this.programme?.key ?? ""}:${this.outputMode}:${this.spatialProfile}:${this.transauralProfile}:${this.appleHeadTracking}:${this.masteringBypassed}:${this.matchBypassed}`;
+  }
 
   setVolume(volume: number) {
     this.volume = volume;

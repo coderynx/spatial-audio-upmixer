@@ -47,6 +47,7 @@ import { useKeyCommands } from "./useKeyCommands";
 import { useLayoutSelection } from "./useLayoutSelection";
 import { usePaneLayout } from "./usePaneLayout";
 import { useStemPreview, type OutputMode } from "./useStemPreview";
+import { createPreviewProgramme } from "./previewProgramme";
 import { resolveEngineConstants } from "./masteringProfiles";
 import { useProjectState } from "./useProjectState";
 import { StemControls, StemProcessingControls } from "./StemControls";
@@ -159,7 +160,23 @@ export function ProjectDetailPage({ configuration }: { configuration: Configurat
     () => monitorMastering(previewMastering, masteringBypassed, matchBypassed),
     [previewMastering, masteringBypassed, matchBypassed],
   );
-  const preview = useStemPreview(previewStems, {}, trackManifest?.mixing, selected?.source_preview_url || null, monitoredMastering, channels, outputMode, spatialProfile, transauralProfile, engineConstants, trackManifest?.routing, masteringBypassed, matchBypassed, appleHeadTracking);
+  const previewProgramme = React.useMemo(() => trackManifest ? createPreviewProgramme({
+    stems: previewStems,
+    mix: trackManifest.mixing,
+    sourcePreviewUrl: selected?.source_preview_url || null,
+    mastering: monitoredMastering,
+    routing: trackManifest.routing,
+    layoutChannels: channels,
+  }) : null, [channels, monitoredMastering, previewStems, selected?.source_preview_url, trackManifest]);
+  const preview = useStemPreview(previewProgramme, {
+    outputMode,
+    spatialProfile,
+    transauralProfile,
+    constants: engineConstants,
+    masteringBypassed,
+    matchBypassed,
+    appleHeadTracking,
+  });
   const previousRoutingLayoutRef = React.useRef(routingLayout);
   React.useEffect(() => { previousRoutingLayoutRef.current = routingLayout; }, [projectId]);
   React.useEffect(() => {

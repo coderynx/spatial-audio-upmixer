@@ -76,10 +76,10 @@ of them — the mono-maker's zero-phase pass and the limiter's forward-window
 minimum both get a queue in front of them, and nothing is emitted until its
 full look-ahead exists. See `packages/dsp/crates/dsp-core/src/stream/`.
 
-`audioEngine.ts` has no React import — it is the framework-free layer that
-selects the native or Web Audio host, owns transport, and translates a
-project's mix into the core's parameter block; `useStemPreview.ts` binds it to React
-state. Every "the mix changed" path — mute, solo, rebalance, routing, stem
+`audioEngine.ts` has no React import — its `PreviewHost` selects the native or
+Web Audio host and owns transport for one `PreviewProgramme`; `previewProgramme.ts`
+defines that resolved track-layout mix, while `useStemPreview.ts` binds it to React
+monitor state. Every "the mix changed" path — mute, solo, rebalance, routing, stem
 EQ, mastering, speaker mute, output mode, spatial and transaural profile —
 resolves to one parameter block and one message. There is no per-control
 rewiring, because there is no graph to rewire.
@@ -93,7 +93,8 @@ normalized shape the parameter builders consume. `resolveEngineConstants`
 maps between them, and is the only place voicing params get their
 snake_case → camelCase rename.
 
-**Preview module layout.** `audioEngine.ts` keeps transport and host selection;
+**Preview module layout.** `previewProgramme.ts` carries one prepared programme;
+`audioEngine.ts` keeps its transport and host selection;
 `nativePreviewClient.ts` adapts the Tauri command/channel protocol. The browser pieces live under
 `src/features/projects/wasmEngine/` — `engineClient.ts` (worklet messaging),
 `engineParams.ts` + `stemMix.ts` (mix → parameter block), `filterAssets.ts` +

@@ -1,67 +1,44 @@
 import * as React from "react";
-import type { ProjectStem, StemScene } from "@/api";
 import { speakerCoordinates } from "@/lib/spatial";
 import { isTauriRuntime } from "@/runtime";
 import type { EngineConstants, SpatialProfile, TransauralProfile } from "./masteringProfiles";
-import type { MasterPreview } from "./masterPreview";
 import {
-  PreviewAudioEngine,
+  PreviewHost,
   POSITIONAL_CHANNELS,
   SILENT_LOUDNESS,
   type EngineCallbacks,
-  type MixPreview,
   type OutputMode,
 } from "./audioEngine";
+import { createPreviewMonitor, type PreviewProgramme } from "./previewProgramme";
 
 export type { OutputMode, MasterMeters, MeterLevel, MixPreview } from "./audioEngine";
 export type { LoudnessSummary } from "./audioEngine";
 export type { SpatialProfile, TransauralProfile } from "./masteringProfiles";
 export { applyTruePeakCeiling } from "./audioEngine";
 
-// Thin React binding over PreviewAudioEngine (audioEngine.ts): syncs props/state
-// onto the engine's fields and wires effects to the matching engine method.
+// Thin React binding over PreviewHost (audioEngine.ts): it prepares the current
+// programme and monitor state, then wires effects to the matching host method.
 export function useStemPreview(
-  stems: ProjectStem[],
-  scene: { stems?: StemScene },
-  mix?: MixPreview,
-  sourcePreviewUrl: string | null = null,
-  mastering?: MasterPreview,
-  // Full channel set (including LFE) of the project's selected speaker
-  // layout — defaults to every positional channel for callers (e.g. tests)
-  // that don't care about layout-scoping the preview's speaker bed.
-  layoutChannels: string[] = POSITIONAL_CHANNELS,
-  // Which final render stage the channel bed feeds. Ephemeral, session-only
-  // choice (not part of the project manifest) — switching it re-routes the
-  // already-built graph rather than re-decoding stems, see the engine's
-  // `applyOutputMode`.
-  outputMode: OutputMode = "binaural",
-  // Spatial Audio Engine profile (Studio/Listening/Flat) — selects the
-  // decode filter set and voicing chain, see docs/standards/
-  // spatial_audio_engine.md. Session-only, like outputMode.
-  spatialProfile: SpatialProfile = "studio",
-  // Crosstalk-cancellation (transaural) speaker profile (Stereo/Smart
-  // speaker/Car) — selects the XTC filter set and voicing chain, see
-  // docs/standards/transaural_speakers.md. Session-only, like outputMode;
-  // only meaningful when outputMode === "transaural".
-  transauralProfile: TransauralProfile = "stereo",
-  // Backend-served tunable DSP constants (resolveEngineConstants). Null until
-  // the bootstrap GET /api/v1/configuration fetch resolves; the preview's
-  // Web Audio graph is not built until it is set — every graph-building effect
-  // below is gated on it.
-  constants: EngineConstants | null = null,
-  // The selected track's manifest `routing` block. Send values here are
-  // per-track and must reach the worklet, or a track previews with the
-  // served default while the export uses its own value.
-  routing?: { height_directional_band_gain?: number },
-  // Transport A/B state. Session-only, like outputMode — the caller has
-  // already stripped the mastering block it passes above; this tells the
-  // engine which of the two programmes it is rendering so it can measure and
-  // loudness-match them separately.
-  masteringBypassed = false,
-  // The reference matcher's own A/B, on the same machinery.
-  matchBypassed = false,
-  appleHeadTracking = true,
+  programme: PreviewProgramme | null,
+  {
+    outputMode = "binaural",
+    spatialProfile = "studio",
+    transauralProfile = "stereo",
+    constants = null,
+    masteringBypassed = false,
+    matchBypassed = false,
+    appleHeadTracking = true,
+  }: {
+    outputMode?: OutputMode;
+    spatialProfile?: SpatialProfile;
+    transauralProfile?: TransauralProfile;
+    constants?: EngineConstants | null;
+    masteringBypassed?: boolean;
+    matchBypassed?: boolean;
+    appleHeadTracking?: boolean;
+  } = {},
 ) {
+  const layoutChannels = programme?.layoutChannels ?? POSITIONAL_CHANNELS;
   const layoutChannelsKey = layoutChannels.join(",");
   // Stable-identity, layout-scoped speaker list: drives the ambisonic
   // speaker-bus construction, so switching e.g. 7.1.4 -> 5.1 tears down and
@@ -118,7 +95,7 @@ export function useStemPreview(
     ]));
   }, [speakerEnabled, speakerSolo]);
 
-  const engineRef = React.useRef<PreviewAudioEngine | null>(null);
+  const engineRef = React.useRef<PreviewHost | null>(null);
   if (!engineRef.current) {
     // `setXxx` state setters have stable identity across renders, so this
     // callbacks object only needs to be constructed once, alongside the
@@ -142,31 +119,22 @@ export function useStemPreview(
         setFallbackReason(reason);
       },
     };
-    engineRef.current = new PreviewAudioEngine(callbacks);
+    engineRef.current = new PreviewHost(callbacks);
   }
   const engine = engineRef.current;
   const [supported] = React.useState(() => engine.supported);
 
-  // Sync every input prop/state onto the engine's public fields, mirroring
-  // the old per-value refs' unconditional per-render assignment — the
-  // engine methods below read these fields at call time instead of closing
-  // over React values directly.
-  engine.stems = stems;
-  engine.scene = scene;
-  engine.mix = mix;
-  engine.sourcePreviewUrl = sourcePreviewUrl;
-  engine.mastering = mastering;
-  engine.routing = routing;
-  engine.layoutChannels = layoutChannels;
-  engine.outputMode = outputMode;
-  engine.spatialProfile = spatialProfile;
-  engine.transauralProfile = transauralProfile;
-  engine.appleHeadTracking = appleHeadTracking;
-  if (constants) engine.constants = constants;
-  engine.positionalChannels = positionalChannels;
-  engine.speakerEnabled = effectiveSpeakerEnabled;
-  engine.masteringBypassed = masteringBypassed;
-  engine.matchBypassed = matchBypassed;
+  engine.setProgramme(programme);
+  if (constants) engine.setConstants(constants);
+  engine.setMonitor(createPreviewMonitor({
+    outputMode,
+    spatialProfile,
+    transauralProfile,
+    appleHeadTracking,
+    speakerEnabled: effectiveSpeakerEnabled,
+    masteringBypassed,
+    matchBypassed,
+  }));
 
   // Layout changed (not just the initial mount): drop mute state for
   // speakers the new layout no longer has and default any newly-added ones
@@ -179,26 +147,9 @@ export function useStemPreview(
     setSpeakerSolo(new Set());
   }, [layoutChannelsKey, positionalChannels]);
 
-  const hasManifest = Boolean(mix);
-  const key = `${stems.map((stem) => `${stem.id}:${stem.preview_url || stem.audio_url}`).join("|")}|${sourcePreviewUrl || ""}`;
-  // Value-stable key: `mastering` is a fresh object every render (the project
-  // page rebuilds its manifest on every edit, including unrelated mixing
-  // edits), but the mastering audio graph only needs rebuilding when the
-  // resolved values actually change.
-  const programKey = JSON.stringify({
-    layoutChannels,
-    scene: scene.stems ?? null,
-    mix: mix ?? null,
-    mastering: mastering ?? null,
-    routing: routing ?? null,
-    outputMode,
-    spatialProfile,
-    transauralProfile,
-    appleHeadTracking,
-    masteringBypassed,
-    matchBypassed,
-  });
-  engine.programKey = programKey;
+  const hasProgramme = Boolean(programme);
+  const key = programme?.sourceKey ?? "";
+  const programKey = `${programme?.key ?? ""}:${outputMode}:${spatialProfile}:${transauralProfile}:${appleHeadTracking}:${masteringBypassed}:${matchBypassed}`;
 
   React.useEffect(() => {
     engine.applySpeakerMute();
@@ -254,15 +205,15 @@ export function useStemPreview(
   }, [programKey, ready, constants]);
 
   React.useEffect(() => {
-    if (!constants || !hasManifest) return;
+    if (!constants || !hasProgramme) return;
     engine.initialize().catch(() => {
       // error state already set inside initialize
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  }, [key, constants, hasManifest]);
+  }, [key, constants, hasProgramme]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- `engine` is a stable ref-backed singleton (see the lazy engineRef init above), never needs to appear in a dependency array
-  React.useEffect(() => () => engine.reset(), [key, hasManifest]);
+  React.useEffect(() => () => engine.reset(), [key, hasProgramme]);
   React.useEffect(() => {
     setError(null);
   }, [key]);
